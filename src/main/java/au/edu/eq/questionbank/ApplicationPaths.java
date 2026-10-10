@@ -1,5 +1,6 @@
 package au.edu.eq.questionbank;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
@@ -41,13 +42,36 @@ public final class ApplicationPaths {
 	}
 
 	/**
-	 * Returns the user-specific application configuration file.
+	 * Returns the dedicated directory for optional performance diagnostics. This is
+	 * separate from the authoritative application data root.
 	 *
-	 * @return normalized absolute properties-file path
+	 * @return normalised absolute diagnostics directory
+	 */
+	public static Path diagnosticsDirectory() {
+		return configurationDirectory().resolve("diagnostics").toAbsolutePath().normalize();
+	}
+
+	/**
+	 * Returns the application configuration file. An explicit JVM property
+	 * overrides the normal production location.
+	 *
+	 * @return normalised absolute configuration-file path
 	 */
 	public static Path propertiesFile() {
+		String override = System.getProperty("eqb.config.file");
+		if (override != null) {
+			if (override.isBlank()) {
+				throw new IllegalArgumentException("eqb.config.file must not be blank");
+			}
+			Path selected = Path.of(override).toAbsolutePath().normalize();
 
-		// Keep mutable configuration outside the installed application image.
+			// Never silently create a fresh configuration when an
+			// explicitly selected development configuration is missing.
+			if (!Files.isRegularFile(selected)) {
+				throw new IllegalArgumentException("Configuration file does not exist: " + selected);
+			}
+			return selected;
+		}
 		return configurationDirectory().resolve(PROPERTIES_FILENAME).toAbsolutePath().normalize();
 	}
 

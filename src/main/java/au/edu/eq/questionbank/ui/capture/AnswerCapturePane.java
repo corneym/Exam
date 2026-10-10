@@ -18,6 +18,8 @@ import java.util.function.IntConsumer;
 import java.util.function.Supplier;
 
 import au.edu.eq.questionbank.ManagedDataLayout;
+import au.edu.eq.questionbank.diagnostics.PerformanceOperation;
+import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.Answer;
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.AnswerRegion;
@@ -152,6 +154,7 @@ public final class AnswerCapturePane extends VBox {
 	private long answerCaptureCompletionQuestionId = -1L;
 	private Runnable answerCaptureCompletedHandler = () -> {
 	};
+	private PerformanceRecorder performanceRecorder = new PerformanceRecorder(false, Path.of("performance.csv"));
 
 	// Dashboard-owned Answer capture may further restrict the Subject queue to one
 	// selected Exam without changing any persisted Question state.
@@ -406,15 +409,37 @@ public final class AnswerCapturePane extends VBox {
 	}
 
 	/**
-	 * Starts Answer capture for one unanswered Question and runs an operation after
-	 * the Answer has been successfully persisted and the save transition has
-	 * finished.
+	 * Starts Answer capture with a diagnostic parent operation.
 	 *
-	 * @param question         Question to capture
-	 * @param completedHandler operation to run after successful capture
-	 * @return {@code true} when the transition into capture was accepted
+	 * @param question          Question requiring an Answer
+	 * @param parentOperationId diagnostic parent, or zero
+	 * @return whether capture was started
+	 */
+	public boolean captureAnswer(Question question, long parentOperationId) {
+		return captureAnswer(question, () -> {
+		}, parentOperationId);
+	}
+
+	/**
+	 * Starts Answer capture with the supplied completion callback.
+	 *
+	 * @param question         Question requiring an Answer
+	 * @param completedHandler callback after capture completion
+	 * @return whether capture was started
 	 */
 	public boolean captureAnswer(Question question, Runnable completedHandler) {
+		return captureAnswer(question, completedHandler, 0);
+	}
+
+	/**
+	 * Starts Answer capture and measures queue and document preparation.
+	 *
+	 * @param question          Question requiring an Answer
+	 * @param completedHandler  callback after capture completion
+	 * @param parentOperationId diagnostic parent, or zero
+	 * @return whether capture was started
+	 */
+	public boolean captureAnswer(Question question, Runnable completedHandler, long parentOperationId) {
 		if (answerSaveInProgress) {
 			return false;
 		}
@@ -428,23 +453,47 @@ public final class AnswerCapturePane extends VBox {
 			throw new IllegalArgumentException("Question already has an answer");
 		}
 		if (question.getResponseType() == QuestionResponseType.UNKNOWN) {
-			throw new IllegalArgumentException("Question response type must be resolved before answer capture");
+			throw new IllegalArgumentException("Question response type must be resolved " + "before answer capture");
 		}
 		if (!answerTransitionAllowed.getAsBoolean()) {
 			return false;
 		}
-		refreshQuestions();
-		Question matching = findQuestionById(unansweredQuestionField.getItems(), question);
+		Question matching;
+		try (PerformanceOperation queueOperation = performanceRecorder.start("dashboard.answer-capture.queue",
+				parentOperationId)) {
+			try {
+
+				// Preserve the authoritative repository-backed reload.
+				refreshQuestions();
+				matching = findQuestionById(unansweredQuestionField.getItems(), question);
+				queueOperation.resultCount(unansweredQuestionField.getItems().size());
+			} catch (RuntimeException | Error failure) {
+				queueOperation.failed();
+				throw failure;
+			}
+		}
 		if (matching == null) {
 			return false;
 		}
+		try (PerformanceOperation documentOperation = performanceRecorder.start("dashboard.answer-capture.document",
+				parentOperationId)) {
+			try {
 
-		// Programmatic capture owns the target transition and therefore suppresses the
-		// ordinary ComboBox listener.
-		setUnansweredQuestionSilently(matching);
-		applyUnansweredQuestionChange(matching);
-		answerCaptureCompletionQuestionId = matching.getId();
-		answerCaptureCompletedHandler = completedHandler;
+				// Suppress the ordinary ComboBox listener during
+				// programmatic Dashboard navigation.
+				setUnansweredQuestionSilently(matching);
+
+				// Includes assigned AnswerFile resolution, PDF opening,
+				// first-page rendering and Answer control preparation.
+				applyUnansweredQuestionChange(matching);
+				answerCaptureCompletionQuestionId = matching.getId();
+				answerCaptureCompletedHandler = completedHandler;
+				documentOperation.resultCount(1);
+			} catch (RuntimeException | Error failure) {
+				documentOperation.failed();
+				throw failure;
+			}
+		}
 		return true;
 	}
 
@@ -673,6 +722,16 @@ public final class AnswerCapturePane extends VBox {
 			// beside the replacement queue.
 			applyUnansweredQuestionChange(null, false);
 		}
+	}
+
+	/**
+	 * Configures shared application performance diagnostics.
+	 *
+	 * @param performanceRecorder application recorder
+	 * @throws NullPointerException if the recorder is null
+	 */
+	public void setPerformanceRecorder(PerformanceRecorder performanceRecorder) {
+		this.performanceRecorder = Objects.requireNonNull(performanceRecorder, "performanceRecorder");
 	}
 
 	/**

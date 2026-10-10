@@ -27,6 +27,7 @@ import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
+import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Exam;
@@ -640,6 +641,99 @@ public class QuestionSearchPaneTest {
 		// persisting the Descriptor refinement.
 		assertFalse(pane.isClassificationDirty());
 		robot.interact(dialog::dispose);
+	}
+
+	@Test
+	public void previewTimingsCorrelateCancelledAndPublishedWork(FxRobot robot) throws Exception {
+		Path pdfRoot = Files.createTempDirectory("question-search-preview-timing-");
+		createOnePagePdf(pdfRoot.resolve("questions.pdf"));
+		Path csv = pdfRoot.resolve("performance.csv");
+		Exam exam = historicalQuestion.getExam();
+		SourceDocument sourceDocument = new SourceDocument(300, "questions.pdf");
+		ExamBooklet booklet = new ExamBooklet(301, exam, "Timing booklet", sourceDocument);
+		Question first = new Question(302, booklet, "P1", "", 1,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.50, 0.20)), currentDescriptor, false);
+		Question second = new Question(303, booklet, "P2", "", 1,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.40, 0.50, 0.20)), currentDescriptor, false);
+		QuestionRetrievalRepository repository = currentNodes -> {
+			if (!currentNodes.contains(currentDescriptor)) {
+				return List.of();
+			}
+			return List.of(new QuestionApplicabilityMatch(first, currentDescriptor),
+					new QuestionApplicabilityMatch(second, currentDescriptor));
+		};
+		QuestionRetrievalService service = new QuestionRetrievalService(repository,
+				new CurriculumSearchNodeExpansionService(curriculumRepository));
+		DelayedQuestionExtractor extractor = new DelayedQuestionExtractor(first.getRegions().getFirst());
+		QuestionPreviewService timedPreviewService = new QuestionPreviewService(new PdfStore(pdfRoot), extractor);
+		PerformanceRecorder recorder = new PerformanceRecorder(true, csv);
+		robot.interact(() -> {
+			QuestionSearchPane existing = (QuestionSearchPane) stage.getScene().getRoot();
+			existing.dispose();
+			QuestionSearchPane pane = new QuestionSearchPane(chemistry, curriculumRepository, service,
+					() -> List.of(first, second), timedPreviewService, outputApplicabilityRepository,
+					QuestionSearchNarrowing.unrestricted(), recorder);
+			stage.setScene(new Scene(pane, 700, 600));
+		});
+		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
+		ImageView preview = robot.lookup("#question-search-preview").queryAs(ImageView.class);
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 2);
+		QuestionSearchResult firstResult = resultsList.getItems().stream()
+				.filter(result -> result.question().getId() == first.getId()).findFirst().orElseThrow();
+		QuestionSearchResult secondResult = resultsList.getItems().stream()
+				.filter(result -> result.question().getId() == second.getId()).findFirst().orElseThrow();
+
+		// Begin a preview that deliberately remains in flight.
+		robot.interact(() -> resultsList.getSelectionModel().select(firstResult));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, extractor::hasDelayStarted);
+
+		// Supersede the first preview with a different Question.
+		robot.interact(() -> resultsList.getSelectionModel().select(secondResult));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> preview.getImage() != null && preview.getImage().getWidth() == 22.0);
+		extractor.releaseDelayedExtraction();
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, extractor::hasDelayFinished);
+
+		// Wait for both background render records, not merely
+		// the earlier cancellation or JavaFX display update.
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> {
+			try {
+				if (!Files.isRegularFile(csv)) {
+					return false;
+				}
+				return Files.readAllLines(csv).stream().filter(line -> line.contains(",search.preview.render,"))
+						.count() == 2;
+			} catch (IOException failure) {
+				return false;
+			}
+		});
+		WaitForAsyncUtils.waitForFxEvents();
+		List<String[]> records = Files.readAllLines(csv).stream().skip(1).map(line -> line.split(",", -1)).toList();
+		List<String[]> loads = records.stream().filter(row -> row[3].equals("search.preview.load")).toList();
+		List<String[]> renders = records.stream().filter(row -> row[3].equals("search.preview.render")).toList();
+		List<String[]> publications = records.stream().filter(row -> row[3].equals("search.preview.publish")).toList();
+		assertEquals(2, loads.size());
+		assertEquals(2, renders.size());
+		assertEquals(1, publications.size());
+		String[] cancelledLoad = loads.stream().filter(row -> row[5].equals("false")).findFirst().orElseThrow();
+		String[] successfulLoad = loads.stream().filter(row -> row[5].equals("true")).findFirst().orElseThrow();
+
+		// Every render belongs to one of the two preview requests.
+		for (String[] render : renders) {
+			assertTrue(render[2].equals(cancelledLoad[1]) || render[2].equals(successfulLoad[1]));
+			assertEquals("true", render[5]);
+			assertEquals("1", render[6]);
+		}
+		String[] publication = publications.getFirst();
+
+		// Only the successful selection reaches JavaFX publication.
+		assertEquals(successfulLoad[1], publication[2]);
+		assertEquals("true", publication[5]);
+		assertEquals("1", publication[6]);
+		assertEquals("1", successfulLoad[6]);
+
+		// The stale preview must never overwrite the newer image.
+		assertEquals(22.0, preview.getImage().getWidth());
 	}
 
 	@Test

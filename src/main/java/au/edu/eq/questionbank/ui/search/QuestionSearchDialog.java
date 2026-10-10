@@ -5,6 +5,8 @@ import java.util.Objects;
 import java.util.function.BiFunction;
 import java.util.function.Supplier;
 
+import au.edu.eq.questionbank.ApplicationPaths;
+import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
@@ -74,38 +76,56 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	}
 
 	/**
-	 * Creates a question-search dialog with an immutable result narrowing.
+	 * Creates a narrowed Search dialog without diagnostics.
 	 *
 	 * @param owner                         dialog owner
-	 * @param workingSubject                authoritative workspace Working Subject
-	 * @param curriculumRepository          current curriculum hierarchy lookup
-	 * @param retrievalService              curriculum-aware Question retrieval
-	 * @param allQuestionsSupplier          complete stored Question retrieval
-	 * @param previewService                stored Question image preview service
-	 * @param outputApplicabilityRepository persisted per-Question revision-output
-	 *                                      exclusions
-	 * @param classificationUpdater         persistence operation for a
-	 *                                      classification-only Question update
-	 * @param searchNarrowing               additional result constraint retained
-	 *                                      across every Search scope and refresh
-	 * @throws NullPointerException if any argument is {@code null}
+	 * @param workingSubject                authoritative Working Subject
+	 * @param curriculumRepository          curriculum lookup
+	 * @param retrievalService              Question retrieval
+	 * @param allQuestionsSupplier          all-Question retrieval
+	 * @param previewService                Question preview service
+	 * @param outputApplicabilityRepository applicability persistence
+	 * @param classificationUpdater         classification persistence callback
+	 * @param searchNarrowing               immutable Search constraint
 	 */
 	public QuestionSearchDialog(Window owner, Subject workingSubject, CurriculumRepository curriculumRepository,
 			QuestionRetrievalService retrievalService, Supplier<List<Question>> allQuestionsSupplier,
 			QuestionPreviewService previewService, QuestionOutputApplicabilityRepository outputApplicabilityRepository,
 			BiFunction<Long, CurriculumNode, Question> classificationUpdater, QuestionSearchNarrowing searchNarrowing) {
+		this(owner, workingSubject, curriculumRepository, retrievalService, allQuestionsSupplier, previewService,
+				outputApplicabilityRepository, classificationUpdater, searchNarrowing,
+				new PerformanceRecorder(false, ApplicationPaths.diagnosticsDirectory().resolve("performance.csv")));
+	}
+
+	/**
+	 * Creates a narrowed Search dialog using the application recorder.
+	 *
+	 * @param owner                         dialog owner
+	 * @param workingSubject                authoritative Working Subject
+	 * @param curriculumRepository          curriculum lookup
+	 * @param retrievalService              Question retrieval
+	 * @param allQuestionsSupplier          all-Question retrieval
+	 * @param previewService                Question preview service
+	 * @param outputApplicabilityRepository applicability persistence
+	 * @param classificationUpdater         classification persistence callback
+	 * @param searchNarrowing               immutable Search constraint
+	 * @param performanceRecorder           shared application recorder
+	 */
+	public QuestionSearchDialog(Window owner, Subject workingSubject, CurriculumRepository curriculumRepository,
+			QuestionRetrievalService retrievalService, Supplier<List<Question>> allQuestionsSupplier,
+			QuestionPreviewService previewService, QuestionOutputApplicabilityRepository outputApplicabilityRepository,
+			BiFunction<Long, CurriculumNode, Question> classificationUpdater, QuestionSearchNarrowing searchNarrowing,
+			PerformanceRecorder performanceRecorder) {
 		this.classificationUpdater = Objects.requireNonNull(classificationUpdater, "classificationUpdater");
 		initOwner(Objects.requireNonNull(owner, "owner"));
-
-		// The Pane owns Search state and background retrieval. The Dialog owns modal
-		// decisions, persistence callbacks and edit-workflow actions.
 		searchPane = new QuestionSearchPane(Objects.requireNonNull(workingSubject, "workingSubject"),
 				Objects.requireNonNull(curriculumRepository, "curriculumRepository"),
 				Objects.requireNonNull(retrievalService, "retrievalService"),
 				Objects.requireNonNull(allQuestionsSupplier, "allQuestionsSupplier"),
 				Objects.requireNonNull(previewService, "previewService"),
 				Objects.requireNonNull(outputApplicabilityRepository, "outputApplicabilityRepository"),
-				Objects.requireNonNull(searchNarrowing, "searchNarrowing"));
+				Objects.requireNonNull(searchNarrowing, "searchNarrowing"),
+				Objects.requireNonNull(performanceRecorder, "performanceRecorder"));
 		configureDialogShell();
 		configureSearchPaneCallbacks();
 		configureActionButtons();

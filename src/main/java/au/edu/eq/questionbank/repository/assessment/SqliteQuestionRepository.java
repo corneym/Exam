@@ -1,5 +1,6 @@
 package au.edu.eq.questionbank.repository.assessment;
 
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -11,6 +12,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import au.edu.eq.questionbank.diagnostics.PerformanceOperation;
+import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.Answer;
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.AnswerRegion;
@@ -47,18 +50,32 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 	private final SqliteDatabase database;
 	private final SqliteQuestionWriter writer;
 	private final CurriculumRepository curriculumRepository;
+	private final PerformanceRecorder performanceRecorder;
 
 	/**
-	 * Creates a repository for an initialised question-bank database.
+	 * Creates a SQLite Question repository with diagnostics disabled.
 	 *
-	 * @param database the question-bank database
-	 * @throws NullPointerException if {@code database} is {@code null}
+	 * @param database initialised Question database
 	 */
 	public SqliteQuestionRepository(SqliteDatabase database) {
+		this(database, new PerformanceRecorder(false, Path.of("performance.csv")));
+	}
+
+	/**
+	 * Creates a SQLite Question repository with shared diagnostics.
+	 *
+	 * @param database            initialised Question database
+	 * @param performanceRecorder application performance recorder
+	 */
+	public SqliteQuestionRepository(SqliteDatabase database, PerformanceRecorder performanceRecorder) {
 		if (database == null) {
 			throw new NullPointerException("database");
 		}
+		if (performanceRecorder == null) {
+			throw new NullPointerException("performanceRecorder");
+		}
 		this.database = database;
+		this.performanceRecorder = performanceRecorder;
 		this.writer = new SqliteQuestionWriter(database);
 		this.curriculumRepository = new SqliteCurriculumRepository(database);
 	}
@@ -136,6 +153,19 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 
 	@Override
 	public List<QuestionApplicabilityMatch> findApplicableToNodes(List<CurriculumNode> currentNodes) {
+		return findApplicableToNodes(currentNodes, 0);
+	}
+
+	/**
+	 * Retrieves applicability matches and records the repository phases.
+	 *
+	 * @param currentNodes      requested current curriculum nodes
+	 * @param parentOperationId enclosing applicability operation ID
+	 * @return matching Question and current-node pairs
+	 */
+	@Override
+	public List<QuestionApplicabilityMatch> findApplicableToNodes(List<CurriculumNode> currentNodes,
+			long parentOperationId) {
 		Map<Long, CurriculumNode> requestedNodesById = validateRetrievalNodes(currentNodes);
 		String requestedNodeValues = createRequestedNodeValues(requestedNodesById.size());
 
@@ -189,22 +219,52 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 				ORDER BY q.id, requested.node_id
 				""".formatted(requestedNodeValues);
 		List<ApplicabilityRow> rows = new ArrayList<ApplicabilityRow>();
-		try (Connection connection = database.openConnection();
-				PreparedStatement statement = connection.prepareStatement(sql)) {
-			int parameterIndex = 1;
-			for (CurriculumNode currentNode : requestedNodesById.values()) {
-				statement.setLong(parameterIndex, currentNode.getId());
-				parameterIndex++;
-			}
-			try (ResultSet result = statement.executeQuery()) {
-				while (result.next()) {
-					rows.add(new ApplicabilityRow(result.getLong("question_id"), result.getLong("current_node_id")));
+		try (PerformanceOperation sqlOperation = performanceRecorder.start("search.repository.sql",
+				parentOperationId)) {
+			try (Connection connection = database.openConnection();
+					PreparedStatement statement = connection.prepareStatement(sql)) {
+				int parameterIndex = 1;
+				for (CurriculumNode currentNode : requestedNodesById.values()) {
+					statement.setLong(parameterIndex, currentNode.getId());
+					parameterIndex++;
 				}
+				try (ResultSet result = statement.executeQuery()) {
+					try (PerformanceOperation rowsOperation = performanceRecorder.start("search.repository.rows",
+							sqlOperation.id())) {
+						try {
+							while (result.next()) {
+								rows.add(new ApplicabilityRow(result.getLong("question_id"),
+										result.getLong("current_node_id")));
+							}
+							rowsOperation.resultCount(rows.size());
+						} catch (SQLException | RuntimeException | Error failure) {
+							rowsOperation.failed();
+							throw failure;
+						}
+					}
+				}
+			} catch (SQLException failure) {
+				sqlOperation.failed();
+				throw new IllegalStateException("Could not retrieve questions by curriculum applicability", failure);
+			} catch (RuntimeException | Error failure) {
+				sqlOperation.failed();
+				throw failure;
 			}
-		} catch (SQLException e) {
-			throw new IllegalStateException("Could not retrieve questions by curriculum applicability", e);
+			sqlOperation.resultCount(rows.size());
 		}
-		return reconstructApplicabilityMatches(rows, requestedNodesById);
+
+		// Question reconstruction is separate from the applicability SQL.
+		try (PerformanceOperation reconstructionOperation = performanceRecorder.start("search.repository.reconstruct",
+				parentOperationId)) {
+			try {
+				List<QuestionApplicabilityMatch> matches = reconstructApplicabilityMatches(rows, requestedNodesById);
+				reconstructionOperation.resultCount(matches.size());
+				return matches;
+			} catch (RuntimeException | Error failure) {
+				reconstructionOperation.failed();
+				throw failure;
+			}
+		}
 	}
 
 	@Override

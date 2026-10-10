@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -16,6 +18,7 @@ import org.testfx.api.FxRobot;
 import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
+import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ImageQuestionContentPart;
@@ -282,11 +285,19 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		WaitForAsyncUtils.waitForFxEvents();
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-question-region");
+		assertFalse(importedQuestions.getItems().isEmpty(), "The incomplete Question must still be queued before Save");
 		fireControl(robot, "#save-question");
 
-		// Completion of the only queued Question is the observable workflow result.
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !importedAction.isVisible());
+		// The imported entry action was already hidden when capture started.
+		// Wait instead for the asynchronous save to empty the queue and
+		// return the workflow to its idle state.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> importedQuestions.getItems().isEmpty()
+				&& !importedControls.isVisible() && !importedControls.isManaged() && !pane.canCaptureRegions());
 		WaitForAsyncUtils.waitForFxEvents();
+
+		// Check the database independently of the UI queue.
+		Question persisted = repository.findById(incomplete.getId()).orElseThrow();
+		assertFalse(persisted.getContentParts().isEmpty(), "The completed Question must have persisted content");
 		assertTrue(importedQuestions.getItems().isEmpty());
 		assertFalse(importedAction.isVisible());
 		assertFalse(importedAction.isManaged());
@@ -681,6 +692,50 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// The Subject-change clear must not erase that newly established document.
 		assertTrue(pdfWorkspace().hasExamPdf());
 		assertEquals(PdfWorkspacePane.DocumentMode.EXAM, pdfWorkspace().getDisplayedDocument());
+	}
+
+	@Test
+	void multipartAndRegionDiagnosticsRetainParentCorrelation(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Path csv = Files.createTempDirectory("question-capture-performance-").resolve("performance.csv");
+		PerformanceRecorder recorder = new PerformanceRecorder(true, csv);
+		QuestionCapturePane pane = questionCapturePane();
+		robot.interact(() -> pane.setPerformanceRecorder(recorder));
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+
+		// A multipart suffix must enter the inference path.
+		robot.interact(() -> questionCode.setText("42b"));
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-question-region");
+		assertTrue(Files.isRegularFile(csv));
+		List<String[]> rows = Files.readAllLines(csv).stream().skip(1).map(line -> line.split(",", -1)).toList();
+		String[] codeChange = rows.stream().filter(row -> row[3].equals("capture.question.code-change")).findFirst()
+				.orElseThrow();
+		String[] inference = rows.stream().filter(row -> row[3].equals("capture.question.code.infer")).findFirst()
+				.orElseThrow();
+		String[] sourceLookup = rows.stream().filter(row -> row[3].equals("capture.question.code.context.source"))
+				.findFirst().orElseThrow();
+		assertEquals(codeChange[1], inference[2]);
+		assertEquals(inference[1], sourceLookup[2]);
+
+		// If this fixture has an existing Source Question,
+		// its corpus and scan phases must share the inference parent.
+		for (String[] row : rows) {
+			if (row[3].equals("capture.question.code.context.corpus")
+					|| row[3].equals("capture.question.code.context.scan")) {
+				assertEquals(inference[1], row[2]);
+			}
+		}
+		String[] region = rows.stream().filter(row -> row[3].equals("capture.question.region.accept")).findFirst()
+				.orElseThrow();
+		for (String phase : List.of("capture.question.region.clear-selection", "capture.question.region.preview",
+				"capture.question.region.controls")) {
+			String[] child = rows.stream().filter(row -> row[3].equals(phase)).findFirst().orElseThrow();
+			assertEquals(region[1], child[2]);
+			assertEquals("true", child[5]);
+		}
+		assertEquals("true", region[5]);
+		assertEquals("1", region[6]);
 	}
 
 	@Test
