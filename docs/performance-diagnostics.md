@@ -1,254 +1,95 @@
 # Performance Diagnostics and Benchmarking
 
-> Sprint 15 design reference. Exact command-line/property names should be updated here if implementation chooses different names.
-
 ## Purpose
 
-The Exam Question Bank uses performance diagnostics to answer two separate questions:
+Exam Question Bank performance diagnostics provide repeatable elapsed-time evidence from normal application use. They distinguish JavaFX work, background retrieval, Question reconstruction, and export processing before any optimisation is attempted. This document describes the runtime instrumentation implemented for Sprint 15 Issue #109 and retains the separate benchmarking design for Issue #110.
 
-1. what operations are slow during normal real-corpus use; and
-2. whether a proposed implementation change actually improves those operations.
+## Enabling runtime diagnostics
 
-Performance work is measurement-led. Diagnostics should identify the slow layer before indexes, caches or query redesign are introduced.
-
-## Runtime instrumentation
-
-Runtime instrumentation measures real workflows while the application is used normally.
-
-A user-facing measurement begins when the operation starts and normally ends after the completed result has been published back to the JavaFX UI.
-
-Example:
+Diagnostics are disabled by default. Enable them with the Java VM argument:
 
 ```text
-Search refresh requested
-        ↓
-start search.refresh
-        ↓
-background hierarchy/retrieval work
-        ↓
-Question reconstruction
-        ↓
-publish result to JavaFX
-        ↓
-complete search.refresh
+-Deqb.performance.enabled=true
 ```
 
-Nested operations identify where the outer elapsed time was spent.
+For Eclipse, add this under **Run Configurations → Arguments → VM arguments**, not Program arguments. Restart the application to enable or disable collection. The code reads this property at application startup.
 
-Example operation hierarchy:
+`PerformanceRecorder.fromSystemProperties(ApplicationPaths.diagnosticsDirectory())` writes to:
 
 ```text
-search.refresh
-    curriculum.expand
-    question.findApplicable
-    question.reconstruct
-    search.resultAssembly
-    javafx.publish
+<ApplicationPaths.configurationDirectory()>/diagnostics/performance.csv
 ```
 
-Operation names should remain stable once introduced so results can be compared across runs and commits.
+`ApplicationPaths.configurationDirectory()` uses the platform's user-writable application configuration location; it is separate from the authoritative Question-bank data root. See `ApplicationPaths` for the platform-specific path. The file is appended to across application sessions. Copy or rename it between controlled comparisons if a separate baseline is needed. Disabled diagnostics create no CSV file.
 
-## Enabling diagnostics
+## CSV format
 
-Diagnostics must be disabled by default.
+The header is:
 
-Sprint 15 may expose enablement through an application property, JVM property or explicit diagnostic setting. The final implementation should record the exact mechanism here.
-
-When disabled:
-
-- no performance CSV should be created;
-- normal application behaviour must be unchanged;
-- timing overhead should be negligible.
-
-## Diagnostic data
-
-A performance record should contain only information required for analysis, such as:
-
-```text
-timestamp
-operation name
-duration milliseconds
-success/failure
-result count
-Question count where relevant
-parent/correlation identifier for nested operations
+```csv
+timestamp,operation_id,parent_id,operation,elapsed_ms,success,result_count
 ```
 
-Do not record Question text, Answer text, image contents, PDF contents or other corpus material solely for performance analysis.
+- `timestamp`: UTC ISO-8601 time when the measurement completes.
+- `operation_id`: a unique, increasing identifier within a `PerformanceRecorder` instance. It resets when the application restarts.
+- `parent_id`: parent operation ID, or `0` for a root/unlinked operation.
+- `operation`: stable identifier for the measured work.
+- `elapsed_ms`: elapsed wall-clock duration derived from monotonic `System.nanoTime()`; includes time spent awaiting background completion for outer operations.
+- `success`: `true` for normal completion, `false` for failure or a deliberately discarded obsolete asynchronous result. Check the UI/console to distinguish cancellation from an exception.
+- `result_count`: an optional non-negative count, or `-1` when not supplied. The interpretation is operation-specific (for example, Questions returned, exportable Questions, or curriculum entries).
 
-A dedicated diagnostics directory is preferred, for example:
+Use `(application session, operation_id)` to identify a specific operation across appended runs; IDs are not globally unique across restarts. A child normally finishes before its parent, so CSV row order is not execution start order. Nested timings can overlap or be re-entrant and should not automatically be summed to equal their parent. Diagnostics do not record Question/Answer text, PDF content, pasted image bytes or stored Question codes.
 
-```text
-<dataRoot>/diagnostics/
-```
+## Implemented runtime operations
 
-The exact location should be updated here after implementation.
+The following names identify representative operations; additional nested names appear in the CSV:
 
-## Normal-use collection procedure
+| Workflow | Examples |
+| --- | --- |
+| Application startup | `application.startup` |
+| Dashboard | `dashboard.refresh`, `dashboard.snapshot`, `dashboard.audit`, `dashboard.question.findAll` |
+| Search and applicability | `search.refresh`, `search.repository.applicability`, `search.repository.reconstruct`, `search.output-applicability.load` |
+| Search previews | `search.preview.load`, `search.preview.render` |
+| Question capture | `capture.question.code-change`, `capture.question.code.context.corpus`, `capture.question.region.accept`, `capture.question.save` |
+| Curriculum selection | `capture.curriculum.unit`, `capture.curriculum.topic`, `capture.curriculum.subtopic`, `capture.curriculum.descriptor` |
+| Dashboard Answer capture | `dashboard.answer-capture.open` |
+| Working Subject capture refresh | `workingSubject.refresh`, `workingSubject.curriculum`, `workingSubject.questions`, `workingSubject.publish` |
+| Revision HTML export | `revision.html.export`, `revision.html.export.work` |
+| Revision SCORM export | `revision.scorm.export`, `revision.scorm.export.work` |
 
-A useful real-use performance session is:
+Working Subject's `workingSubject.refresh` span measures the curriculum and Question/Answer capture snapshot through JavaFX publication. Dashboard refresh runs separately and is measured by `dashboard.refresh`. Export outer spans run from accepted export launch through progress-dialog cleanup; they deliberately end **before** the user acknowledges a result alert. Their `.work` child spans measure the background export service.
 
-1. start the application with diagnostics enabled;
-2. open the normal Chemistry corpus;
-3. use the application as normal rather than repeatedly clicking one control unnaturally;
-4. include representative Dashboard refreshes, Search scopes, Question previews and Working Subject transitions;
-5. retain the generated diagnostic file;
-6. summarise repeated operations using median and a high percentile such as p90;
-7. inspect nested timings for operations whose outer elapsed time is visibly high.
+## Collecting a representative run
 
-This mode is intended to reveal the workflows that matter in practice.
+1. Start the development application with diagnostics enabled.
+2. Use a safe real-corpus development database (for example, the Chemistry corpus); do not conduct tests against production data inadvertently.
+3. Perform representative Dashboard, Search, preview, Question-capture, Working Subject, and export operations.
+4. Retain `performance.csv` and note the date, branch/commit, corpus size, and operations exercised.
+5. Separate appended application sessions before comparing timings; analyse repeated operations with median, p90, and maximum rather than a single extreme event.
+6. Inspect nested operations and failure flags to locate the expensive phase. Do not infer the bottleneck from an outer duration alone.
 
-## Repeatable benchmark runner
+For the multipart Shared Context case discovered in Sprint 15, the reproducible workflow is: capture and save part `a` **with its Shared Context**; then enter part `b` for the same source Question. Batch 18 captured repeated whole-corpus retrieval in that path. Any change to eliminate duplicate retrieval belongs to **Issue #111**, with a regression confirming correct context inheritance.
 
-Runtime instrumentation is complemented by a controlled benchmark runner.
+## Diagnostic design and interpretation
 
-The planned administration entry point is conceptually:
+`PerformanceRecorder` and `PerformanceOperation` support monotonic timing, explicit parent IDs across threads, optional result counts, and failure recording without swallowing the original exception. Diagnostics are opt-in and must not alter persistence or functional outcomes. Core unit tests cover enabled/disabled recording, nesting, concurrency, failure propagation, and file-output failures; application workflow tests cover representative parent/child correlations.
 
-```text
-au.edu.eq.questionbank.admin.PerformanceBenchmarkTool
-```
+For an expensive outer operation, compare the named inner spans. For example, a 2.6-second Question Save may contain two ~1.25-second full-corpus reads and only ~0.1 second of persistence. That evidence calls for reconstruction/retrieval improvements, not a change to the save transaction. The large corpus provides more reliable evidence than a small synthetic fixture.
 
-The final implemented class and arguments should replace this placeholder if they differ.
+## Repeatable benchmark runner — Issue #110
 
-The benchmark runner should operate against an explicitly supplied realistic data-root/database copy and must not mutate the corpus.
+The controlled benchmark runner is distinct from runtime CSV collection. Its proposed entry point is `au.edu.eq.questionbank.admin.PerformanceBenchmarkTool`; this remains a **design proposal**, not an implemented command from Issue #109. The runner should operate only on an explicitly supplied safe copy of a realistic database and must not mutate the authoritative corpus.
 
-Initial benchmark cases include:
+Planned benchmark cases include whole-bank `findAll`, individual `findById`, Subject/Unit/Topic/Descriptor applicability retrieval, Dashboard/corpus preparation, and representative Question Search filters. Each case should use at least one unmeasured warm-up followed by measured iterations; retain result counts and report minimum, median, p90 and maximum. Record the Question count, database size, and application version/commit where available.
 
-- whole-bank `QuestionRepository.findAll()`;
-- one complete `findById()` reconstruction;
-- Subject search;
-- Unit search;
-- Topic search;
-- Descriptor search;
-- Dashboard/corpus data preparation where directly callable;
-- representative Sprint 15 #94 filter combinations.
+Compare equivalent before/after corpora when implementing Issue #94 or later Issue #111 performance changes. Preserve the same benchmark definitions and verify unchanged functional results.
 
-## Benchmark iteration rules
+## Additional investigation tools
 
-For each selected benchmark:
+If repository timing dominates, investigate SQL statement/connection counts, how many Questions are reconstructed, `EXPLAIN QUERY PLAN`, and index inventory before changing SQLite access. `SqliteQuestionRepository.findAll()` and applicability retrieval can repeatedly reconstruct full Questions through `findById()`; Sprint 15 measurements established this as a material source of latency, not merely a hypothesis.
 
-1. run at least one unmeasured warm-up;
-2. run the configured measured iterations;
-3. retain result counts as a correctness/sanity check;
-4. report minimum, median, p90 and maximum elapsed time.
+Java Flight Recorder is useful when application elapsed time remains high but SQL/repository spans do not explain the delay. It can identify CPU, allocation, garbage collection, blocking and JavaFX rendering costs. JFR is an external developer diagnostic; it is not reimplemented in Issue #109.
 
-Also record corpus context where practical:
+## Scope boundary
 
-- Question count;
-- database file size;
-- benchmark name;
-- application version/commit where available.
-
-Median should be treated as the primary before/after comparison value.
-
-These are application/database timings. Do not interpret them as nanosecond-scale Java microbenchmarks.
-
-## Baseline procedure
-
-Before performance-affecting Sprint 15 changes:
-
-1. create/use a safe realistic copy of the current corpus;
-2. run the standard benchmark set;
-3. retain the output as the baseline;
-4. implement the feature or optimisation;
-5. rerun the same benchmark definition against equivalent data;
-6. compare result counts and timing statistics.
-
-For #94 specifically:
-
-```text
-pre-#94 baseline
-        ↓
-implement richer Search filters
-        ↓
-repeat existing Search benchmarks
-        ↓
-add representative new filter combinations
-        ↓
-identify demonstrated bottleneck
-```
-
-## SQL and reconstruction diagnostics
-
-If repository/service timing identifies SQLite or Question reconstruction as expensive, collect more specific evidence.
-
-Useful diagnostics include:
-
-- SQL statement count per outer operation;
-- SQLite connection count per outer operation;
-- number of Questions reconstructed;
-- applicability query time separately from reconstruction time;
-- `EXPLAIN QUERY PLAN` for demonstrated slow SQL;
-- current index inventory before proposing new indexes.
-
-`SqliteQuestionRepository.findAll()` is a known candidate for investigation because it currently reads all Question IDs and reconstructs each Question through `findById()`.
-
-Curriculum-aware retrieval similarly reconstructs matching Questions through `findById()`.
-
-This is a candidate N+1/repeated-round-trip pattern, not a pre-decided diagnosis.
-
-## Java Flight Recorder
-
-Use Java Flight Recorder when application elapsed time remains high but SQL/repository timings do not explain it.
-
-JFR can help identify:
-
-- CPU hotspots;
-- allocation pressure;
-- garbage collection;
-- blocking/thread activity;
-- expensive Java reconstruction or rendering paths.
-
-JFR is a developer diagnostic and does not need to be reimplemented as an application feature.
-
-## Interpreting a result
-
-An outer timing alone says what the user experienced:
-
-```text
-search.refresh = 1,320 ms
-```
-
-Nested measurements explain the cause:
-
-```text
-search.refresh                 1,320 ms
-    curriculum.expand            18 ms
-    sqlite.applicability        126 ms
-    question.reconstruct      1,131 ms
-    result.assembly              24 ms
-    javafx.publish               21 ms
-```
-
-That evidence would direct investigation toward reconstruction rather than JavaFX or the applicability SQL.
-
-A different run might instead show JavaFX publication or PDF preview dominating. The instrumentation exists specifically to avoid guessing.
-
-## Optimisation evidence rule
-
-A performance optimisation is justified only when there is:
-
-1. a reproducible baseline;
-2. evidence of the dominant cost;
-3. a bounded change addressing that cost;
-4. an equivalent post-change run;
-5. unchanged functional results.
-
-A useful closeout statement is therefore quantitative, for example:
-
-```text
-Chemistry Subject Search
-before median: 2.31 s
-after median:  0.24 s
-result count unchanged
-```
-
-or:
-
-```text
-Dashboard refresh measurement showed database work below 100 ms;
-most elapsed time was preview/layout work.
-No SQLite change was justified.
-```
-
-Both are valid outcomes.
+Issue #109 establishes measurement only. It does not change the Question repository, Shared Context inference, export semantics or user-visible workflow to make operations faster. Performance improvements and before/after comparisons belong to Issue #111, supported by the repeatable baseline runner in Issue #110.

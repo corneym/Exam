@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -18,6 +19,7 @@ import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ApplicationConfig;
+import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
@@ -37,6 +39,25 @@ import javafx.stage.Stage;
 @Tag("ui")
 @Tag("workflow-ui")
 class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
+
+	private static void assertExportDiagnostics(Path csv, String outerName, String workName, boolean successful)
+			throws Exception {
+		assertTrue(Files.isRegularFile(csv));
+		List<String[]> rows = Files.readAllLines(csv).stream().skip(1).map(line -> line.split(",", -1)).toList();
+		String[] parent = rows.stream().filter(row -> row[3].equals(outerName)).findFirst().orElseThrow();
+		String[] worker = rows.stream().filter(row -> row[3].equals(workName)).findFirst().orElseThrow();
+		assertEquals("0", parent[2]);
+
+		// The worker must be correlated with its enclosing
+		// asynchronous user-visible export operation.
+		assertEquals(parent[1], worker[2]);
+		assertEquals(Boolean.toString(successful), parent[5]);
+		assertEquals(Boolean.toString(successful), worker[5]);
+		if (successful) {
+			assertTrue(Long.parseLong(parent[6]) >= 0);
+			assertTrue(Long.parseLong(worker[6]) >= 0);
+		}
+	}
 
 	@Test
 	void exportMenuContainsRevisionHtmlCommand(FxRobot robot) {
@@ -58,6 +79,8 @@ class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 	@Test
 	void failedScormExportRestoresMenu(FxRobot robot) throws Exception {
+		Path csv = Files.createTempDirectory("scorm-failed-diagnostics-").resolve("performance.csv");
+		setField(application, "performanceRecorder", new PerformanceRecorder(true, csv));
 		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
 		Subject chemistry = model.getSubjects().stream().filter(subject -> "Chemistry".equals(subject.getName()))
 				.findFirst().orElseThrow();
@@ -72,18 +95,30 @@ class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
 								RevisionGroupingMode.class, Set.class },
 						primaryStage, applicationConfig, chemistry, destination, null, null);
 				disabledWhileStarting.set(exportItem.isDisable());
-			} catch (Exception e) {
-				throw new RuntimeException(e);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
 			}
 		});
 		assertTrue(disabledWhileStarting.get());
 
-		// The helper waits for the DialogPane-owned button, so rendered button text is
-		// never used as the TestFX target.
-		fireDialogButton(robot, "OK");
+		// Wait specifically for the failure dialog, not the
+		// earlier progress dialog with the same window title.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
+			DialogPane dialog = showingDialogPane(robot, "Export Revision SCORM");
+			return dialog != null && dialog.getButtonTypes().contains(ButtonType.OK);
+		});
+		DialogPane dialog = showingDialogPane(robot, "Export Revision SCORM");
+		Node okNode = dialog.lookupButton(ButtonType.OK);
+		assertTrue(okNode instanceof Button);
+		robot.interact(((Button) okNode)::fire);
+		waitForDialogHidden(robot, "Export Revision SCORM");
 		assertFalse(Files.exists(destination));
 		assertFalse(field(application, "scormExportRunning", Boolean.class).booleanValue());
 		assertFalse(exportItem.isDisable());
+
+		// Failure must be recorded at both layers without
+		// changing ordinary menu restoration behaviour.
+		assertExportDiagnostics(csv, "revision.scorm.export", "revision.scorm.export.work", false);
 	}
 
 	@Test
@@ -154,6 +189,8 @@ class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 	@Test
 	void revisionHtmlExportRunsFromApplicationAndRestoresMenu(FxRobot robot) throws Exception {
+		Path csv = Files.createTempDirectory("revision-html-diagnostics-").resolve("performance.csv");
+		setField(application, "performanceRecorder", new PerformanceRecorder(true, csv));
 		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
 		Subject chemistry = model.getSubjects().stream().filter(subject -> "Chemistry".equals(subject.getName()))
 				.findFirst().orElseThrow();
@@ -168,26 +205,28 @@ class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
 								RevisionGroupingMode.class, Set.class },
 						primaryStage, applicationConfig, chemistry, destination, null, null);
 				disabledWhileStarting.set(exportItem.isDisable());
-			} catch (Exception e) {
-				throw new RuntimeException(e);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
 			}
 		});
 		assertTrue(disabledWhileStarting.get());
-		long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
-		while (!Files.isRegularFile(destination.resolve("index.html")) && System.nanoTime() < deadline) {
-			Thread.sleep(25);
-		}
-		assertTrue(Files.isRegularFile(destination.resolve("index.html")), "Revision export did not complete");
-		assertTrue(Files.isRegularFile(destination.resolve(Path.of("assets", "revision.css"))));
 
-		// The successful export displays its normal information alert. Close it so the
-		// FX success handler can finish.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> robot.lookup("OK").tryQuery().isPresent());
-		Button okButton = robot.lookup("OK").queryButton();
-		robot.interact(okButton::fire);
-		WaitForAsyncUtils.waitForFxEvents();
+		// The completion dialog appears only after the
+		// export has published its output and restored the menu.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
+			DialogPane dialog = showingDialogPane(robot, "Export Revision HTML");
+			return dialog != null && dialog.getButtonTypes().contains(ButtonType.OK);
+		});
+		assertTrue(Files.isRegularFile(destination.resolve("index.html")));
+		assertTrue(Files.isRegularFile(destination.resolve(Path.of("assets", "revision.css"))));
+		DialogPane dialog = showingDialogPane(robot, "Export Revision HTML");
+		Node okNode = dialog.lookupButton(ButtonType.OK);
+		assertTrue(okNode instanceof Button);
+		robot.interact(((Button) okNode)::fire);
+		waitForDialogHidden(robot, "Export Revision HTML");
 		assertFalse(field(application, "revisionExportRunning", Boolean.class).booleanValue());
 		assertFalse(exportItem.isDisable());
+		assertExportDiagnostics(csv, "revision.html.export", "revision.html.export.work", true);
 	}
 
 	@Test
@@ -244,6 +283,8 @@ class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 	@Test
 	void revisionScormExportRunsFromApplicationAndRestoresMenu(FxRobot robot) throws Exception {
+		Path csv = Files.createTempDirectory("revision-scorm-diagnostics-").resolve("performance.csv");
+		setField(application, "performanceRecorder", new PerformanceRecorder(true, csv));
 		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
 		Subject chemistry = model.getSubjects().stream().filter(subject -> "Chemistry".equals(subject.getName()))
 				.findFirst().orElseThrow();
@@ -258,18 +299,25 @@ class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
 								RevisionGroupingMode.class, Set.class },
 						primaryStage, applicationConfig, chemistry, destination, null, null);
 				disabledWhileStarting.set(exportItem.isDisable());
-			} catch (Exception e) {
-				throw new RuntimeException(e);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
 			}
 		});
 		assertTrue(disabledWhileStarting.get());
-		WaitForAsyncUtils.waitFor(10, java.util.concurrent.TimeUnit.SECONDS,
-				() -> robot.lookup("OK").tryQuery().isPresent());
-		assertTrue(Files.isRegularFile(destination), "SCORM export did not complete");
-		assertTrue(Files.size(destination) > 0, "SCORM export produced an empty ZIP");
-		fireDialogButton(robot, "OK");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
+			DialogPane dialog = showingDialogPane(robot, "Export Revision SCORM");
+			return dialog != null && dialog.getButtonTypes().contains(ButtonType.OK);
+		});
+		assertTrue(Files.isRegularFile(destination));
+		assertTrue(Files.size(destination) > 0);
+		DialogPane dialog = showingDialogPane(robot, "Export Revision SCORM");
+		Node okNode = dialog.lookupButton(ButtonType.OK);
+		assertTrue(okNode instanceof Button);
+		robot.interact(((Button) okNode)::fire);
+		waitForDialogHidden(robot, "Export Revision SCORM");
 		assertFalse(field(application, "scormExportRunning", Boolean.class).booleanValue());
 		assertFalse(exportItem.isDisable());
+		assertExportDiagnostics(csv, "revision.scorm.export", "revision.scorm.export.work", true);
 	}
 
 	@Test

@@ -1089,15 +1089,35 @@ public class QuestionBankApplication extends Application {
 		showResourceCloseFailure(result.failure());
 	}
 
-	private void completeRevisionExport(Task<RevisionExportResult> task, Alert progressAlert) {
-		finishRevisionExport();
-		progressAlert.close();
+	private void completeRevisionExport(Task<RevisionExportResult> task, Alert progressAlert,
+			PerformanceOperation operation) {
+		try {
+			finishRevisionExport();
+			progressAlert.close();
+			operation.resultCount(task.getValue().getStatistics().getRenderableQuestions());
+		} catch (RuntimeException | Error failure) {
+			operation.failed();
+			throw failure;
+		} finally {
+
+			// Stop before the teacher acknowledges the success dialog.
+			operation.close();
+		}
 		showRevisionExportSuccess(task.getValue());
 	}
 
-	private void completeScormExport(Task<ScormExportResult> task, Alert progressAlert) {
-		finishScormExport();
-		progressAlert.close();
+	private void completeScormExport(Task<ScormExportResult> task, Alert progressAlert,
+			PerformanceOperation operation) {
+		try {
+			finishScormExport();
+			progressAlert.close();
+			operation.resultCount(task.getValue().getStatistics().getRenderableQuestions());
+		} catch (RuntimeException | Error failure) {
+			operation.failed();
+			throw failure;
+		} finally {
+			operation.close();
+		}
 		showScormExportSuccess(task.getValue());
 	}
 
@@ -2115,16 +2135,29 @@ public class QuestionBankApplication extends Application {
 				"The selected Question booklet could not be prepared for capture.", failureMessage(effectiveFailure));
 	}
 
-	private void failRevisionExport(Task<RevisionExportResult> task, Alert progressAlert) {
-		finishRevisionExport();
-		progressAlert.close();
+	private void failRevisionExport(Task<RevisionExportResult> task, Alert progressAlert,
+			PerformanceOperation operation) {
+		operation.failed();
+		try {
+			finishRevisionExport();
+			progressAlert.close();
+		} finally {
+
+			// Do not include time waiting for the error dialog.
+			operation.close();
+		}
 		showAlert(Alert.AlertType.ERROR, "Export Revision HTML", "The revision export could not be completed.",
 				failureMessage(task.getException()));
 	}
 
-	private void failScormExport(Task<ScormExportResult> task, Alert progressAlert) {
-		finishScormExport();
-		progressAlert.close();
+	private void failScormExport(Task<ScormExportResult> task, Alert progressAlert, PerformanceOperation operation) {
+		operation.failed();
+		try {
+			finishScormExport();
+			progressAlert.close();
+		} finally {
+			operation.close();
+		}
 		showAlert(Alert.AlertType.ERROR, "Export Revision SCORM", "The SCORM export could not be completed.",
 				failureMessage(task.getException()));
 	}
@@ -5046,21 +5079,34 @@ public class QuestionBankApplication extends Application {
 		if (revisionExportRunning) {
 			return;
 		}
-		revisionExportRunning = true;
-		if (revisionExportMenuItem != null) {
-			revisionExportMenuItem.setDisable(true);
+		PerformanceOperation operation = performanceRecorder.start("revision.html.export");
+		try {
+			revisionExportRunning = true;
+			if (revisionExportMenuItem != null) {
+				revisionExportMenuItem.setDisable(true);
+			}
+			RevisionExportService exportService = createRevisionExportService(config);
+			RevisionExportRequest request = new RevisionExportRequest(subject, destination, groupingMode,
+					selectedUnitIds);
+			RevisionExportTask task = new RevisionExportTask(exportService, request, performanceRecorder,
+					operation.id());
+			Alert progressAlert = createExportProgressAlert(primaryStage, task, "Export Revision HTML",
+					"Creating revision website...", "Starting export...");
+			task.setOnSucceeded(_ -> completeRevisionExport(task, progressAlert, operation));
+			task.setOnFailed(_ -> failRevisionExport(task, progressAlert, operation));
+			task.setOnCancelled(_ -> {
+				operation.failed();
+				operation.close();
+			});
+			progressAlert.show();
+			Thread thread = new Thread(task, "revision-html-export");
+			thread.setDaemon(true);
+			thread.start();
+		} catch (RuntimeException | Error failure) {
+			operation.failed();
+			operation.close();
+			throw failure;
 		}
-		RevisionExportService exportService = createRevisionExportService(config);
-		RevisionExportRequest request = new RevisionExportRequest(subject, destination, groupingMode, selectedUnitIds);
-		RevisionExportTask task = new RevisionExportTask(exportService, request);
-		Alert progressAlert = createExportProgressAlert(primaryStage, task, "Export Revision HTML",
-				"Creating revision website...", "Starting export...");
-		task.setOnSucceeded(_ -> completeRevisionExport(task, progressAlert));
-		task.setOnFailed(_ -> failRevisionExport(task, progressAlert));
-		progressAlert.show();
-		Thread thread = new Thread(task, "revision-html-export");
-		thread.setDaemon(true);
-		thread.start();
 	}
 
 	private void startScormExport(Stage primaryStage, ApplicationConfig config, Subject subject, Path destination,
@@ -5068,59 +5114,133 @@ public class QuestionBankApplication extends Application {
 		if (scormExportRunning) {
 			return;
 		}
-		scormExportRunning = true;
-		if (scormExportMenuItem != null) {
-			scormExportMenuItem.setDisable(true);
+		PerformanceOperation operation = performanceRecorder.start("revision.scorm.export");
+		try {
+			scormExportRunning = true;
+			if (scormExportMenuItem != null) {
+				scormExportMenuItem.setDisable(true);
+			}
+			ScormExportService exportService = createScormExportService(config);
+			ScormExportRequest request = new ScormExportRequest(subject, destination, groupingMode, selectedUnitIds);
+			ScormExportTask task = new ScormExportTask(exportService, request, performanceRecorder, operation.id());
+			Alert progressAlert = createExportProgressAlert(primaryStage, task, "Export Revision SCORM",
+					"Creating SCORM package...", "Starting SCORM export...");
+			task.setOnSucceeded(_ -> completeScormExport(task, progressAlert, operation));
+			task.setOnFailed(_ -> failScormExport(task, progressAlert, operation));
+			task.setOnCancelled(_ -> {
+				operation.failed();
+				operation.close();
+			});
+			progressAlert.show();
+			Thread thread = new Thread(task, "revision-scorm-export");
+			thread.setDaemon(true);
+			thread.start();
+		} catch (RuntimeException | Error failure) {
+			operation.failed();
+			operation.close();
+			throw failure;
 		}
-		ScormExportService exportService = createScormExportService(config);
-		ScormExportRequest request = new ScormExportRequest(subject, destination, groupingMode, selectedUnitIds);
-		ScormExportTask task = new ScormExportTask(exportService, request);
-		Alert progressAlert = createExportProgressAlert(primaryStage, task, "Export Revision SCORM",
-				"Creating SCORM package...", "Starting SCORM export...");
-		task.setOnSucceeded(_ -> completeScormExport(task, progressAlert));
-		task.setOnFailed(_ -> failScormExport(task, progressAlert));
-		progressAlert.show();
-		Thread thread = new Thread(task, "revision-scorm-export");
-		thread.setDaemon(true);
-		thread.start();
 	}
 
 	private void startWorkingSubjectCaptureRefresh(Subject subject, long generation) {
+		PerformanceOperation refresh = performanceRecorder.start("workingSubject.refresh");
+		try {
 
-		// Remove curriculum state belonging to the previous Subject immediately while
-		// keeping all persistence reads off the JavaFX thread.
-		if (curriculumSelectorPane != null) {
-			curriculumSelectorPane.beginSubjectRefresh(subject);
+			// Immediately clear state belonging to the previous
+			// Subject. Persistence remains on the background worker.
+			if (curriculumSelectorPane != null) {
+				curriculumSelectorPane.beginSubjectRefresh(subject);
+			}
+			if (questionCapturePane != null) {
+				questionCapturePane.setWorkingSubject(subject, List.of());
+			}
+			if (answerCapturePane != null) {
+				answerCapturePane.setWorkingSubject(subject, List.of());
+			}
+			if (subject == null) {
+
+				// Clearing the Subject requires no replacement snapshot.
+				refresh.resultCount(0);
+				refresh.close();
+				return;
+			}
+			Task<WorkingSubjectCaptureSnapshot> task = new ApplicationBackgroundTask<>(() -> {
+				CurriculumSelectionModel.SubjectSnapshot curriculumSnapshot;
+				try (PerformanceOperation curriculum = performanceRecorder.start("workingSubject.curriculum",
+						refresh.id())) {
+					try {
+						curriculumSnapshot = workingSubjectCurriculumSnapshotLoader.apply(subject);
+						curriculum.resultCount(curriculumSnapshot.syllabusVersions().size());
+					} catch (RuntimeException | Error failure) {
+						curriculum.failed();
+						throw failure;
+					}
+				}
+				List<Question> questions;
+				try (PerformanceOperation retrieval = performanceRecorder.start("workingSubject.questions",
+						refresh.id())) {
+					try {
+
+						// One corpus read continues to supply both
+						// Question and Answer capture queues.
+						questions = List.copyOf(workingSubjectQuestionSnapshotLoader.get());
+						retrieval.resultCount(questions.size());
+					} catch (RuntimeException | Error failure) {
+						retrieval.failed();
+						throw failure;
+					}
+				}
+				return new WorkingSubjectCaptureSnapshot(curriculumSnapshot, questions);
+			});
+			task.setOnSucceeded(_ -> {
+				if (!isCurrentWorkingSubjectRefresh(subject, generation)) {
+
+					// An obsolete Subject may finish its worker,
+					// but must not publish over a newer selection.
+					refresh.failed();
+					refresh.close();
+					return;
+				}
+				try {
+					WorkingSubjectCaptureSnapshot snapshot = task.getValue();
+					try (PerformanceOperation publish = performanceRecorder.start("workingSubject.publish",
+							refresh.id())) {
+						try {
+							completeWorkingSubjectCaptureRefresh(subject, generation, snapshot);
+							publish.resultCount(snapshot.questions().size());
+						} catch (RuntimeException | Error failure) {
+							publish.failed();
+							throw failure;
+						}
+					}
+					refresh.resultCount(snapshot.questions().size());
+				} catch (RuntimeException | Error failure) {
+					refresh.failed();
+					throw failure;
+				} finally {
+
+					// Includes background retrieval and JavaFX
+					// publication, not merely Task completion.
+					refresh.close();
+				}
+			});
+			task.setOnFailed(_ -> {
+				refresh.failed();
+				refresh.close();
+				failWorkingSubjectCaptureRefresh(subject, generation, task.getException());
+			});
+			task.setOnCancelled(_ -> {
+				refresh.failed();
+				refresh.close();
+			});
+			Thread thread = new Thread(task, "working-subject-capture-refresh-" + generation);
+			thread.setDaemon(true);
+			thread.start();
+		} catch (RuntimeException | Error failure) {
+			refresh.failed();
+			refresh.close();
+			throw failure;
 		}
-
-		// Clear previous Subject queues immediately; persistence remains on the worker.
-		if (questionCapturePane != null) {
-			questionCapturePane.setWorkingSubject(subject, List.of());
-		}
-		if (answerCapturePane != null) {
-			answerCapturePane.setWorkingSubject(subject, List.of());
-		}
-		if (subject == null) {
-
-			// Clearing Working Subject requires no replacement persistence snapshot.
-			return;
-		}
-		Task<WorkingSubjectCaptureSnapshot> task = new ApplicationBackgroundTask<>(() -> {
-
-			// Load curriculum first so successful publication can establish
-			// classification choices before either capture pane exposes Questions.
-			CurriculumSelectionModel.SubjectSnapshot curriculumSnapshot = workingSubjectCurriculumSnapshotLoader
-					.apply(subject);
-
-			// One corpus read supplies both capture panes for this Subject transition.
-			List<Question> questions = List.copyOf(workingSubjectQuestionSnapshotLoader.get());
-			return new WorkingSubjectCaptureSnapshot(curriculumSnapshot, questions);
-		});
-		task.setOnSucceeded(_ -> completeWorkingSubjectCaptureRefresh(subject, generation, task.getValue()));
-		task.setOnFailed(_ -> failWorkingSubjectCaptureRefresh(subject, generation, task.getException()));
-		Thread thread = new Thread(task, "working-subject-capture-refresh-" + generation);
-		thread.setDaemon(true);
-		thread.start();
 	}
 
 	private void startWorkingSubjectDashboardRefresh(Subject subject, long generation) {

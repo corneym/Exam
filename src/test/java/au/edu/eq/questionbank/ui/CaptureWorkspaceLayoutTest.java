@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
@@ -29,6 +30,7 @@ import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ManagedDataLayout;
+import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
 import au.edu.eq.questionbank.importer.legacy.LegacyQuestionImportResult;
 import au.edu.eq.questionbank.model.AnswerFile;
@@ -2157,6 +2159,49 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		// Syllabus selection still belongs to classification within the already
 		// selected Subject.
 		assertTrue(isDescendantOf(syllabus, classificationContext));
+	}
+
+	@Test
+	void workingSubjectRefreshRecordsCorrelatedDiagnostics(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Path csv = Files.createTempDirectory("working-subject-diagnostics-").resolve("performance.csv");
+		setField(application, "performanceRecorder", new PerformanceRecorder(true, csv));
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		Subject physics = subjects.getItems().stream().filter(subject -> "Physics".equals(subject.getName()))
+				.findFirst().orElseThrow();
+
+		// Exercise the real Subject selection. Do not bypass
+		// the application-owned asynchronous refresh route.
+		robot.interact(() -> subjects.getSelectionModel().select(physics));
+
+		// The parent CSV record is emitted only after publication
+		// of the completed Subject snapshot.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
+			if (!Files.isRegularFile(csv)) {
+				return false;
+			}
+			try {
+				return Files.readAllLines(csv).stream()
+						.anyMatch(line -> line.contains(",workingSubject.refresh,") && line.contains(",true,"));
+			} catch (IOException exception) {
+				return false;
+			}
+		});
+		WaitForAsyncUtils.waitForFxEvents();
+		List<String[]> rows = Files.readAllLines(csv).stream().skip(1).map(line -> line.split(",", -1)).toList();
+		String[] parent = rows.stream().filter(row -> row[3].equals("workingSubject.refresh")).findFirst()
+				.orElseThrow();
+		assertEquals("0", parent[2]);
+		assertEquals("true", parent[5]);
+		for (String phase : List.of("workingSubject.curriculum", "workingSubject.questions",
+				"workingSubject.publish")) {
+			String[] child = rows.stream().filter(row -> row[3].equals(phase)).findFirst().orElseThrow();
+			assertEquals(parent[1], child[2], phase);
+			assertEquals("true", child[5], phase);
+		}
+		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
+		assertEquals(physics, model.getSubject());
+		assertEquals(physics, subjects.getValue());
 	}
 
 	private Path createPdf(Path path, int pageCount) throws Exception {
