@@ -593,15 +593,13 @@ public final class CorpusDashboardPane extends VBox {
 		} finally {
 			changingQuestionFilter = false;
 		}
-
-		// Returning to an ordinary Question filter ends the separate explanation-work
-		// drill-down.
 		mcqExplanationFilterActive = false;
-
-		// Subject-level summary buttons narrow the complete Exam -> booklet -> Question
-		// hierarchy rather than filtering only the previously selected Question scope.
 		selectedQuestionProblem = problem;
-		summaryQuestionFilterActive = true;
+
+		// Selecting all Questions must restore the complete Exam
+		// hierarchy, including Exams without captured Questions.
+		// Specific summary drill-downs still narrow that hierarchy.
+		summaryQuestionFilterActive = completion != QuestionCorpusCompletionFilter.ALL || problem != null;
 		refreshDashboard();
 	}
 

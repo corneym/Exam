@@ -376,6 +376,42 @@ class CorpusDashboardPaneTest {
 	}
 
 	@Test
+	@SuppressWarnings("unchecked")
+	void emptyExamRemainsVisibleUnderMatchingFilters(FxRobot robot) {
+		ExamCorpusStatus emptyExam = new ExamCorpusStatus(fixture.activeExam,
+				new ExamAssetExpectations(null, 0, null, 0), List.of(), new QuestionCorpusSummary(0, 0, 0, 0, 0, 0, 0),
+				new McqExplanationSummary(0, 0, 0), EnumSet.noneOf(ExamCorpusFinding.class));
+		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		ComboBox<Integer> years = robot.lookup("#corpus-dashboard-filter-year").queryAs(ComboBox.class);
+		ComboBox<ExamCaptureState> states = robot.lookup("#corpus-dashboard-filter-exam-state").queryAs(ComboBox.class);
+		Button clear = robot.lookup("#corpus-dashboard-clear-filters").queryButton();
+
+		// Publish an empty Exam independently of any Question.
+		robot.interact(() -> pane.replaceData(List.of(emptyExam), List.of()));
+		assertEquals(1, exams.getItems().size());
+		assertEquals(fixture.activeExam.getId(), exams.getItems().getFirst().exam().getId());
+
+		// Matching lifecycle state must preserve the row.
+		robot.interact(() -> states.setValue(ExamCaptureState.ACTIVE));
+		assertEquals(1, exams.getItems().size());
+
+		// A deliberately non-matching lifecycle filter excludes it.
+		robot.interact(() -> states.setValue(ExamCaptureState.COMPLETE));
+		assertTrue(exams.getItems().isEmpty());
+
+		// Clear restores the structural Exam even though there
+		// are still no Question or booklet records.
+		robot.interact(clear::fire);
+		assertEquals(1, exams.getItems().size());
+		assertEquals(fixture.activeExam.getId(), exams.getItems().getFirst().exam().getId());
+
+		// A matching year must also preserve visibility.
+		robot.interact(() -> years.setValue(fixture.activeExam.getYear()));
+		assertEquals(1, exams.getItems().size());
+		assertEquals(0, exams.getItems().getFirst().questionSummary().totalQuestions());
+	}
+
+	@Test
 	void emptySubjectCorpusOffersExamOnlyAfterCurriculumExists(FxRobot robot) {
 		AtomicReference<Boolean> addExamCalled = new AtomicReference<>(Boolean.FALSE);
 		AtomicReference<Boolean> addCurriculumCalled = new AtomicReference<>(Boolean.FALSE);
@@ -997,6 +1033,38 @@ class CorpusDashboardPaneTest {
 		robot.interact(total::fire);
 		assertEquals(4, questions.getItems().size());
 		assertEquals(fixture.completeExamStatus, exams.getSelectionModel().getSelectedItem());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void totalQuestionsRestoresEmptyExamAfterSummaryDrillDown(FxRobot robot) {
+		ExamCorpusStatus emptyExam = new ExamCorpusStatus(fixture.activeExam,
+				new ExamAssetExpectations(null, 0, null, 0), List.of(), new QuestionCorpusSummary(0, 0, 0, 0, 0, 0, 0),
+				new McqExplanationSummary(0, 0, 0), EnumSet.noneOf(ExamCorpusFinding.class));
+		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		Button missingAnswers = robot.lookup("#corpus-dashboard-summary-missing-answer").queryButton();
+		Button needsAttention = robot.lookup("#corpus-dashboard-summary-attention").queryButton();
+		Button totalQuestions = robot.lookup("#corpus-dashboard-summary-total").queryButton();
+
+		// One Exam has captured Questions and another has no
+		// Question or booklet records.
+		robot.interact(() -> pane.replaceData(List.of(fixture.completeExamStatus, emptyExam), fixture.questions()
+				.stream().filter(question -> question.getExam().getId() == fixture.completeExam.getId()).toList()));
+		assertEquals(2, exams.getItems().size());
+		robot.interact(missingAnswers::fire);
+		assertEquals(1, exams.getItems().size());
+		assertEquals(fixture.completeExam.getId(), exams.getItems().getFirst().exam().getId());
+		robot.interact(totalQuestions::fire);
+
+		// All Questions must restore the structural Exam
+		// hierarchy, including the Exam with no Questions.
+		assertEquals(2, exams.getItems().size());
+		assertTrue(exams.getItems().stream().anyMatch(status -> status.exam().getId() == fixture.activeExam.getId()));
+		robot.interact(needsAttention::fire);
+		assertEquals(1, exams.getItems().size());
+		robot.interact(totalQuestions::fire);
+		assertEquals(2, exams.getItems().size());
+		assertTrue(exams.getItems().stream().anyMatch(status -> status.exam().getId() == fixture.activeExam.getId()));
 	}
 
 	@Test
