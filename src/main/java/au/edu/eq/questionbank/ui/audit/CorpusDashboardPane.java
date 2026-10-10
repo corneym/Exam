@@ -593,15 +593,13 @@ public final class CorpusDashboardPane extends VBox {
 		} finally {
 			changingQuestionFilter = false;
 		}
-
-		// Returning to an ordinary Question filter ends the separate explanation-work
-		// drill-down.
 		mcqExplanationFilterActive = false;
-
-		// Subject-level summary buttons narrow the complete Exam -> booklet -> Question
-		// hierarchy rather than filtering only the previously selected Question scope.
 		selectedQuestionProblem = problem;
-		summaryQuestionFilterActive = true;
+
+		// Selecting all Questions must restore the complete Exam
+		// hierarchy, including Exams without captured Questions.
+		// Specific summary drill-downs still narrow that hierarchy.
+		summaryQuestionFilterActive = completion != QuestionCorpusCompletionFilter.ALL || problem != null;
 		refreshDashboard();
 	}
 
@@ -1185,7 +1183,7 @@ public final class CorpusDashboardPane extends VBox {
 				.setCellValueFactory(data -> new ReadOnlyStringWrapper(questionAssetCount(data.getValue())));
 		TableColumn<ExamCorpusStatus, String> answerBookletsColumn = new TableColumn<>("Answer Booklets");
 		answerBookletsColumn.setCellValueFactory(data -> new ReadOnlyStringWrapper(answerAssetCount(data.getValue())));
-		TableColumn<ExamCorpusStatus, String> workColumn = new TableColumn<>("Work");
+		TableColumn<ExamCorpusStatus, String> workColumn = new TableColumn<>("Needs Work");
 		workColumn.setCellValueFactory(data -> new ReadOnlyStringWrapper(workLabel(data.getValue())));
 
 		// Use the collection overload so mixed TableColumn value types do not create
@@ -2167,7 +2165,9 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private String workLabel(ExamCorpusStatus status) {
-		int work = examWorkCount(status);
-		return work == 0 ? "—" : Integer.toString(work);
+
+		// The authoritative Exam audit already accounts for missing
+		// expectations, asset mismatches and incomplete capture.
+		return status.isReadyForCompletion() ? "—" : "Yes";
 	}
 }

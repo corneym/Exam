@@ -3,6 +3,7 @@ package au.edu.eq.questionbank.ui;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
@@ -22,14 +23,18 @@ import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
+import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.audit.BookletCorpusStatus;
+import au.edu.eq.questionbank.service.audit.ExamCorpusStatus;
 import au.edu.eq.questionbank.service.legacy.LegacyQuestionWorkbookStore;
 import au.edu.eq.questionbank.ui.exam.ExamAssetsPane;
 import javafx.application.Platform;
@@ -371,6 +376,70 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	@SuppressWarnings("unchecked")
+	void dashboardRetainsExamWithNoCapturedQuestionsAfterAssetsReturn(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1",
+				ExamBookletQuestionFormat.MIXED);
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+
+		// The structural fixture is persisted, but no Question
+		// capture has occurred.
+		assertTrue(repository.findAll().isEmpty());
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
+			return null;
+		}).get();
+
+		// Wait for the asynchronous persistence-backed snapshot,
+		// not merely the Dashboard container.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-exams").tryQuery().filter(TableView.class::isInstance)
+						.map(TableView.class::cast).map(table -> table.getItems().size() == 1).orElse(false));
+		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		assertEquals(1, exams.getItems().size());
+		ExamCorpusStatus initial = exams.getItems().getFirst();
+		assertEquals("External Assessment", initial.exam().getName());
+		assertEquals(0, initial.questionSummary().totalQuestions());
+		assertEquals(1, initial.bookletStatuses().size());
+		assertFalse(initial.isReadyForCompletion());
+
+		// The first Exam is automatically selected.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> booklets.getItems().size() == 1);
+		assertEquals(initial.exam().getId(), exams.getSelectionModel().getSelectedItem().exam().getId());
+		assertEquals(0, booklets.getItems().getFirst().encounteredTopLevelQuestionCount());
+		Button manageAssets = lookup(robot, "#corpus-dashboard-manage-exam-assets", Button.class);
+		assertFalse(manageAssets.isDisabled());
+
+		// Enter the real Exam/Assets workflow.
+		fireControl(robot, manageAssets);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#exam-assets-workspace").tryQuery().isPresent());
+		Button returnDashboard = lookup(robot, "#exam-assets-return-dashboard", Button.class);
+		assertTrue(returnDashboard.isVisible());
+		assertFalse(returnDashboard.isDisabled());
+
+		// This is the production navigation boundary
+		// associated with the reported defect.
+		fireControl(robot, returnDashboard);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-exams").tryQuery().filter(TableView.class::isInstance)
+						.map(TableView.class::cast).map(table -> table.getItems().size() == 1).orElse(false));
+		TableView<ExamCorpusStatus> refreshedExams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		TableView<BookletCorpusStatus> refreshedBooklets = robot.lookup("#corpus-dashboard-booklets")
+				.queryAs(TableView.class);
+		ExamCorpusStatus refreshed = refreshedExams.getItems().getFirst();
+
+		// Structural identity must survive Dashboard refresh.
+		assertEquals(initial.exam().getId(), refreshed.exam().getId());
+		assertEquals(1, refreshedExams.getItems().size());
+		assertEquals(1, refreshedBooklets.getItems().size());
+		assertEquals(0, refreshed.questionSummary().totalQuestions());
+		assertEquals(0, refreshedBooklets.getItems().getFirst().encounteredTopLevelQuestionCount());
+		assertTrue(repository.findAll().isEmpty());
+	}
+
+	@Test
 	void dashboardReturnSurvivesCaptureAndExamAssetsTransitions(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1",
 				ExamBookletQuestionFormat.MIXED);
@@ -435,6 +504,82 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		fireControl(robot, assetsReturn);
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void dashboardShowsPersistedExamWithoutExpectationsOrBooklets(FxRobot robot) throws Exception {
+		ComboBox<Subject> subjectBox = lookup(robot, "#curriculum-subject", ComboBox.class);
+		Subject chemistry = subjectBox.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
+				.findFirst().orElseThrow();
+
+		// Select the authoritative Working Subject.
+		robot.interact(() -> subjectBox.getSelectionModel().select(chemistry));
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
+			Subject selected = field(application, "workingSubject", Subject.class);
+			return selected != null && selected.getId() == chemistry.getId();
+		});
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+
+		// Persist only the Exam. No booklet, expected count,
+		// Question or Answer exists yet.
+		Exam exam = examWriter.createExam(chemistry, "QCAA", 2026, "External Assessment");
+		assertEquals(1, examWriter.findExamsForSubject(chemistry).size());
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> robot.lookup("#corpus-dashboard-exams").tryQuery()
+				.filter(TableView.class::isInstance).map(TableView.class::cast)
+				.map(table -> table.getItems().stream().filter(ExamCorpusStatus.class::isInstance)
+						.map(ExamCorpusStatus.class::cast)
+						.anyMatch(item -> ((ExamCorpusStatus) item).exam().getId() == exam.getId()))
+				.orElse(false));
+		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		assertEquals(1, exams.getItems().size());
+		ExamCorpusStatus initial = exams.getItems().getFirst();
+		assertEquals(exam.getId(), initial.exam().getId());
+		assertEquals(0, initial.questionSummary().totalQuestions());
+		assertTrue(initial.bookletStatuses().isEmpty());
+		assertNull(initial.assetExpectations().expectedQuestionBookletCount());
+		assertNull(initial.assetExpectations().expectedAnswerFileCount());
+		assertEquals(0, initial.assetExpectations().availableQuestionBookletCount());
+		assertEquals(0, initial.assetExpectations().availableAnswerFileCount());
+		assertFalse(initial.isReadyForCompletion());
+		assertTrue(booklets.getItems().isEmpty());
+
+		// Even without booklets, the selected Exam must provide
+		// access to structural setup.
+		Button manageAssets = lookup(robot, "#corpus-dashboard-manage-exam-assets", Button.class);
+		assertFalse(manageAssets.isDisabled());
+
+		// Adding expectations must update the existing Exam,
+		// not introduce a new Dashboard row.
+		examWriter.updateExamAssetExpectations(exam, 2, 1);
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "refreshCorpusDashboardHome", new Class<?>[] { long.class }, -1L);
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> robot.lookup("#corpus-dashboard-exams").tryQuery()
+				.filter(TableView.class::isInstance).map(TableView.class::cast).map(table -> table.getItems().stream()
+						.filter(ExamCorpusStatus.class::isInstance).map(ExamCorpusStatus.class::cast).anyMatch(item -> {
+							ExamCorpusStatus status = (ExamCorpusStatus) item;
+							return status.exam().getId() == exam.getId() && Integer.valueOf(2)
+									.equals(status.assetExpectations().expectedQuestionBookletCount());
+						}))
+				.orElse(false));
+		TableView<ExamCorpusStatus> refreshedExams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		ExamCorpusStatus refreshed = refreshedExams.getItems().getFirst();
+		assertEquals(1, refreshedExams.getItems().size());
+		assertEquals(exam.getId(), refreshed.exam().getId());
+		assertEquals(Integer.valueOf(2), refreshed.assetExpectations().expectedQuestionBookletCount());
+		assertEquals(Integer.valueOf(1), refreshed.assetExpectations().expectedAnswerFileCount());
+		assertEquals(0, refreshed.assetExpectations().availableQuestionBookletCount());
+		assertEquals(0, refreshed.assetExpectations().availableAnswerFileCount());
+		assertTrue(refreshed.bookletStatuses().isEmpty());
+		assertFalse(refreshed.isReadyForCompletion());
 	}
 
 	@Test

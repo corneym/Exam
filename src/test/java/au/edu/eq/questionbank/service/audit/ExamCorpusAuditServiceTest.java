@@ -173,6 +173,76 @@ class ExamCorpusAuditServiceTest {
 	}
 
 	@Test
+	void newlyCreatedExamRemainsInAuditThroughInitialSetup() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("new-exam-visibility.db"));
+		database.initialiseSchema();
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
+		Subject physics = curriculumWriter.insertSubject("Physics");
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
+		ExamCorpusAuditService service = new ExamCorpusAuditService(examWriter, answerWriter, questionRepository,
+				new PdfStore(tempDirectory.resolve("new-exam-pdf")));
+
+		// Stage 1: Persist an Exam without expectations,
+		// booklets or Questions.
+		Exam exam = examWriter.createExam(chemistry, "QCAA", 2026, "External Assessment");
+		ExamCorpusStatus initial = service.assessSubject(chemistry).stream()
+				.filter(status -> status.exam().getId() == exam.getId()).findFirst().orElseThrow();
+		assertNull(initial.assetExpectations().expectedQuestionBookletCount());
+		assertNull(initial.assetExpectations().expectedAnswerFileCount());
+		assertEquals(0, initial.assetExpectations().availableQuestionBookletCount());
+		assertEquals(0, initial.assetExpectations().availableAnswerFileCount());
+		assertTrue(initial.bookletStatuses().isEmpty());
+		assertEquals(0, initial.questionSummary().totalQuestions());
+		assertFalse(initial.isReadyForCompletion());
+
+		// Stage 2: Record expectations without importing assets.
+		examWriter.updateExamAssetExpectations(exam, 1, 0);
+		ExamCorpusStatus planned = service.assessSubject(chemistry).stream()
+				.filter(status -> status.exam().getId() == exam.getId()).findFirst().orElseThrow();
+		assertEquals(exam.getId(), planned.exam().getId());
+		assertEquals(Integer.valueOf(1), planned.assetExpectations().expectedQuestionBookletCount());
+		assertEquals(0, planned.assetExpectations().availableQuestionBookletCount());
+		assertTrue(planned.bookletStatuses().isEmpty());
+		assertFalse(planned.isReadyForCompletion());
+
+		// Stage 3: Register a source booklet without Questions.
+		SourceDocument document = examWriter.insertSourceDocument("Chemistry/QCAA/2026/paper1.pdf");
+		ExamBooklet booklet = examWriter.insertExamBooklet(exam, document, "Paper 1",
+				ExamBookletQuestionFormat.WRITTEN_RESPONSE, 1);
+		ExamCorpusStatus withBooklet = service.assessSubject(chemistry).stream()
+				.filter(status -> status.exam().getId() == exam.getId()).findFirst().orElseThrow();
+		assertEquals(exam.getId(), withBooklet.exam().getId());
+		assertEquals(1, withBooklet.bookletStatuses().size());
+		assertEquals(booklet.getId(), withBooklet.bookletStatuses().getFirst().booklet().getId());
+		assertEquals(0, withBooklet.questionSummary().totalQuestions());
+		assertEquals(0, withBooklet.bookletStatuses().getFirst().encounteredTopLevelQuestionCount());
+		assertFalse(withBooklet.isReadyForCompletion());
+
+		// Stage 4: Capture the first Question.
+		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2026", true);
+		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
+		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
+		Descriptor descriptor = curriculumWriter.insertDescriptor(topic, "1.1.1", "Descriptor", 1);
+		questionRepository.save(booklet, "1", "", 2, List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.70, 0.20)),
+				descriptor, false, null, null, QuestionResponseType.WRITTEN_RESPONSE);
+		ExamCorpusStatus withQuestion = service.assessSubject(chemistry).stream()
+				.filter(status -> status.exam().getId() == exam.getId()).findFirst().orElseThrow();
+		assertEquals(exam.getId(), withQuestion.exam().getId());
+		assertEquals(1, withQuestion.questionSummary().totalQuestions());
+		assertEquals(1, withQuestion.bookletStatuses().size());
+		assertEquals(1, withQuestion.bookletStatuses().getFirst().encounteredTopLevelQuestionCount());
+
+		// A different Subject must never receive this Exam.
+		assertTrue(service.assessSubject(physics).isEmpty());
+
+		// There must still be exactly one Exam row.
+		assertEquals(1, service.assessSubject(chemistry).size());
+	}
+
+	@Test
 	void plannedExamWithoutBookletsRemainsVisibleAndReportsAssetMismatch() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("planned-exam.db"));
 		database.initialiseSchema();
