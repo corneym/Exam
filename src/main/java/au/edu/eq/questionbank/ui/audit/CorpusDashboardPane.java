@@ -1183,7 +1183,7 @@ public final class CorpusDashboardPane extends VBox {
 				.setCellValueFactory(data -> new ReadOnlyStringWrapper(questionAssetCount(data.getValue())));
 		TableColumn<ExamCorpusStatus, String> answerBookletsColumn = new TableColumn<>("Answer Booklets");
 		answerBookletsColumn.setCellValueFactory(data -> new ReadOnlyStringWrapper(answerAssetCount(data.getValue())));
-		TableColumn<ExamCorpusStatus, String> workColumn = new TableColumn<>("Work");
+		TableColumn<ExamCorpusStatus, String> workColumn = new TableColumn<>("Needs Work");
 		workColumn.setCellValueFactory(data -> new ReadOnlyStringWrapper(workLabel(data.getValue())));
 
 		// Use the collection overload so mixed TableColumn value types do not create
@@ -2165,7 +2165,9 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private String workLabel(ExamCorpusStatus status) {
-		int work = examWorkCount(status);
-		return work == 0 ? "—" : Integer.toString(work);
+
+		// The authoritative Exam audit already accounts for missing
+		// expectations, asset mismatches and incomplete capture.
+		return status.isReadyForCompletion() ? "—" : "Yes";
 	}
 }
