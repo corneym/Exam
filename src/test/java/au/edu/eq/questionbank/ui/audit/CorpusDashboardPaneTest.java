@@ -64,6 +64,7 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressIndicator;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
@@ -71,6 +72,7 @@ import javafx.scene.control.TableView;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
 import javafx.stage.Stage;
 
 @Tag("ui")
@@ -395,6 +397,37 @@ class CorpusDashboardPaneTest {
 	}
 
 	@Test
+	void dashboardLabelsRemainReadableAfterDividerResize(FxRobot robot) {
+		ScrollPane filters = robot.lookup("#corpus-dashboard-exam-filters-scroll").queryAs(ScrollPane.class);
+		SplitPane workSplit = robot.lookup("#corpus-dashboard-work-split").queryAs(SplitPane.class);
+		HBox filterRow = (HBox) filters.getContent();
+		Label provider = (Label) filterRow.getChildren().get(0);
+		Label year = (Label) filterRow.getChildren().get(2);
+		Label examState = (Label) filterRow.getChildren().get(4);
+		Label selectedExam = robot.lookup("#corpus-dashboard-selected-exam").queryAs(Label.class);
+		Label declaredState = robot.lookup("#corpus-dashboard-selected-exam-state").queryAs(Label.class);
+
+		// Exercise window resizing and the existing vertical divider.
+		robot.interact(() -> {
+			pane.getScene().getWindow().setWidth(820);
+			workSplit.setDividerPositions(0.65);
+		});
+		WaitForAsyncUtils.waitForFxEvents();
+		robot.interact(() -> {
+			pane.applyCss();
+			pane.layout();
+
+			// Under the standard light JavaFX theme these labels must
+			// retain dark text, including those below the Exam table.
+			for (Label label : List.of(provider, year, examState, selectedExam, declaredState)) {
+				assertTrue(label.getTextFill() instanceof Color, label.getText());
+				Color colour = (Color) label.getTextFill();
+				assertTrue(colour.getBrightness() < 0.65, label.getText() + " has unreadable text: " + colour);
+			}
+		});
+	}
+
+	@Test
 	void dashboardPlacesCurriculumAboveAdjustableWorkSplit(FxRobot robot) {
 		Node curriculumSection = robot.lookup("#corpus-dashboard-curriculum-section").query();
 		Node summaryRow = robot.lookup("#corpus-dashboard-summary-row").query();
@@ -502,6 +535,35 @@ class CorpusDashboardPaneTest {
 		assertEquals(2, booklets.getItems().size());
 		assertNull(booklets.getSelectionModel().getSelectedItem());
 		assertEquals("Selected booklet: All booklets", selectedBooklet.getText());
+	}
+
+	@Test
+	void emptyExamControlsRetainTheirScrollableContainer(FxRobot robot) {
+		ScrollPane emptyExamScroll = robot.lookup("#corpus-dashboard-empty-exam-scroll").queryAs(ScrollPane.class);
+		Button addExam = robot.lookup("#corpus-dashboard-add-exam").queryButton();
+		Button legacyImport = robot.lookup("#corpus-dashboard-import-legacy-questions").queryButton();
+
+		// Start from the ordinary populated-Exam state.
+		assertFalse(emptyExamScroll.isManaged());
+		robot.interact(() -> pane.replaceData(List.of(), List.of(), List.of(), true, -1L));
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// Empty-Exam onboarding must expose its entire control row, including
+		// the single Legacy Import action moved from the normal filter row.
+		assertTrue(emptyExamScroll.isVisible());
+		assertTrue(emptyExamScroll.isManaged());
+		assertEquals("corpus-dashboard-exam-empty-state", emptyExamScroll.getContent().getId());
+		assertEquals(emptyExamScroll.getContent(), addExam.getParent());
+		assertEquals(emptyExamScroll.getContent(), legacyImport.getParent());
+
+		// Returning to a populated Exam must remove the empty-state container
+		// rather than leaving a blank scroll area.
+		robot.interact(() -> pane.replaceData(List.of(fixture.completeExamStatus, fixture.activeExamStatus),
+				fixture.questions()));
+		WaitForAsyncUtils.waitForFxEvents();
+		assertFalse(emptyExamScroll.isVisible());
+		assertFalse(emptyExamScroll.isManaged());
+		assertEquals("corpus-dashboard-exam-filter-row", legacyImport.getParent().getId());
 	}
 
 	@Test
@@ -746,6 +808,24 @@ class CorpusDashboardPaneTest {
 		assertFalse(captureQuestions.isDisable());
 		robot.interact(captureQuestions::fire);
 		assertEquals(fixture.activePaper.getId(), questionCapture.get().getId());
+	}
+
+	@Test
+	void horizontalScrollRowsKeepLabelsReadableAfterResize(FxRobot robot) {
+		ScrollPane filters = robot.lookup("#corpus-dashboard-exam-filters-scroll").queryAs(ScrollPane.class);
+		Label providerLabel = (Label) ((HBox) filters.getContent()).getChildren().get(0);
+		Label selectedExamLabel = robot.lookup("#corpus-dashboard-selected-exam").queryAs(Label.class);
+		robot.interact(() -> pane.getScene().getWindow().setWidth(820));
+		WaitForAsyncUtils.waitForFxEvents();
+		robot.interact(pane::applyCss);
+
+		// The standard light Dashboard theme requires dark label text.
+		// Transparent background colour lookups must not turn it white.
+		Color providerText = (Color) providerLabel.getTextFill();
+		Color selectedExamText = (Color) selectedExamLabel.getTextFill();
+		assertTrue(providerText.getBrightness() < 0.65, "Provider label has insufficient contrast: " + providerText);
+		assertTrue(selectedExamText.getBrightness() < 0.65,
+				"Selected Exam label has insufficient contrast: " + selectedExamText);
 	}
 
 	@Test
@@ -1015,6 +1095,43 @@ class CorpusDashboardPaneTest {
 		String problemText = String.valueOf(problemColumn.getCellObservableValue(missingContent).getValue());
 		assertTrue(problemText.contains("Missing question content"));
 		assertTrue(problemText.contains("Missing answer"));
+	}
+
+	@Test
+	void narrowDashboardRetainsScrollableControls(FxRobot robot) {
+		ScrollPane filters = robot.lookup("#corpus-dashboard-exam-filters-scroll").queryAs(ScrollPane.class);
+		ScrollPane examActions = robot.lookup("#corpus-dashboard-exam-actions-scroll").queryAs(ScrollPane.class);
+		ScrollPane bookletActions = robot.lookup("#corpus-dashboard-booklet-actions-scroll").queryAs(ScrollPane.class);
+		Button legacyImport = robot.lookup("#corpus-dashboard-import-legacy-questions").queryButton();
+		Button lifecycle = robot.lookup("#corpus-dashboard-exam-lifecycle").queryButton();
+		Button captureMcq = robot.lookup("#corpus-dashboard-capture-mcq-explanations").queryButton();
+
+		// Wrapping the rows must preserve their existing button containers.
+		assertEquals(filters.getContent(), legacyImport.getParent());
+		assertEquals(examActions.getContent(), lifecycle.getParent());
+		assertEquals(bookletActions.getContent(), captureMcq.getParent());
+		robot.interact(() -> pane.getScene().getWindow().setWidth(820));
+		WaitForAsyncUtils.waitForFxEvents();
+		for (ScrollPane scroll : List.of(filters, examActions, bookletActions)) {
+			assertEquals(ScrollPane.ScrollBarPolicy.AS_NEEDED, scroll.getHbarPolicy());
+			assertEquals(ScrollPane.ScrollBarPolicy.NEVER, scroll.getVbarPolicy());
+
+			// There must be a real viewport and more content width than fits
+			// within it. This verifies that the controls remain scrollable.
+			assertTrue(scroll.getViewportBounds().getWidth() > 0, scroll.getId());
+			assertTrue(scroll.getContent().getLayoutBounds().getWidth() > scroll.getViewportBounds().getWidth() + 5,
+					scroll.getId() + " should require horizontal scrolling");
+			robot.interact(() -> scroll.setHvalue(scroll.getHmax()));
+			WaitForAsyncUtils.waitForFxEvents();
+			assertEquals(scroll.getHmax(), scroll.getHvalue(), 0.001);
+		}
+
+		// Selected-scope descriptions must wrap rather than force the
+		// hierarchy to expand beyond the available width.
+		Label examCounts = robot.lookup("#corpus-dashboard-selected-exam-counts").queryAs(Label.class);
+		Label selectedBooklet = robot.lookup("#corpus-dashboard-selected-booklet").queryAs(Label.class);
+		assertTrue(examCounts.isWrapText());
+		assertTrue(selectedBooklet.isWrapText());
 	}
 
 	@Test
