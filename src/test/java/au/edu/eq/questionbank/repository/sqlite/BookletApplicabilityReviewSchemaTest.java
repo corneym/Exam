@@ -23,7 +23,6 @@ class BookletApplicabilityReviewSchemaTest {
 	void newDatabaseStartsWithNoImplicitBookletReviews() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("reviews.db"));
 		database.initialiseSchema();
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 
 			// A confirmation must be a separately persisted human decision.
@@ -40,12 +39,9 @@ class BookletApplicabilityReviewSchemaTest {
 
 	@Test
 	void reviewRecordIsUniqueAndBelongsToAnExistingBooklet() throws Exception {
-
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("reviews.db"));
 		database.initialiseSchema();
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
-
 			statement.execute("""
 					INSERT INTO subjects (id, subject_name)
 					VALUES (1, 'Chemistry')
@@ -76,12 +72,10 @@ class BookletApplicabilityReviewSchemaTest {
 					INSERT INTO booklet_applicability_reviews (booklet_id)
 					VALUES (1)
 					""");
-
 			assertThrows(SQLException.class, () -> statement.execute("""
 					INSERT INTO booklet_applicability_reviews (booklet_id)
 					VALUES (1)
 					"""));
-
 			assertThrows(SQLException.class, () -> statement.execute("""
 					INSERT INTO booklet_applicability_reviews (booklet_id)
 					VALUES (999)
@@ -92,7 +86,6 @@ class BookletApplicabilityReviewSchemaTest {
 					DELETE FROM booklet_applicability_reviews
 					WHERE booklet_id = 1
 					"""));
-
 			try (ResultSet result = statement.executeQuery("""
 					SELECT COUNT(*)
 					FROM booklet_applicability_reviews
@@ -100,7 +93,6 @@ class BookletApplicabilityReviewSchemaTest {
 				assertTrue(result.next());
 				assertEquals(0, result.getInt(1));
 			}
-
 			try (ResultSet result = statement.executeQuery("""
 					SELECT id
 					FROM exam_booklets
