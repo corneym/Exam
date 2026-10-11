@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 20;
+	private static final int LATEST_SCHEMA_VERSION = 21;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -655,6 +655,14 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v19-to-v20.sql", 20);
 			return 20;
 		}
+		if (version == 20) {
+
+			// Install invalidation triggers in the existing migration transaction.
+			// The version update follows only after all triggers are installed.
+			BookletApplicabilityReviewInvalidationTriggers.install(connection);
+			executeMigration(connection, "/db/migration-v20-to-v21.sql", 21);
+			return 21;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -929,6 +937,12 @@ public final class SqliteDatabase {
 			// The review table must exist with its unique booklet identity
 			// and cascading foreign-key relationship.
 			verifyVersion20BookletApplicabilityReviewSchema(connection);
+		}
+		if (version >= 21) {
+
+			// A version-21 database must retain every invalidation trigger.
+			// Missing triggers could silently preserve obsolete reviews.
+			BookletApplicabilityReviewInvalidationTriggers.verify(connection);
 		}
 	}
 
