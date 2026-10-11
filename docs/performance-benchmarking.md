@@ -77,6 +77,31 @@ Baseline snapshot: `D:\ExamData\Benchmarks\questionbank-baseline.db`; schema ver
 
 This measurement preceded the new CSV format; the historical results were recorded manually. Do not manufacture a historical CSV from these four summaries. Re-run the unchanged code and snapshot after enabling CSV for a recorded pre-change artefact.
 
+## Recorded CSV-enabled baseline — 11 October 2026
+
+After adding Batch 06 CSV reporting, the unchanged baseline snapshot was benchmarked again. Keep this second run separate from the earlier manually recorded measurement; ordinary run-to-run variation must not be presented as an optimisation result.
+
+| Property | Recorded value |
+| --- | --- |
+| Snapshot | `D:\ExamData\Benchmarks\questionbank-baseline.db` |
+| SHA-256 | `9e1690c136206c1b49233a097e033ff92654e227323cbd4e7f2c031412e0722f` |
+| Database size | 819,200 bytes |
+| Question count | 624 |
+| Schema version | 19 |
+| SQLite version | 3.53.2 |
+| Java version | 25.0.4 |
+| Operation | `question.findAll` |
+| Warm-ups / measured iterations | 2 / 10 |
+| Result count per measured iteration | 624 |
+| Minimum | 1098.698 ms |
+| Median | **1126.442 ms** |
+| Nearest-rank p90 | 1143.949 ms |
+| Maximum | 1143.968 ms |
+| CSV file | `D:\ExamData\Benchmarks\findall-pre94-a10c1ed.csv` |
+| Supplied code label | `pre94-a10c1ed` |
+
+**Provenance qualification:** The code label was entered manually and refers to the pre-#94 comparison stage. Batch 06 CSV functionality was implemented locally *after* the pushed commit `a10c1ed`, so this label alone does **not** identify the exact compiled code revision. Record the actual Batch 06 commit for future runs, and do not edit or overwrite this existing CSV artefact. The SHA-256 fingerprint, by contrast, identifies the precise snapshot bytes.
+
 ## Before/after procedure
 
 1. Preserve the baseline SQLite snapshot. Check that it has no WAL/SHM sidecars and no other process writes to it.

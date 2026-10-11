@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Exam Question Bank performance diagnostics provide repeatable elapsed-time evidence from normal application use. They distinguish JavaFX work, background retrieval, Question reconstruction, and export processing before any optimisation is attempted. This document describes the runtime instrumentation implemented for Sprint 15 Issue #109 and retains the separate benchmarking design for Issue #110.
+Exam Question Bank performance diagnostics provide repeatable elapsed-time evidence from normal application use. They distinguish JavaFX work, background retrieval, Question reconstruction, and export processing before any optimisation is attempted. This document describes the runtime instrumentation implemented for Sprint 15 Issue #109. The separately implemented, read-only corpus benchmark runner for Issue #110 is documented in [performance-benchmarking.md](performance-benchmarking.md).
 
 ## Enabling runtime diagnostics
 
@@ -78,11 +78,15 @@ For an expensive outer operation, compare the named inner spans. For example, a 
 
 ## Repeatable benchmark runner — Issue #110
 
-The controlled benchmark runner is distinct from runtime CSV collection. Its proposed entry point is `au.edu.eq.questionbank.admin.PerformanceBenchmarkTool`; this remains a **design proposal**, not an implemented command from Issue #109. The runner should operate only on an explicitly supplied safe copy of a realistic database and must not mutate the authoritative corpus.
+The controlled benchmark runner is separate from the opt-in runtime `PerformanceRecorder`. The implemented entry point is `au.edu.eq.questionbank.admin.PerformanceBenchmarkTool`; run it in Eclipse with **Program arguments**, not VM arguments. It requires an explicitly supplied, immutable SQLite database snapshot. Do not point it at the live Eclipse development or production database, and do not apply schema migrations to the frozen baseline.
 
-Planned benchmark cases include whole-bank `findAll`, individual `findById`, Subject/Unit/Topic/Descriptor applicability retrieval, Dashboard/corpus preparation, and representative Question Search filters. Each case should use at least one unmeasured warm-up followed by measured iterations; retain result counts and report minimum, median, p90 and maximum. Record the Question count, database size, and application version/commit where available.
+The runner uses the production repositories to benchmark `question.findAll`, `question.findById:<id>` and current-curriculum Subject, Unit, Topic or Descriptor applicability retrieval. Scope expansion and corpus validation occur outside timed iterations. Each operation has at least one unmeasured warm-up, configurable measured iterations and stable result counts. The console reports minimum, median, nearest-rank p90 and maximum in milliseconds along with database size, Question count, schema and SQLite version.
 
-Compare equivalent before/after corpora when implementing Issue #94 or later Issue #111 performance changes. Preserve the same benchmark definitions and verify unchanged functional results.
+The Issue #110 CSV report is **not** the same format as runtime `diagnostics/performance.csv`. Supply optional `--csv <absolute-new-file-path>` and `--label <code-version-label>` to record one row per completed workload, with snapshot SHA-256, corpus metadata, Java/SQLite versions, all summary timings and the individual measured samples. Existing CSV files are not overwritten. A label is supplied by the operator; it is **not** independently verified against a Git commit. See [performance-benchmarking.md](performance-benchmarking.md) for the CSV header, snapshot creation, CLI selectors, controls and before/after comparison procedure.
+
+A frozen schema-v19 snapshot containing 624 Questions was established on 11 October 2026. Its SHA-256 fingerprint is `9e1690c136206c1b49233a097e033ff92654e227323cbd4e7f2c031412e0722f`. A subsequent CSV-enabled `question.findAll` run used two warm-ups and ten measured iterations; result count 624, median **1126.442 ms**, p90 **1143.949 ms**. Preserve the original snapshot unchanged when comparing code versions. Issue #128 migrations belong on a **separate copy**; an upgraded schema may not be readable by the pre-migration benchmark executable.
+
+Dashboard/corpus preparation remains to be assessed for a practical headless benchmark boundary under Issue #110. Richer Search filter workloads from Issue #94 are to be added after the relevant production functionality exists. Those future operations should use the same existing benchmark runner and reporting format, not a separate timing implementation.
 
 ## Additional investigation tools
 
