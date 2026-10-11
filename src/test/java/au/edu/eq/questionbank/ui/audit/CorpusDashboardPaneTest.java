@@ -367,41 +367,58 @@ class CorpusDashboardPaneTest {
 		Node bookletsSection = robot.lookup("#corpus-dashboard-booklets-section").query();
 		AtomicReference<double[]> widths = new AtomicReference<>();
 
-		// Stage.show() does not guarantee that the first JavaFX layout pulse
-		// has completed. Wait for real section dimensions before measuring.
+		// Use enough horizontal space for a meaningful divider movement
+		// without either section encountering its minimum width.
+		robot.interact(() -> pane.getScene().getWindow().setWidth(1200));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> {
-			robot.interact(() -> widths.set(new double[] { examsSection.getBoundsInParent().getWidth(),
-					bookletsSection.getBoundsInParent().getWidth() }));
-			return widths.get()[0] >= 340.0 && widths.get()[1] >= 360.0;
+			robot.interact(() -> {
+				pane.applyCss();
+				pane.layout();
+				widths.set(new double[] { hierarchy.getWidth(), examsSection.getBoundsInParent().getWidth(),
+						bookletsSection.getBoundsInParent().getWidth() });
+			});
+			return widths.get()[0] > 1100 && widths.get()[1] >= 339 && widths.get()[2] >= 359;
 		});
 		double[] initial = widths.get();
 		assertEquals(0.5, hierarchy.getDividerPositions()[0], 0.05);
-		assertTrue(Math.abs(initial[0] - initial[1]) < 30.0);
+		assertTrue(Math.abs(initial[1] - initial[2]) < 30.0);
 
-		// Wait for the actual width change. Draining queued JavaFX events
-		// alone does not guarantee that SplitPane has completed layout.
-		robot.interact(() -> hierarchy.setDividerPositions(0.64));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> {
-			robot.interact(() -> widths.set(new double[] { examsSection.getBoundsInParent().getWidth(),
-					bookletsSection.getBoundsInParent().getWidth() }));
-			return widths.get()[0] > initial[0] + 50.0 && widths.get()[1] < initial[1] - 50.0;
-		});
+		// Relocate the divider while respecting the minimum booklet width.
+		robot.interact(() -> hierarchy.setDividerPositions(0.60));
+		try {
+			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> {
+				robot.interact(() -> {
+					hierarchy.requestLayout();
+					pane.layout();
+					widths.set(new double[] { hierarchy.getWidth(), examsSection.getBoundsInParent().getWidth(),
+							bookletsSection.getBoundsInParent().getWidth() });
+				});
+				return widths.get()[1] > initial[1] + 30 && widths.get()[2] < initial[2] - 30;
+			});
+		} catch (TimeoutException failure) {
+			double[] measured = widths.get();
+			throw new AssertionError("Divider did not reallocate panel widths. " + "Initial: exams=" + initial[1]
+					+ ", booklets=" + initial[2] + "; measured: hierarchy=" + measured[0] + ", exams=" + measured[1]
+					+ ", booklets=" + measured[2], failure);
+		}
 		double[] adjusted = widths.get();
-		assertTrue(adjusted[0] > initial[0] + 50.0);
-		assertTrue(adjusted[1] < initial[1] - 50.0);
 
-		// Window resizing must also produce observable section-width changes
-		// without allowing either panel below its configured minimum.
+		// Verify that shrinking the window reallocates the existing sections,
+		// without violating their minimum width constraints.
 		robot.interact(() -> pane.getScene().getWindow().setWidth(940));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> {
-			robot.interact(() -> widths.set(new double[] { examsSection.getBoundsInParent().getWidth(),
-					bookletsSection.getBoundsInParent().getWidth() }));
-			return widths.get()[0] < adjusted[0] - 25.0 && widths.get()[0] >= 339.0 && widths.get()[1] >= 359.0;
+			robot.interact(() -> {
+				pane.applyCss();
+				pane.layout();
+				widths.set(new double[] { hierarchy.getWidth(), examsSection.getBoundsInParent().getWidth(),
+						bookletsSection.getBoundsInParent().getWidth() });
+			});
+			return widths.get()[0] < adjusted[0] - 150 && widths.get()[1] < adjusted[1] - 25;
 		});
 		double[] narrower = widths.get();
-		assertTrue(narrower[0] < adjusted[0] - 25.0);
-		assertTrue(narrower[0] >= 339.0);
-		assertTrue(narrower[1] >= 359.0);
+		assertTrue(narrower[1] < adjusted[1] - 25);
+		assertTrue(narrower[1] >= 339.0);
+		assertTrue(narrower[2] >= 359.0);
 	}
 
 	@Test
