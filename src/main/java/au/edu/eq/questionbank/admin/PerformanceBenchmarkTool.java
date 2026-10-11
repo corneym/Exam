@@ -255,8 +255,8 @@ public final class PerformanceBenchmarkTool {
 			throw new IllegalArgumentException("Benchmark target ID must be positive");
 		}
 		return switch (operation) {
-		case "question.findById", "search.current.subject", "search.current.unit", "search.current.topic",
-				"search.current.descriptor" ->
+		case "question.findById", "dashboard.audit.subject", "search.current.subject", "search.current.unit",
+				"search.current.topic", "search.current.descriptor" ->
 			new Selection(operation, targetId);
 		default -> throw new IllegalArgumentException("Unknown benchmark operation: " + operation);
 		};
@@ -297,6 +297,7 @@ public final class PerformanceBenchmarkTool {
 				    [--csv <absolute-new-file-path>]
 
 				Benchmarks:
+				  dashboard.audit.subject:<subject-id>
 				  question.findAll
 				  question.findById:<question-id>
 				  search.current.subject:<subject-id>
@@ -319,6 +320,12 @@ public final class PerformanceBenchmarkTool {
 				  Existing files are never overwritten.
 				  One row is written per completed benchmark workload.
 
+				Dashboard audit:
+				  Runs production corpus-audit preparation for one Subject.
+				  Reports the number of Exams audited.
+				  Physical PDF assets are treated as unavailable.
+				  This is not an end-to-end JavaFX Dashboard benchmark.
+
 				A separate, consistent SQLite snapshot is required.
 				Never benchmark a live database with concurrent writers.
 				Use --help to display these instructions.
@@ -329,6 +336,7 @@ public final class PerformanceBenchmarkTool {
 			PerformanceBenchmarkWorkloads workloads, PerformanceBenchmarkCurriculumScopes scopes) {
 		long id = selection.targetId();
 		return switch (selection.operation()) {
+		case "dashboard.audit.subject" -> workloads.dashboardAuditSubject(id);
 		case "question.findAll" -> workloads.findAll();
 		case "question.findById" -> workloads.findById(id);
 		case "search.current.subject" -> workloads.findApplicableToNodes(scopes.subject(id));

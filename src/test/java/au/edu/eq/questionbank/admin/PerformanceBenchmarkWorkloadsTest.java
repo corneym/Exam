@@ -22,12 +22,16 @@ import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.pdf.PdfStore;
+import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.audit.ExamCorpusAuditService;
+import au.edu.eq.questionbank.service.audit.ExamCorpusStatus;
 
 class PerformanceBenchmarkWorkloadsTest {
 
@@ -96,6 +100,61 @@ class PerformanceBenchmarkWorkloadsTest {
 
 		// Duplicate requested nodes must not inflate Question counts.
 		assertEquals(1, workloads.findApplicableToNodes(List.of(descriptor, descriptor)).execute());
+	}
+
+	@Test
+	void dashboardAuditRejectsMissingAndInvalidSubjects() throws Exception {
+		Fixture fixture = createFixture();
+		PerformanceBenchmarkWorkloads workloads = new PerformanceBenchmarkWorkloads(fixture.snapshotPath());
+		assertThrows(IllegalArgumentException.class, () -> workloads.dashboardAuditSubject(0));
+		assertThrows(IllegalArgumentException.class, () -> workloads.dashboardAuditSubject(-1));
+		assertThrows(IllegalArgumentException.class, () -> workloads.dashboardAuditSubject(999999));
+	}
+
+	@Test
+	void dashboardAuditRejectsUnexpectedAssetRoot() throws Exception {
+		Fixture fixture = createFixture();
+		PerformanceBenchmarkWorkloads workloads = new PerformanceBenchmarkWorkloads(fixture.snapshotPath());
+		Subject subject = new SqliteCurriculumRepository(SqliteDatabase.readOnly(fixture.snapshotPath()))
+				.findAllSubjects().getFirst();
+		Path absentRoot = fixture.snapshotPath()
+				.resolveSibling(fixture.snapshotPath().getFileName() + ".benchmark-no-pdfs");
+
+		// A directory at this location would make the benchmark's
+		// PDF-availability assumptions unreliable.
+		Files.createDirectories(absentRoot);
+		assertThrows(IllegalStateException.class, () -> workloads.dashboardAuditSubject(subject.getId()));
+	}
+
+	@Test
+	void dashboardAuditUsesProductionServiceAndPreservesSnapshot() throws Exception {
+		Fixture fixture = createFixture();
+		byte[] before = Files.readAllBytes(fixture.snapshotPath());
+		SqliteDatabase database = SqliteDatabase.readOnly(fixture.snapshotPath());
+		Subject subject = new SqliteCurriculumRepository(database).findAllSubjects().getFirst();
+
+		// Calculate the expected audit result independently using
+		// the actual production corpus-audit service.
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		ExamCorpusAuditService service = new ExamCorpusAuditService(examWriter,
+				new SqliteAnswerWriter(database, examWriter), new SqliteQuestionRepository(database),
+				new PdfStore(tempDirectory.resolve("control-empty-pdfs")));
+		List<ExamCorpusStatus> expected = service.assessSubject(subject);
+		assertEquals(1, expected.size());
+		assertEquals(2, expected.getFirst().questionSummary().totalQuestions());
+		assertFalse(expected.getFirst().bookletStatuses().getFirst().questionPdfAvailable());
+		PerformanceBenchmarkWorkloads workloads = new PerformanceBenchmarkWorkloads(fixture.snapshotPath());
+		PerformanceBenchmarkResult result = new PerformanceBenchmarkRunner().run("dashboard.audit.subject", 1, 2,
+				workloads.dashboardAuditSubject(subject.getId()));
+		assertEquals(expected.size(), result.resultCount());
+		assertEquals(1, result.warmupIterations());
+		assertEquals(2, result.measuredIterations());
+		Path absentRoot = fixture.snapshotPath()
+				.resolveSibling(fixture.snapshotPath().getFileName() + ".benchmark-no-pdfs");
+		assertFalse(Files.exists(absentRoot));
+		assertArrayEquals(before, Files.readAllBytes(fixture.snapshotPath()));
+		assertFalse(Files.exists(fixture.snapshotPath().resolveSibling(fixture.snapshotPath().getFileName() + "-wal")));
+		assertFalse(Files.exists(fixture.snapshotPath().resolveSibling(fixture.snapshotPath().getFileName() + "-shm")));
 	}
 
 	@Test

@@ -35,6 +35,37 @@ class PerformanceBenchmarkToolTest {
 	Path tempDirectory;
 
 	@Test
+	void benchmarksDashboardAuditAndExportsCsv() throws Exception {
+		Fixture fixture = createFixture();
+		Path csv = tempDirectory.resolve("dashboard-audit.csv");
+		byte[] before = Files.readAllBytes(fixture.snapshot());
+		ByteArrayOutputStream outputBytes = new ByteArrayOutputStream();
+		ByteArrayOutputStream errorBytes = new ByteArrayOutputStream();
+		String operation = "dashboard.audit.subject:" + fixture.subjectId();
+		int status = PerformanceBenchmarkTool.run(
+				new String[] { "--snapshot", fixture.snapshot().toString(), "--operation", operation, "--warmups", "1",
+						"--iterations", "2", "--label", "dashboard-audit-test", "--csv", csv.toString() },
+				new PrintStream(outputBytes), new PrintStream(errorBytes));
+		assertEquals(0, status);
+		assertTrue(errorBytes.toString().isEmpty());
+		String output = outputBytes.toString();
+		assertTrue(output.contains("Operation: " + operation));
+		assertTrue(output.contains("Measured iterations: 2"));
+
+		// The fixture has one Exam containing one Question.
+		// The audit workload counts Exams, not Questions.
+		assertTrue(output.contains("Result count: 1"));
+		assertTrue(Files.isRegularFile(csv));
+		List<String> rows = Files.readAllLines(csv);
+		assertEquals(2, rows.size());
+		assertEquals(PerformanceBenchmarkCsvReport.HEADER, rows.getFirst());
+		assertTrue(rows.get(1).contains("," + operation + ",1,2,1,"));
+		assertArrayEquals(before, Files.readAllBytes(fixture.snapshot()));
+		Path absentRoot = fixture.snapshot().resolveSibling(fixture.snapshot().getFileName() + ".benchmark-no-pdfs");
+		assertFalse(Files.exists(absentRoot));
+	}
+
+	@Test
 	void csvReportContainsRealSnapshotFingerprintAndMetadata() throws Exception {
 		Fixture fixture = createFixture();
 		Path csv = tempDirectory.resolve("results.csv");
@@ -180,6 +211,15 @@ class PerformanceBenchmarkToolTest {
 				"question.findAll", "--iterations", "-1"));
 		assertEquals(2, runTool("--snapshot", tempDirectory.resolve("x.db").toString(), "--operation",
 				"question.findAll", "--operation", "question.findAll"));
+	}
+
+	@Test
+	void rejectsMissingDashboardAuditSubject() throws Exception {
+		Fixture fixture = createFixture();
+		assertEquals(2,
+				runTool("--snapshot", fixture.snapshot().toString(), "--operation", "dashboard.audit.subject:0"));
+		assertEquals(1, runTool("--snapshot", fixture.snapshot().toString(), "--operation",
+				"dashboard.audit.subject:999999", "--warmups", "1", "--iterations", "1"));
 	}
 
 	@Test

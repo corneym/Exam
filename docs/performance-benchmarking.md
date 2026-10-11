@@ -46,6 +46,7 @@ Supported selectors:
 | `search.current.unit:<id>` | Find applicable Questions within the selected current Unit |
 | `search.current.topic:<id>` | Find applicable Questions within the selected current Topic |
 | `search.current.descriptor:<id>` | Find applicable Questions for the selected current Descriptor |
+| `dashboard.audit.subject:<id>` | Audit all Exams belonging to the selected Subject using the production corpus-audit service; report the number of Exams |
 
 Use real persisted identifiers from the *same snapshot*. Curriculum scopes are resolved into current-syllabus Subtopics and Descriptors **outside** each timed execution. Search workloads invoke `SqliteQuestionRepository.findApplicableToNodes(...)`, including confirmed historical mappings; a Question applicable to multiple requested nodes is counted once. A scope with no retrievable nodes, a historical node, or a missing ID fails rather than producing a misleading measurement.
 
@@ -114,6 +115,8 @@ After adding Batch 06 CSV reporting, the unchanged baseline snapshot was benchma
 
 ## Boundaries and pending workloads
 
-The CLI currently covers whole-bank reconstruction, single-Question reconstruction, and current-curriculum Subject/Unit/Topic/Descriptor applicability. Dashboard/corpus snapshot preparation is part of Issue #110 but has not yet been added to this CLI. Future richer Question Search filters from Issue #94 can be registered as new workload selectors without changing `PerformanceBenchmarkRunner` or the CSV report schema.
+The CLI covers whole-bank reconstruction, single-Question reconstruction, current-curriculum Subject/Unit/Topic/Descriptor applicability, and Subject-level Dashboard corpus auditing. The `dashboard.audit.subject:<id>` workload uses `ExamCorpusAuditService.assessSubject(...)`, including Question reconstruction, Exam/booklet retrieval, AnswerFile assignment and calculated completeness. PDF assets are deliberately unavailable to this workload; therefore its PDF-availability findings must not be compared with those from a complete installed data root.
+
+This is one production preparation boundary, not the entire Dashboard snapshot. The complete Dashboard also prepares curriculum mapping coverage and performs a separate whole-bank Question retrieval. User-visible JavaFX responsiveness is measured through Issue #109 runtime diagnostics. Future richer Question Search filters from Issue #94 can be registered without redesigning `PerformanceBenchmarkRunner` or the CSV reporting schema.
 
 Do not confuse these isolated repository timings with user-visible JavaFX responsiveness. For end-to-end interaction timings use the separate opt-in Issue #109 recorder and its `performance.csv` file.

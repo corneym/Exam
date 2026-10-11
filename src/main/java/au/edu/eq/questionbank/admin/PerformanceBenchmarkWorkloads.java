@@ -1,5 +1,7 @@
 package au.edu.eq.questionbank.admin;
 
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.List;
@@ -7,8 +9,14 @@ import java.util.Objects;
 
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
+import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.pdf.PdfStore;
+import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
+import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.audit.ExamCorpusAuditService;
 
 /**
  * Defines benchmark workloads backed by production Question repositories.
@@ -21,29 +29,66 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
  */
 public final class PerformanceBenchmarkWorkloads {
 
+	private final Path absentAssetRoot;
+	private final SqliteDatabase database;
 	private final SqliteQuestionRepository questions;
 
-	/**
-	 * Creates workloads using an existing read-only database snapshot.
-	 *
-	 * @param snapshotPath explicit path to an immutable SQLite snapshot
-	 * @throws SQLException         if the snapshot is unavailable or its schema is
-	 *                              not the current application schema
-	 * @throws NullPointerException if snapshotPath is null
-	 */
 	public PerformanceBenchmarkWorkloads(Path snapshotPath) throws SQLException {
 		Objects.requireNonNull(snapshotPath, "snapshotPath");
-		SqliteDatabase database = SqliteDatabase.readOnly(snapshotPath);
+		database = SqliteDatabase.readOnly(snapshotPath);
 		int schemaVersion = database.schemaVersion();
 		if (schemaVersion != SqliteDatabase.latestSchemaVersion()) {
 			throw new SQLException("Benchmark requires schema version " + SqliteDatabase.latestSchemaVersion()
 					+ "; snapshot has version " + schemaVersion);
 		}
 
-		// Validate once, outside measured benchmark iterations.
-		// Never invoke schema initialisation on a benchmark snapshot.
+		// Validate the immutable snapshot before any measurements.
+		// Never initialise or migrate the benchmark database.
 		database.verifySchema();
-		this.questions = new SqliteQuestionRepository(database);
+		questions = new SqliteQuestionRepository(database);
+
+		// The audit service checks managed PDF availability. Use a
+		// deliberately nonexistent root so timings never depend on
+		// mutable development or production PDF assets.
+		Path absoluteSnapshot = snapshotPath.toAbsolutePath().normalize();
+		absentAssetRoot = absoluteSnapshot.resolveSibling(absoluteSnapshot.getFileName() + ".benchmark-no-pdfs");
+	}
+
+	/**
+	 * Creates a production Dashboard corpus-audit benchmark for one Subject.
+	 *
+	 * Subject resolution and repository/service construction occur outside measured
+	 * iterations. Every iteration executes the real
+	 * ExamCorpusAuditService.assessSubject operation.
+	 *
+	 * Physical Question PDFs are deliberately treated as unavailable, because this
+	 * workload requires only an immutable SQLite snapshot. Consequently, it
+	 * measures audit preparation but cannot reproduce the PDF-availability findings
+	 * of a complete installed data root.
+	 *
+	 * @param subjectId positive persisted Subject identifier
+	 * @return workload reporting the number of audited Exams
+	 * @throws IllegalArgumentException if the Subject ID is invalid or absent
+	 * @throws IllegalStateException    if the reserved absent-asset root exists
+	 */
+	public PerformanceBenchmarkRunner.Workload dashboardAuditSubject(long subjectId) {
+		if (subjectId <= 0) {
+			throw new IllegalArgumentException("Subject ID must be positive");
+		}
+		Subject subject = new SqliteCurriculumRepository(database).findSubjectById(subjectId)
+				.orElseThrow(() -> new IllegalArgumentException("Benchmark Subject does not exist: " + subjectId));
+		requireAbsentAssetRoot();
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		ExamCorpusAuditService auditService = new ExamCorpusAuditService(examWriter, answerWriter, questions,
+				new PdfStore(absentAssetRoot));
+		return () -> {
+
+			// Detect an accidentally populated asset location rather
+			// than silently changing the benchmark's PDF assumptions.
+			requireAbsentAssetRoot();
+			return auditService.assessSubject(subject).size();
+		};
 	}
 
 	/**
@@ -108,5 +153,11 @@ public final class PerformanceBenchmarkWorkloads {
 			}
 			return 1L;
 		};
+	}
+
+	private void requireAbsentAssetRoot() {
+		if (Files.exists(absentAssetRoot, LinkOption.NOFOLLOW_LINKS)) {
+			throw new IllegalStateException("Reserved benchmark asset root must not exist: " + absentAssetRoot);
+		}
 	}
 }
