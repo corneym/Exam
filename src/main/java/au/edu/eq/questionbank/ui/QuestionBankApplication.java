@@ -96,6 +96,7 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.audit.BookletApplicabilityReviewService;
 import au.edu.eq.questionbank.service.audit.ExamCorpusAuditService;
 import au.edu.eq.questionbank.service.audit.ExamCorpusStatus;
+import au.edu.eq.questionbank.service.audit.ExamLifecycleService;
 import au.edu.eq.questionbank.service.backup.ApplicationRestartService;
 import au.edu.eq.questionbank.service.backup.AutomaticBackupRetention;
 import au.edu.eq.questionbank.service.backup.BackupException;
@@ -251,6 +252,7 @@ public class QuestionBankApplication extends Application {
 	private BookletApplicabilityReviewRepository bookletApplicabilityReviewRepository;
 	private BookletApplicabilityReviewService bookletApplicabilityReviewService;
 	private boolean corpusDashboardReviewChangeRunning;
+	private ExamLifecycleService examLifecycleService;
 
 	// Curriculum persistence joins the application-owned Working Subject refresh
 	// rather than being read by CurriculumSelectorPane on the JavaFX thread.
@@ -928,9 +930,10 @@ public class QuestionBankApplication extends Application {
 		}
 		Task<Exam> task = new ApplicationBackgroundTask<>(() -> {
 
-			// SQLite persistence must not block the JavaFX application thread. The same
-			// authoritative writer remains responsible for lifecycle semantics.
-			return examWriter.setExamCaptureState(exam, targetState);
+			// Reassess corpus and applicability readiness off the JavaFX thread.
+			// The lifecycle service owns the COMPLETE decision; the writer owns
+			// the actual persisted state transition.
+			return examLifecycleService.setCaptureState(exam, targetState);
 		});
 		task.setOnSucceeded(_ -> {
 			Exam updatedExam = task.getValue();
@@ -2757,6 +2760,8 @@ public class QuestionBankApplication extends Application {
 		bookletApplicabilityReviewRepository = new SqliteBookletApplicabilityReviewRepository(database);
 		bookletApplicabilityReviewService = new BookletApplicabilityReviewService(corpusDashboardAuditService,
 				bookletApplicabilityReviewRepository);
+		examLifecycleService = new ExamLifecycleService(examWriter, corpusDashboardAuditService,
+				bookletApplicabilityReviewRepository);
 		initialiseExamAssetsWorkflow(primaryStage, config, database, answerWriter);
 		initialiseCapturePanes(primaryStage, config, database, sourceQuestionRepository, questionCaptureService,
 				legacyQuestionSplitService, answerWriter);
@@ -2959,11 +2964,6 @@ public class QuestionBankApplication extends Application {
 			refreshOperation.close();
 			throw failure;
 		}
-	}
-
-	private CorpusDashboardSnapshot loadCorpusDashboardSnapshot(ApplicationConfig config,
-			ExamCorpusAuditService auditService, Subject dashboardSubject) throws SQLException {
-		return loadCorpusDashboardSnapshot(config, auditService, dashboardSubject, 0);
 	}
 
 	private CorpusDashboardSnapshot loadCorpusDashboardSnapshot(ApplicationConfig config,

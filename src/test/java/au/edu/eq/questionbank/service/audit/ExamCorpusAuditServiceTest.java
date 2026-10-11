@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
@@ -114,10 +116,21 @@ class ExamCorpusAuditServiceTest {
 		questionRepository.save(paper1, "1", "", 2, List.of(new QuestionRegion(paper1, 1, 0.10, 0.10, 0.70, 0.20)),
 				descriptor, false, null, null, QuestionResponseType.WRITTEN_RESPONSE);
 
-		// Complete the Exam only after all intended structural setup has been
-		// persisted.
-		// The missing Answer and missing Paper 2 PDF must not reverse this declaration.
-		examWriter.setExamCaptureState(exam, ExamCaptureState.COMPLETE);
+		// Simulate a historical COMPLETE declaration made before the
+		// applicability-review requirement existed.
+		//
+		// The modern lifecycle service would reject this incomplete Exam.
+		// Migration and ordinary auditing must nevertheless preserve its
+		// previously declared state.
+		try (Connection connection = database.openConnection();
+				PreparedStatement update = connection.prepareStatement("""
+						UPDATE exams
+						SET capture_state = 'COMPLETE'
+						WHERE id = ?
+						""")) {
+			update.setLong(1, exam.getId());
+			assertEquals(1, update.executeUpdate());
+		}
 		Subject physics = curriculumWriter.insertSubject("Physics");
 
 		// A different Subject Exam proves the service honours the authoritative
@@ -253,7 +266,20 @@ class ExamCorpusAuditServiceTest {
 
 		// Planning metadata may legitimately precede source-asset registration.
 		examWriter.updateExamAssetExpectations(exam, 1, 0);
-		Exam completed = examWriter.setExamCaptureState(exam, ExamCaptureState.COMPLETE);
+
+		// Model an existing COMPLETE declaration that predates the
+		// current review and completion requirements.
+		try (Connection connection = database.openConnection();
+				PreparedStatement update = connection.prepareStatement("""
+						UPDATE exams
+						SET capture_state = 'COMPLETE'
+						WHERE id = ?
+						""")) {
+			update.setLong(1, exam.getId());
+			assertEquals(1, update.executeUpdate());
+		}
+		Exam completed = examWriter.findExamsForSubject(chemistry).stream()
+				.filter(candidate -> candidate.getId() == exam.getId()).findFirst().orElseThrow();
 		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
 		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
 		ExamCorpusAuditService service = new ExamCorpusAuditService(examWriter, answerWriter, questionRepository,

@@ -20,7 +20,6 @@ import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.AnswerRegion;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
-import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.Subject;
@@ -56,7 +55,10 @@ class SqliteAnswerWriterTest {
 		AnswerFile reloaded = answerWriter.findAnswerFiles(booklet.getExam()).getFirst();
 		assertEquals(created.getId(), reloaded.getId());
 		assertTrue(reloaded.hasAnswerExplanations());
-		Exam completedExam = examWriter.setExamCaptureState(booklet.getExam(), ExamCaptureState.COMPLETE);
+
+		// Preserve a historical COMPLETE fixture to verify that
+		// explanation metadata remains editable after completion.
+		Exam completedExam = HistoricalCompleteExamFixture.markComplete(database, examWriter, booklet.getExam());
 
 		// Explanation metadata remains descriptive: reusing the existing Answer asset
 		// may correct the flag without reactivating the completed Exam.
@@ -131,7 +133,10 @@ class SqliteAnswerWriterTest {
 		answerWriter.assignAnswerFile(paper1, answersA);
 		answerWriter.assignAnswerFile(paper2, answersA);
 		assertEquals(2, countRows(database, "answer_files"));
-		Exam completedExam = examWriter.setExamCaptureState(paper1.getExam(), ExamCaptureState.COMPLETE);
+
+		// This test checks structural locking and permitted Answer edits,
+		// not the eligibility of a new lifecycle transition.
+		Exam completedExam = HistoricalCompleteExamFixture.markComplete(database, examWriter, paper1.getExam());
 
 		// Reusing an already registered AnswerFile and its already-established booklet
 		// mapping is non-structural and must remain legal.

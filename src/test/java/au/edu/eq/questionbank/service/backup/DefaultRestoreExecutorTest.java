@@ -20,6 +20,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.ApplicationConfig;
+import au.edu.eq.questionbank.repository.sqlite.HistoricalSchemaFixture;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 class DefaultRestoreExecutorTest {
@@ -250,6 +251,11 @@ class DefaultRestoreExecutorTest {
 	private void createVersion11Database(Path databasePath) throws Exception {
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		database.initialiseSchema();
+
+		// The source backup must contain genuine v11 structures, not
+		// residual applicability-review objects from modern schema versions.
+		HistoricalSchemaFixture.removePostVersion19Objects(database);
+
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 
 			// Seed values that migration v12->v13 must preserve while renaming the

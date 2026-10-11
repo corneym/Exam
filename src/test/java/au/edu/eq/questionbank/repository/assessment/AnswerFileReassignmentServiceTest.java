@@ -14,7 +14,6 @@ import org.junit.jupiter.api.io.TempDir;
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.AnswerRegion;
 import au.edu.eq.questionbank.model.ExamBooklet;
-import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
@@ -140,7 +139,11 @@ class AnswerFileReassignmentServiceTest {
 				"Correct marking guide", "Chemistry/QCAA/2025/new-answers.pdf", "6".repeat(64));
 		fixture.answerWriter().insertAnswer(written, null,
 				List.of(new AnswerRegion(oldFile, 3, 0.10, 0.20, 0.50, 0.12)));
-		fixture.examWriter().setExamCaptureState(fixture.booklet().getExam(), ExamCaptureState.COMPLETE);
+
+		// Recreate a historical COMPLETE Exam to test structural
+		// reassignment protection without invoking modern completion eligibility.
+		HistoricalCompleteExamFixture.markComplete(fixture.database(), fixture.examWriter(),
+				fixture.booklet().getExam());
 		AnswerFileReassignmentService service = new AnswerFileReassignmentService(fixture.database());
 		assertThrows(IllegalStateException.class, () -> service.reassign(fixture.booklet(), replacement));
 

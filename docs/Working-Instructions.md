@@ -135,10 +135,9 @@ Number multiple proposed changes.
 
 When producing code, add Javadoc where required for public API and add algorithmic `//` comments where they improve understanding.
 
-Do not give me a large batch of unrelated implementation changes unless I explicitly ask for one.
-
 After each code slice, tell me exactly which test command to run. If it is a UI test, use the headless command.
 
+UI test commands: Always provide Maven commands using the project's -Pheadless-ui-tests profile. The user runs Maven from Git Bash in Eclipse on Windows. Do not provide xvfb-run commands or ordinary desktop UI test commands. Use the existing Maven configuration rather than inventing test execution flags.
 Do not test beyond what the slice requires. Avoid unnecessarily running very large test classes that take minutes.
 
 If I report that the tests are green, continue to the next logical slice only after checking the acceptance criteria.

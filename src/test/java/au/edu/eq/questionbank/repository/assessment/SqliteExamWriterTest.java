@@ -239,7 +239,8 @@ class SqliteExamWriterTest {
 
 		// Persist a different lifecycle state so the query also proves that Exam
 		// Setup receives authoritative ACTIVE/COMPLETE state.
-		writer.setExamCaptureState(chemistry2024, ExamCaptureState.COMPLETE);
+		// Preserve a pre-review COMPLETE Exam with no registered assets.
+		HistoricalCompleteExamFixture.markComplete(database, writer, chemistry2024);
 		List<Exam> exams = writer.findExamsForSubject(chemistry);
 		assertEquals(2, exams.size());
 
@@ -502,7 +503,10 @@ class SqliteExamWriterTest {
 		assertNotNull(reloaded);
 		assertEquals(ExamBookletQuestionFormat.MIXED, reloaded.getQuestionFormat());
 		assertEquals(18, reloaded.getExpectedQuestionCount());
-		Exam completed = writer.setExamCaptureState(exam, ExamCaptureState.COMPLETE);
+
+		// Construct a historical COMPLETE Exam to test structural locking
+		// independently of current completion eligibility.
+		Exam completed = HistoricalCompleteExamFixture.markComplete(database, writer, exam);
 		assertTrue(completed.isComplete());
 
 		// Both changing existing booklet planning and adding a new booklet alter Exam
@@ -552,7 +556,10 @@ class SqliteExamWriterTest {
 		assertEquals(1, partiallyAvailable.availableQuestionBookletCount());
 		assertEquals(1, partiallyAvailable.expectedAnswerFileCount());
 		assertEquals(1, partiallyAvailable.availableAnswerFileCount());
-		Exam completed = writer.setExamCaptureState(exam, ExamCaptureState.COMPLETE);
+
+		// Historical COMPLETE state permits verification of the structural
+		// lock even though planned Question booklets are still missing.
+		Exam completed = HistoricalCompleteExamFixture.markComplete(database, writer, exam);
 
 		// Changing expectations changes Exam structure and therefore requires explicit
 		// reactivation.
@@ -577,6 +584,21 @@ class SqliteExamWriterTest {
 		// them.
 		assertEquals(ExamCaptureState.ACTIVE, exam.getCaptureState());
 		assertFalse(exam.isComplete());
+
+		// A new completion transition requires a known Question-booklet
+		// structure and an explicit persisted review confirmation.
+		SourceDocument document = writer.insertSourceDocument("Chemistry/QCAA/2025/paper1.pdf");
+		ExamBooklet booklet = writer.insertExamBooklet(exam, document, "Paper 1",
+				ExamBookletQuestionFormat.MULTIPLE_CHOICE, 1);
+		writer.updateExamAssetExpectations(exam, 1, 0);
+
+		// The writer must reject COMPLETE before review confirmation.
+		assertThrows(IllegalStateException.class, () -> writer.setExamCaptureState(exam, ExamCaptureState.COMPLETE));
+		assertEquals(ExamCaptureState.ACTIVE,
+				writer.findExamByProviderAndYear(chemistry, "QCAA", 2025).getCaptureState());
+
+		// Record the review after all structural fixture setup.
+		new SqliteBookletApplicabilityReviewRepository(database).setReviewed(booklet.getId(), true);
 		Exam completed = writer.setExamCaptureState(exam, ExamCaptureState.COMPLETE);
 		assertTrue(completed.isComplete());
 

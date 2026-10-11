@@ -18,7 +18,6 @@ import org.junit.jupiter.api.io.TempDir;
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.AnswerRegion;
 import au.edu.eq.questionbank.model.ExamBooklet;
-import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.PdfQuestionContentPart;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
@@ -95,7 +94,11 @@ class SqliteExamAssetDeletionServiceTest {
 	@Test
 	void completeExamRejectsAssetDeletionWithoutChangingPersistence() throws Exception {
 		Fixture fixture = createFixture("reject-complete-deletion.db");
-		fixture.examWriter().setExamCaptureState(fixture.booklet().getExam(), ExamCaptureState.COMPLETE);
+
+		// Preserve a historical COMPLETE declaration so deletion tests
+		// exercise the persisted structural lock rather than review eligibility.
+		HistoricalCompleteExamFixture.markComplete(fixture.database(), fixture.examWriter(),
+				fixture.booklet().getExam());
 		SqliteExamAssetDeletionService service = new SqliteExamAssetDeletionService(fixture.database(),
 				fixture.examWriter());
 
