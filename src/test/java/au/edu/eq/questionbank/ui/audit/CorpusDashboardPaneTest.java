@@ -86,34 +86,26 @@ class CorpusDashboardPaneTest {
 		// Found and expected top-level Question counts belong in one column.
 		assertTrue(booklets.getColumns().stream()
 				.noneMatch(column -> "Expected".equals(column.getText()) || "Found".equals(column.getText())));
-
 		TableColumn<BookletCorpusStatus, String> questions = booklets.getColumns().stream()
 				.filter(column -> "Questions".equals(column.getText()))
 				.map(column -> (TableColumn<BookletCorpusStatus, String>) column).findFirst().orElseThrow();
-
 		TableColumn<BookletCorpusStatus, String> descriptors = booklets.getColumns().stream()
 				.filter(column -> "No descriptor".equals(column.getText()))
 				.map(column -> (TableColumn<BookletCorpusStatus, String>) column).findFirst().orElseThrow();
-
 		TableColumn<BookletCorpusStatus, String> explanations = booklets.getColumns().stream()
 				.filter(column -> "MCQ explanations".equals(column.getText()))
 				.map(column -> (TableColumn<BookletCorpusStatus, String>) column).findFirst().orElseThrow();
-
 		TableColumn<BookletCorpusStatus, String> problems = booklets.getColumns().stream()
 				.filter(column -> "Problems".equals(column.getText()))
 				.map(column -> (TableColumn<BookletCorpusStatus, String>) column).findFirst().orElseThrow();
-
 		ExamBooklet unknownBooklet = new ExamBooklet(80, fixture.activeExam, "Unknown count",
 				new SourceDocument(81, "Chemistry/2024/unknown.pdf"), ExamBookletQuestionFormat.WRITTEN_RESPONSE);
-
 		BookletCorpusStatus unknown = new BookletCorpusStatus(unknownBooklet, true, null, 0, 0, 0,
 				new QuestionCorpusSummary(0, 0, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0),
 				EnumSet.of(BookletCorpusFinding.MISSING_EXPECTED_TOP_LEVEL_QUESTION_COUNT));
-
 		BookletCorpusStatus emptyKnown = new BookletCorpusStatus(fixture.paper2, true, fixture.markingGuide, 0, 0, 0,
 				new QuestionCorpusSummary(0, 0, 0, 0, 0, 0, 0), new McqExplanationCoverage(true, 0, 0),
 				EnumSet.of(BookletCorpusFinding.EXPECTED_TOP_LEVEL_QUESTION_COUNT_MISMATCH));
-
 		BookletCorpusStatus complete = new BookletCorpusStatus(fixture.activePaper, true, null, 10, 10, 0,
 				new QuestionCorpusSummary(10, 10, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0),
 				EnumSet.noneOf(BookletCorpusFinding.class));
@@ -148,14 +140,14 @@ class CorpusDashboardPaneTest {
 	@SuppressWarnings("unchecked")
 	void bookletTableReportsQuestionsWithoutDescriptorClassification(FxRobot robot) {
 		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
-		TableColumn<BookletCorpusStatus, Number> noDescriptorColumn = booklets.getColumns().stream()
+		TableColumn<BookletCorpusStatus, String> noDescriptorColumn = booklets.getColumns().stream()
 				.filter(column -> "No descriptor".equals(column.getText()))
-				.map(column -> (TableColumn<BookletCorpusStatus, Number>) column).findFirst().orElseThrow();
+				.map(column -> (TableColumn<BookletCorpusStatus, String>) column).findFirst().orElseThrow();
 
-		// The booklet table reports descriptor coverage independently from ordinary
-		// completeness and structural Problems.
-		assertEquals(0, noDescriptorColumn.getCellData(fixture.paper1Status).intValue());
-		assertEquals(3, noDescriptorColumn.getCellData(fixture.paper2Status).intValue());
+		// A genuine zero means that captured Questions are classified.
+		// A non-zero value identifies outstanding descriptor classification.
+		assertEquals("0", noDescriptorColumn.getCellData(fixture.paper1Status));
+		assertEquals("3", noDescriptorColumn.getCellData(fixture.paper2Status));
 	}
 
 	@Test
@@ -801,6 +793,27 @@ class CorpusDashboardPaneTest {
 
 	@Test
 	@SuppressWarnings("unchecked")
+	void missingExpectedBookletCountShowsActionableWarning(FxRobot robot) {
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		Label warning = robot.lookup("#corpus-dashboard-booklet-warning").queryAs(Label.class);
+		ExamBooklet unknownBooklet = new ExamBooklet(90, fixture.activeExam, "Unknown expectations",
+				new SourceDocument(91, "Chemistry/2024/unknown.pdf"), ExamBookletQuestionFormat.WRITTEN_RESPONSE);
+		BookletCorpusStatus unknown = new BookletCorpusStatus(unknownBooklet, true, null, 0, 0, 0,
+				new QuestionCorpusSummary(0, 0, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0),
+				EnumSet.of(BookletCorpusFinding.MISSING_EXPECTED_TOP_LEVEL_QUESTION_COUNT));
+		robot.interact(() -> {
+			booklets.getItems().setAll(unknown);
+			booklets.getSelectionModel().select(unknown);
+		});
+
+		// A problem indicator must have an actionable explanation.
+		assertTrue(warning.isVisible());
+		assertTrue(warning.getText().contains("Expected top-level Question count has not been recorded"));
+		assertTrue(warning.getText().contains("Manage Exam / Assets"));
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
 	void missingMcqExplanationsAreReportedAndRoutedAsSeparateExamWork(FxRobot robot) {
 		AtomicReference<Question> routedQuestion = new AtomicReference<>();
 		robot.interact(() -> pane.setMcqExplanationCaptureHandler(routedQuestion::set));
@@ -833,8 +846,9 @@ class CorpusDashboardPaneTest {
 				.filter(column -> "Problems".equals(column.getText()))
 				.map(column -> (TableColumn<BookletCorpusStatus, String>) column).findFirst().orElseThrow();
 
-		// Question Booklets reports the same active work dimension as Question Work.
-		assertEquals("1 missing MCQ explanation", bookletProblemColumn.getCellData(booklets.getItems().getFirst()));
+		// Question Booklets indicates outstanding work without repeating
+		// the detailed problem description shown in Question Work.
+		assertEquals("Yes", bookletProblemColumn.getCellData(booklets.getItems().getFirst()));
 		assertEquals(1, questions.getItems().size());
 		assertEquals("Q1", questions.getItems().getFirst().question().getQuestionCode());
 		TableColumn<QuestionCorpusWorkItem, String> problemColumn = questions.getColumns().stream()

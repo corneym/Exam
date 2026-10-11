@@ -63,21 +63,17 @@ class BookletCorpusAuditTest {
 	@Test
 	void bookletExpectedCountDistinguishesEmptyShortExactAndExcessCapture() {
 		ExamBooklet expectedTwo = fixture.booklet;
-
 		Question first = fixture.question(73, expectedTwo, "1", null);
 		Question second = fixture.question(74, expectedTwo, "2", null);
 		Question third = fixture.question(75, expectedTwo, "3", null);
-
 		BookletCorpusStatus empty = BookletCorpusAudit.assess(expectedTwo, List.of(), null, true);
 		BookletCorpusStatus shortfall = BookletCorpusAudit.assess(expectedTwo, List.of(first), null, true);
 		BookletCorpusStatus exact = BookletCorpusAudit.assess(expectedTwo, List.of(first, second), null, true);
 		BookletCorpusStatus excess = BookletCorpusAudit.assess(expectedTwo, List.of(first, second, third), null, true);
-
 		assertEquals(0, empty.encounteredTopLevelQuestionCount());
 		assertEquals(1, shortfall.encounteredTopLevelQuestionCount());
 		assertEquals(2, exact.encounteredTopLevelQuestionCount());
 		assertEquals(3, excess.encounteredTopLevelQuestionCount());
-
 		assertTrue(empty.hasFinding(BookletCorpusFinding.EXPECTED_TOP_LEVEL_QUESTION_COUNT_MISMATCH));
 		assertTrue(shortfall.hasFinding(BookletCorpusFinding.EXPECTED_TOP_LEVEL_QUESTION_COUNT_MISMATCH));
 		assertFalse(exact.hasFinding(BookletCorpusFinding.EXPECTED_TOP_LEVEL_QUESTION_COUNT_MISMATCH));
@@ -117,20 +113,16 @@ class BookletCorpusAuditTest {
 	void missingExpectedQuestionCountRequiresAttentionEvenForEmptyBooklet() {
 		ExamBooklet unknownCountBooklet = new ExamBooklet(70, fixture.exam, "Unknown count",
 				new SourceDocument(71, "Chemistry/2025/unknown.pdf"), ExamBookletQuestionFormat.WRITTEN_RESPONSE);
-
 		BookletCorpusStatus empty = BookletCorpusAudit.assess(unknownCountBooklet, List.of(), null, true);
-
 		assertNull(empty.expectedTopLevelQuestionCount());
 		assertEquals(0, empty.encounteredTopLevelQuestionCount());
 
 		// An unknown expectation is not the same as a confirmed
 		// zero-work or complete booklet.
 		assertTrue(empty.requiresAttention());
-
 		Question captured = fixture.question(72, unknownCountBooklet, "1", null);
 		BookletCorpusStatus partlyCaptured = BookletCorpusAudit.assess(unknownCountBooklet, List.of(captured), null,
 				true);
-
 		assertNull(partlyCaptured.expectedTopLevelQuestionCount());
 		assertEquals(1, partlyCaptured.encounteredTopLevelQuestionCount());
 		assertTrue(partlyCaptured.requiresAttention());

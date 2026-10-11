@@ -604,24 +604,10 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private String bookletProblemLabel(BookletCorpusStatus status) {
-		if (mcqExplanationFilterActive) {
-			int missingExplanations = status.mcqExplanationCoverage().missingExplanationCount();
-			if (missingExplanations == 0) {
-				return "—";
-			}
 
-			// While the Dashboard is explicitly showing missing explanation work, the
-			// booklet Problem column should describe that same work dimension rather than
-			// falling back to ordinary incomplete-Question counts.
-			return missingExplanations == 1 ? "1 missing MCQ explanation"
-					: missingExplanations + " missing MCQ explanations";
-		}
-		int problemCount = status.questionSummary().incompleteQuestions();
-
-		// Outside the explanation drill-down, preserve the existing ordinary Question
-		// problem count. Structural booklet findings remain in the warning
-		// presentation.
-		return problemCount == 0 ? "—" : Integer.toString(problemCount);
+		// Use the authoritative booklet audit so structural findings,
+		// incomplete Questions and missing MCQ explanations all count.
+		return status.requiresAttention() ? "Yes" : "—";
 	}
 
 	private BookletCorpusStatus bookletStatusFor(Question question) {
@@ -650,19 +636,26 @@ public final class CorpusDashboardPane extends VBox {
 		if (status.hasFinding(BookletCorpusFinding.MISSING_QUESTION_PDF)) {
 			text.append("Question PDF is missing. Use Manage Exam / Assets before Question capture.");
 		}
+		if (status.hasFinding(BookletCorpusFinding.MISSING_EXPECTED_TOP_LEVEL_QUESTION_COUNT)) {
+			if (!text.isEmpty()) {
+				text.append("  ");
+			}
+			text.append("Expected top-level Question count has not been recorded. ")
+					.append("Set the expected count in Manage Exam / Assets.");
+		}
 		if (status.hasFinding(BookletCorpusFinding.EXPECTED_TOP_LEVEL_QUESTION_COUNT_MISMATCH)) {
 			if (!text.isEmpty()) {
 				text.append("  ");
 			}
 
-			// Expected-versus-encountered is advisory: either the corpus is incomplete
-			// or the recorded expectation is wrong.
+			// A mismatch may indicate either incomplete capture or
+			// incorrect planning metadata; do not assume which one.
 			text.append("Expected ").append(status.expectedTopLevelQuestionCount())
 					.append(" top-level Questions; encountered ").append(status.encounteredTopLevelQuestionCount())
 					.append(". ");
 			if (status.booklet().getExam().isComplete()) {
-				text.append(
-						"If Questions are missing, reactivate the Exam in Manage Exam / Assets, then use Capture Questions. ");
+				text.append("If Questions are missing, reactivate the Exam in ")
+						.append("Manage Exam / Assets, then use Capture Questions. ");
 			} else {
 				text.append("If Questions are missing, use Capture Questions. ");
 			}
@@ -996,29 +989,39 @@ public final class CorpusDashboardPane extends VBox {
 				data -> new ReadOnlyStringWrapper(data.getValue().questionPdfAvailable() ? "Available" : "MISSING"));
 		TableColumn<BookletCorpusStatus, String> answerFileColumn = new TableColumn<>("Answer file");
 		answerFileColumn.setCellValueFactory(data -> new ReadOnlyStringWrapper(answerFileLabel(data.getValue())));
-		TableColumn<BookletCorpusStatus, String> expectedColumn = new TableColumn<>("Expected");
-		expectedColumn.setCellValueFactory(
-				data -> new ReadOnlyStringWrapper(nullableCount(data.getValue().expectedTopLevelQuestionCount())));
-		TableColumn<BookletCorpusStatus, Number> foundColumn = new TableColumn<>("Found");
-		foundColumn.setCellValueFactory(
-				data -> new ReadOnlyObjectWrapper<>(data.getValue().encounteredTopLevelQuestionCount()));
+		TableColumn<BookletCorpusStatus, String> questionsColumn = new TableColumn<>("Questions");
+		questionsColumn.setCellValueFactory(data -> {
+			BookletCorpusStatus status = data.getValue();
+			Integer expected = status.expectedTopLevelQuestionCount();
+
+			// Zero captured Questions is known; a missing expectation is not.
+			String expectedText = expected == null ? "?" : expected.toString();
+			String value = status.encounteredTopLevelQuestionCount() + " / " + expectedText;
+			return new ReadOnlyStringWrapper(value);
+		});
 		TableColumn<BookletCorpusStatus, Number> partsColumn = new TableColumn<>("Parts");
 		partsColumn.setCellValueFactory(data -> new ReadOnlyObjectWrapper<>(data.getValue().questionPartCount()));
-		TableColumn<BookletCorpusStatus, Number> noDescriptorColumn = new TableColumn<>("No descriptor");
-		noDescriptorColumn.setCellValueFactory(
-				data -> new ReadOnlyObjectWrapper<>(data.getValue().questionsWithoutDescriptorCount()));
+		TableColumn<BookletCorpusStatus, String> noDescriptorColumn = new TableColumn<>("No descriptor");
+		noDescriptorColumn.setCellValueFactory(data -> {
+			BookletCorpusStatus status = data.getValue();
+
+			// No captured Questions means classification coverage is not applicable.
+			String value = status.questionPartCount() == 0 ? "—"
+					: Integer.toString(status.questionsWithoutDescriptorCount());
+			return new ReadOnlyStringWrapper(value);
+		});
 		TableColumn<BookletCorpusStatus, String> mcqExplanationColumn = new TableColumn<>("MCQ explanations");
 		mcqExplanationColumn
 				.setCellValueFactory(data -> new ReadOnlyStringWrapper(mcqExplanationCoverageText(data.getValue())));
 		TableColumn<BookletCorpusStatus, String> problemsColumn = new TableColumn<>("Problems");
 		problemsColumn.setCellValueFactory(data -> new ReadOnlyStringWrapper(bookletProblemLabel(data.getValue())));
 
-		// Descriptor coverage and MCQ explanation coverage are independent reporting
-		// dimensions beside the ordinary Question counts.
+		// The combined Question count saves space without losing expected-count
+		// information or conflating unknown with not applicable.
 		bookletTable.getColumns()
 				.setAll(List.<TableColumn<BookletCorpusStatus, ?>>of(bookletColumn, formatColumn, pdfColumn,
-						answerFileColumn, expectedColumn, foundColumn, partsColumn, noDescriptorColumn,
-						mcqExplanationColumn, problemsColumn));
+						answerFileColumn, questionsColumn, partsColumn, noDescriptorColumn, mcqExplanationColumn,
+						problemsColumn));
 		centreTableColumns(bookletTable);
 	}
 
@@ -1635,12 +1638,12 @@ public final class CorpusDashboardPane extends VBox {
 
 	private String mcqExplanationCoverageText(BookletCorpusStatus status) {
 		McqExplanationCoverage coverage = status.mcqExplanationCoverage();
-		if (!coverage.explanationCapable()) {
+
+		// With no eligible MCQs, there is no explanation-coverage denominator.
+		// This includes empty and written-response-only booklets.
+		if (!coverage.explanationCapable() || coverage.eligibleQuestionCount() == 0) {
 			return "—";
 		}
-
-		// Booklet rows make the location of explanation work visible without requiring
-		// the teacher to select every booklet individually.
 		return coverage.capturedExplanationCount() + " / " + coverage.eligibleQuestionCount();
 	}
 
