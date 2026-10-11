@@ -3,7 +3,7 @@ package au.edu.eq.questionbank.service.curriculum;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Optional;
+import java.util.Map;
 import java.util.Set;
 
 import au.edu.eq.questionbank.model.CurriculumLevel;
@@ -65,29 +65,33 @@ public final class CurriculumMappingCoverageService {
 	 */
 	public CurriculumMappingCoverage calculateCoverage(SyllabusVersion sourceVersion, SyllabusVersion targetVersion) {
 		validateVersions(sourceVersion, targetVersion);
-		Set<Long> reviewedSourceIds = reviewRepository.findReviewedSourceIds(sourceVersion, targetVersion);
+
+		// One retrieval supplies both the reviewed source IDs and their
+		// authoritative MATCHED or NO_MATCH outcomes.
+		Map<Long, CurriculumMappingReviewOutcome> reviewOutcomes = reviewRepository
+				.findOutcomesForVersions(sourceVersion, targetVersion);
 		ConfirmedPairMappings confirmedMappings = confirmedPairMappings(sourceVersion, targetVersion);
-		CurriculumMappingLevelCoverage descriptorCoverage = calculateLevelCoverage(sourceVersion, targetVersion,
-				CurriculumLevel.DESCRIPTOR, reviewedSourceIds, confirmedMappings.sourceIds(),
+		ReviewLevelNodes sourceNodes = findReviewLevelNodes(sourceVersion);
+		ReviewLevelNodes targetNodes = findReviewLevelNodes(targetVersion);
+		CurriculumMappingLevelCoverage descriptorCoverage = calculateLevelCoverage(sourceNodes.descriptors(),
+				targetNodes.descriptors(), CurriculumLevel.DESCRIPTOR, reviewOutcomes, confirmedMappings.sourceIds(),
 				confirmedMappings.targetIds());
-		CurriculumMappingLevelCoverage subtopicCoverage = calculateLevelCoverage(sourceVersion, targetVersion,
-				CurriculumLevel.SUBTOPIC, reviewedSourceIds, confirmedMappings.sourceIds(),
+		CurriculumMappingLevelCoverage subtopicCoverage = calculateLevelCoverage(sourceNodes.subtopics(),
+				targetNodes.subtopics(), CurriculumLevel.SUBTOPIC, reviewOutcomes, confirmedMappings.sourceIds(),
 				confirmedMappings.targetIds());
 		return new CurriculumMappingCoverage(sourceVersion, targetVersion, descriptorCoverage, subtopicCoverage);
 	}
 
-	private CurriculumMappingLevelCoverage calculateLevelCoverage(SyllabusVersion sourceVersion,
-			SyllabusVersion targetVersion, CurriculumLevel level, Set<Long> reviewedSourceIds,
-			Set<Long> confirmedMappedSourceIds, Set<Long> confirmedMappedTargetIds) {
-		List<CurriculumNode> sourceNodes = findNodesAtLevel(sourceVersion, level);
-		List<CurriculumNode> targetNodes = findNodesAtLevel(targetVersion, level);
+	private CurriculumMappingLevelCoverage calculateLevelCoverage(List<CurriculumNode> sourceNodes,
+			List<CurriculumNode> targetNodes, CurriculumLevel level,
+			Map<Long, CurriculumMappingReviewOutcome> reviewOutcomes, Set<Long> confirmedMappedSourceIds,
+			Set<Long> confirmedMappedTargetIds) {
 		int matched = 0;
 		int noMatch = 0;
 		int unreviewed = 0;
 		int inconsistent = 0;
 		for (CurriculumNode source : sourceNodes) {
-			CurriculumMappingSourceState state = determineSourceState(source, targetVersion, reviewedSourceIds,
-					confirmedMappedSourceIds);
+			CurriculumMappingSourceState state = determineSourceState(source, reviewOutcomes, confirmedMappedSourceIds);
 			switch (state) {
 			case MATCHED:
 				matched++;
@@ -103,9 +107,6 @@ public final class CurriculumMappingCoverageService {
 				break;
 			}
 		}
-
-		// New target content may have no predecessor even when all source reviews are
-		// complete.
 		int uncoveredTargetCount = 0;
 		for (CurriculumNode target : targetNodes) {
 			if (!confirmedMappedTargetIds.contains(target.getId())) {
@@ -114,15 +115,6 @@ public final class CurriculumMappingCoverageService {
 		}
 		return new CurriculumMappingLevelCoverage(level, sourceNodes.size(), matched, noMatch, unreviewed, inconsistent,
 				uncoveredTargetCount);
-	}
-
-	private void collectNodesAtLevel(CurriculumNode node, CurriculumLevel level, List<CurriculumNode> result) {
-		if (node.getLevel() == level) {
-			result.add(node);
-		}
-		for (CurriculumNode child : curriculumRepository.findChildren(node)) {
-			collectNodesAtLevel(child, level, result);
-		}
 	}
 
 	private ConfirmedPairMappings confirmedPairMappings(SyllabusVersion sourceVersion, SyllabusVersion targetVersion) {
@@ -147,36 +139,46 @@ public final class CurriculumMappingCoverageService {
 		return new ConfirmedPairMappings(Set.copyOf(sourceIds), Set.copyOf(targetIds));
 	}
 
-	private CurriculumMappingSourceState determineSourceState(CurriculumNode source, SyllabusVersion targetVersion,
-			Set<Long> reviewedSourceIds, Set<Long> confirmedMappedSourceIds) {
-		boolean reviewed = reviewedSourceIds.contains(source.getId());
+	private CurriculumMappingSourceState determineSourceState(CurriculumNode source,
+			Map<Long, CurriculumMappingReviewOutcome> reviewOutcomes, Set<Long> confirmedMappedSourceIds) {
+		CurriculumMappingReviewOutcome outcome = reviewOutcomes.get(source.getId());
 		boolean confirmedMapping = confirmedMappedSourceIds.contains(source.getId());
 
-		// A mapping alone is not a completed review; the explicit outcome must agree
-		// with it.
-		if (!reviewed) {
+		// Missing review record means unreviewed. A confirmed mapping
+		// without a completed review remains inconsistent.
+		if (outcome == null) {
 			return confirmedMapping ? CurriculumMappingSourceState.INCONSISTENT
 					: CurriculumMappingSourceState.UNREVIEWED;
 		}
-		Optional<CurriculumMappingReviewOutcome> outcome = reviewRepository.findOutcome(source, targetVersion);
-		if (outcome.isEmpty()) {
-			return CurriculumMappingSourceState.INCONSISTENT;
-		}
-		if (outcome.get() == CurriculumMappingReviewOutcome.MATCHED) {
+		if (outcome == CurriculumMappingReviewOutcome.MATCHED) {
 			return confirmedMapping ? CurriculumMappingSourceState.MATCHED : CurriculumMappingSourceState.INCONSISTENT;
 		}
 
-		// An explicit no-match decision is complete only when no confirmed target
-		// contradicts it.
+		// NO_MATCH is valid only when no confirmed target mapping
+		// contradicts the explicit review decision.
 		return confirmedMapping ? CurriculumMappingSourceState.INCONSISTENT : CurriculumMappingSourceState.NO_MATCH;
 	}
 
-	private List<CurriculumNode> findNodesAtLevel(SyllabusVersion syllabusVersion, CurriculumLevel level) {
-		List<CurriculumNode> result = new ArrayList<>();
-		for (CurriculumNode root : curriculumRepository.findRootNodes(syllabusVersion)) {
-			collectNodesAtLevel(root, level, result);
+	private ReviewLevelNodes findReviewLevelNodes(SyllabusVersion syllabusVersion) {
+		List<CurriculumNode> subtopics = new ArrayList<>();
+		List<CurriculumNode> descriptors = new ArrayList<>();
+
+		// The repository supplies both reviewable levels through one
+		// bulk operation for SQLite, or its standard hierarchy traversal
+		// for other implementations.
+		for (CurriculumNode node : curriculumRepository.findReviewNodes(syllabusVersion)) {
+			switch (node.getLevel()) {
+			case SUBTOPIC:
+				subtopics.add(node);
+				break;
+			case DESCRIPTOR:
+				descriptors.add(node);
+				break;
+			default:
+				throw new IllegalStateException("Unexpected curriculum review node level: " + node.getLevel());
+			}
 		}
-		return List.copyOf(result);
+		return new ReviewLevelNodes(List.copyOf(subtopics), List.copyOf(descriptors));
 	}
 
 	private void validateVersions(SyllabusVersion sourceVersion, SyllabusVersion targetVersion) {
@@ -198,6 +200,9 @@ public final class CurriculumMappingCoverageService {
 		if (!targetVersion.isCurrent()) {
 			throw new IllegalArgumentException("target syllabus version must be current");
 		}
+	}
+
+	private record ReviewLevelNodes(List<CurriculumNode> subtopics, List<CurriculumNode> descriptors) {
 	}
 
 	private record ConfirmedPairMappings(Set<Long> sourceIds, Set<Long> targetIds) {

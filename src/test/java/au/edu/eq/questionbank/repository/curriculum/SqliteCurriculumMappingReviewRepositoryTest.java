@@ -3,11 +3,10 @@ package au.edu.eq.questionbank.repository.curriculum;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
-
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.Statement;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -20,6 +19,7 @@ import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 class SqliteCurriculumMappingReviewRepositoryTest {
 
@@ -66,6 +66,18 @@ class SqliteCurriculumMappingReviewRepositoryTest {
 		CurriculumMappingReviewRepository repository = new SqliteCurriculumMappingReviewRepository(database);
 		Set<Long> reviewedSourceIds = repository.findReviewedSourceIds(sourceVersion, targetVersion);
 		assertEquals(Set.of(12L, 13L), reviewedSourceIds);
+
+		// The bulk reader must preserve the outcome of each completed
+		// review and exclude reviews for a different target version.
+		assertEquals(Map.of(12L, CurriculumMappingReviewOutcome.MATCHED, 13L, CurriculumMappingReviewOutcome.NO_MATCH),
+				repository.findOutcomesForVersions(sourceVersion, targetVersion));
+		SyllabusVersion otherTargetVersion = new SyllabusVersion(3, subject, "Other syllabus", false);
+		assertEquals(Map.of(14L, CurriculumMappingReviewOutcome.NO_MATCH),
+				repository.findOutcomesForVersions(sourceVersion, otherTargetVersion));
+
+		// This syllabus has no source nodes in the fixture, so it
+		// cannot contribute reviews for the current target.
+		assertTrue(repository.findOutcomesForVersions(otherTargetVersion, targetVersion).isEmpty());
 	}
 
 	@Test

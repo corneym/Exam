@@ -36,10 +36,9 @@ import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.model.Subject;
-import au.edu.eq.questionbank.model.SyllabusVersion;
-import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteReadProbe;
 
 /**
  * SQLite-backed question repository that reconstructs complete question,
@@ -49,7 +48,7 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 
 	private final SqliteDatabase database;
 	private final SqliteQuestionWriter writer;
-	private final CurriculumRepository curriculumRepository;
+	private final SqliteCurriculumRepository curriculumRepository;
 	private final PerformanceRecorder performanceRecorder;
 
 	/**
@@ -127,28 +126,34 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 	@Override
 	public List<Question> findAll() {
 		List<Long> questionIds = new ArrayList<>();
-		try (Connection connection = database.openConnection();
-				Statement statement = connection.createStatement();
-				ResultSet result = statement.executeQuery("""
-						SELECT id
-						FROM questions
-						ORDER BY id
-						""")) {
-			while (result.next()) {
-				questionIds.add(result.getLong("id"));
+
+		// Keep one connection throughout the bulk retrieval. The ID
+		// cursor is closed before reconstructing complete Questions.
+		try (Connection connection = database.openConnection()) {
+			try (Statement statement = connection.createStatement();
+					ResultSet result = statement.executeQuery(SqliteQuestionSelectSql.allIds())) {
+				while (result.next()) {
+					questionIds.add(result.getLong("id"));
+				}
 			}
-		} catch (SQLException e) {
-			throw new IllegalStateException("Could not read questions from database", e);
-		}
-		List<Question> questions = new ArrayList<>();
-		for (Long questionId : questionIds) {
-			Optional<Question> question = findById(questionId.longValue());
-			if (question.isEmpty()) {
-				throw new IllegalStateException("Question disappeared while reading database: " + questionId);
+			List<Question> questions = new ArrayList<>(questionIds.size());
+			for (Long questionId : questionIds) {
+				Optional<Question> question;
+				try {
+					question = findById(connection, questionId);
+				} catch (SQLException failure) {
+					throw new IllegalStateException("Could not read question " + questionId + " from database",
+							failure);
+				}
+				if (question.isEmpty()) {
+					throw new IllegalStateException("Question disappeared while reading database: " + questionId);
+				}
+				questions.add(question.get());
 			}
-			questions.add(question.get());
+			return questions;
+		} catch (SQLException failure) {
+			throw new IllegalStateException("Could not read questions from database", failure);
 		}
-		return questions;
 	}
 
 	@Override
@@ -167,57 +172,9 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 	public List<QuestionApplicabilityMatch> findApplicableToNodes(List<CurriculumNode> currentNodes,
 			long parentOperationId) {
 		Map<Long, CurriculumNode> requestedNodesById = validateRetrievalNodes(currentNodes);
-		String requestedNodeValues = createRequestedNodeValues(requestedNodesById.size());
 
-		// Match direct current classifications or confirmed historical-to-current
-		// mappings.
-		String sql = """
-				WITH requested_nodes(node_id) AS (
-				    VALUES %s
-				)
-				SELECT DISTINCT
-				    q.id AS question_id,
-				    requested.node_id AS current_node_id
-				FROM requested_nodes requested
-				JOIN curriculum_nodes target
-				    ON target.id = requested.node_id
-				JOIN syllabus_versions target_version
-				    ON target_version.id = target.syllabus_version_id
-				CROSS JOIN questions q
-				JOIN exam_booklets eb
-				    ON eb.id = q.booklet_id
-				JOIN exams e
-				    ON e.id = eb.exam_id
-				JOIN curriculum_nodes classification
-				    ON classification.id = q.classification_node_id
-				JOIN syllabus_versions classification_version
-				    ON classification_version.id =
-				       classification.syllabus_version_id
-				WHERE target_version.is_current = 1
-				  AND target.curriculum_level IN ('SUBTOPIC', 'DESCRIPTOR')
-				  AND e.subject_id = target_version.subject_id
-				  AND (
-				      (
-				          q.classification_node_id = requested.node_id
-				          AND classification_version.id = target_version.id
-				      )
-				      OR EXISTS (
-				          SELECT 1
-				          FROM curriculum_mappings mapping
-				          WHERE mapping.source_node_id =
-				                q.classification_node_id
-				            AND mapping.target_node_id =
-				                requested.node_id
-				            AND mapping.mapping_status = 'CONFIRMED'
-				            AND classification_version.is_current = 0
-				            AND classification_version.subject_id =
-				                target_version.subject_id
-				            AND classification.curriculum_level =
-				                target.curriculum_level
-				      )
-				  )
-				ORDER BY q.id, requested.node_id
-				""".formatted(requestedNodeValues);
+		// The investigation tool uses this same production SQL definition.
+		String sql = SqliteQuestionSelectSql.applicability(requestedNodesById.size());
 		List<ApplicabilityRow> rows = new ArrayList<ApplicabilityRow>();
 		try (PerformanceOperation sqlOperation = performanceRecorder.start("search.repository.sql",
 				parentOperationId)) {
@@ -269,60 +226,10 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 
 	@Override
 	public Optional<Question> findById(long id) {
-		try (Connection connection = database.openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
-						SELECT
-							q.id,
-							q.question_code,
-							q.question_text,
-							q.marks,
-							q.shared_context_capture_required,
-							q.source_capture_required,
-							q.response_type,
-							q.source_question_id,
-							q.shared_context_id,
-							q.classification_node_id,
-							eb.id AS booklet_id,
-							eb.booklet_name,
-							eb.question_format,
-							eb.expected_question_count,
-							sd.id AS source_document_id,
-							sd.relative_path,
-							sd.content_sha256,
-							e.id AS exam_id,
-							e.exam_year,
-							e.exam_name,
-							e.capture_state,
-							s.id AS subject_id,
-							s.subject_name,
-							p.id AS provider_id,
-							p.provider_name,
-							cn.syllabus_version_id,
-							cn.curriculum_code
-						FROM questions q
-						JOIN exam_booklets eb
-							ON eb.id = q.booklet_id
-						JOIN source_documents sd
-							ON sd.id = eb.source_document_id
-						JOIN exams e
-							ON e.id = eb.exam_id
-						JOIN subjects s
-							ON s.id = e.subject_id
-						JOIN exam_providers p
-							ON p.id = e.provider_id
-						JOIN curriculum_nodes cn
-							ON cn.id = q.classification_node_id
-						WHERE q.id = ?
-																		""")) {
-			statement.setLong(1, id);
-			try (ResultSet result = statement.executeQuery()) {
-				if (!result.next()) {
-					return Optional.empty();
-				}
-				return Optional.of(readQuestion(connection, result, id));
-			}
-		} catch (SQLException e) {
-			throw new IllegalStateException("Could not read question " + id + " from database", e);
+		try (Connection connection = database.openConnection()) {
+			return findById(connection, id);
+		} catch (SQLException failure) {
+			throw new IllegalStateException("Could not read question " + id + " from database", failure);
 		}
 	}
 
@@ -441,17 +348,6 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 		}
 	}
 
-	private String createRequestedNodeValues(int nodeCount) {
-		StringBuilder values = new StringBuilder();
-		for (int index = 0; index < nodeCount; index++) {
-			if (index > 0) {
-				values.append(", ");
-			}
-			values.append("(?)");
-		}
-		return values.toString();
-	}
-
 	private Answer findAnswer(Connection connection, long questionId, Exam exam) throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
 				SELECT id, answer_text
@@ -517,6 +413,22 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 			}
 		}
 		return regions;
+	}
+
+	private Optional<Question> findById(Connection connection, long id) throws SQLException {
+
+		// The caller owns the connection. This method closes only its
+		// statement and result set, allowing subsequent Question reads
+		// to reuse the same connection.
+		try (PreparedStatement statement = connection.prepareStatement(SqliteQuestionSelectSql.byId())) {
+			statement.setLong(1, id);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					return Optional.empty();
+				}
+				return Optional.of(readQuestion(connection, result, id));
+			}
+		}
 	}
 
 	private List<QuestionContentPart> findContentParts(Connection connection, long questionId,
@@ -650,8 +562,7 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 		Exam exam = new Exam(result.getLong("exam_id"), subject, provider, result.getInt("exam_year"),
 				result.getString("exam_name"), captureState);
 
-		// Question reload must retain managed-document byte identity rather than
-		// downgrading the SourceDocument to a path-only object.
+		// Question reload must retain managed-document byte identity.
 		SourceDocument sourceDocument = new SourceDocument(result.getLong("source_document_id"),
 				result.getString("relative_path"), result.getString("content_sha256"));
 		ExamBookletQuestionFormat questionFormat = ExamBookletQuestionFormat
@@ -660,12 +571,11 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 		Integer expectedQuestionCount = result.wasNull() ? null : storedExpectedQuestionCount;
 		ExamBooklet booklet = new ExamBooklet(result.getLong("booklet_id"), exam, result.getString("booklet_name"),
 				sourceDocument, questionFormat, expectedQuestionCount);
-		long syllabusVersionId = result.getLong("syllabus_version_id");
-		SyllabusVersion syllabusVersion = curriculumRepository.findVersionById(syllabusVersionId)
-				.orElseThrow(() -> new IllegalStateException("Missing syllabus version " + syllabusVersionId));
-		String curriculumCode = result.getString("curriculum_code");
-		CurriculumNode classification = curriculumRepository.findByCode(syllabusVersion, curriculumCode)
-				.orElseThrow(() -> new IllegalStateException("Missing curriculum node " + curriculumCode));
+		long classificationNodeId = result.getLong("classification_node_id");
+
+		// Reconstruct classification and ancestors using the existing connection.
+		CurriculumNode classification = curriculumRepository.findNodeById(connection, classificationNodeId)
+				.orElseThrow(() -> new IllegalStateException("Missing curriculum node " + classificationNodeId));
 		List<QuestionContentPart> contentParts = findContentParts(connection, questionId, booklet);
 		List<QuestionRegion> regions = regionsFromContentParts(contentParts);
 		long sourceQuestionId = result.getLong("source_question_id");
@@ -683,30 +593,49 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 		if (answer != null) {
 			question.setAnswer(answer);
 		}
+
+		// Count successfully reconstructed Questions only when profiling.
+		SqliteReadProbe.recordQuestionReconstruction();
 		return question;
 	}
 
 	private List<QuestionApplicabilityMatch> reconstructApplicabilityMatches(List<ApplicabilityRow> rows,
 			Map<Long, CurriculumNode> requestedNodesById) {
-
-		// Load each question once while retaining a separate match for every applicable
-		// node.
-		Map<Long, Question> questionsById = new LinkedHashMap<Long, Question>();
-		List<QuestionApplicabilityMatch> matches = new ArrayList<QuestionApplicabilityMatch>();
-		for (ApplicabilityRow row : rows) {
-			Question question = questionsById.get(row.questionId());
-			if (question == null) {
-				question = findById(row.questionId()).orElseThrow(() -> new IllegalStateException(
-						"Question disappeared while retrieving applicability: " + row.questionId()));
-				questionsById.put(row.questionId(), question);
-			}
-			CurriculumNode currentNode = requestedNodesById.get(row.currentNodeId());
-			if (currentNode == null) {
-				throw new IllegalStateException("Retrieval query returned an unrequested current node");
-			}
-			matches.add(new QuestionApplicabilityMatch(question, currentNode));
+		if (rows.isEmpty()) {
+			return List.of();
 		}
-		return List.copyOf(matches);
+		Map<Long, Question> questionsById = new LinkedHashMap<>();
+		List<QuestionApplicabilityMatch> matches = new ArrayList<>();
+
+		// Applicability SQL has already completed. Reconstruct the
+		// matching Questions using one connection rather than opening
+		// a new connection for every unique Question.
+		try (Connection connection = database.openConnection()) {
+			for (ApplicabilityRow row : rows) {
+				Question question = questionsById.get(row.questionId());
+				if (question == null) {
+					try {
+						question = findById(connection, row.questionId()).orElseThrow(() -> new IllegalStateException(
+								"Question disappeared while " + "retrieving applicability: " + row.questionId()));
+					} catch (SQLException failure) {
+						throw new IllegalStateException(
+								"Could not read question " + row.questionId() + " from database", failure);
+					}
+					questionsById.put(row.questionId(), question);
+				}
+				CurriculumNode currentNode = requestedNodesById.get(row.currentNodeId());
+				if (currentNode == null) {
+					throw new IllegalStateException("Retrieval query returned an unrequested " + "current node");
+				}
+
+				// Keep a separate match for each applicable node while
+				// sharing the reconstructed Question instance.
+				matches.add(new QuestionApplicabilityMatch(question, currentNode));
+			}
+			return List.copyOf(matches);
+		} catch (SQLException failure) {
+			throw new IllegalStateException("Could not reconstruct applicable questions", failure);
+		}
 	}
 
 	private List<QuestionRegion> regionsFromContentParts(List<QuestionContentPart> contentParts) {

@@ -3,7 +3,9 @@ package au.edu.eq.questionbank.admin;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -23,6 +25,7 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.pdf.PdfStore;
+import au.edu.eq.questionbank.repository.assessment.QuestionApplicabilityMatch;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
@@ -30,6 +33,7 @@ import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteReadProbe;
 import au.edu.eq.questionbank.service.audit.ExamCorpusAuditService;
 import au.edu.eq.questionbank.service.audit.ExamCorpusStatus;
 
@@ -37,6 +41,30 @@ class PerformanceBenchmarkWorkloadsTest {
 
 	@TempDir
 	Path tempDirectory;
+
+	@Test
+	void applicabilityReconstructionUsesTwoConnections() throws Exception {
+		Fixture fixture = createFixture();
+		SqliteDatabase database = SqliteDatabase.readOnly(fixture.snapshotPath());
+		SqliteCurriculumRepository curriculum = new SqliteCurriculumRepository(database);
+		SyllabusVersion version = curriculum.findVersionById(fixture.syllabusId()).orElseThrow();
+		CurriculumNode descriptor = curriculum.findByCode(version, "1.1.1.1").orElseThrow();
+		CurriculumNode subtopic = curriculum.findByCode(version, "1.1.1").orElseThrow();
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		List<QuestionApplicabilityMatch> matches;
+		SqliteReadProbe.Snapshot measurements;
+		try (SqliteReadProbe probe = SqliteReadProbe.begin()) {
+			matches = repository.findApplicableToNodes(List.of(subtopic, descriptor));
+			measurements = probe.snapshot();
+		}
+		assertEquals(2, matches.size());
+		assertEquals(2, measurements.questionsReconstructed());
+
+		// The first connection selects applicability matches.
+		// The second reconstructs both Questions and their ancestors.
+		assertEquals(2, measurements.connectionsOpened());
+		assertEquals(2, matches.stream().map(match -> match.getQuestion().getId()).distinct().count());
+	}
 
 	@Test
 	void benchmarkExecutionDoesNotModifyDatabaseSnapshot() throws Exception {
@@ -103,6 +131,27 @@ class PerformanceBenchmarkWorkloadsTest {
 	}
 
 	@Test
+	void classificationReconstructionUsesQuestionConnection() throws Exception {
+		Fixture fixture = createFixture();
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(
+				SqliteDatabase.readOnly(fixture.snapshotPath()));
+		Question question;
+		SqliteReadProbe.Snapshot measurements;
+		try (SqliteReadProbe probe = SqliteReadProbe.begin()) {
+			question = repository.findById(fixture.questionId()).orElseThrow();
+			measurements = probe.snapshot();
+		}
+		assertEquals(1, measurements.connectionsOpened());
+		assertEquals(1, measurements.questionsReconstructed());
+		assertEquals("1.1.1.1", question.getClassification().getCode());
+		assertEquals(fixture.syllabusId(), question.getClassification().getSyllabusVersion().getId());
+		assertInstanceOf(Descriptor.class, question.getClassification());
+		Descriptor classification = (Descriptor) question.getClassification();
+		assertInstanceOf(Subtopic.class, classification.getParent());
+		assertInstanceOf(Topic.class, classification.getParent().getParent());
+	}
+
+	@Test
 	void dashboardAuditRejectsMissingAndInvalidSubjects() throws Exception {
 		Fixture fixture = createFixture();
 		PerformanceBenchmarkWorkloads workloads = new PerformanceBenchmarkWorkloads(fixture.snapshotPath());
@@ -158,6 +207,37 @@ class PerformanceBenchmarkWorkloadsTest {
 	}
 
 	@Test
+	void findAllReusesOneConnectionForQuestionLookups() throws Exception {
+		Fixture fixture = createFixture();
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(
+				SqliteDatabase.readOnly(fixture.snapshotPath()));
+		List<Question> questions;
+		SqliteReadProbe.Snapshot bulk;
+		try (SqliteReadProbe probe = SqliteReadProbe.begin()) {
+			questions = repository.findAll();
+			bulk = probe.snapshot();
+		}
+		SqliteReadProbe.Snapshot individual;
+		try (SqliteReadProbe probe = SqliteReadProbe.begin()) {
+			for (Question question : questions) {
+				Question reloaded = repository.findById(question.getId()).orElseThrow();
+				assertEquals(question.getId(), reloaded.getId());
+			}
+			individual = probe.snapshot();
+		}
+		assertEquals(2, questions.size());
+		assertEquals(2, bulk.questionsReconstructed());
+
+		// Individual lookups open one top-level connection per
+		// Question. Bulk retrieval uses one shared connection.
+		assertEquals(individual.connectionsOpened() - questions.size() + 1, bulk.connectionsOpened());
+
+		// No SQL statements are removed by this optimisation.
+		// Bulk retrieval still executes one additional ID-list query.
+		assertEquals(individual.executions() + 1, bulk.executions());
+	}
+
+	@Test
 	void rejectsInvalidCurriculumRetrievalScope() throws Exception {
 		Fixture fixture = createFixture();
 		SqliteDatabase database = SqliteDatabase.readOnly(fixture.snapshotPath());
@@ -178,6 +258,59 @@ class PerformanceBenchmarkWorkloadsTest {
 		Path invalid = tempDirectory.resolve("invalid.db");
 		Files.writeString(invalid, "not a SQLite database");
 		assertThrows(SQLException.class, () -> new PerformanceBenchmarkWorkloads(invalid));
+	}
+
+	@Test
+	void searchReusesOneConnectionForMatchedQuestionLookups() throws Exception {
+		Fixture fixture = createFixture();
+		SqliteDatabase database = SqliteDatabase.readOnly(fixture.snapshotPath());
+		SqliteCurriculumRepository curriculum = new SqliteCurriculumRepository(database);
+		SyllabusVersion version = curriculum.findVersionById(fixture.syllabusId()).orElseThrow();
+		CurriculumNode descriptor = curriculum.findByCode(version, "1.1.1.1").orElseThrow();
+		CurriculumNode subtopic = curriculum.findByCode(version, "1.1.1").orElseThrow();
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		List<QuestionApplicabilityMatch> matches;
+		SqliteReadProbe.Snapshot bulk;
+		try (SqliteReadProbe probe = SqliteReadProbe.begin()) {
+			matches = repository.findApplicableToNodes(List.of(subtopic, descriptor));
+			bulk = probe.snapshot();
+		}
+		List<Long> distinctIds = matches.stream().map(match -> match.getQuestion().getId()).distinct().toList();
+		assertEquals(2, distinctIds.size());
+		assertEquals(2, bulk.questionsReconstructed());
+		SqliteReadProbe.Snapshot individual;
+		try (SqliteReadProbe probe = SqliteReadProbe.begin()) {
+			for (Long questionId : distinctIds) {
+				assertTrue(repository.findById(questionId).isPresent());
+			}
+			individual = probe.snapshot();
+		}
+
+		// One connection selects the applicability rows, and a
+		// second is reused for all matching Question reconstructions.
+		assertEquals(individual.connectionsOpened() - distinctIds.size() + 2, bulk.connectionsOpened());
+		assertEquals(individual.executions() + 1, bulk.executions());
+	}
+
+	@Test
+	void wholeBankReconstructionUsesOneConnection() throws Exception {
+		Fixture fixture = createFixture();
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(
+				SqliteDatabase.readOnly(fixture.snapshotPath()));
+		List<Question> questions;
+		SqliteReadProbe.Snapshot measurements;
+		try (SqliteReadProbe probe = SqliteReadProbe.begin()) {
+			questions = repository.findAll();
+			measurements = probe.snapshot();
+		}
+		assertEquals(2, questions.size());
+		assertEquals(2, measurements.questionsReconstructed());
+
+		// Both Questions and their curriculum ancestor chains must
+		// now be reconstructed through the same connection.
+		assertEquals(1, measurements.connectionsOpened());
+		assertEquals("1.1.1.1", questions.get(0).getClassification().getCode());
+		assertEquals("1.1.1", questions.get(1).getClassification().getCode());
 	}
 
 	private Fixture createFixture() throws Exception {

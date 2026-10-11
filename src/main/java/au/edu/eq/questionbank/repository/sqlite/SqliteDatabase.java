@@ -198,10 +198,15 @@ public final class SqliteDatabase {
 	/**
 	 * Opens a SQLite connection with the configured access mode.
 	 *
+	 * When a diagnostic probe is active, the returned connection also records JDBC
+	 * operations. Ordinary application connections remain unchanged.
+	 *
 	 * @return an open database connection
 	 * @throws SQLException if the database cannot be opened or configured
 	 */
 	public Connection openConnection() throws SQLException {
+		SqliteReadProbe probe = SqliteReadProbe.active();
+		long startedNanos = probe == null ? 0L : System.nanoTime();
 
 		// A benchmark must never create a missing database accidentally.
 		if (readOnly && !Files.isRegularFile(databasePath)) {
@@ -229,7 +234,11 @@ public final class SqliteDatabase {
 				statement.execute("PRAGMA busy_timeout = 5000");
 				statement.execute("PRAGMA foreign_keys = ON");
 			}
-			return connection;
+			if (probe == null) {
+				return connection;
+			}
+			long openingNanos = System.nanoTime() - startedNanos;
+			return probe.wrap(connection, openingNanos);
 		} catch (SQLException | RuntimeException failure) {
 			try {
 				connection.close();
