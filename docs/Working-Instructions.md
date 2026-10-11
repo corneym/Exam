@@ -135,10 +135,9 @@ Number multiple proposed changes.
 
 When producing code, add Javadoc where required for public API and add algorithmic `//` comments where they improve understanding.
 
-Do not give me a large batch of unrelated implementation changes unless I explicitly ask for one.
-
 After each code slice, tell me exactly which test command to run. If it is a UI test, use the headless command.
 
+UI test commands: Always provide Maven commands using the project's -Pheadless-ui-tests profile. The user runs Maven from Git Bash in Eclipse on Windows. Do not provide xvfb-run commands or ordinary desktop UI test commands. Use the existing Maven configuration rather than inventing test execution flags.
 Do not test beyond what the slice requires. Avoid unnecessarily running very large test classes that take minutes.
 
 If I report that the tests are green, continue to the next logical slice only after checking the acceptance criteria.
@@ -281,15 +280,15 @@ Keep only deliberately deferred or unresolved architectural work that must survi
 
 Avoid duplicating the same actionable work in both the backlog document and a GitHub Issue unless the documentation deliberately acts as a higher-level roadmap.
 
-### Documentation
+### Documentation and development records
 
-Treat repository documentation as part of the implementation.
+GitHub Issues are the authoritative record of feature requirements, design decisions, implementation details, architectural changes, schema migrations and verification results.
 
-When code changes alter documented architecture, workflow, status, or design rules, identify the documentation that needs to be updated.
-
-Do not rewrite project history or status documents speculatively.
-
-Base documentation changes on implemented and verified behaviour.
+- Record implementation decisions and completed work as comments on the relevant GitHub Issue.
+- Do not routinely rewrite `docs/development-roadmap.md`, sprint design documents or other Markdown files after implementation batches.
+- Update repository Markdown documentation only when the user explicitly requests it or agrees that a particular permanent document needs updating.
+- Avoid duplicating information already recorded in GitHub Issues.
+- Before recommending PR readiness, ensure the relevant Issue contains a complete implementation and verification summary.
 
 ### Communication style
 

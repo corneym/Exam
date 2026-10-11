@@ -2636,10 +2636,6 @@ public final class QuestionCapturePane extends VBox {
 		showMcqSharedContextOption();
 	}
 
-	private void refreshMultipartSharedContextControls() {
-		refreshMultipartSharedContextControls(0);
-	}
-
 	private void refreshMultipartSharedContextControls(long parentOperationId) {
 		String sourceCode = SourceQuestionCodeParser.derive(questionCodeField.getText());
 		if (sourceCode == null) {

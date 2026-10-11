@@ -21,7 +21,6 @@ import org.junit.jupiter.api.io.TempDir;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
-import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.ImageQuestionContentPart;
 import au.edu.eq.questionbank.model.PdfQuestionContentPart;
 import au.edu.eq.questionbank.model.Question;
@@ -105,7 +104,10 @@ class QuestionBookletPdfReplacementServiceTest {
 
 		// COMPLETE is persisted independently of the caller's older in-memory booklet
 		// object. The replacement service must honour the authoritative database state.
-		examWriter.setExamCaptureState(booklet.getExam(), ExamCaptureState.COMPLETE);
+		// Simulate a previously completed Exam. The replacement service
+		// must honour its persisted lifecycle state even when the caller
+		// holds an older ACTIVE booklet object.
+		HistoricalCompleteExamFixture.markComplete(database, examWriter, booklet.getExam());
 		QuestionBookletPdfReplacementService service = new QuestionBookletPdfReplacementService(database, pdfRoot);
 		assertThrows(IllegalStateException.class, () -> service.replace(booklet, replacementPdf));
 

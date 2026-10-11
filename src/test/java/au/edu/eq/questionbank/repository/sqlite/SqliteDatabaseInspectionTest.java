@@ -25,6 +25,7 @@ class SqliteDatabaseInspectionTest {
 		Path databasePath = tempDir.resolve("pending-mcq-context.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		database.initialiseSchema();
+		HistoricalSchemaFixture.removePostVersion19Objects(database);
 		boolean columnFound = false;
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();
@@ -214,6 +215,10 @@ class SqliteDatabaseInspectionTest {
 		Path databasePath = tempDir.resolve("version-13-question-content.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		database.initialiseSchema();
+
+		// Remove modern review structures before reconstructing schema v13.
+		HistoricalSchemaFixture.removePostVersion19Objects(database);
+
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 
 			// Build enough real relational data to retain two legacy PDF regions across
@@ -338,6 +343,7 @@ class SqliteDatabaseInspectionTest {
 		Path databasePath = tempDir.resolve("version-14-exam-capture-metadata.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		database.initialiseSchema();
+		HistoricalSchemaFixture.removePostVersion19Objects(database);
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.execute("ALTER TABLE answer_files DROP COLUMN contains_answer_explanations");
 
@@ -462,6 +468,7 @@ class SqliteDatabaseInspectionTest {
 		Path databasePath = tempDir.resolve("version-15-source-document-hash.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		database.initialiseSchema();
+		HistoricalSchemaFixture.removePostVersion19Objects(database);
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 
 			// Seed an existing document before reconstructing the exact v15 schema.
@@ -557,6 +564,7 @@ class SqliteDatabaseInspectionTest {
 		Path databasePath = tempDir.resolve("version-16-question-source-recapture.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		database.initialiseSchema();
+		HistoricalSchemaFixture.removePostVersion19Objects(database);
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 
 			// Manufacture the exact version-16 schema from the current latest schema.
@@ -598,6 +606,7 @@ class SqliteDatabaseInspectionTest {
 		Path databasePath = tempDir.resolve("version-17-exam-asset-expectations.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		database.initialiseSchema();
+		HistoricalSchemaFixture.removePostVersion19Objects(database);
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 
 			// Manufacture the exact immediately preceding schema from the current one.
