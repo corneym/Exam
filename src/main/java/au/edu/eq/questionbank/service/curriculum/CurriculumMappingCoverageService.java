@@ -117,26 +117,6 @@ public final class CurriculumMappingCoverageService {
 				uncoveredTargetCount);
 	}
 
-	private void collectReviewLevelNodes(CurriculumNode node, List<CurriculumNode> subtopics,
-			List<CurriculumNode> descriptors) {
-
-		// Preserve the existing hierarchy traversal semantics,
-		// collecting both reviewable levels in the same pass.
-		switch (node.getLevel()) {
-		case SUBTOPIC:
-			subtopics.add(node);
-			break;
-		case DESCRIPTOR:
-			descriptors.add(node);
-			break;
-		default:
-			break;
-		}
-		for (CurriculumNode child : curriculumRepository.findChildren(node)) {
-			collectReviewLevelNodes(child, subtopics, descriptors);
-		}
-	}
-
 	private ConfirmedPairMappings confirmedPairMappings(SyllabusVersion sourceVersion, SyllabusVersion targetVersion) {
 
 		// Suggestions and mappings for other syllabus pairs cannot establish this
@@ -182,8 +162,21 @@ public final class CurriculumMappingCoverageService {
 	private ReviewLevelNodes findReviewLevelNodes(SyllabusVersion syllabusVersion) {
 		List<CurriculumNode> subtopics = new ArrayList<>();
 		List<CurriculumNode> descriptors = new ArrayList<>();
-		for (CurriculumNode root : curriculumRepository.findRootNodes(syllabusVersion)) {
-			collectReviewLevelNodes(root, subtopics, descriptors);
+
+		// The repository supplies both reviewable levels through one
+		// bulk operation for SQLite, or its standard hierarchy traversal
+		// for other implementations.
+		for (CurriculumNode node : curriculumRepository.findReviewNodes(syllabusVersion)) {
+			switch (node.getLevel()) {
+			case SUBTOPIC:
+				subtopics.add(node);
+				break;
+			case DESCRIPTOR:
+				descriptors.add(node);
+				break;
+			default:
+				throw new IllegalStateException("Unexpected curriculum review node level: " + node.getLevel());
+			}
 		}
 		return new ReviewLevelNodes(List.copyOf(subtopics), List.copyOf(descriptors));
 	}

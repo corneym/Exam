@@ -7,10 +7,13 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
+import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.CurriculumStatus;
 import au.edu.eq.questionbank.model.Descriptor;
@@ -149,6 +152,94 @@ public final class SqliteCurriculumRepository implements CurriculumRepository {
 	public Optional<CurriculumNode> findNodeById(Connection connection, long id) throws SQLException {
 		Objects.requireNonNull(connection, "connection");
 		return findNodeById(connection, id, MAX_HIERARCHY_DEPTH);
+	}
+
+	@Override
+	public List<CurriculumNode> findReviewNodes(SyllabusVersion syllabusVersion) {
+		if (syllabusVersion == null) {
+			throw new NullPointerException("syllabusVersion");
+		}
+		List<CurriculumNode> reviewNodes = new ArrayList<>();
+		Map<Long, CurriculumNode> nodesById = new HashMap<>();
+
+		// Retrieve the reachable hierarchy in one SQL execution.
+		// Depth ordering ensures each parent is constructed before its children.
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						WITH RECURSIVE hierarchy (
+						    id, parent_id, curriculum_code,
+						    curriculum_name, curriculum_level,
+						    display_order, depth
+						) AS (
+						    SELECT
+						        id, parent_id, curriculum_code,
+						        curriculum_name, curriculum_level,
+						        display_order, 1
+						    FROM curriculum_nodes
+						    WHERE syllabus_version_id = ?
+						      AND parent_id IS NULL
+						      AND curriculum_level = 'UNIT'
+
+						    UNION ALL
+
+						    SELECT
+						        child.id, child.parent_id,
+						        child.curriculum_code,
+						        child.curriculum_name,
+						        child.curriculum_level,
+						        child.display_order,
+						        hierarchy.depth + 1
+						    FROM curriculum_nodes child
+						    JOIN hierarchy
+						        ON child.parent_id = hierarchy.id
+						    WHERE child.syllabus_version_id = ?
+						      AND hierarchy.depth <= ?
+						)
+						SELECT
+						    id, parent_id, curriculum_code,
+						    curriculum_name, curriculum_level,
+						    display_order, depth
+						FROM hierarchy
+						ORDER BY depth, display_order,
+						         curriculum_code, id
+						""")) {
+			statement.setLong(1, syllabusVersion.getId());
+			statement.setLong(2, syllabusVersion.getId());
+			statement.setInt(3, MAX_HIERARCHY_DEPTH);
+			try (ResultSet result = statement.executeQuery()) {
+				while (result.next()) {
+					long id = result.getLong("id");
+					int depth = result.getInt("depth");
+					if (depth > MAX_HIERARCHY_DEPTH) {
+						throw new IllegalStateException("Curriculum hierarchy exceeds four levels " + "at node " + id);
+					}
+					long parentId = result.getLong("parent_id");
+					boolean isRoot = result.wasNull();
+					CurriculumNode node;
+					if (isRoot) {
+						node = new Unit(id, syllabusVersion, result.getString("curriculum_code"),
+								result.getString("curriculum_name"), result.getInt("display_order"));
+					} else {
+						CurriculumNode parent = nodesById.get(parentId);
+						if (parent == null) {
+							throw new IllegalStateException(
+									"Missing curriculum parent " + parentId + " for node " + id);
+						}
+
+						// Reuse the repository's existing level and
+						// parent-type validation.
+						node = createChild(result, parent);
+					}
+					nodesById.put(id, node);
+					if (node.getLevel() == CurriculumLevel.DESCRIPTOR || node.getLevel() == CurriculumLevel.SUBTOPIC) {
+						reviewNodes.add(node);
+					}
+				}
+			}
+			return List.copyOf(reviewNodes);
+		} catch (SQLException failure) {
+			throw new IllegalStateException("Could not read curriculum review nodes from database", failure);
+		}
 	}
 
 	@Override

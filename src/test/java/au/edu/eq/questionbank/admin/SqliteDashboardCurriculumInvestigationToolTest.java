@@ -43,8 +43,13 @@ class SqliteDashboardCurriculumInvestigationToolTest {
 		// Coverage traverses each hierarchy separately for both
 		// Descriptor and Subtopic calculations.
 		// One traversal per syllabus, collecting both review levels.
-		assertTrue(report.contains("curriculum.findRootNodes: calls=2"));
-		assertTrue(report.contains("curriculum.findChildren: calls=8"));
+		// One bulk retrieval for the historical syllabus and one for
+		// the current syllabus.
+		assertTrue(report.contains("curriculum.findReviewNodes: calls=2"));
+
+		// The coverage service must no longer perform node-by-node SQL.
+		assertFalse(report.contains("curriculum.findChildren: calls="));
+		assertFalse(report.contains("curriculum.findRootNodes: calls="));
 
 		// One mapping collection and one reviewed source decision.
 		assertTrue(report.contains("mappings.findAll: calls=1"));
