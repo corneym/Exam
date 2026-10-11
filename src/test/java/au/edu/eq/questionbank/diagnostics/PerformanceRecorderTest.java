@@ -117,7 +117,8 @@ class PerformanceRecorderTest {
 			assertFalse(recorder.isEnabled());
 			try (PerformanceOperation operation = recorder.start("application.startup")) {
 
-				// Disabled recording must not produce output.
+				// Disabled diagnostics must return the no-op operation.
+				assertEquals(0L, operation.id());
 			}
 			assertFalse(Files.exists(outputDirectory));
 		} finally {

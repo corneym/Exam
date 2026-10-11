@@ -37,7 +37,9 @@ class SqliteExamImporterTest {
 
 		// Completion records the user's decision that the Exam's structure is now
 		// authoritative.
-		writer.setExamCaptureState(firstBooklet.getExam(), ExamCaptureState.COMPLETE);
+		// Recreate a historical COMPLETE Exam so this test can verify
+		// that importing another booklet remains structurally prohibited.
+		HistoricalCompleteExamFixture.markComplete(database, writer, firstBooklet.getExam());
 
 		// A second booklet would change Exam structure and must therefore require
 		// explicit reactivation first.

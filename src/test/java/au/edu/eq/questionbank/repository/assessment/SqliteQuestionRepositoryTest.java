@@ -302,9 +302,10 @@ class SqliteQuestionRepositoryTest {
 		Question saved = repository.save(booklet, "Q1", "", 1,
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.50, 0.20)), subtopic, false);
 
-		// Completion happens after Question capture and must still be visible when a
-		// Question later reconstructs its owning Exam.
-		examWriter.setExamCaptureState(exam, ExamCaptureState.COMPLETE);
+		// Recreate a historical COMPLETE Exam with incomplete capture.
+		// Question reconstruction must report its persisted lifecycle state
+		// independently of modern completion eligibility.
+		HistoricalCompleteExamFixture.markComplete(database, examWriter, exam);
 		Question reloaded = new SqliteQuestionRepository(database).findById(saved.getId()).orElseThrow();
 		assertEquals(ExamCaptureState.COMPLETE, reloaded.getExam().getCaptureState());
 		assertTrue(reloaded.getExam().isComplete());

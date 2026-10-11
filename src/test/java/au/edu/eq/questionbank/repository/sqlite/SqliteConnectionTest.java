@@ -767,7 +767,7 @@ class SqliteConnectionTest {
 		}
 		assertEquals(18, database.schemaVersion());
 		database.initialiseSchema();
-		assertEquals(19, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("""

@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -38,12 +39,16 @@ import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.pdf.PdfStore;
+import au.edu.eq.questionbank.repository.assessment.BookletApplicabilityReviewRepository;
+import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
+import au.edu.eq.questionbank.repository.assessment.SqliteBookletApplicabilityReviewRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumMappingReviewWriter;
@@ -51,6 +56,9 @@ import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.audit.BookletCorpusStatus;
+import au.edu.eq.questionbank.service.audit.ExamCorpusAuditService;
+import au.edu.eq.questionbank.service.audit.ExamCorpusStatus;
+import au.edu.eq.questionbank.service.audit.ExamLifecycleService;
 import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
 import au.edu.eq.questionbank.ui.curriculum.CurriculumSelectorPane;
 import au.edu.eq.questionbank.ui.exam.ExamAssetsPane;
@@ -721,9 +729,9 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		SqliteExamWriter writer = new SqliteExamWriter(database);
 
-		// Establish a persisted COMPLETE Exam without using the Dashboard action under
-		// test, then rebuild Dashboard from authoritative persistence.
-		writer.setExamCaptureState(originalBooklet.getExam(), ExamCaptureState.COMPLETE);
+		// Establish a historical COMPLETE declaration without using the
+		// Dashboard action under test.
+		persistHistoricalCompleteState(database, originalBooklet.getExam());
 		WaitForAsyncUtils.asyncFx(() -> {
 			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
 			return null;
@@ -783,9 +791,9 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		SqliteExamWriter realWriter = new SqliteExamWriter(database);
 
-		// Establish a persisted COMPLETE Exam so the Dashboard exposes Mark Active
-		// without requiring the completion confirmation dialog.
-		realWriter.setExamCaptureState(originalBooklet.getExam(), ExamCaptureState.COMPLETE);
+		// Establish a historical COMPLETE declaration so the Dashboard
+		// exposes Mark Active without a completion confirmation dialog.
+		persistHistoricalCompleteState(database, originalBooklet.getExam());
 		WaitForAsyncUtils.asyncFx(() -> {
 			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
 			return null;
@@ -803,8 +811,17 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// persistence failure without changing the real Dashboard data source.
 		Path invalidDatabasePath = Files
 				.createDirectory(databasePath.getParent().resolve("invalid-lifecycle-database"));
+		ExamLifecycleService originalLifecycleService = field(application, "examLifecycleService",
+				ExamLifecycleService.class);
 		SqliteExamWriter failingWriter = new SqliteExamWriter(new SqliteDatabase(invalidDatabasePath));
-		setField(application, "examWriter", failingWriter);
+
+		// The Dashboard now delegates to ExamLifecycleService.
+		// Replace that dependency, rather than the unused application
+		// writer field, to exercise a genuine persistence failure.
+		ExamLifecycleService failingLifecycleService = new ExamLifecycleService(failingWriter,
+				field(application, "corpusDashboardAuditService", ExamCorpusAuditService.class),
+				field(application, "bookletApplicabilityReviewRepository", BookletApplicabilityReviewRepository.class));
+		setField(application, "examLifecycleService", failingLifecycleService);
 		fireControl(robot, lifecycle);
 		waitForDialogShowing(robot, "Exam State");
 
@@ -827,9 +844,9 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(reloaded.getExam().isComplete());
 
 		// Restore the application's normal writer so teardown and any later fixture
-		// work
-		// continue against the real test database.
-		setField(application, "examWriter", realWriter);
+		// work continue against the real test database.
+		// Restore the original lifecycle service after the failure test.
+		setField(application, "examLifecycleService", originalLifecycleService);
 	}
 
 	@Test
@@ -1138,6 +1155,10 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		ExamBooklet activeBooklet = examMetadataPane().getBooklet();
 		assertNotNull(activeBooklet);
 		assertFalse(activeBooklet.getExam().isComplete());
+
+		// Establish valid capture, asset expectations and an explicit
+		// applicability review before requesting the real completion transition.
+		prepareCompletionEligibleBooklet(activeBooklet);
 		Platform.runLater(() -> {
 			try {
 
@@ -1248,6 +1269,10 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		prepareExamAndClassification(robot);
 		ExamBooklet originalBooklet = examMetadataPane().getBooklet();
 		assertNotNull(originalBooklet);
+
+		// Exercise COMPLETE -> ACTIVE against an Exam that genuinely
+		// satisfies the modern completion requirements.
+		prepareCompletionEligibleBooklet(originalBooklet);
 		Platform.runLater(() -> {
 			try {
 
@@ -1680,6 +1705,65 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 			document.save(path.toFile());
 		}
 		return path;
+	}
+
+	private void persistHistoricalCompleteState(SqliteDatabase database, Exam exam) throws SQLException {
+
+		// Recreate a pre-applicability-review COMPLETE declaration.
+		// This is fixture setup, not a valid modern completion transition.
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						UPDATE exams
+						SET capture_state = 'COMPLETE'
+						WHERE id = ?
+						  AND subject_id = ?
+						""")) {
+			statement.setLong(1, exam.getId());
+			statement.setLong(2, exam.getSubject().getId());
+			assertEquals(1, statement.executeUpdate());
+		}
+	}
+
+	private void prepareCompletionEligibleBooklet(ExamBooklet booklet) throws Exception {
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+
+		// One planned booklet containing one top-level Question.
+		// A multiple-choice Answer requires no separate Answer PDF.
+		examWriter.updateExamBookletPlanning(booklet, booklet.getQuestionFormat(), 1);
+		examWriter.updateExamAssetExpectations(booklet.getExam(), 1, 0);
+		CurriculumSelectionModel selectionModel = field(application, "curriculumSelectionModel",
+				CurriculumSelectionModel.class);
+		CurriculumNode classification = selectionModel.getClassification();
+		assertNotNull(classification);
+		assertEquals(CurriculumLevel.DESCRIPTOR, classification.getLevel());
+		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
+		Question question = questionRepository.save(booklet, "COMPLETE-Q1", "", 1,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.70, 0.20)), classification, false, null, null,
+				QuestionResponseType.MULTIPLE_CHOICE);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		answerWriter.insertAnswer(question, "A", List.of());
+
+		// Attest only after completing all source and Answer edits,
+		// because those edits invalidate earlier confirmations.
+		SqliteBookletApplicabilityReviewRepository reviewRepository = new SqliteBookletApplicabilityReviewRepository(
+				database);
+		reviewRepository.setReviewed(booklet.getId(), true);
+		assertTrue(reviewRepository.isReviewed(booklet.getId()));
+
+		// Check the real corpus audit before exercising the UI.
+		// A failed fixture now gives a direct assertion failure
+		// rather than a misleading asynchronous UI timeout.
+		ExamCorpusAuditService auditService = new ExamCorpusAuditService(examWriter, answerWriter, questionRepository,
+				new PdfStore(pdfDataRoot));
+		ExamCorpusStatus status = auditService.assessSubject(booklet.getExam().getSubject()).stream()
+				.filter(candidate -> candidate.exam().getId() == booklet.getExam().getId()).findFirst().orElseThrow();
+		assertTrue(status.isReadyForCompletion(),
+				"The lifecycle test fixture must satisfy " + "ordinary corpus completion requirements.");
+		assertTrue(
+				auditService.isApplicabilityReviewed(status,
+						reviewRepository.findReviewedBookletIds(booklet.getExam().getId())),
+				"The lifecycle test fixture must have valid " + "persisted applicability reviews.");
 	}
 
 	private void selectSubject(FxRobot robot, String subjectName) {

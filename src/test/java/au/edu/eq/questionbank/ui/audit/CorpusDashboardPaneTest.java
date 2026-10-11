@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
@@ -58,6 +59,7 @@ import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
@@ -77,6 +79,64 @@ class CorpusDashboardPaneTest {
 
 	private CorpusDashboardPane pane;
 	private Fixture fixture;
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void bookletReviewCheckboxControlsDerivedExamStatus(FxRobot robot) {
+		BookletCorpusStatus readyBooklet = new BookletCorpusStatus(fixture.activePaper, true, null, 10, 10, 0,
+				new QuestionCorpusSummary(10, 10, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0),
+				EnumSet.noneOf(BookletCorpusFinding.class));
+		ExamCorpusStatus readyExam = new ExamCorpusStatus(fixture.activeExam, new ExamAssetExpectations(1, 1, 0, 0),
+				List.of(readyBooklet), new QuestionCorpusSummary(10, 10, 0, 0, 0, 0, 0),
+				new McqExplanationSummary(0, 0, 0), EnumSet.noneOf(ExamCorpusFinding.class));
+		AtomicReference<ExamBooklet> requestedBooklet = new AtomicReference<>();
+		AtomicReference<Boolean> requestedState = new AtomicReference<>();
+		robot.interact(() -> {
+			pane.setApplicabilityReviewHandler((booklet, reviewed) -> {
+				requestedBooklet.set(booklet);
+				requestedState.set(reviewed);
+			});
+			pane.replaceData(List.of(readyExam), List.of());
+		});
+		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		TableColumn<ExamCorpusStatus, String> examReview = exams.getColumns().stream()
+				.filter(column -> "Applicability Reviewed".equals(column.getText()))
+				.map(column -> (TableColumn<ExamCorpusStatus, String>) column).findFirst().orElseThrow();
+		TableColumn<BookletCorpusStatus, Boolean> bookletReview = booklets.getColumns().stream()
+				.filter(column -> "Applicability Reviewed".equals(column.getText()))
+				.map(column -> (TableColumn<BookletCorpusStatus, Boolean>) column).findFirst().orElseThrow();
+		Button lifecycle = robot.lookup("#corpus-dashboard-exam-lifecycle").queryButton();
+		assertEquals("—", examReview.getCellData(readyExam));
+		assertFalse(bookletReview.getCellData(readyBooklet));
+		assertTrue(lifecycle.isDisable());
+
+		// Bring the checkbox column into view before semantic activation.
+		robot.interact(() -> booklets.scrollToColumn(bookletReview));
+		WaitForAsyncUtils.waitForFxEvents();
+		CheckBox checkBox = robot.lookup("#corpus-dashboard-applicability-reviewed-31").queryAs(CheckBox.class);
+		assertFalse(checkBox.isDisable());
+		robot.interact(checkBox::fire);
+		assertEquals(fixture.activePaper.getId(), requestedBooklet.get().getId());
+		assertEquals(Boolean.TRUE, requestedState.get());
+
+		// A callback request is not itself persisted state.
+		assertTrue(lifecycle.isDisable());
+
+		// Simulate the new authoritative persistence snapshot.
+		robot.interact(() -> pane.setApplicabilityReviewState(Set.of(fixture.activePaper.getId())));
+		assertEquals("✓", examReview.getCellData(readyExam));
+		assertTrue(bookletReview.getCellData(readyBooklet));
+		assertFalse(lifecycle.isDisable());
+		checkBox = robot.lookup("#corpus-dashboard-applicability-reviewed-31").queryAs(CheckBox.class);
+		CheckBox confirmedCheckBox = checkBox;
+		robot.interact(confirmedCheckBox::fire);
+		assertEquals(Boolean.FALSE, requestedState.get());
+		robot.interact(() -> pane.setApplicabilityReviewState(Set.of()));
+		assertEquals("—", examReview.getCellData(readyExam));
+		assertFalse(bookletReview.getCellData(readyBooklet));
+		assertTrue(lifecycle.isDisable());
+	}
 
 	@Test
 	@SuppressWarnings("unchecked")
@@ -539,9 +599,13 @@ class CorpusDashboardPaneTest {
 				new McqExplanationSummary(0, 0, 0), EnumSet.noneOf(ExamCorpusFinding.class));
 		robot.interact(() -> pane.replaceData(List.of(readyExam), List.of()));
 
-		// Mark Complete becomes available only after structural, ordinary Question and
-		// descriptor-classification work are all complete.
+		// Complete structural and Question capture is still insufficient
+		// until the teacher has explicitly reviewed applicability.
 		assertEquals("Mark Complete", lifecycle.getText());
+		assertTrue(lifecycle.isDisable());
+		robot.interact(() -> pane.setApplicabilityReviewState(Set.of(fixture.activePaper.getId())));
+
+		// The review confirmation completes the remaining lifecycle gate.
 		assertFalse(lifecycle.isDisable());
 		routedExam.set(null);
 		routedState.set(null);
@@ -647,6 +711,23 @@ class CorpusDashboardPaneTest {
 		assertFalse(captureQuestions.isDisable());
 		robot.interact(captureQuestions::fire);
 		assertEquals(fixture.activePaper.getId(), questionCapture.get().getId());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void incompleteBookletCannotBeConfirmedReviewed(FxRobot robot) {
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		TableColumn<BookletCorpusStatus, Boolean> reviewedColumn = booklets.getColumns().stream()
+				.filter(column -> "Applicability Reviewed".equals(column.getText()))
+				.map(column -> (TableColumn<BookletCorpusStatus, Boolean>) column).findFirst().orElseThrow();
+		robot.interact(() -> booklets.scrollToColumn(reviewedColumn));
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// Paper 1 still lacks one required MCQ explanation.
+		CheckBox checkBox = robot.lookup("#corpus-dashboard-applicability-reviewed-20").queryAs(CheckBox.class);
+		assertFalse(checkBox.isSelected());
+		assertTrue(checkBox.isDisable());
+		assertTrue(checkBox.getTooltip().getText().contains("classification"));
 	}
 
 	@Test
@@ -939,10 +1020,13 @@ class CorpusDashboardPaneTest {
 		assertFalse(fixture.completeExamStatus.isReadyForCompletion());
 		assertEquals("Yes", needsWork.getCellData(fixture.completeExamStatus));
 
-		// Matching asset and Question counts, available source
-		// material and completed capture require no further work.
+		// Corpus completion alone no longer closes all operational work.
 		robot.interact(() -> pane.replaceData(List.of(exactCounts), List.of()));
 		assertTrue(exactCounts.isReadyForCompletion());
+		assertEquals("Yes", needsWork.getCellData(exactCounts));
+		robot.interact(() -> pane.setApplicabilityReviewState(Set.of(fixture.activePaper.getId())));
+
+		// Explicit applicability review closes the final work dimension.
 		assertEquals("—", needsWork.getCellData(exactCounts));
 	}
 
