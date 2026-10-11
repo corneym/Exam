@@ -361,35 +361,43 @@ class CorpusDashboardPaneTest {
 	}
 
 	@Test
-	void dashboardExamAndBookletDividerCanResizeAndFollowWindow(FxRobot robot) {
+	void dashboardExamAndBookletDividerCanResizeAndFollowWindow(FxRobot robot) throws TimeoutException {
 		SplitPane hierarchy = robot.lookup("#corpus-dashboard-hierarchy-row").queryAs(SplitPane.class);
 		Node examsSection = robot.lookup("#corpus-dashboard-exams-section").query();
 		Node bookletsSection = robot.lookup("#corpus-dashboard-booklets-section").query();
 		AtomicReference<double[]> widths = new AtomicReference<>();
-		robot.interact(() -> widths.set(new double[] { examsSection.getBoundsInParent().getWidth(),
-				bookletsSection.getBoundsInParent().getWidth() }));
-		double[] initial = widths.get();
 
-		// Both structural sections should initially receive approximately
-		// equal space, independently of their preferred content widths.
+		// Stage.show() does not guarantee that the first JavaFX layout pulse
+		// has completed. Wait for real section dimensions before measuring.
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> {
+			robot.interact(() -> widths.set(new double[] { examsSection.getBoundsInParent().getWidth(),
+					bookletsSection.getBoundsInParent().getWidth() }));
+			return widths.get()[0] >= 340.0 && widths.get()[1] >= 360.0;
+		});
+		double[] initial = widths.get();
 		assertEquals(0.5, hierarchy.getDividerPositions()[0], 0.05);
 		assertTrue(Math.abs(initial[0] - initial[1]) < 30.0);
 
-		// Moving the divider must genuinely reallocate the section widths.
+		// Wait for the actual width change. Draining queued JavaFX events
+		// alone does not guarantee that SplitPane has completed layout.
 		robot.interact(() -> hierarchy.setDividerPositions(0.64));
-		WaitForAsyncUtils.waitForFxEvents();
-		robot.interact(() -> widths.set(new double[] { examsSection.getBoundsInParent().getWidth(),
-				bookletsSection.getBoundsInParent().getWidth() }));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> {
+			robot.interact(() -> widths.set(new double[] { examsSection.getBoundsInParent().getWidth(),
+					bookletsSection.getBoundsInParent().getWidth() }));
+			return widths.get()[0] > initial[0] + 50.0 && widths.get()[1] < initial[1] - 50.0;
+		});
 		double[] adjusted = widths.get();
 		assertTrue(adjusted[0] > initial[0] + 50.0);
 		assertTrue(adjusted[1] < initial[1] - 50.0);
 
-		// Shrinking the application window must relayout the existing split,
-		// rather than retaining fixed section widths.
+		// Window resizing must also produce observable section-width changes
+		// without allowing either panel below its configured minimum.
 		robot.interact(() -> pane.getScene().getWindow().setWidth(940));
-		WaitForAsyncUtils.waitForFxEvents();
-		robot.interact(() -> widths.set(new double[] { examsSection.getBoundsInParent().getWidth(),
-				bookletsSection.getBoundsInParent().getWidth() }));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> {
+			robot.interact(() -> widths.set(new double[] { examsSection.getBoundsInParent().getWidth(),
+					bookletsSection.getBoundsInParent().getWidth() }));
+			return widths.get()[0] < adjusted[0] - 25.0 && widths.get()[0] >= 339.0 && widths.get()[1] >= 359.0;
+		});
 		double[] narrower = widths.get();
 		assertTrue(narrower[0] < adjusted[0] - 25.0);
 		assertTrue(narrower[0] >= 339.0);

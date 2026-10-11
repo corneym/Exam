@@ -408,7 +408,14 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> booklets.getItems().size() == 1);
 		assertEquals(initial.exam().getId(), exams.getSelectionModel().getSelectedItem().exam().getId());
 		assertEquals(0, booklets.getItems().getFirst().encounteredTopLevelQuestionCount());
-		Button manageAssets = lookup(robot, "#corpus-dashboard-manage-exam-assets", Button.class);
+
+		// The action may be outside the visible viewport of the new horizontal
+		// ScrollPane. Resolve it on the JavaFX thread instead of relying on
+		// TestFX's general scene-graph search.
+		Node dashboardRoot = primaryStage.getScene().getRoot();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> nodePresentOnFx(robot, dashboardRoot, "#corpus-dashboard-manage-exam-assets"));
+		Button manageAssets = lookupOnFx(robot, dashboardRoot, "#corpus-dashboard-manage-exam-assets", Button.class);
 		assertFalse(manageAssets.isDisabled());
 
 		// Enter the real Exam/Assets workflow.
