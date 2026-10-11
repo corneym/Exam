@@ -280,15 +280,15 @@ Keep only deliberately deferred or unresolved architectural work that must survi
 
 Avoid duplicating the same actionable work in both the backlog document and a GitHub Issue unless the documentation deliberately acts as a higher-level roadmap.
 
-### Documentation
+### Documentation and development records
 
-Treat repository documentation as part of the implementation.
+GitHub Issues are the authoritative record of feature requirements, design decisions, implementation details, architectural changes, schema migrations and verification results.
 
-When code changes alter documented architecture, workflow, status, or design rules, identify the documentation that needs to be updated.
-
-Do not rewrite project history or status documents speculatively.
-
-Base documentation changes on implemented and verified behaviour.
+- Record implementation decisions and completed work as comments on the relevant GitHub Issue.
+- Do not routinely rewrite `docs/development-roadmap.md`, sprint design documents or other Markdown files after implementation batches.
+- Update repository Markdown documentation only when the user explicitly requests it or agrees that a particular permanent document needs updating.
+- Avoid duplicating information already recorded in GitHub Issues.
+- Before recommending PR readiness, ensure the relevant Issue contains a complete implementation and verification summary.
 
 ### Communication style
 
