@@ -10,6 +10,8 @@ import java.sql.PreparedStatement;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -108,6 +110,52 @@ class SqliteCurriculumRepositoryTest {
 		assertTrue(children.get(0) instanceof Descriptor);
 		assertEquals("2.3.5", children.get(0).getCode());
 		assertEquals(topic, children.get(0).getParent());
+	}
+
+	@Test
+	void findsReviewNodesInBulkForThreeAndFourLevelCurricula() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("bulk-review-nodes.db"));
+		database.initialiseSchema();
+		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
+		Subject chemistry = writer.insertSubject("Chemistry");
+		SyllabusVersion historical = writer.insertSyllabusVersion(chemistry, "2019", false);
+		SyllabusVersion current = writer.insertSyllabusVersion(chemistry, "2025", true);
+
+		// Four-level structure: Unit > Topic > Subtopic > Descriptor.
+		Unit historicalUnit = writer.insertUnit(historical, "1", "Unit", 1);
+		Topic historicalTopic = writer.insertTopic(historicalUnit, "1.1", "Topic", 1);
+		Subtopic historicalSubtopic = writer.insertSubtopic(historicalTopic, "1.1.1", "Subtopic", 1);
+		Descriptor nestedDescriptor = writer.insertDescriptor(historicalSubtopic, "1.1.1.1", "Nested descriptor", 1);
+
+		// Also exercise a Descriptor directly beneath a Topic.
+		Descriptor directDescriptor = writer.insertDescriptor(historicalTopic, "1.1.2", "Direct descriptor", 2);
+
+		// Independent three-level hierarchy in the current syllabus.
+		Unit currentUnit = writer.insertUnit(current, "1", "Current unit", 1);
+		Topic currentTopic = writer.insertTopic(currentUnit, "1.1", "Current topic", 1);
+		Descriptor currentDescriptor = writer.insertDescriptor(currentTopic, "1.1.1", "Current descriptor", 1);
+		SqliteCurriculumRepository repository = new SqliteCurriculumRepository(database);
+		List<CurriculumNode> historicalNodes = repository.findReviewNodes(historical);
+		assertEquals(Set.of(historicalSubtopic.getId(), nestedDescriptor.getId(), directDescriptor.getId()),
+				historicalNodes.stream().map(CurriculumNode::getId).collect(Collectors.toSet()));
+		CurriculumNode reloadedSubtopic = historicalNodes.stream()
+				.filter(node -> node.getId() == historicalSubtopic.getId()).findFirst().orElseThrow();
+		CurriculumNode reloadedNestedDescriptor = historicalNodes.stream()
+				.filter(node -> node.getId() == nestedDescriptor.getId()).findFirst().orElseThrow();
+		CurriculumNode reloadedDirectDescriptor = historicalNodes.stream()
+				.filter(node -> node.getId() == directDescriptor.getId()).findFirst().orElseThrow();
+		assertTrue(reloadedSubtopic instanceof Subtopic);
+		assertTrue(reloadedNestedDescriptor instanceof Descriptor);
+		assertTrue(reloadedDirectDescriptor instanceof Descriptor);
+		assertEquals(historicalTopic.getId(), reloadedSubtopic.getParent().getId());
+		assertEquals(historicalSubtopic.getId(), reloadedNestedDescriptor.getParent().getId());
+		assertEquals(historicalTopic.getId(), reloadedDirectDescriptor.getParent().getId());
+
+		// The query must not incorporate nodes from another version.
+		List<CurriculumNode> currentNodes = repository.findReviewNodes(current);
+		assertEquals(1, currentNodes.size());
+		assertEquals(currentDescriptor.getId(), currentNodes.getFirst().getId());
+		assertEquals(currentTopic.getId(), currentNodes.getFirst().getParent().getId());
 	}
 
 	@Test

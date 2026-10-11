@@ -7,9 +7,13 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
+import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.CurriculumStatus;
 import au.edu.eq.questionbank.model.Descriptor;
@@ -133,6 +137,111 @@ public final class SqliteCurriculumRepository implements CurriculumRepository {
 		}
 	}
 
+	/**
+	 * Reconstructs a curriculum node through its stored parent relationships.
+	 *
+	 * All queries use the caller-owned connection. The connection is never closed
+	 * by this method.
+	 *
+	 * @param connection caller-owned database connection
+	 * @param id         persistent curriculum node identifier
+	 * @return the reconstructed node, or empty if absent
+	 * @throws SQLException          if a database query fails
+	 * @throws IllegalStateException if the stored hierarchy is inconsistent
+	 */
+	public Optional<CurriculumNode> findNodeById(Connection connection, long id) throws SQLException {
+		Objects.requireNonNull(connection, "connection");
+		return findNodeById(connection, id, MAX_HIERARCHY_DEPTH);
+	}
+
+	@Override
+	public List<CurriculumNode> findReviewNodes(SyllabusVersion syllabusVersion) {
+		if (syllabusVersion == null) {
+			throw new NullPointerException("syllabusVersion");
+		}
+		List<CurriculumNode> reviewNodes = new ArrayList<>();
+		Map<Long, CurriculumNode> nodesById = new HashMap<>();
+
+		// Retrieve the reachable hierarchy in one SQL execution.
+		// Depth ordering ensures each parent is constructed before its children.
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						WITH RECURSIVE hierarchy (
+						    id, parent_id, curriculum_code,
+						    curriculum_name, curriculum_level,
+						    display_order, depth
+						) AS (
+						    SELECT
+						        id, parent_id, curriculum_code,
+						        curriculum_name, curriculum_level,
+						        display_order, 1
+						    FROM curriculum_nodes
+						    WHERE syllabus_version_id = ?
+						      AND parent_id IS NULL
+						      AND curriculum_level = 'UNIT'
+
+						    UNION ALL
+
+						    SELECT
+						        child.id, child.parent_id,
+						        child.curriculum_code,
+						        child.curriculum_name,
+						        child.curriculum_level,
+						        child.display_order,
+						        hierarchy.depth + 1
+						    FROM curriculum_nodes child
+						    JOIN hierarchy
+						        ON child.parent_id = hierarchy.id
+						    WHERE child.syllabus_version_id = ?
+						      AND hierarchy.depth <= ?
+						)
+						SELECT
+						    id, parent_id, curriculum_code,
+						    curriculum_name, curriculum_level,
+						    display_order, depth
+						FROM hierarchy
+						ORDER BY depth, display_order,
+						         curriculum_code, id
+						""")) {
+			statement.setLong(1, syllabusVersion.getId());
+			statement.setLong(2, syllabusVersion.getId());
+			statement.setInt(3, MAX_HIERARCHY_DEPTH);
+			try (ResultSet result = statement.executeQuery()) {
+				while (result.next()) {
+					long id = result.getLong("id");
+					int depth = result.getInt("depth");
+					if (depth > MAX_HIERARCHY_DEPTH) {
+						throw new IllegalStateException("Curriculum hierarchy exceeds four levels " + "at node " + id);
+					}
+					long parentId = result.getLong("parent_id");
+					boolean isRoot = result.wasNull();
+					CurriculumNode node;
+					if (isRoot) {
+						node = new Unit(id, syllabusVersion, result.getString("curriculum_code"),
+								result.getString("curriculum_name"), result.getInt("display_order"));
+					} else {
+						CurriculumNode parent = nodesById.get(parentId);
+						if (parent == null) {
+							throw new IllegalStateException(
+									"Missing curriculum parent " + parentId + " for node " + id);
+						}
+
+						// Reuse the repository's existing level and
+						// parent-type validation.
+						node = createChild(result, parent);
+					}
+					nodesById.put(id, node);
+					if (node.getLevel() == CurriculumLevel.DESCRIPTOR || node.getLevel() == CurriculumLevel.SUBTOPIC) {
+						reviewNodes.add(node);
+					}
+				}
+			}
+			return List.copyOf(reviewNodes);
+		} catch (SQLException failure) {
+			throw new IllegalStateException("Could not read curriculum review nodes from database", failure);
+		}
+	}
+
 	@Override
 	public List<CurriculumNode> findRootNodes(SyllabusVersion syllabusVersion) {
 		if (syllabusVersion == null) {
@@ -227,22 +336,6 @@ public final class SqliteCurriculumRepository implements CurriculumRepository {
 		}
 	}
 
-	/**
-	 * Reconstructs a node using its stored parent links, without interpreting its
-	 * code. Mapping reads share their caller-owned connection so mapping and node
-	 * identities are read from the same SQLite snapshot.
-	 *
-	 * @param connection the caller-owned connection with an active read
-	 * @param id         the persistent node identifier
-	 * @return the reconstructed node, or empty if the identifier is absent
-	 * @throws SQLException          if a lookup fails
-	 * @throws IllegalStateException if a parent/version is missing or the stored
-	 *                               hierarchy is inconsistent
-	 */
-	Optional<CurriculumNode> findNodeById(Connection connection, long id) throws SQLException {
-		return findNodeById(connection, id, MAX_HIERARCHY_DEPTH);
-	}
-
 	private CurriculumNode createChild(ResultSet result, CurriculumNode parent) throws SQLException {
 		long id = result.getLong("id");
 		String code = result.getString("curriculum_code");
@@ -261,9 +354,10 @@ public final class SqliteCurriculumRepository implements CurriculumRepository {
 				throw new IllegalStateException("SUBTOPIC has invalid parent");
 			}
 			return new Subtopic(id, syllabusVersion, (Topic) parent, code, name, displayOrder);
-
-		// Descriptors may sit directly under a Topic or under an optional Subtopic.
 		case "DESCRIPTOR":
+
+			// Descriptors can belong directly to a Topic or
+			// to an optional Subtopic.
 			if (parent instanceof Topic) {
 				return new Descriptor(id, syllabusVersion, (Topic) parent, code, name, displayOrder);
 			}

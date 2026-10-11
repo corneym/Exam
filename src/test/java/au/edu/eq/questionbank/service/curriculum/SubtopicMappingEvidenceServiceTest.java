@@ -23,19 +23,6 @@ import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository
 class SubtopicMappingEvidenceServiceTest {
 
 	@Test
-	void incompleteDescriptorReviewIsReported() {
-		Fixture fixture = createFixture();
-		CurriculumMappingReviewRepository reviewRepository = new TestReviewRepository(
-				Map.of(fixture.firstDescriptor().getId(), CurriculumMappingReviewOutcome.MATCHED));
-		SubtopicMappingEvidenceService service = new SubtopicMappingEvidenceService(fixture.repository(),
-				reviewRepository);
-		SubtopicMappingEvidence evidence = service.summarise(fixture.sourceSubtopic(), fixture.targetVersion());
-		assertEquals(1, evidence.reviewedDescriptorCount());
-		assertEquals(3, evidence.totalDescriptorCount());
-		assertEquals(0, evidence.noMatchDescriptorCount());
-	}
-
-	@Test
 	void descendantDescriptorNoMatchOutcomesAreCountedCorrectly() {
 		Fixture fixture = createFixture();
 		CurriculumMappingReviewRepository reviewRepository = new TestReviewRepository(
@@ -48,6 +35,19 @@ class SubtopicMappingEvidenceServiceTest {
 		assertEquals(2, evidence.reviewedDescriptorCount());
 		assertEquals(3, evidence.totalDescriptorCount());
 		assertEquals(1, evidence.noMatchDescriptorCount());
+	}
+
+	@Test
+	void incompleteDescriptorReviewIsReported() {
+		Fixture fixture = createFixture();
+		CurriculumMappingReviewRepository reviewRepository = new TestReviewRepository(
+				Map.of(fixture.firstDescriptor().getId(), CurriculumMappingReviewOutcome.MATCHED));
+		SubtopicMappingEvidenceService service = new SubtopicMappingEvidenceService(fixture.repository(),
+				reviewRepository);
+		SubtopicMappingEvidence evidence = service.summarise(fixture.sourceSubtopic(), fixture.targetVersion());
+		assertEquals(1, evidence.reviewedDescriptorCount());
+		assertEquals(3, evidence.totalDescriptorCount());
+		assertEquals(0, evidence.noMatchDescriptorCount());
 	}
 
 	private Fixture createFixture() {
@@ -82,14 +82,20 @@ class SubtopicMappingEvidenceServiceTest {
 		}
 
 		@Override
-		public Set<Long> findReviewedSourceIds(SyllabusVersion sourceVersion, SyllabusVersion targetVersion) {
-			return outcomes.keySet();
-		}
-
-		@Override
 		public Optional<CurriculumMappingReviewOutcome> findOutcome(CurriculumNode source,
 				SyllabusVersion targetVersion) {
 			return Optional.ofNullable(outcomes.get(source.getId()));
+		}
+
+		@Override
+		public Map<Long, CurriculumMappingReviewOutcome> findOutcomesForVersions(SyllabusVersion sourceVersion,
+				SyllabusVersion targetVersion) {
+			return outcomes;
+		}
+
+		@Override
+		public Set<Long> findReviewedSourceIds(SyllabusVersion sourceVersion, SyllabusVersion targetVersion) {
+			return outcomes.keySet();
 		}
 	}
 }

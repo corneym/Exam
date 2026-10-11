@@ -1,5 +1,6 @@
 package au.edu.eq.questionbank.repository.curriculum;
 
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -15,6 +16,38 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
 public interface CurriculumMappingReviewRepository {
 
 	/**
+	 * Finds the completed outcome for one source and target-version pair.
+	 *
+	 * @param source        the directional source node
+	 * @param targetVersion the syllabus version against which it was reviewed
+	 * @return the outcome, or an empty value when this pair is unreviewed
+	 * @throws NullPointerException     if either argument is {@code null}
+	 * @throws IllegalArgumentException if the source and target version have
+	 *                                  different subjects or use the same version
+	 * @throws IllegalStateException    if persisted review state cannot be read
+	 */
+	Optional<CurriculumMappingReviewOutcome> findOutcome(CurriculumNode source, SyllabusVersion targetVersion);
+
+	/**
+	 * Returns completed review outcomes for one ordered pair of syllabus versions,
+	 * keyed by source curriculum-node identifier.
+	 *
+	 * Absence of a source ID means that the node has not been reviewed for the
+	 * target version. Reviews belonging to another source or target version must
+	 * not be included.
+	 *
+	 * @param sourceVersion the version containing the source nodes
+	 * @param targetVersion the version against which the nodes were reviewed
+	 * @return source-node IDs mapped to their completed review outcomes
+	 * @throws NullPointerException     if either version is null
+	 * @throws IllegalArgumentException if the versions have different subjects or
+	 *                                  represent the same version
+	 * @throws IllegalStateException    if persisted review state cannot be read
+	 */
+	Map<Long, CurriculumMappingReviewOutcome> findOutcomesForVersions(SyllabusVersion sourceVersion,
+			SyllabusVersion targetVersion);
+
+	/**
 	 * Finds source-node identifiers reviewed for one ordered pair of syllabus
 	 * versions.
 	 *
@@ -27,17 +60,4 @@ public interface CurriculumMappingReviewRepository {
 	 * @throws IllegalStateException    if persisted review state cannot be read
 	 */
 	Set<Long> findReviewedSourceIds(SyllabusVersion sourceVersion, SyllabusVersion targetVersion);
-
-	/**
-	 * Finds the completed outcome for one source and target-version pair.
-	 *
-	 * @param source        the directional source node
-	 * @param targetVersion the syllabus version against which it was reviewed
-	 * @return the outcome, or an empty value when this pair is unreviewed
-	 * @throws NullPointerException     if either argument is {@code null}
-	 * @throws IllegalArgumentException if the source and target version have
-	 *                                  different subjects or use the same version
-	 * @throws IllegalStateException    if persisted review state cannot be read
-	 */
-	Optional<CurriculumMappingReviewOutcome> findOutcome(CurriculumNode source, SyllabusVersion targetVersion);
 }
