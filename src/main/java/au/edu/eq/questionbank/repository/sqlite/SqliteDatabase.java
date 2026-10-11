@@ -207,38 +207,29 @@ public final class SqliteDatabase {
 		if (readOnly && !Files.isRegularFile(databasePath)) {
 			throw new SQLException("Read-only database file does not exist: " + databasePath);
 		}
-
 		String jdbcUrl;
-
 		if (readOnly) {
 
 			// SQLite URI mode=ro prevents changes to the database.
 			// immutable=1 avoids creating journal or shared-memory sidecars
 			// when reading a consistent, unchanging benchmark snapshot.
 			jdbcUrl = "jdbc:sqlite:" + databasePath.toUri().toASCIIString() + "?mode=ro&immutable=1";
-
 		} else {
 			jdbcUrl = "jdbc:sqlite:" + databasePath;
 		}
-
 		Connection connection = DriverManager.getConnection(jdbcUrl);
-
 		try {
 			try (Statement statement = connection.createStatement()) {
-
 				if (readOnly) {
 
 					// Defence in depth: prevent application SQL from modifying
 					// database state even if it reaches this connection.
 					statement.execute("PRAGMA query_only = ON");
 				}
-
 				statement.execute("PRAGMA busy_timeout = 5000");
 				statement.execute("PRAGMA foreign_keys = ON");
 			}
-
 			return connection;
-
 		} catch (SQLException | RuntimeException failure) {
 			try {
 				connection.close();

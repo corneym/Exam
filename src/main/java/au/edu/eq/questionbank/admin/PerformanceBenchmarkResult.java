@@ -30,19 +30,15 @@ public record PerformanceBenchmarkResult(String operation, int warmupIterations,
 		if (resultCount < 0) {
 			throw new IllegalArgumentException("Result count must be non-negative");
 		}
-
 		elapsedNanos = List.copyOf(elapsedNanos);
-
 		if (elapsedNanos.isEmpty()) {
 			throw new IllegalArgumentException("At least one measured iteration is required");
 		}
-
 		for (long elapsed : elapsedNanos) {
 			if (elapsed < 0) {
 				throw new IllegalArgumentException("Elapsed durations must be non-negative");
 			}
 		}
-
 		if (!Double.isFinite(minMilliseconds) || !Double.isFinite(medianMilliseconds)
 				|| !Double.isFinite(p90Milliseconds) || !Double.isFinite(maxMilliseconds) || minMilliseconds < 0
 				|| minMilliseconds > medianMilliseconds || medianMilliseconds > p90Milliseconds
@@ -65,37 +61,29 @@ public record PerformanceBenchmarkResult(String operation, int warmupIterations,
 	 */
 	public static PerformanceBenchmarkResult fromMeasurements(String operation, int warmupIterations, long resultCount,
 			List<Long> measuredNanos) {
-
 		List<Long> samples = List.copyOf(measuredNanos);
-
 		if (samples.isEmpty()) {
 			throw new IllegalArgumentException("At least one measured iteration is required");
 		}
-
 		for (long sample : samples) {
 			if (sample < 0) {
 				throw new IllegalArgumentException("Measured durations must be non-negative");
 			}
 		}
-
 		List<Long> sorted = new ArrayList<>(samples);
 		Collections.sort(sorted);
-
 		int size = sorted.size();
-
 		double minimum = sorted.getFirst() / 1_000_000.0;
 		double maximum = sorted.getLast() / 1_000_000.0;
 
 		// Convert to floating point before adding the middle values
 		// to avoid overflow when calculating an even-sample median.
 		double middle = ((double) sorted.get((size - 1) / 2) + sorted.get(size / 2)) / 2.0;
-
 		double median = middle / 1_000_000.0;
 
 		// Nearest-rank p90 selects an observed measurement.
 		int p90Index = (int) Math.ceil(size * 0.90) - 1;
 		double p90 = sorted.get(p90Index) / 1_000_000.0;
-
 		return new PerformanceBenchmarkResult(operation, warmupIterations, resultCount, samples, minimum, median, p90,
 				maximum);
 	}
