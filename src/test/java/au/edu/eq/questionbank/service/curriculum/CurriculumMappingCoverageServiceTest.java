@@ -234,6 +234,17 @@ class CurriculumMappingCoverageServiceTest {
 		}
 
 		@Override
+		public Map<Long, CurriculumMappingReviewOutcome> findOutcomesForVersions(SyllabusVersion sourceVersion,
+				SyllabusVersion targetVersion) {
+			return outcomes.entrySet().stream()
+					.filter(entry -> entry.getKey().targetVersionId() == targetVersion.getId()).filter(entry -> {
+						CurriculumNode source = nodesById.get(entry.getKey().sourceNodeId());
+						return source != null && source.getSyllabusVersion().equals(sourceVersion);
+					})
+					.collect(Collectors.toUnmodifiableMap(entry -> entry.getKey().sourceNodeId(), Map.Entry::getValue));
+		}
+
+		@Override
 		public Set<Long> findReviewedSourceIds(SyllabusVersion sourceVersion, SyllabusVersion targetVersion) {
 			return outcomes.keySet().stream().filter(key -> key.targetVersionId() == targetVersion.getId())
 					.filter(key -> {

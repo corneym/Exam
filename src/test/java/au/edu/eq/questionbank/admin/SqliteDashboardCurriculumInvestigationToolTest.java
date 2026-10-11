@@ -48,8 +48,13 @@ class SqliteDashboardCurriculumInvestigationToolTest {
 
 		// One mapping collection and one reviewed source decision.
 		assertTrue(report.contains("mappings.findAll: calls=1"));
-		assertTrue(report.contains("reviews.findReviewedSourceIds: calls=1"));
-		assertTrue(report.contains("reviews.findOutcome: calls=1"));
+
+		// The complete review outcome map must be retrieved once.
+		assertTrue(report.contains("reviews.findOutcomesForVersions: calls=1"));
+
+		// Coverage must not fall back to individual review lookups.
+		assertFalse(report.contains("reviews.findOutcome: calls="));
+		assertFalse(report.contains("reviews.findReviewedSourceIds: calls="));
 		assertTrue(report.contains("Connections opened:"));
 		assertTrue(report.contains("SQL executions:"));
 		assertTrue(report.contains("Snapshot unchanged: true"));

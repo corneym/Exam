@@ -3,7 +3,7 @@ package au.edu.eq.questionbank.service.curriculum;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Optional;
+import java.util.Map;
 import java.util.Set;
 
 import au.edu.eq.questionbank.model.CurriculumLevel;
@@ -65,32 +65,33 @@ public final class CurriculumMappingCoverageService {
 	 */
 	public CurriculumMappingCoverage calculateCoverage(SyllabusVersion sourceVersion, SyllabusVersion targetVersion) {
 		validateVersions(sourceVersion, targetVersion);
-		Set<Long> reviewedSourceIds = reviewRepository.findReviewedSourceIds(sourceVersion, targetVersion);
-		ConfirmedPairMappings confirmedMappings = confirmedPairMappings(sourceVersion, targetVersion);
 
-		// Each syllabus hierarchy is loaded once. Both review levels
-		// are collected during the same traversal.
+		// One retrieval supplies both the reviewed source IDs and their
+		// authoritative MATCHED or NO_MATCH outcomes.
+		Map<Long, CurriculumMappingReviewOutcome> reviewOutcomes = reviewRepository
+				.findOutcomesForVersions(sourceVersion, targetVersion);
+		ConfirmedPairMappings confirmedMappings = confirmedPairMappings(sourceVersion, targetVersion);
 		ReviewLevelNodes sourceNodes = findReviewLevelNodes(sourceVersion);
 		ReviewLevelNodes targetNodes = findReviewLevelNodes(targetVersion);
 		CurriculumMappingLevelCoverage descriptorCoverage = calculateLevelCoverage(sourceNodes.descriptors(),
-				targetNodes.descriptors(), targetVersion, CurriculumLevel.DESCRIPTOR, reviewedSourceIds,
-				confirmedMappings.sourceIds(), confirmedMappings.targetIds());
+				targetNodes.descriptors(), CurriculumLevel.DESCRIPTOR, reviewOutcomes, confirmedMappings.sourceIds(),
+				confirmedMappings.targetIds());
 		CurriculumMappingLevelCoverage subtopicCoverage = calculateLevelCoverage(sourceNodes.subtopics(),
-				targetNodes.subtopics(), targetVersion, CurriculumLevel.SUBTOPIC, reviewedSourceIds,
-				confirmedMappings.sourceIds(), confirmedMappings.targetIds());
+				targetNodes.subtopics(), CurriculumLevel.SUBTOPIC, reviewOutcomes, confirmedMappings.sourceIds(),
+				confirmedMappings.targetIds());
 		return new CurriculumMappingCoverage(sourceVersion, targetVersion, descriptorCoverage, subtopicCoverage);
 	}
 
 	private CurriculumMappingLevelCoverage calculateLevelCoverage(List<CurriculumNode> sourceNodes,
-			List<CurriculumNode> targetNodes, SyllabusVersion targetVersion, CurriculumLevel level,
-			Set<Long> reviewedSourceIds, Set<Long> confirmedMappedSourceIds, Set<Long> confirmedMappedTargetIds) {
+			List<CurriculumNode> targetNodes, CurriculumLevel level,
+			Map<Long, CurriculumMappingReviewOutcome> reviewOutcomes, Set<Long> confirmedMappedSourceIds,
+			Set<Long> confirmedMappedTargetIds) {
 		int matched = 0;
 		int noMatch = 0;
 		int unreviewed = 0;
 		int inconsistent = 0;
 		for (CurriculumNode source : sourceNodes) {
-			CurriculumMappingSourceState state = determineSourceState(source, targetVersion, reviewedSourceIds,
-					confirmedMappedSourceIds);
+			CurriculumMappingSourceState state = determineSourceState(source, reviewOutcomes, confirmedMappedSourceIds);
 			switch (state) {
 			case MATCHED:
 				matched++;
@@ -158,27 +159,23 @@ public final class CurriculumMappingCoverageService {
 		return new ConfirmedPairMappings(Set.copyOf(sourceIds), Set.copyOf(targetIds));
 	}
 
-	private CurriculumMappingSourceState determineSourceState(CurriculumNode source, SyllabusVersion targetVersion,
-			Set<Long> reviewedSourceIds, Set<Long> confirmedMappedSourceIds) {
-		boolean reviewed = reviewedSourceIds.contains(source.getId());
+	private CurriculumMappingSourceState determineSourceState(CurriculumNode source,
+			Map<Long, CurriculumMappingReviewOutcome> reviewOutcomes, Set<Long> confirmedMappedSourceIds) {
+		CurriculumMappingReviewOutcome outcome = reviewOutcomes.get(source.getId());
 		boolean confirmedMapping = confirmedMappedSourceIds.contains(source.getId());
 
-		// A mapping alone is not a completed review; the explicit outcome must agree
-		// with it.
-		if (!reviewed) {
+		// Missing review record means unreviewed. A confirmed mapping
+		// without a completed review remains inconsistent.
+		if (outcome == null) {
 			return confirmedMapping ? CurriculumMappingSourceState.INCONSISTENT
 					: CurriculumMappingSourceState.UNREVIEWED;
 		}
-		Optional<CurriculumMappingReviewOutcome> outcome = reviewRepository.findOutcome(source, targetVersion);
-		if (outcome.isEmpty()) {
-			return CurriculumMappingSourceState.INCONSISTENT;
-		}
-		if (outcome.get() == CurriculumMappingReviewOutcome.MATCHED) {
+		if (outcome == CurriculumMappingReviewOutcome.MATCHED) {
 			return confirmedMapping ? CurriculumMappingSourceState.MATCHED : CurriculumMappingSourceState.INCONSISTENT;
 		}
 
-		// An explicit no-match decision is complete only when no confirmed target
-		// contradicts it.
+		// NO_MATCH is valid only when no confirmed target mapping
+		// contradicts the explicit review decision.
 		return confirmedMapping ? CurriculumMappingSourceState.INCONSISTENT : CurriculumMappingSourceState.NO_MATCH;
 	}
 

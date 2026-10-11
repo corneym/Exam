@@ -1,18 +1,19 @@
 package au.edu.eq.questionbank.repository.curriculum;
 
-import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
-
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
 import au.edu.eq.questionbank.model.CurriculumMappingReviewOutcome;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 /**
  * Reads completed curriculum-mapping reviews from SQLite.
@@ -59,6 +60,47 @@ public final class SqliteCurriculumMappingReviewRepository implements Curriculum
 			}
 		} catch (SQLException e) {
 			throw new IllegalStateException("Could not read curriculum mapping review from database", e);
+		}
+	}
+
+	@Override
+	public Map<Long, CurriculumMappingReviewOutcome> findOutcomesForVersions(SyllabusVersion sourceVersion,
+			SyllabusVersion targetVersion) {
+		validateVersions(sourceVersion, targetVersion);
+		Map<Long, CurriculumMappingReviewOutcome> outcomes = new HashMap<>();
+
+		// Read all decisions for this directional syllabus pair with one
+		// connection and one SQL execution. The source-version join prevents
+		// reviews for other historical syllabuses entering the result.
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT review.source_node_id,
+						       review.review_outcome
+						FROM curriculum_mapping_reviews review
+						JOIN curriculum_nodes source
+						    ON source.id = review.source_node_id
+						WHERE source.syllabus_version_id = ?
+						  AND review.target_syllabus_version_id = ?
+						""")) {
+			statement.setLong(1, sourceVersion.getId());
+			statement.setLong(2, targetVersion.getId());
+			try (ResultSet result = statement.executeQuery()) {
+				while (result.next()) {
+					long sourceNodeId = result.getLong("source_node_id");
+					String storedOutcome = result.getString("review_outcome");
+					CurriculumMappingReviewOutcome outcome;
+					try {
+						outcome = CurriculumMappingReviewOutcome.valueOf(storedOutcome);
+					} catch (IllegalArgumentException | NullPointerException failure) {
+						throw new IllegalStateException(
+								"Unexpected curriculum mapping review outcome: " + storedOutcome, failure);
+					}
+					outcomes.put(sourceNodeId, outcome);
+				}
+			}
+			return Map.copyOf(outcomes);
+		} catch (SQLException failure) {
+			throw new IllegalStateException("Could not read curriculum mapping reviews from database", failure);
 		}
 	}
 
