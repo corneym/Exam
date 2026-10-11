@@ -64,10 +64,17 @@ public final class BookletCorpusAudit {
 			findings.add(BookletCorpusFinding.MISSING_QUESTION_PDF);
 		}
 		Integer expectedQuestionCount = booklet.getExpectedQuestionCount();
-		if (expectedQuestionCount != null && expectedQuestionCount.intValue() != encounteredTopLevelQuestions) {
 
-			// Report the discrepancy without guessing whether the expected count or the
-			// captured source structure is wrong.
+		if (expectedQuestionCount == null) {
+
+			// Unknown expectations require review even when no Questions
+			// have been captured.
+			findings.add(BookletCorpusFinding.MISSING_EXPECTED_TOP_LEVEL_QUESTION_COUNT);
+
+		} else if (expectedQuestionCount.intValue() != encounteredTopLevelQuestions) {
+
+			// A known mismatch requires attention regardless of whether
+			// the actual count is above or below the expected count.
 			findings.add(BookletCorpusFinding.EXPECTED_TOP_LEVEL_QUESTION_COUNT_MISMATCH);
 		}
 
