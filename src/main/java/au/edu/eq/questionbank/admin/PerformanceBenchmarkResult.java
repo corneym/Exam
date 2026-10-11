@@ -20,6 +20,10 @@ public record PerformanceBenchmarkResult(String operation, int warmupIterations,
 		List<Long> elapsedNanos, double minMilliseconds, double medianMilliseconds, double p90Milliseconds,
 		double maxMilliseconds) {
 
+	/**
+	 * Validates the benchmark result's invariants and defensively copies the
+	 * measured durations to preserve immutability.
+	 */
 	public PerformanceBenchmarkResult {
 		if (operation == null || !operation.matches("[a-zA-Z0-9._-]+")) {
 			throw new IllegalArgumentException("Invalid benchmark operation");

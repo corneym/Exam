@@ -86,7 +86,7 @@ The Issue #110 CSV report is **not** the same format as runtime `diagnostics/per
 
 A frozen schema-v19 snapshot containing 624 Questions was established on 11 October 2026. Its SHA-256 fingerprint is `9e1690c136206c1b49233a097e033ff92654e227323cbd4e7f2c031412e0722f`. A subsequent CSV-enabled `question.findAll` run used two warm-ups and ten measured iterations; result count 624, median **1126.442 ms**, p90 **1143.949 ms**. Preserve the original snapshot unchanged when comparing code versions. Issue #128 migrations belong on a **separate copy**; an upgraded schema may not be readable by the pre-migration benchmark executable.
 
-Dashboard/corpus preparation remains to be assessed for a practical headless benchmark boundary under Issue #110. Richer Search filter workloads from Issue #94 are to be added after the relevant production functionality exists. Those future operations should use the same existing benchmark runner and reporting format, not a separate timing implementation.
+Dashboard corpus-audit preparation is now benchmarked through dashboard.audit.subject:<id>, using the production ExamCorpusAuditService with physical PDF assets deliberately unavailable. The frozen 624-Question snapshot produced 14 Exam audit statuses, with a median execution time of 1114.287 ms across ten measured iterations. This measures one production Dashboard preparation boundary, not the complete Dashboard refresh. Richer Search filter workloads will be introduced alongside Issue #94.
 
 ## Additional investigation tools
 

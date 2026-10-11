@@ -33,6 +33,13 @@ public final class PerformanceBenchmarkWorkloads {
 	private final SqliteDatabase database;
 	private final SqliteQuestionRepository questions;
 
+	/**
+	 * Creates workloads backed by an existing immutable SQLite snapshot.
+	 *
+	 * @param snapshotPath path to the benchmark database snapshot
+	 * @throws SQLException         if the schema is invalid or unsupported
+	 * @throws NullPointerException if snapshotPath is null
+	 */
 	public PerformanceBenchmarkWorkloads(Path snapshotPath) throws SQLException {
 		Objects.requireNonNull(snapshotPath, "snapshotPath");
 		database = SqliteDatabase.readOnly(snapshotPath);

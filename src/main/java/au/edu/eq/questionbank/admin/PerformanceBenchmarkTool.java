@@ -43,6 +43,16 @@ public final class PerformanceBenchmarkTool {
 		}
 	}
 
+	/**
+	 * Executes the selected read-only benchmarks and optionally writes a CSV
+	 * report.
+	 *
+	 * @param args   benchmark options
+	 * @param output normal report destination
+	 * @param error  error report destination
+	 * @return zero on success, one on execution failure, or two for invalid
+	 *         arguments
+	 */
 	public static int run(String[] args, PrintStream output, PrintStream error) {
 		Objects.requireNonNull(args, "args");
 		Objects.requireNonNull(output, "output");
