@@ -8,6 +8,7 @@ import java.sql.Statement;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 import au.edu.eq.questionbank.model.CurriculumNode;
@@ -133,6 +134,23 @@ public final class SqliteCurriculumRepository implements CurriculumRepository {
 		}
 	}
 
+	/**
+	 * Reconstructs a curriculum node through its stored parent relationships.
+	 *
+	 * All queries use the caller-owned connection. The connection is never closed
+	 * by this method.
+	 *
+	 * @param connection caller-owned database connection
+	 * @param id         persistent curriculum node identifier
+	 * @return the reconstructed node, or empty if absent
+	 * @throws SQLException          if a database query fails
+	 * @throws IllegalStateException if the stored hierarchy is inconsistent
+	 */
+	public Optional<CurriculumNode> findNodeById(Connection connection, long id) throws SQLException {
+		Objects.requireNonNull(connection, "connection");
+		return findNodeById(connection, id, MAX_HIERARCHY_DEPTH);
+	}
+
 	@Override
 	public List<CurriculumNode> findRootNodes(SyllabusVersion syllabusVersion) {
 		if (syllabusVersion == null) {
@@ -227,22 +245,6 @@ public final class SqliteCurriculumRepository implements CurriculumRepository {
 		}
 	}
 
-	/**
-	 * Reconstructs a node using its stored parent links, without interpreting its
-	 * code. Mapping reads share their caller-owned connection so mapping and node
-	 * identities are read from the same SQLite snapshot.
-	 *
-	 * @param connection the caller-owned connection with an active read
-	 * @param id         the persistent node identifier
-	 * @return the reconstructed node, or empty if the identifier is absent
-	 * @throws SQLException          if a lookup fails
-	 * @throws IllegalStateException if a parent/version is missing or the stored
-	 *                               hierarchy is inconsistent
-	 */
-	Optional<CurriculumNode> findNodeById(Connection connection, long id) throws SQLException {
-		return findNodeById(connection, id, MAX_HIERARCHY_DEPTH);
-	}
-
 	private CurriculumNode createChild(ResultSet result, CurriculumNode parent) throws SQLException {
 		long id = result.getLong("id");
 		String code = result.getString("curriculum_code");
@@ -261,9 +263,10 @@ public final class SqliteCurriculumRepository implements CurriculumRepository {
 				throw new IllegalStateException("SUBTOPIC has invalid parent");
 			}
 			return new Subtopic(id, syllabusVersion, (Topic) parent, code, name, displayOrder);
-
-		// Descriptors may sit directly under a Topic or under an optional Subtopic.
 		case "DESCRIPTOR":
+
+			// Descriptors can belong directly to a Topic or
+			// to an optional Subtopic.
 			if (parent instanceof Topic) {
 				return new Descriptor(id, syllabusVersion, (Topic) parent, code, name, displayOrder);
 			}
