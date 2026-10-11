@@ -28,19 +28,24 @@ public final class SqliteDatabase {
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
 	private final Path databasePath;
+	private final boolean readOnly;
 
 	/**
-	 * Creates a database boundary for the supplied SQLite file.
+	 * Creates a database boundary with ordinary read/write access.
 	 *
-	 * @param databasePath the SQLite database file; converted to a normalized
-	 *                     absolute path
-	 * @throws NullPointerException if {@code databasePath} is {@code null}
+	 * @param databasePath database file location
+	 * @throws NullPointerException if databasePath is null
 	 */
 	public SqliteDatabase(Path databasePath) {
+		this(databasePath, false);
+	}
+
+	private SqliteDatabase(Path databasePath, boolean readOnly) {
 		if (databasePath == null) {
 			throw new NullPointerException("databasePath");
 		}
 		this.databasePath = databasePath.toAbsolutePath().normalize();
+		this.readOnly = readOnly;
 	}
 
 	/**
@@ -50,6 +55,22 @@ public final class SqliteDatabase {
 	 */
 	public static int latestSchemaVersion() {
 		return LATEST_SCHEMA_VERSION;
+	}
+
+	/**
+	 * Creates a database boundary for a stable, read-only SQLite snapshot.
+	 *
+	 * The snapshot must already exist and must not change while being read.
+	 * Connections cannot create or modify the supplied database.
+	 *
+	 * Do not use this mode on a live database with concurrent writers.
+	 *
+	 * @param databasePath existing SQLite snapshot path
+	 * @return a read-only database boundary
+	 * @throws NullPointerException if databasePath is null
+	 */
+	public static SqliteDatabase readOnly(Path databasePath) {
+		return new SqliteDatabase(databasePath, true);
 	}
 
 	/**
@@ -175,33 +196,47 @@ public final class SqliteDatabase {
 	}
 
 	/**
-	 * Opens a caller-owned connection with SQLite foreign-key enforcement enabled.
+	 * Opens a SQLite connection with the configured access mode.
 	 *
-	 * @return an open connection that the caller must close
-	 * @throws SQLException if the connection cannot be opened or configured
+	 * @return an open database connection
+	 * @throws SQLException if the database cannot be opened or configured
 	 */
 	public Connection openConnection() throws SQLException {
-		Connection connection = DriverManager.getConnection("jdbc:sqlite:" + databasePath);
+
+		// A benchmark must never create a missing database accidentally.
+		if (readOnly && !Files.isRegularFile(databasePath)) {
+			throw new SQLException("Read-only database file does not exist: " + databasePath);
+		}
+		String jdbcUrl;
+		if (readOnly) {
+
+			// SQLite URI mode=ro prevents changes to the database.
+			// immutable=1 avoids creating journal or shared-memory sidecars
+			// when reading a consistent, unchanging benchmark snapshot.
+			jdbcUrl = "jdbc:sqlite:" + databasePath.toUri().toASCIIString() + "?mode=ro&immutable=1";
+		} else {
+			jdbcUrl = "jdbc:sqlite:" + databasePath;
+		}
+		Connection connection = DriverManager.getConnection(jdbcUrl);
 		try {
 			try (Statement statement = connection.createStatement()) {
+				if (readOnly) {
 
-				// Wait briefly for another short-lived SQLite transaction rather than
-				// failing immediately with SQLITE_BUSY. The application performs
-				// persistence work off the JavaFX thread while UI reads may occur
-				// concurrently on another connection.
+					// Defence in depth: prevent application SQL from modifying
+					// database state even if it reaches this connection.
+					statement.execute("PRAGMA query_only = ON");
+				}
 				statement.execute("PRAGMA busy_timeout = 5000");
-
-				// Foreign-key enforcement is connection-local, so enable it for every caller.
 				statement.execute("PRAGMA foreign_keys = ON");
 			}
 			return connection;
-		} catch (SQLException e) {
+		} catch (SQLException | RuntimeException failure) {
 			try {
 				connection.close();
 			} catch (SQLException closeFailure) {
-				e.addSuppressed(closeFailure);
+				failure.addSuppressed(closeFailure);
 			}
-			throw e;
+			throw failure;
 		}
 	}
 
