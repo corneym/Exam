@@ -58,6 +58,7 @@ import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
 import au.edu.eq.questionbank.repository.assessment.AnswerFileReassignmentService;
 import au.edu.eq.questionbank.repository.assessment.AnswerPdfReplacementService;
+import au.edu.eq.questionbank.repository.assessment.BookletApplicabilityReviewRepository;
 import au.edu.eq.questionbank.repository.assessment.ExamMetadataCorrectionService;
 import au.edu.eq.questionbank.repository.assessment.LegacyQuestionMetadataService;
 import au.edu.eq.questionbank.repository.assessment.LegacyQuestionMetadataUpdateResult;
@@ -66,6 +67,7 @@ import au.edu.eq.questionbank.repository.assessment.QuestionBookletPdfReplacemen
 import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SourceQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
+import au.edu.eq.questionbank.repository.assessment.SqliteBookletApplicabilityReviewRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamAssetDeletionService;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
@@ -91,6 +93,7 @@ import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumSourcePdfRep
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.IncompatibleDatabaseException;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.audit.BookletApplicabilityReviewService;
 import au.edu.eq.questionbank.service.audit.ExamCorpusAuditService;
 import au.edu.eq.questionbank.service.audit.ExamCorpusStatus;
 import au.edu.eq.questionbank.service.backup.ApplicationRestartService;
@@ -245,6 +248,9 @@ public class QuestionBankApplication extends Application {
 	private SqliteExamAssetDeletionService examAssetDeletionService;
 	private long corpusDashboardRefreshGeneration;
 	private boolean corpusDashboardLifecycleChangeRunning;
+	private BookletApplicabilityReviewRepository bookletApplicabilityReviewRepository;
+	private BookletApplicabilityReviewService bookletApplicabilityReviewService;
+	private boolean corpusDashboardReviewChangeRunning;
 
 	// Curriculum persistence joins the application-owned Working Subject refresh
 	// rather than being read by CurriculumSelectorPane on the JavaFX thread.
@@ -844,6 +850,47 @@ public class QuestionBankApplication extends Application {
 				+ subject.getName()
 				+ " has more than one current syllabus version. Resolve the curriculum state before exporting revision material.");
 		return false;
+	}
+
+	private void changeCorpusDashboardBookletReview(ExamBooklet booklet, boolean reviewed) {
+		if (booklet == null) {
+			throw new NullPointerException("booklet");
+		}
+		if (corpusDashboardReviewChangeRunning || corpusDashboardLifecycleChangeRunning) {
+			return;
+		}
+		Subject dashboardSubject = workingSubject;
+		long subjectGeneration = workingSubjectRefreshGeneration;
+		CorpusDashboardPane initiatingDashboard = corpusDashboardPane;
+		corpusDashboardReviewChangeRunning = true;
+		if (initiatingDashboard != null) {
+			initiatingDashboard.setApplicabilityReviewChangeInProgress(true);
+		}
+		Task<Void> task = new ApplicationBackgroundTask<>(() -> {
+
+			// Eligibility checks and SQLite writes run off the FX thread.
+			bookletApplicabilityReviewService.setReviewed(booklet, reviewed);
+			return null;
+		});
+		task.setOnSucceeded(_ -> {
+			if (dashboardSubject == null) {
+				finishCorpusDashboardReviewChange(initiatingDashboard);
+				return;
+			}
+
+			// A new background snapshot reloads the persisted review IDs,
+			// recalculates the Exam status and updates Mark Complete.
+			loadCorpusDashboardHome(dashboardSubject, subjectGeneration, -1L,
+					() -> finishCorpusDashboardReviewChange(initiatingDashboard));
+		});
+		task.setOnFailed(_ -> {
+			finishCorpusDashboardReviewChange(initiatingDashboard);
+			showAlert(Alert.AlertType.ERROR, "Applicability Review", "The booklet review status could not be changed.",
+					failureMessage(task.getException()));
+		});
+		Thread thread = new Thread(task, "corpus-dashboard-applicability-review-" + booklet.getId());
+		thread.setDaemon(true);
+		thread.start();
 	}
 
 	private void changeCorpusDashboardExamState(Exam exam, ExamCaptureState targetState) {
@@ -2261,6 +2308,13 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void finishCorpusDashboardReviewChange(CorpusDashboardPane initiatingDashboard) {
+		corpusDashboardReviewChangeRunning = false;
+		if (initiatingDashboard != null) {
+			initiatingDashboard.setApplicabilityReviewChangeInProgress(false);
+		}
+	}
+
 	private void finishLegacyQuestionImportDashboardReturn() {
 		boolean returnToDashboard = legacyQuestionImportDashboardOwned;
 		legacyQuestionImportDashboardOwned = false;
@@ -2700,6 +2754,9 @@ public class QuestionBankApplication extends Application {
 		// and Exam / Assets rather than constructing a parallel corpus model.
 		corpusDashboardAuditService = new ExamCorpusAuditService(examWriter, answerWriter, questionRepository,
 				createExamPdfStore(config));
+		bookletApplicabilityReviewRepository = new SqliteBookletApplicabilityReviewRepository(database);
+		bookletApplicabilityReviewService = new BookletApplicabilityReviewService(corpusDashboardAuditService,
+				bookletApplicabilityReviewRepository);
 		initialiseExamAssetsWorkflow(primaryStage, config, database, answerWriter);
 		initialiseCapturePanes(primaryStage, config, database, sourceQuestionRepository, questionCaptureService,
 				legacyQuestionSplitService, answerWriter);
@@ -2850,6 +2907,9 @@ public class QuestionBankApplication extends Application {
 				}
 
 				// Preserve current Dashboard filters and selection.
+				// Publish review confirmations before replacing the Exam audit
+				// snapshot so lifecycle readiness never uses stale review IDs.
+				corpusDashboardPane.setApplicabilityReviewState(snapshot.reviewedBookletIds());
 				corpusDashboardPane.replaceData(snapshot.examStatuses(), snapshot.questions(),
 						snapshot.mappingCoverages(), snapshot.curriculumAvailable(), preferredQuestionId);
 			} catch (RuntimeException | Error failure) {
@@ -2950,8 +3010,12 @@ public class QuestionBankApplication extends Application {
 		}
 
 		// Preserve the authoritative Dashboard snapshot contents.
+		// Read all persisted review confirmations for this Subject in one
+		// repository operation on the existing background worker.
+		Set<Long> reviewedBookletIds = bookletApplicabilityReviewRepository
+				.findReviewedBookletIdsForSubject(dashboardSubject.getId());
 		return new CorpusDashboardSnapshot(examStatuses, questions, curriculumState.mappingCoverages(),
-				curriculumState.curriculumAvailable());
+				curriculumState.curriculumAvailable(), reviewedBookletIds);
 	}
 
 	private CurriculumDashboardState loadCurriculumDashboardState(SqliteDatabase database, Subject subject) {
@@ -3951,6 +4015,8 @@ public class QuestionBankApplication extends Application {
 	private void showCorpusDashboardSnapshot(Subject dashboardSubject, CorpusDashboardSnapshot snapshot) {
 		CorpusDashboardPane dashboard = new CorpusDashboardPane(dashboardSubject, snapshot.examStatuses(),
 				snapshot.questions(), snapshot.mappingCoverages(), snapshot.curriculumAvailable());
+		dashboard.setApplicabilityReviewState(snapshot.reviewedBookletIds());
+		dashboard.setApplicabilityReviewHandler(this::changeCorpusDashboardBookletReview);
 		dashboard.setAddExamHandler(this::showExamAssetsModeForNewExam);
 		dashboard.setAddCurriculumHandler(() -> showDashboardAddCurriculum(primaryStage(), applicationConfig));
 		dashboard.setLegacyQuestionImportHandler(this::showLegacyQuestionImportFromDashboard);
@@ -5476,7 +5542,8 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private record CorpusDashboardSnapshot(List<ExamCorpusStatus> examStatuses, List<Question> questions,
-			List<CurriculumMappingCoverage> mappingCoverages, boolean curriculumAvailable) {
+			List<CurriculumMappingCoverage> mappingCoverages, boolean curriculumAvailable,
+			Set<Long> reviewedBookletIds) {
 
 		private CorpusDashboardSnapshot {
 			if (examStatuses == null) {
@@ -5488,12 +5555,15 @@ public class QuestionBankApplication extends Application {
 			if (mappingCoverages == null) {
 				throw new NullPointerException("mappingCoverages");
 			}
+			if (reviewedBookletIds == null) {
+				throw new NullPointerException("reviewedBookletIds");
+			}
 
-			// Freeze worker-thread repository results before publishing the complete
-			// Dashboard generation to JavaFX.
+			// The worker publishes immutable snapshots to the FX thread.
 			examStatuses = List.copyOf(examStatuses);
 			questions = List.copyOf(questions);
 			mappingCoverages = List.copyOf(mappingCoverages);
+			reviewedBookletIds = Set.copyOf(reviewedBookletIds);
 		}
 	}
 

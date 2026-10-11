@@ -239,6 +239,20 @@ class SqliteBookletApplicabilityReviewRepositoryTest {
 		assertTrue(repository.isReviewed(20));
 	}
 
+	@Test
+	void subjectQueryReturnsReviewsAcrossAllItsExams() {
+		assertEquals(Set.of(), repository.findReviewedBookletIdsForSubject(1));
+		repository.setReviewed(10, true);
+		repository.setReviewed(20, true);
+		repository.setReviewed(30, true);
+
+		// All three fixture booklets belong to Chemistry, despite
+		// the second Exam having a different year.
+		assertEquals(Set.of(10L, 20L, 30L), repository.findReviewedBookletIdsForSubject(1));
+		repository.setReviewed(20, false);
+		assertEquals(Set.of(10L, 30L), repository.findReviewedBookletIdsForSubject(1));
+	}
+
 	private void insertQuestionFixture() throws Exception {
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.execute("""

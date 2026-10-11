@@ -53,6 +53,31 @@ public final class SqliteBookletApplicabilityReviewRepository implements Booklet
 	}
 
 	@Override
+	public Set<Long> findReviewedBookletIdsForSubject(long subjectId) {
+		requireId(subjectId, "subjectId");
+		Set<Long> reviewedIds = new HashSet<>();
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT r.booklet_id
+						FROM booklet_applicability_reviews r
+						JOIN exam_booklets b ON b.id = r.booklet_id
+						JOIN exams e ON e.id = b.exam_id
+						WHERE e.subject_id = ?
+						ORDER BY r.booklet_id
+						""")) {
+			statement.setLong(1, subjectId);
+			try (ResultSet result = statement.executeQuery()) {
+				while (result.next()) {
+					reviewedIds.add(result.getLong("booklet_id"));
+				}
+			}
+			return Set.copyOf(reviewedIds);
+		} catch (SQLException exception) {
+			throw new IllegalStateException("Could not load Subject booklet applicability reviews", exception);
+		}
+	}
+
+	@Override
 	public boolean isReviewed(long bookletId) {
 		requireId(bookletId, "bookletId");
 		try (Connection connection = database.openConnection();

@@ -20,6 +20,15 @@ public interface BookletApplicabilityReviewRepository {
 	Set<Long> findReviewedBookletIds(long examId);
 
 	/**
+	 * Returns explicit review confirmations for every Question booklet belonging to
+	 * the supplied Subject.
+	 *
+	 * @param subjectId persistent Subject identifier
+	 * @return immutable set of reviewed booklet IDs
+	 */
+	Set<Long> findReviewedBookletIdsForSubject(long subjectId);
+
+	/**
 	 * Tests whether a booklet has an explicit persisted confirmation.
 	 *
 	 * @param bookletId persistent booklet identifier

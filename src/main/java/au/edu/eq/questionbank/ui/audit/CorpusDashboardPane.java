@@ -20,6 +20,7 @@ import au.edu.eq.questionbank.model.QuestionSourceOrder;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.service.audit.BookletCorpusFinding;
 import au.edu.eq.questionbank.service.audit.BookletCorpusStatus;
+import au.edu.eq.questionbank.service.audit.ExamApplicabilityReview;
 import au.edu.eq.questionbank.service.audit.ExamCorpusStatus;
 import au.edu.eq.questionbank.service.audit.McqExplanationCoverage;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusAudit;
@@ -42,6 +43,7 @@ import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressIndicator;
@@ -129,6 +131,10 @@ public final class CorpusDashboardPane extends VBox {
 	private final Button inspectExamQuestionsButton = new Button("Inspect Questions");
 	private BiConsumer<Exam, ExamBooklet> questionInspectionHandler = (_, _) -> {
 	};
+	private boolean applicabilityReviewChangeInProgress;
+	private BiConsumer<ExamBooklet, Boolean> applicabilityReviewHandler = (_, _) -> {
+	};
+	private Set<Long> reviewedBookletIds = Set.of();
 
 	// Curriculum mapping review is a Subject-level reporting dimension independent
 	// of ordinary Question and Exam completeness.
@@ -347,6 +353,49 @@ public final class CorpusDashboardPane extends VBox {
 		// Answer capture remains application-owned because it coordinates the shared
 		// PDF workspace and capture lifecycle.
 		answerCaptureHandler = handler;
+	}
+
+	/**
+	 * Prevents duplicate review changes while background persistence and the
+	 * subsequent Dashboard refresh are running.
+	 *
+	 * @param inProgress whether a review change is underway
+	 */
+	public void setApplicabilityReviewChangeInProgress(boolean inProgress) {
+		applicabilityReviewChangeInProgress = inProgress;
+		bookletTable.refresh();
+		updateExamLifecycleActionState();
+	}
+
+	/**
+	 * Supplies the application-owned persistence action for an explicit booklet
+	 * applicability-review confirmation or clearing action.
+	 *
+	 * @param handler receives the selected booklet and requested state
+	 */
+	public void setApplicabilityReviewHandler(BiConsumer<ExamBooklet, Boolean> handler) {
+		if (handler == null) {
+			throw new NullPointerException("handler");
+		}
+		applicabilityReviewHandler = handler;
+	}
+
+	/**
+	 * Replaces the explicit persisted review confirmations shown by the current
+	 * Dashboard generation.
+	 *
+	 * @param reviewedIds booklet IDs with persisted confirmations
+	 */
+	public void setApplicabilityReviewState(Set<Long> reviewedIds) {
+		if (reviewedIds == null) {
+			throw new NullPointerException("reviewedIds");
+		}
+		reviewedBookletIds = Set.copyOf(reviewedIds);
+
+		// Both status tables and lifecycle readiness depend on these IDs.
+		examTable.refresh();
+		bookletTable.refresh();
+		updateExamLifecycleActionState();
 	}
 
 	/**
@@ -867,21 +916,19 @@ public final class CorpusDashboardPane extends VBox {
 
 	private void changeSelectedExamState() {
 		ExamCorpusStatus selected = examTable.getSelectionModel().getSelectedItem();
-		if (selected == null) {
+		if (selected == null || applicabilityReviewChangeInProgress || examLifecycleChangeInProgress) {
 			return;
 		}
 		if (selected.declaredCaptureState() == ExamCaptureState.COMPLETE) {
-
-			// COMPLETE Exams can always be deliberately reopened for structural work.
 			examLifecycleHandler.accept(selected.exam(), ExamCaptureState.ACTIVE);
 			return;
 		}
-		if (!selected.isReadyForCompletion()) {
+
+		// BOTH ordinary corpus readiness and deliberate applicability
+		// review are required before allowing this action.
+		if (!selected.isReadyForCompletion() || !isExamApplicabilityReviewed(selected)) {
 			return;
 		}
-
-		// ACTIVE -> COMPLETE is offered only after the current audit snapshot proves
-		// that every required structure and ordinary capture task is complete.
 		examLifecycleHandler.accept(selected.exam(), ExamCaptureState.COMPLETE);
 	}
 
@@ -973,9 +1020,6 @@ public final class CorpusDashboardPane extends VBox {
 	private void configureBookletTable() {
 		bookletTable.setId("corpus-dashboard-booklets");
 		bookletTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
-
-		// Preserve enough space for the header plus at least three ordinary booklet
-		// rows, while preventing a small booklet list from consuming the whole dialog.
 		bookletTable.setMinHeight(BOOKLET_TABLE_MIN_HEIGHT);
 		bookletTable.setPrefHeight(BOOKLET_TABLE_HEIGHT);
 		bookletTable.setMaxHeight(BOOKLET_TABLE_MAX_HEIGHT);
@@ -993,19 +1037,14 @@ public final class CorpusDashboardPane extends VBox {
 		questionsColumn.setCellValueFactory(data -> {
 			BookletCorpusStatus status = data.getValue();
 			Integer expected = status.expectedTopLevelQuestionCount();
-
-			// Zero captured Questions is known; a missing expectation is not.
 			String expectedText = expected == null ? "?" : expected.toString();
-			String value = status.encounteredTopLevelQuestionCount() + " / " + expectedText;
-			return new ReadOnlyStringWrapper(value);
+			return new ReadOnlyStringWrapper(status.encounteredTopLevelQuestionCount() + " / " + expectedText);
 		});
 		TableColumn<BookletCorpusStatus, Number> partsColumn = new TableColumn<>("Parts");
 		partsColumn.setCellValueFactory(data -> new ReadOnlyObjectWrapper<>(data.getValue().questionPartCount()));
 		TableColumn<BookletCorpusStatus, String> noDescriptorColumn = new TableColumn<>("No descriptor");
 		noDescriptorColumn.setCellValueFactory(data -> {
 			BookletCorpusStatus status = data.getValue();
-
-			// No captured Questions means classification coverage is not applicable.
 			String value = status.questionPartCount() == 0 ? "—"
 					: Integer.toString(status.questionsWithoutDescriptorCount());
 			return new ReadOnlyStringWrapper(value);
@@ -1015,14 +1054,18 @@ public final class CorpusDashboardPane extends VBox {
 				.setCellValueFactory(data -> new ReadOnlyStringWrapper(mcqExplanationCoverageText(data.getValue())));
 		TableColumn<BookletCorpusStatus, String> problemsColumn = new TableColumn<>("Problems");
 		problemsColumn.setCellValueFactory(data -> new ReadOnlyStringWrapper(bookletProblemLabel(data.getValue())));
-
-		// The combined Question count saves space without losing expected-count
-		// information or conflating unknown with not applicable.
+		TableColumn<BookletCorpusStatus, Boolean> reviewedColumn = new TableColumn<>("Applicability Reviewed");
+		reviewedColumn.setCellValueFactory(
+				data -> new ReadOnlyObjectWrapper<>(isBookletApplicabilityReviewed(data.getValue())));
 		bookletTable.getColumns()
 				.setAll(List.<TableColumn<BookletCorpusStatus, ?>>of(bookletColumn, formatColumn, pdfColumn,
 						answerFileColumn, questionsColumn, partsColumn, noDescriptorColumn, mcqExplanationColumn,
-						problemsColumn));
+						problemsColumn, reviewedColumn));
 		centreTableColumns(bookletTable);
+
+		// Apply this factory AFTER the standard centred-cell setup,
+		// otherwise the ordinary text factory would replace the checkbox.
+		reviewedColumn.setCellFactory(_ -> createApplicabilityReviewCell());
 	}
 
 	private void configureBulkResponseTypeControls() {
@@ -1186,13 +1229,16 @@ public final class CorpusDashboardPane extends VBox {
 				.setCellValueFactory(data -> new ReadOnlyStringWrapper(questionAssetCount(data.getValue())));
 		TableColumn<ExamCorpusStatus, String> answerBookletsColumn = new TableColumn<>("Answer Booklets");
 		answerBookletsColumn.setCellValueFactory(data -> new ReadOnlyStringWrapper(answerAssetCount(data.getValue())));
+		TableColumn<ExamCorpusStatus, String> reviewedColumn = new TableColumn<>("Applicability Reviewed");
+		reviewedColumn.setCellValueFactory(
+				data -> new ReadOnlyStringWrapper(isExamApplicabilityReviewed(data.getValue()) ? "✓" : "—"));
 		TableColumn<ExamCorpusStatus, String> workColumn = new TableColumn<>("Needs Work");
 		workColumn.setCellValueFactory(data -> new ReadOnlyStringWrapper(workLabel(data.getValue())));
 
-		// Use the collection overload so mixed TableColumn value types do not create
-		// a generic varargs array warning.
-		examTable.getColumns().setAll(List.<TableColumn<ExamCorpusStatus, ?>>of(yearColumn, providerColumn,
-				assessmentColumn, stateColumn, questionBookletsColumn, answerBookletsColumn, workColumn));
+		// The Exam status is derived and intentionally has no editable control.
+		examTable.getColumns()
+				.setAll(List.<TableColumn<ExamCorpusStatus, ?>>of(yearColumn, providerColumn, assessmentColumn,
+						stateColumn, questionBookletsColumn, answerBookletsColumn, reviewedColumn, workColumn));
 		centreTableColumns(examTable);
 	}
 
@@ -1413,6 +1459,64 @@ public final class CorpusDashboardPane extends VBox {
 		return confirmation.showAndWait().orElse(ButtonType.CANCEL) == captureButton;
 	}
 
+	private TableCell<BookletCorpusStatus, Boolean> createApplicabilityReviewCell() {
+		return new TableCell<>() {
+
+			private final CheckBox checkBox = new CheckBox();
+			{
+				setAlignment(Pos.CENTER);
+				checkBox.setOnAction(_ -> {
+					BookletCorpusStatus status = getTableRow() == null ? null : getTableRow().getItem();
+					if (status == null || applicabilityReviewChangeInProgress) {
+						return;
+					}
+					boolean recorded = reviewedBookletIds.contains(status.booklet().getId());
+					if (!recorded && !ExamApplicabilityReview.eligibleForReview(status)) {
+						return;
+					}
+
+					// The application persists the change asynchronously.
+					// Only a refreshed authoritative snapshot confirms it.
+					applicabilityReviewHandler.accept(status.booklet(), !recorded);
+				});
+			}
+
+			@Override
+			protected void updateItem(Boolean reviewed, boolean empty) {
+				super.updateItem(reviewed, empty);
+				BookletCorpusStatus status = getTableRow() == null ? null : getTableRow().getItem();
+				if (empty || status == null) {
+					setGraphic(null);
+					setText(null);
+					setTooltip(null);
+					return;
+				}
+				long bookletId = status.booklet().getId();
+				boolean recorded = reviewedBookletIds.contains(bookletId);
+				boolean eligible = ExamApplicabilityReview.eligibleForReview(status);
+				checkBox.setId("corpus-dashboard-applicability-reviewed-" + bookletId);
+				checkBox.setSelected(recorded && eligible);
+				checkBox.setDisable(applicabilityReviewChangeInProgress || (!recorded && !eligible));
+				String explanation;
+				if (!eligible) {
+					explanation = "Finish the booklet's expected Question "
+							+ "capture, classification and required content "
+							+ "before confirming applicability review.";
+				} else if (recorded) {
+					explanation = "Applicability reviewed. " + "Uncheck to require another review.";
+				} else {
+					explanation = "Confirm that all Questions and their " + "Revision Output Include/Exclude decisions "
+							+ "have been inspected.";
+				}
+				Tooltip tooltip = new Tooltip(explanation);
+				checkBox.setTooltip(tooltip);
+				setTooltip(tooltip);
+				setText(null);
+				setGraphic(checkBox);
+			}
+		};
+	}
+
 	private Label createBoldLabel(String text) {
 		Label label = new Label(text);
 
@@ -1582,6 +1686,19 @@ public final class CorpusDashboardPane extends VBox {
 
 		// A null booklet deliberately means all Questions belonging to this Exam.
 		questionInspectionHandler.accept(selectedExam.exam(), null);
+	}
+
+	private boolean isBookletApplicabilityReviewed(BookletCorpusStatus status) {
+
+		// A persisted confirmation alone cannot overcome a known
+		// incomplete or invalid booklet audit.
+		return reviewedBookletIds.contains(status.booklet().getId())
+				&& ExamApplicabilityReview.eligibleForReview(status);
+	}
+
+	private boolean isExamApplicabilityReviewed(ExamCorpusStatus status) {
+		return ExamApplicabilityReview.allBookletsReviewed(status.assetExpectations(), status.bookletStatuses(),
+				reviewedBookletIds);
 	}
 
 	private boolean isMissingMcqExplanation(Question question) {
@@ -2122,28 +2239,31 @@ public final class CorpusDashboardPane extends VBox {
 			examLifecycleButton.setTooltip(new Tooltip("Select an Exam before changing its lifecycle state."));
 			return;
 		}
-		if (examLifecycleChangeInProgress) {
-
-			// Busy state temporarily overrides ordinary lifecycle availability without
-			// changing which action the selected Exam will expose once the refresh ends.
+		if (examLifecycleChangeInProgress || applicabilityReviewChangeInProgress) {
 			examLifecycleButton.setDisable(true);
-			examLifecycleButton.setTooltip(new Tooltip("Exam state change is in progress."));
+			examLifecycleButton.setTooltip(new Tooltip("An Exam or booklet status change is in progress."));
 			return;
 		}
 		if (selected.declaredCaptureState() == ExamCaptureState.COMPLETE) {
-
-			// Reactivation is a deliberate structural decision and does not require the
-			// completed Exam still to satisfy current audit readiness.
 			examLifecycleButton.setText("Mark Active");
 			examLifecycleButton.setDisable(false);
 			examLifecycleButton.setTooltip(new Tooltip("Reactivate this Exam for structural changes."));
 			return;
 		}
-		boolean ready = selected.isReadyForCompletion();
+		boolean corpusReady = selected.isReadyForCompletion();
+		boolean reviewsComplete = isExamApplicabilityReviewed(selected);
+		boolean ready = corpusReady && reviewsComplete;
 		examLifecycleButton.setText("Mark Complete");
 		examLifecycleButton.setDisable(!ready);
-		examLifecycleButton.setTooltip(new Tooltip(ready ? "Mark this fully captured Exam complete."
-				: "Complete expected assets, Question counts and remaining Question work first."));
+		String message;
+		if (!corpusReady) {
+			message = "Complete expected assets, Question counts " + "and remaining Question work first.";
+		} else if (!reviewsComplete) {
+			message = "Every expected Question booklet must have " + "Applicability Reviewed confirmed.";
+		} else {
+			message = "Mark this fully captured and reviewed Exam complete.";
+		}
+		examLifecycleButton.setTooltip(new Tooltip(message));
 	}
 
 	private void updateQuestionActionState() {
@@ -2169,8 +2289,8 @@ public final class CorpusDashboardPane extends VBox {
 
 	private String workLabel(ExamCorpusStatus status) {
 
-		// The authoritative Exam audit already accounts for missing
-		// expectations, asset mismatches and incomplete capture.
-		return status.isReadyForCompletion() ? "—" : "Yes";
+		// An Exam with completed Question capture still requires work
+		// until every expected booklet has been explicitly reviewed.
+		return status.isReadyForCompletion() && isExamApplicabilityReviewed(status) ? "—" : "Yes";
 	}
 }
