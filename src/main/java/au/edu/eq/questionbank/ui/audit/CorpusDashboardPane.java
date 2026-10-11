@@ -69,6 +69,8 @@ public final class CorpusDashboardPane extends VBox {
 	private static final double EXAM_TABLE_HEIGHT = 190.0;
 	private static final double BOOKLET_TABLE_HEIGHT = 190.0;
 	private static final double QUESTION_TABLE_HEIGHT = 180.0;
+	private static final double BOOKLETS_SECTION_MIN_WIDTH = 360.0;
+	private static final double EXAMS_SECTION_MIN_WIDTH = 340.0;
 
 	// Booklet scope must retain at least several immediately visible rows even when
 	// the dialog is vertically constrained.
@@ -716,12 +718,12 @@ public final class CorpusDashboardPane extends VBox {
 	private void buildContent() {
 		StackPane curriculumSection = buildCurriculumSection();
 		HBox summaryRow = buildSummaryRow();
-		HBox hierarchyRow = buildHierarchyRow();
+		SplitPane hierarchyRow = buildHierarchyRow();
 		StackPane questionSection = buildQuestionWorkSection();
 		SplitPane workSplit = buildWorkSplit(hierarchyRow, questionSection);
 
-		// Curriculum belongs directly below Subject. Corpus summary follows it, while
-		// the adjustable Exam/Question workspace consumes the remaining height.
+		// Curriculum and summary remain outside the adjustable work area.
+		// The hierarchy now has its own horizontal divider.
 		getChildren().addAll(curriculumSection, summaryRow, workSplit);
 		setSpacing(SPACING);
 		setPadding(PADDING);
@@ -737,7 +739,7 @@ public final class CorpusDashboardPane extends VBox {
 				curriculumActionsRow);
 	}
 
-	private HBox buildHierarchyRow() {
+	private SplitPane buildHierarchyRow() {
 
 		// Keep the Exam filter row as application state because the single Legacy
 		// Import action moves between this populated-Exam row and the empty-Exam
@@ -745,9 +747,9 @@ public final class CorpusDashboardPane extends VBox {
 		examFilterRow = new HBox(SPACING, createBoldLabel("Provider"), providerBox, createBoldLabel("Year"), yearBox,
 				createBoldLabel("Exam state"), examStateBox, clearFiltersButton);
 
-		// Retain a stable structural identity because the single Subject-level Legacy
-		// Import action is deliberately reparented between this row and empty
-		// onboarding.
+		// Retain a stable structural identity because the single Subject-level
+		// Legacy Import action is deliberately reparented between this row and
+		// empty onboarding.
 		examFilterRow.setId("corpus-dashboard-exam-filter-row");
 		examFilterRow.setAlignment(Pos.CENTER_LEFT);
 		examEmptyStateRow = new HBox(SPACING, noExamsLabel, addExamButton);
@@ -757,12 +759,9 @@ public final class CorpusDashboardPane extends VBox {
 				inspectExamQuestionsButton, examLifecycleButton);
 		selectedExamTitleRow.setAlignment(Pos.CENTER_LEFT);
 
-		// Exam lifecycle, structural management and read-only inspection all derive
-		// from explicit Dashboard Exam selection.
+		// Exam lifecycle, structural management and read-only inspection all
+		// derive from explicit Dashboard Exam selection.
 		HBox.setHgrow(selectedExamLabel, Priority.ALWAYS);
-
-		// The ordinary Exam catalogue disappears when a Subject has no Exams. The
-		// onboarding row then explains the next valid Subject-level action.
 		examOperationalContent = new VBox(SPACING, examFilterRow, examTable, selectedExamTitleRow,
 				selectedExamCountsLabel);
 		examOperationalContent.setId("corpus-dashboard-exam-operational-content");
@@ -776,15 +775,16 @@ public final class CorpusDashboardPane extends VBox {
 		bookletsSection = createTitledSection("corpus-dashboard-booklets-section", "QUESTION BOOKLETS", bookletTable,
 				selectedBookletLabel, bookletWarningLabel, bookletActionsRow);
 
-		// Exam and booklet hierarchy shares one horizontal structural band.
-		HBox hierarchyRow = new HBox(SPACING, examsSection, bookletsSection);
-		hierarchyRow.setId("corpus-dashboard-hierarchy-row");
-		examsSection.setMinWidth(0);
+		// Each section has an explicit lower width bound, while SplitPane owns
+		// horizontal growth and divider positioning.
+		examsSection.setMinWidth(EXAMS_SECTION_MIN_WIDTH);
 		examsSection.setMaxWidth(Double.MAX_VALUE);
-		bookletsSection.setMinWidth(0);
+		bookletsSection.setMinWidth(BOOKLETS_SECTION_MIN_WIDTH);
 		bookletsSection.setMaxWidth(Double.MAX_VALUE);
-		HBox.setHgrow(examsSection, Priority.ALWAYS);
-		HBox.setHgrow(bookletsSection, Priority.ALWAYS);
+		SplitPane hierarchyRow = new SplitPane(examsSection, bookletsSection);
+		hierarchyRow.setId("corpus-dashboard-hierarchy-row");
+		hierarchyRow.setOrientation(Orientation.HORIZONTAL);
+		hierarchyRow.setDividerPositions(0.5);
 		return hierarchyRow;
 	}
 
@@ -821,11 +821,10 @@ public final class CorpusDashboardPane extends VBox {
 		return summaryRow;
 	}
 
-	private SplitPane buildWorkSplit(HBox hierarchyRow, StackPane questionSection) {
+	private SplitPane buildWorkSplit(SplitPane hierarchyRow, StackPane questionSection) {
 
-		// Structural hierarchy and Question work are independently sizeable. The user
-		// can drag the divider according to whether structure or cleanup currently
-		// needs more screen space.
+		// The outer divider continues to control hierarchy versus Question Work
+		// height. The nested divider controls Exam versus booklet width.
 		SplitPane workSplit = new SplitPane(hierarchyRow, questionSection);
 		workSplit.setId("corpus-dashboard-work-split");
 		workSplit.setOrientation(Orientation.VERTICAL);

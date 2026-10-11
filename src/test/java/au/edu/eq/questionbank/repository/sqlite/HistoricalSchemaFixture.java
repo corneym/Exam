@@ -30,14 +30,11 @@ public final class HistoricalSchemaFixture {
 	 * @throws SQLException if schema cleanup fails
 	 */
 	public static void removePostVersion19Objects(SqliteDatabase database) throws SQLException {
-
 		if (database == null) {
 			throw new NullPointerException("database");
 		}
-
 		try (Connection connection = database.openConnection()) {
 			List<String> triggerNames = new ArrayList<>();
-
 			try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery("""
 					SELECT name
 					FROM sqlite_master
@@ -45,7 +42,6 @@ public final class HistoricalSchemaFixture {
 					  AND name GLOB 'app_review_*'
 					ORDER BY name
 					""")) {
-
 				while (result.next()) {
 					triggerNames.add(result.getString("name"));
 				}
@@ -57,10 +53,8 @@ public final class HistoricalSchemaFixture {
 					if (!triggerName.matches("app_review_[a-z_]+_(insert|update|delete)")) {
 						throw new SQLException("Unexpected applicability trigger: " + triggerName);
 					}
-
 					statement.execute("DROP TRIGGER \"" + triggerName + "\"");
 				}
-
 				statement.execute("DROP TABLE booklet_applicability_reviews");
 			}
 		}

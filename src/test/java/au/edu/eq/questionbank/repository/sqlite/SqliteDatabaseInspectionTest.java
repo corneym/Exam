@@ -218,7 +218,6 @@ class SqliteDatabaseInspectionTest {
 
 		// Remove modern review structures before reconstructing schema v13.
 		HistoricalSchemaFixture.removePostVersion19Objects(database);
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 
 			// Build enough real relational data to retain two legacy PDF regions across

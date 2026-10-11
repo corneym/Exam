@@ -255,7 +255,6 @@ class DefaultRestoreExecutorTest {
 		// The source backup must contain genuine v11 structures, not
 		// residual applicability-review objects from modern schema versions.
 		HistoricalSchemaFixture.removePostVersion19Objects(database);
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 
 			// Seed values that migration v12->v13 must preserve while renaming the

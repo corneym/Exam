@@ -359,29 +359,64 @@ class CorpusDashboardPaneTest {
 	}
 
 	@Test
+	void dashboardExamAndBookletDividerCanResizeAndFollowWindow(FxRobot robot) {
+		SplitPane hierarchy = robot.lookup("#corpus-dashboard-hierarchy-row").queryAs(SplitPane.class);
+		Node examsSection = robot.lookup("#corpus-dashboard-exams-section").query();
+		Node bookletsSection = robot.lookup("#corpus-dashboard-booklets-section").query();
+		AtomicReference<double[]> widths = new AtomicReference<>();
+		robot.interact(() -> widths.set(new double[] { examsSection.getBoundsInParent().getWidth(),
+				bookletsSection.getBoundsInParent().getWidth() }));
+		double[] initial = widths.get();
+
+		// Both structural sections should initially receive approximately
+		// equal space, independently of their preferred content widths.
+		assertEquals(0.5, hierarchy.getDividerPositions()[0], 0.05);
+		assertTrue(Math.abs(initial[0] - initial[1]) < 30.0);
+
+		// Moving the divider must genuinely reallocate the section widths.
+		robot.interact(() -> hierarchy.setDividerPositions(0.64));
+		WaitForAsyncUtils.waitForFxEvents();
+		robot.interact(() -> widths.set(new double[] { examsSection.getBoundsInParent().getWidth(),
+				bookletsSection.getBoundsInParent().getWidth() }));
+		double[] adjusted = widths.get();
+		assertTrue(adjusted[0] > initial[0] + 50.0);
+		assertTrue(adjusted[1] < initial[1] - 50.0);
+
+		// Shrinking the application window must relayout the existing split,
+		// rather than retaining fixed section widths.
+		robot.interact(() -> pane.getScene().getWindow().setWidth(940));
+		WaitForAsyncUtils.waitForFxEvents();
+		robot.interact(() -> widths.set(new double[] { examsSection.getBoundsInParent().getWidth(),
+				bookletsSection.getBoundsInParent().getWidth() }));
+		double[] narrower = widths.get();
+		assertTrue(narrower[0] < adjusted[0] - 25.0);
+		assertTrue(narrower[0] >= 339.0);
+		assertTrue(narrower[1] >= 359.0);
+	}
+
+	@Test
 	void dashboardPlacesCurriculumAboveAdjustableWorkSplit(FxRobot robot) {
 		Node curriculumSection = robot.lookup("#corpus-dashboard-curriculum-section").query();
 		Node summaryRow = robot.lookup("#corpus-dashboard-summary-row").query();
-		Node hierarchyRow = robot.lookup("#corpus-dashboard-hierarchy-row").query();
+		SplitPane hierarchyRow = robot.lookup("#corpus-dashboard-hierarchy-row").queryAs(SplitPane.class);
 		Node examsSection = robot.lookup("#corpus-dashboard-exams-section").query();
 		Node bookletsSection = robot.lookup("#corpus-dashboard-booklets-section").query();
 		Node questionSection = robot.lookup("#corpus-dashboard-question-work-section").query();
 		SplitPane workSplit = robot.lookup("#corpus-dashboard-work-split").queryAs(SplitPane.class);
 
-		// Curriculum is Subject-level context and therefore appears before corpus
-		// summary
-		// and before any Exam-specific structure.
+		// Subject-level sections remain above the operational workspace.
 		assertTrue(pane.getChildren().indexOf(curriculumSection) < pane.getChildren().indexOf(summaryRow));
 		assertTrue(pane.getChildren().indexOf(summaryRow) < pane.getChildren().indexOf(workSplit));
 
-		// Exam and booklet structure retain the accepted side-by-side hierarchy.
-		assertTrue(hierarchyRow instanceof HBox);
-		assertEquals(hierarchyRow, examsSection.getParent());
-		assertEquals(hierarchyRow, bookletsSection.getParent());
+		// Exam and booklet sections share a separately adjustable horizontal
+		// hierarchy without changing their structural identities.
+		assertEquals(Orientation.HORIZONTAL, hierarchyRow.getOrientation());
+		assertEquals(2, hierarchyRow.getItems().size());
+		assertEquals(examsSection, hierarchyRow.getItems().get(0));
+		assertEquals(bookletsSection, hierarchyRow.getItems().get(1));
+		assertEquals(1, hierarchyRow.getDividers().size());
 
-		// A real vertical SplitPane makes hierarchy versus Question Work height
-		// directly
-		// adjustable without introducing persistent application settings.
+		// The established vertical split remains independently adjustable.
 		assertEquals(Orientation.VERTICAL, workSplit.getOrientation());
 		assertEquals(2, workSplit.getItems().size());
 		assertEquals(hierarchyRow, workSplit.getItems().get(0));
