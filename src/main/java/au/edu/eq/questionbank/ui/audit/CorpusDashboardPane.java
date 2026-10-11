@@ -47,6 +47,7 @@ import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressIndicator;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SelectionMode;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.TableCell;
@@ -69,6 +70,8 @@ public final class CorpusDashboardPane extends VBox {
 	private static final double EXAM_TABLE_HEIGHT = 190.0;
 	private static final double BOOKLET_TABLE_HEIGHT = 190.0;
 	private static final double QUESTION_TABLE_HEIGHT = 180.0;
+	private static final double BOOKLETS_SECTION_MIN_WIDTH = 360.0;
+	private static final double EXAMS_SECTION_MIN_WIDTH = 340.0;
 
 	// Booklet scope must retain at least several immediately visible rows even when
 	// the dialog is vertically constrained.
@@ -104,6 +107,7 @@ public final class CorpusDashboardPane extends VBox {
 	private QuestionCorpusProblem selectedQuestionProblem;
 	private boolean changingScopeFilters;
 	private boolean changingQuestionFilter;
+	private ScrollPane examEmptyStateScroll;
 	private BiConsumer<List<Question>, QuestionResponseType> bulkResponseTypeHandler = (_, _) -> {
 	};
 	private final Button manageExamAssetsButton = new Button("Manage Exam / Assets");
@@ -716,12 +720,12 @@ public final class CorpusDashboardPane extends VBox {
 	private void buildContent() {
 		StackPane curriculumSection = buildCurriculumSection();
 		HBox summaryRow = buildSummaryRow();
-		HBox hierarchyRow = buildHierarchyRow();
+		SplitPane hierarchyRow = buildHierarchyRow();
 		StackPane questionSection = buildQuestionWorkSection();
 		SplitPane workSplit = buildWorkSplit(hierarchyRow, questionSection);
 
-		// Curriculum belongs directly below Subject. Corpus summary follows it, while
-		// the adjustable Exam/Question workspace consumes the remaining height.
+		// Curriculum and summary remain outside the adjustable work area.
+		// The hierarchy now has its own horizontal divider.
 		getChildren().addAll(curriculumSection, summaryRow, workSplit);
 		setSpacing(SPACING);
 		setPadding(PADDING);
@@ -737,54 +741,56 @@ public final class CorpusDashboardPane extends VBox {
 				curriculumActionsRow);
 	}
 
-	private HBox buildHierarchyRow() {
+	private SplitPane buildHierarchyRow() {
 
-		// Keep the Exam filter row as application state because the single Legacy
-		// Import action moves between this populated-Exam row and the empty-Exam
-		// onboarding row.
+		// Keep the Exam filter row as application state because Legacy Import
+		// moves between the populated and empty Exam presentations.
 		examFilterRow = new HBox(SPACING, createBoldLabel("Provider"), providerBox, createBoldLabel("Year"), yearBox,
 				createBoldLabel("Exam state"), examStateBox, clearFiltersButton);
-
-		// Retain a stable structural identity because the single Subject-level Legacy
-		// Import action is deliberately reparented between this row and empty
-		// onboarding.
 		examFilterRow.setId("corpus-dashboard-exam-filter-row");
 		examFilterRow.setAlignment(Pos.CENTER_LEFT);
+		ScrollPane examFilterScroll = createHorizontalScrollRow("corpus-dashboard-exam-filters-scroll", examFilterRow);
 		examEmptyStateRow = new HBox(SPACING, noExamsLabel, addExamButton);
 		examEmptyStateRow.setId("corpus-dashboard-exam-empty-state");
 		examEmptyStateRow.setAlignment(Pos.CENTER_LEFT);
+
+		// The empty-state row must remain a reusable HBox because the same
+		// Legacy Import button is moved into it during onboarding.
+		examEmptyStateScroll = createHorizontalScrollRow("corpus-dashboard-empty-exam-scroll", examEmptyStateRow);
 		HBox selectedExamTitleRow = new HBox(SPACING, selectedExamLabel, declaredExamStateLabel, manageExamAssetsButton,
 				inspectExamQuestionsButton, examLifecycleButton);
 		selectedExamTitleRow.setAlignment(Pos.CENTER_LEFT);
-
-		// Exam lifecycle, structural management and read-only inspection all derive
-		// from explicit Dashboard Exam selection.
 		HBox.setHgrow(selectedExamLabel, Priority.ALWAYS);
-
-		// The ordinary Exam catalogue disappears when a Subject has no Exams. The
-		// onboarding row then explains the next valid Subject-level action.
-		examOperationalContent = new VBox(SPACING, examFilterRow, examTable, selectedExamTitleRow,
+		ScrollPane examActionsScroll = createHorizontalScrollRow("corpus-dashboard-exam-actions-scroll",
+				selectedExamTitleRow);
+		examOperationalContent = new VBox(SPACING, examFilterScroll, examTable, examActionsScroll,
 				selectedExamCountsLabel);
 		examOperationalContent.setId("corpus-dashboard-exam-operational-content");
 		bookletWarningLabel.setWrapText(true);
 		setVisibleAndManaged(bookletWarningLabel, false);
+
+		// Retain existing actions, order and routing. Their grouping and
+		// alignment will be addressed separately by Issue #127.
 		HBox bookletActionsRow = new HBox(SPACING, inspectBookletQuestionsButton, captureQuestionsButton,
 				captureAnswersButton, captureMcqExplanationsButton);
 		bookletActionsRow.setAlignment(Pos.CENTER_LEFT);
-		StackPane examsSection = createTitledSection("corpus-dashboard-exams-section", "EXAMS", examEmptyStateRow,
+		ScrollPane bookletActionsScroll = createHorizontalScrollRow("corpus-dashboard-booklet-actions-scroll",
+				bookletActionsRow);
+		StackPane examsSection = createTitledSection("corpus-dashboard-exams-section", "EXAMS", examEmptyStateScroll,
 				examOperationalContent);
 		bookletsSection = createTitledSection("corpus-dashboard-booklets-section", "QUESTION BOOKLETS", bookletTable,
-				selectedBookletLabel, bookletWarningLabel, bookletActionsRow);
+				selectedBookletLabel, bookletWarningLabel, bookletActionsScroll);
 
-		// Exam and booklet hierarchy shares one horizontal structural band.
-		HBox hierarchyRow = new HBox(SPACING, examsSection, bookletsSection);
-		hierarchyRow.setId("corpus-dashboard-hierarchy-row");
-		examsSection.setMinWidth(0);
+		// SplitPane owns horizontal layout. The minimum widths prevent either
+		// work area collapsing to an unusable sliver.
+		examsSection.setMinWidth(EXAMS_SECTION_MIN_WIDTH);
 		examsSection.setMaxWidth(Double.MAX_VALUE);
-		bookletsSection.setMinWidth(0);
+		bookletsSection.setMinWidth(BOOKLETS_SECTION_MIN_WIDTH);
 		bookletsSection.setMaxWidth(Double.MAX_VALUE);
-		HBox.setHgrow(examsSection, Priority.ALWAYS);
-		HBox.setHgrow(bookletsSection, Priority.ALWAYS);
+		SplitPane hierarchyRow = new SplitPane(examsSection, bookletsSection);
+		hierarchyRow.setId("corpus-dashboard-hierarchy-row");
+		hierarchyRow.setOrientation(Orientation.HORIZONTAL);
+		hierarchyRow.setDividerPositions(0.5);
 		return hierarchyRow;
 	}
 
@@ -821,11 +827,10 @@ public final class CorpusDashboardPane extends VBox {
 		return summaryRow;
 	}
 
-	private SplitPane buildWorkSplit(HBox hierarchyRow, StackPane questionSection) {
+	private SplitPane buildWorkSplit(SplitPane hierarchyRow, StackPane questionSection) {
 
-		// Structural hierarchy and Question work are independently sizeable. The user
-		// can drag the divider according to whether structure or cleanup currently
-		// needs more screen space.
+		// The outer divider continues to control hierarchy versus Question Work
+		// height. The nested divider controls Exam versus booklet width.
 		SplitPane workSplit = new SplitPane(hierarchyRow, questionSection);
 		workSplit.setId("corpus-dashboard-work-split");
 		workSplit.setOrientation(Orientation.VERTICAL);
@@ -1185,11 +1190,13 @@ public final class CorpusDashboardPane extends VBox {
 				.setTooltip(new Tooltip("Import legacy Question metadata for the current Working Subject."));
 		importLegacyQuestionsButton.setMinWidth(Region.USE_PREF_SIZE);
 
-		// Selected-scope descriptions act as field labels as well as status text, so
-		// emphasise them consistently with the Dashboard's other metadata labels.
+		// Status labels must remain readable as the adjacent panel grows or
+		// shrinks, rather than forcing the enclosing section to be wider.
 		declaredExamStateLabel.setStyle("-fx-font-weight: bold;");
 		selectedExamCountsLabel.setStyle("-fx-font-weight: bold;");
+		selectedExamCountsLabel.setWrapText(true);
 		selectedBookletLabel.setStyle("-fx-font-weight: bold;");
+		selectedBookletLabel.setWrapText(true);
 		selectedExamLabel.setId("corpus-dashboard-selected-exam");
 		declaredExamStateLabel.setId("corpus-dashboard-selected-exam-state");
 		selectedExamCountsLabel.setId("corpus-dashboard-selected-exam-counts");
@@ -1524,6 +1531,26 @@ public final class CorpusDashboardPane extends VBox {
 		// describe.
 		label.setStyle("-fx-font-weight: bold;");
 		return label;
+	}
+
+	private ScrollPane createHorizontalScrollRow(String id, HBox content) {
+		ScrollPane scrollPane = new ScrollPane(content);
+		scrollPane.setId(id);
+
+		// Retain the natural width of the controls so that narrow panels
+		// scroll horizontally rather than clipping or shrinking buttons.
+		scrollPane.setFitToWidth(false);
+		scrollPane.setFitToHeight(true);
+		scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+		scrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+
+		// Let the enclosing SplitPane control the available width.
+		scrollPane.setMinWidth(0);
+		scrollPane.setMaxWidth(Double.MAX_VALUE);
+
+		// Use the default JavaFX theme styling. In particular, do not
+		// override background-related CSS lookups used by text colours.
+		return scrollPane;
 	}
 
 	private StackPane createTitledSection(String id, String title, Node... content) {
@@ -2219,13 +2246,13 @@ public final class CorpusDashboardPane extends VBox {
 	private void updateExamEmptyState() {
 		boolean noExams = examStatuses.isEmpty();
 
-		// Legacy preflight is valid before an Exam exists. Move the single action
-		// beside Add Exam for onboarding, otherwise keep it on the normal filter row.
+		// Preserve the existing Subject-level Legacy Import action as it moves
+		// between the normal filter row and the empty-Exam onboarding row.
 		moveLegacyImportButton(noExams ? examEmptyStateRow : examFilterRow);
 
-		// Booklet and Question work becomes meaningful only after authoritative Exam
-		// structure exists.
-		setVisibleAndManaged(examEmptyStateRow, noExams);
+		// Hide the complete scroll container so an empty scroll area does
+		// not remain visible when normal Exam operations are displayed.
+		setVisibleAndManaged(examEmptyStateScroll, noExams);
 		setVisibleAndManaged(examOperationalContent, !noExams);
 		setVisibleAndManaged(bookletsSection, !noExams);
 		setVisibleAndManaged(questionWorkSection, !noExams);
