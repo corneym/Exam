@@ -67,20 +67,23 @@ public final class CurriculumMappingCoverageService {
 		validateVersions(sourceVersion, targetVersion);
 		Set<Long> reviewedSourceIds = reviewRepository.findReviewedSourceIds(sourceVersion, targetVersion);
 		ConfirmedPairMappings confirmedMappings = confirmedPairMappings(sourceVersion, targetVersion);
-		CurriculumMappingLevelCoverage descriptorCoverage = calculateLevelCoverage(sourceVersion, targetVersion,
-				CurriculumLevel.DESCRIPTOR, reviewedSourceIds, confirmedMappings.sourceIds(),
-				confirmedMappings.targetIds());
-		CurriculumMappingLevelCoverage subtopicCoverage = calculateLevelCoverage(sourceVersion, targetVersion,
-				CurriculumLevel.SUBTOPIC, reviewedSourceIds, confirmedMappings.sourceIds(),
-				confirmedMappings.targetIds());
+
+		// Each syllabus hierarchy is loaded once. Both review levels
+		// are collected during the same traversal.
+		ReviewLevelNodes sourceNodes = findReviewLevelNodes(sourceVersion);
+		ReviewLevelNodes targetNodes = findReviewLevelNodes(targetVersion);
+		CurriculumMappingLevelCoverage descriptorCoverage = calculateLevelCoverage(sourceNodes.descriptors(),
+				targetNodes.descriptors(), targetVersion, CurriculumLevel.DESCRIPTOR, reviewedSourceIds,
+				confirmedMappings.sourceIds(), confirmedMappings.targetIds());
+		CurriculumMappingLevelCoverage subtopicCoverage = calculateLevelCoverage(sourceNodes.subtopics(),
+				targetNodes.subtopics(), targetVersion, CurriculumLevel.SUBTOPIC, reviewedSourceIds,
+				confirmedMappings.sourceIds(), confirmedMappings.targetIds());
 		return new CurriculumMappingCoverage(sourceVersion, targetVersion, descriptorCoverage, subtopicCoverage);
 	}
 
-	private CurriculumMappingLevelCoverage calculateLevelCoverage(SyllabusVersion sourceVersion,
-			SyllabusVersion targetVersion, CurriculumLevel level, Set<Long> reviewedSourceIds,
-			Set<Long> confirmedMappedSourceIds, Set<Long> confirmedMappedTargetIds) {
-		List<CurriculumNode> sourceNodes = findNodesAtLevel(sourceVersion, level);
-		List<CurriculumNode> targetNodes = findNodesAtLevel(targetVersion, level);
+	private CurriculumMappingLevelCoverage calculateLevelCoverage(List<CurriculumNode> sourceNodes,
+			List<CurriculumNode> targetNodes, SyllabusVersion targetVersion, CurriculumLevel level,
+			Set<Long> reviewedSourceIds, Set<Long> confirmedMappedSourceIds, Set<Long> confirmedMappedTargetIds) {
 		int matched = 0;
 		int noMatch = 0;
 		int unreviewed = 0;
@@ -103,9 +106,6 @@ public final class CurriculumMappingCoverageService {
 				break;
 			}
 		}
-
-		// New target content may have no predecessor even when all source reviews are
-		// complete.
 		int uncoveredTargetCount = 0;
 		for (CurriculumNode target : targetNodes) {
 			if (!confirmedMappedTargetIds.contains(target.getId())) {
@@ -116,12 +116,23 @@ public final class CurriculumMappingCoverageService {
 				uncoveredTargetCount);
 	}
 
-	private void collectNodesAtLevel(CurriculumNode node, CurriculumLevel level, List<CurriculumNode> result) {
-		if (node.getLevel() == level) {
-			result.add(node);
+	private void collectReviewLevelNodes(CurriculumNode node, List<CurriculumNode> subtopics,
+			List<CurriculumNode> descriptors) {
+
+		// Preserve the existing hierarchy traversal semantics,
+		// collecting both reviewable levels in the same pass.
+		switch (node.getLevel()) {
+		case SUBTOPIC:
+			subtopics.add(node);
+			break;
+		case DESCRIPTOR:
+			descriptors.add(node);
+			break;
+		default:
+			break;
 		}
 		for (CurriculumNode child : curriculumRepository.findChildren(node)) {
-			collectNodesAtLevel(child, level, result);
+			collectReviewLevelNodes(child, subtopics, descriptors);
 		}
 	}
 
@@ -171,12 +182,13 @@ public final class CurriculumMappingCoverageService {
 		return confirmedMapping ? CurriculumMappingSourceState.INCONSISTENT : CurriculumMappingSourceState.NO_MATCH;
 	}
 
-	private List<CurriculumNode> findNodesAtLevel(SyllabusVersion syllabusVersion, CurriculumLevel level) {
-		List<CurriculumNode> result = new ArrayList<>();
+	private ReviewLevelNodes findReviewLevelNodes(SyllabusVersion syllabusVersion) {
+		List<CurriculumNode> subtopics = new ArrayList<>();
+		List<CurriculumNode> descriptors = new ArrayList<>();
 		for (CurriculumNode root : curriculumRepository.findRootNodes(syllabusVersion)) {
-			collectNodesAtLevel(root, level, result);
+			collectReviewLevelNodes(root, subtopics, descriptors);
 		}
-		return List.copyOf(result);
+		return new ReviewLevelNodes(List.copyOf(subtopics), List.copyOf(descriptors));
 	}
 
 	private void validateVersions(SyllabusVersion sourceVersion, SyllabusVersion targetVersion) {
@@ -198,6 +210,9 @@ public final class CurriculumMappingCoverageService {
 		if (!targetVersion.isCurrent()) {
 			throw new IllegalArgumentException("target syllabus version must be current");
 		}
+	}
+
+	private record ReviewLevelNodes(List<CurriculumNode> subtopics, List<CurriculumNode> descriptors) {
 	}
 
 	private record ConfirmedPairMappings(Set<Long> sourceIds, Set<Long> targetIds) {

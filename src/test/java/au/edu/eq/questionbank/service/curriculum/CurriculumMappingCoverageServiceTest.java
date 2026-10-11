@@ -90,8 +90,9 @@ class CurriculumMappingCoverageServiceTest {
 				CurriculumMappingReviewOutcome.MATCHED);
 		reviews.put(new ReviewKey(secondHistoricalSubtopic.getId(), current.getId()),
 				CurriculumMappingReviewOutcome.NO_MATCH);
-		CurriculumMappingCoverageService service = new CurriculumMappingCoverageService(
-				new TestCurriculumRepository(List.of(historical, current, otherHistorical), nodes),
+		TestCurriculumRepository countingCurriculum = new TestCurriculumRepository(
+				List.of(historical, current, otherHistorical), nodes);
+		CurriculumMappingCoverageService service = new CurriculumMappingCoverageService(countingCurriculum,
 				new InMemoryCurriculumMappingRepository(mappings), new TestReviewRepository(nodes, reviews));
 		CurriculumMappingCoverage coverage = service.calculateCoverage(historical, current);
 		CurriculumMappingLevelCoverage descriptors = coverage.descriptorCoverage();
@@ -110,6 +111,14 @@ class CurriculumMappingCoverageServiceTest {
 		assertEquals(CurriculumMappingCoverageStatus.COMPLETE, subtopics.status());
 		assertEquals(CurriculumMappingCoverageStatus.INCOMPLETE, coverage.status());
 		assertFalse(coverage.complete());
+
+		// Historical and current versions are each traversed once.
+		// The unrelated historical syllabus must not be visited.
+		assertEquals(2, countingCurriculum.rootLookupCalls);
+
+		// Ten historical nodes and five current nodes.
+		// Each is visited exactly once, including leaf descriptors.
+		assertEquals(15, countingCurriculum.childLookupCalls);
 	}
 
 	@Test
@@ -160,6 +169,8 @@ class CurriculumMappingCoverageServiceTest {
 
 		private final List<SyllabusVersion> versions;
 		private final List<CurriculumNode> nodes;
+		private int childLookupCalls;
+		private int rootLookupCalls;
 
 		TestCurriculumRepository(List<SyllabusVersion> versions, List<CurriculumNode> nodes) {
 			this.versions = List.copyOf(versions);
@@ -179,11 +190,13 @@ class CurriculumMappingCoverageServiceTest {
 
 		@Override
 		public List<CurriculumNode> findChildren(CurriculumNode parent) {
+			childLookupCalls++;
 			return nodes.stream().filter(node -> parent.equals(node.getParent())).toList();
 		}
 
 		@Override
 		public List<CurriculumNode> findRootNodes(SyllabusVersion syllabusVersion) {
+			rootLookupCalls++;
 			return nodes.stream().filter(node -> node.getSyllabusVersion().equals(syllabusVersion))
 					.filter(node -> node.getLevel() == CurriculumLevel.UNIT).toList();
 		}

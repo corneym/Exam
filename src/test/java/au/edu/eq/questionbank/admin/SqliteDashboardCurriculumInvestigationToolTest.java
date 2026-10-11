@@ -25,22 +25,16 @@ class SqliteDashboardCurriculumInvestigationToolTest {
 
 	@Test
 	void measuresProductionCoverageWithoutModifyingSnapshot() throws Exception {
-
 		Path snapshot = createFixture();
 		byte[] before = Files.readAllBytes(snapshot);
-
 		ByteArrayOutputStream output = new ByteArrayOutputStream();
 		ByteArrayOutputStream errors = new ByteArrayOutputStream();
-
 		int status = SqliteDashboardCurriculumInvestigationTool.run(
 				new String[] { "--snapshot", snapshot.toString(), "--subject", "1" },
 				new PrintStream(output, true, StandardCharsets.UTF_8),
 				new PrintStream(errors, true, StandardCharsets.UTF_8));
-
 		assertEquals(0, status, errors.toString());
-
 		String report = output.toString(StandardCharsets.UTF_8);
-
 		assertTrue(report.contains("Historical syllabus 1 -> current 2"));
 		assertTrue(report.contains("Historical syllabus pairs: 1"));
 		assertTrue(report.contains("Source descriptors: 1"));
@@ -48,25 +42,19 @@ class SqliteDashboardCurriculumInvestigationToolTest {
 
 		// Coverage traverses each hierarchy separately for both
 		// Descriptor and Subtopic calculations.
-		assertTrue(report.contains("curriculum.findRootNodes: calls=4"));
-
-		assertTrue(report.contains("curriculum.findChildren: calls=16"));
+		// One traversal per syllabus, collecting both review levels.
+		assertTrue(report.contains("curriculum.findRootNodes: calls=2"));
+		assertTrue(report.contains("curriculum.findChildren: calls=8"));
 
 		// One mapping collection and one reviewed source decision.
 		assertTrue(report.contains("mappings.findAll: calls=1"));
-
 		assertTrue(report.contains("reviews.findReviewedSourceIds: calls=1"));
-
 		assertTrue(report.contains("reviews.findOutcome: calls=1"));
-
 		assertTrue(report.contains("Connections opened:"));
 		assertTrue(report.contains("SQL executions:"));
 		assertTrue(report.contains("Snapshot unchanged: true"));
-
 		assertArrayEquals(before, Files.readAllBytes(snapshot));
-
 		assertFalse(Files.exists(snapshot.resolveSibling(snapshot.getFileName() + "-wal")));
-
 		assertFalse(Files.exists(snapshot.resolveSibling(snapshot.getFileName() + "-shm")));
 	}
 
@@ -74,15 +62,11 @@ class SqliteDashboardCurriculumInvestigationToolTest {
 	void refusesSnapshotWithWalSidecar() throws Exception {
 		Path snapshot = createFixture();
 		Path wal = snapshot.resolveSibling(snapshot.getFileName() + "-wal");
-
 		Files.writeString(wal, "not a valid WAL");
-
 		ByteArrayOutputStream errors = new ByteArrayOutputStream();
-
 		int status = SqliteDashboardCurriculumInvestigationTool.run(
 				new String[] { "--snapshot", snapshot.toString(), "--subject", "1" },
 				new PrintStream(new ByteArrayOutputStream()), new PrintStream(errors));
-
 		assertEquals(2, status);
 		assertTrue(errors.toString().contains("sidecar"));
 	}
@@ -90,13 +74,10 @@ class SqliteDashboardCurriculumInvestigationToolTest {
 	@Test
 	void rejectsMissingSubject() throws Exception {
 		Path snapshot = createFixture();
-
 		ByteArrayOutputStream errors = new ByteArrayOutputStream();
-
 		int status = SqliteDashboardCurriculumInvestigationTool.run(
 				new String[] { "--snapshot", snapshot.toString(), "--subject", "999999" },
 				new PrintStream(new ByteArrayOutputStream()), new PrintStream(errors));
-
 		assertEquals(2, status);
 		assertTrue(errors.toString().contains("Subject does not exist"));
 	}
@@ -104,17 +85,13 @@ class SqliteDashboardCurriculumInvestigationToolTest {
 	private Path createFixture() throws Exception {
 		Path source = tempDirectory.resolve("source.db");
 		Path snapshot = tempDirectory.resolve("snapshot.db");
-
 		SqliteDatabase database = new SqliteDatabase(source);
 		database.initialiseSchema();
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
-
 			statement.execute("""
 					INSERT INTO subjects (id, subject_name)
 					VALUES (1, 'Chemistry')
 					""");
-
 			statement.execute("""
 					INSERT INTO syllabus_versions
 					    (id, subject_id, syllabus_name, is_current)
@@ -122,7 +99,6 @@ class SqliteDashboardCurriculumInvestigationToolTest {
 					    (1, 1, '2019', 0),
 					    (2, 1, '2025', 1)
 					""");
-
 			statement.execute("""
 					INSERT INTO curriculum_nodes
 					    (id, syllabus_version_id, parent_id,
@@ -157,7 +133,6 @@ class SqliteDashboardCurriculumInvestigationToolTest {
 					VALUES (13, 2, 'NO_MATCH')
 					""");
 		}
-
 		database.createConsistentSnapshot(snapshot);
 		return snapshot;
 	}
