@@ -830,13 +830,18 @@ public final class SqliteExamWriter {
 	}
 
 	/**
-	 * Changes the user-declared structural capture state of an Exam.
+	 * Changes an Exam's declared lifecycle state.
 	 *
-	 * @param exam         persisted Exam to update
-	 * @param captureState replacement lifecycle state
-	 * @return the same Exam identity carrying the persisted replacement state
-	 * @throws SQLException         if persistence fails
-	 * @throws NullPointerException if {@code exam} or {@code captureState} is null
+	 * A transition to COMPLETE requires explicit applicability-review confirmations
+	 * for every expected Question booklet.
+	 *
+	 * Existing structural readiness checks remain the responsibility of the corpus
+	 * audit and application workflow.
+	 *
+	 * @param exam         persisted Exam
+	 * @param captureState requested lifecycle state
+	 * @return updated Exam identity
+	 * @throws SQLException if persistence fails
 	 */
 	public Exam setExamCaptureState(Exam exam, ExamCaptureState captureState) throws SQLException {
 		if (exam == null) {
@@ -845,20 +850,36 @@ public final class SqliteExamWriter {
 		if (captureState == null) {
 			throw new NullPointerException("captureState");
 		}
-		try (Connection connection = database.openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				if (captureState == ExamCaptureState.COMPLETE) {
+
+					// The persistence boundary must not allow a caller to
+					// bypass the explicit review requirement.
+					requireCompletedApplicabilityReviews(connection, exam);
+				}
+				try (PreparedStatement statement = connection.prepareStatement("""
 						UPDATE exams
 						SET capture_state = ?
 						WHERE id = ?
 						  AND subject_id = ?
 						""")) {
-			statement.setString(1, captureState.name());
-			statement.setLong(2, exam.getId());
-			statement.setLong(3, exam.getSubject().getId());
-
-			// Never manufacture a lifecycle change for a stale or fabricated Exam.
-			if (statement.executeUpdate() != 1) {
-				throw new IllegalArgumentException("Exam does not exist for its stored subject");
+					statement.setString(1, captureState.name());
+					statement.setLong(2, exam.getId());
+					statement.setLong(3, exam.getSubject().getId());
+					if (statement.executeUpdate() != 1) {
+						throw new IllegalArgumentException("Exam does not exist for its stored subject");
+					}
+				}
+				connection.commit();
+			} catch (SQLException | RuntimeException exception) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					exception.addSuppressed(rollbackFailure);
+				}
+				throw exception;
 			}
 		}
 		return new Exam(exam.getId(), exam.getSubject(), exam.getProvider(), exam.getYear(), exam.getName(),
@@ -1528,6 +1549,45 @@ public final class SqliteExamWriter {
 		// the value to a domain object where null has deliberate meaning.
 		int value = result.getInt(columnName);
 		return result.wasNull() ? null : value;
+	}
+
+	private void requireCompletedApplicabilityReviews(Connection connection, Exam exam) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT
+				    e.expected_question_booklet_count,
+				    (
+				        SELECT COUNT(*)
+				        FROM exam_booklets b
+				        WHERE b.exam_id = e.id
+				    ) AS actual_booklets,
+				    (
+				        SELECT COUNT(*)
+				        FROM exam_booklets b
+				        JOIN booklet_applicability_reviews r
+				          ON r.booklet_id = b.id
+				        WHERE b.exam_id = e.id
+				    ) AS reviewed_booklets
+				FROM exams e
+				WHERE e.id = ?
+				  AND e.subject_id = ?
+				""")) {
+			statement.setLong(1, exam.getId());
+			statement.setLong(2, exam.getSubject().getId());
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalArgumentException("Exam does not exist for its stored subject");
+				}
+				int expected = result.getInt("expected_question_booklet_count");
+				boolean expectedKnown = !result.wasNull();
+				int actual = result.getInt("actual_booklets");
+				int reviewed = result.getInt("reviewed_booklets");
+				if (!expectedKnown || expected < 1 || expected != actual || reviewed != actual) {
+					throw new IllegalStateException(
+							"Exam cannot be marked COMPLETE: " + "every expected Question booklet must have "
+									+ "an explicit Applicability Reviewed confirmation.");
+				}
+			}
+		}
 	}
 
 	private void updateSourceDocumentPaths(Connection connection, Map<Long, String> sourceDocumentPaths)

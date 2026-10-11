@@ -4,6 +4,7 @@ import java.nio.file.Files;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.Exam;
@@ -59,31 +60,43 @@ public final class ExamCorpusAuditService {
 	}
 
 	/**
-	 * Loads calculated audit state for every persisted Exam belonging to one
-	 * Subject.
+	 * Loads calculated audit state for every persisted Exam belonging to the
+	 * supplied Subject.
 	 *
 	 * @param subject authoritative Working Subject
-	 * @return immutable Exam audit snapshots in repository-defined Exam order
-	 * @throws SQLException         if Exam or Answer persistence cannot be read
-	 * @throws NullPointerException if {@code subject} is {@code null}
+	 * @return immutable Exam audit snapshots
+	 * @throws SQLException if persistence cannot be read
 	 */
 	public List<ExamCorpusStatus> assessSubject(Subject subject) throws SQLException {
 		if (subject == null) {
 			throw new NullPointerException("subject");
 		}
 
-		// Read the Question corpus once for the whole Subject rather than repeatedly
-		// reloading it for every Exam or booklet.
+		// Load the Subject's Question corpus once and reuse it for
+		// all of its Exams.
 		List<Question> subjectQuestions = questionRepository.findAll().stream()
 				.filter(question -> question.getExam().getSubject().getId() == subject.getId()).toList();
 		List<ExamCorpusStatus> statuses = new ArrayList<>();
 		for (Exam exam : examWriter.findExamsForSubject(subject)) {
-
-			// Each Exam snapshot combines authoritative persisted structure with the
-			// calculated Question and booklet audit layers.
 			statuses.add(assessExam(exam, subjectQuestions));
 		}
 		return List.copyOf(statuses);
+	}
+
+	/**
+	 * Calculates explicit booklet applicability-review coverage for an already
+	 * calculated Exam corpus snapshot.
+	 *
+	 * @param status             current Exam audit snapshot
+	 * @param reviewedBookletIds persisted explicit confirmation identifiers
+	 * @return true only if every expected booklet is validly reviewed
+	 */
+	public boolean isApplicabilityReviewed(ExamCorpusStatus status, Set<Long> reviewedBookletIds) {
+		if (status == null) {
+			throw new NullPointerException("status");
+		}
+		return ExamApplicabilityReview.allBookletsReviewed(status.assetExpectations(), status.bookletStatuses(),
+				reviewedBookletIds);
 	}
 
 	private ExamCorpusStatus assessExam(Exam exam, List<Question> subjectQuestions) throws SQLException {
