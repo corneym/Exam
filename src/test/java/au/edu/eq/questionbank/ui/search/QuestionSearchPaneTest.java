@@ -14,6 +14,7 @@ import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
@@ -537,22 +538,35 @@ public class QuestionSearchPaneTest {
 
 	@Test
 	public void narrowedSearchStillShowsCompleteRevisionOutputApplicability(FxRobot robot) throws TimeoutException {
-		QuestionRetrievalRepository multipleApplicabilityRepository = currentNodes -> {
+		AtomicInteger selectiveCalls = new AtomicInteger();
+		QuestionRetrievalRepository multipleApplicabilityRepository = new QuestionRetrievalRepository() {
 
-			// Return only applicability inside the requested Search scope. A Descriptor
-			// search therefore carries one matching placement, while a Working
-			// Subject-wide lookup carries both.
-			if (currentNodes.contains(currentDescriptor) && currentNodes.contains(noMatchDescriptor)) {
-				return List.of(new QuestionApplicabilityMatch(historicalQuestion, currentDescriptor),
-						new QuestionApplicabilityMatch(historicalQuestion, noMatchDescriptor));
+			@Override
+			public List<QuestionApplicabilityMatch> findApplicableToNodes(List<CurriculumNode> currentNodes) {
+				if (currentNodes.contains(currentDescriptor) && currentNodes.contains(noMatchDescriptor)) {
+					return List.of(new QuestionApplicabilityMatch(historicalQuestion, currentDescriptor),
+							new QuestionApplicabilityMatch(historicalQuestion, noMatchDescriptor));
+				}
+				if (currentNodes.contains(currentDescriptor)) {
+					return List.of(new QuestionApplicabilityMatch(historicalQuestion, currentDescriptor));
+				}
+				if (currentNodes.contains(noMatchDescriptor)) {
+					return List.of(new QuestionApplicabilityMatch(historicalQuestion, noMatchDescriptor));
+				}
+				return List.of();
 			}
-			if (currentNodes.contains(currentDescriptor)) {
-				return List.of(new QuestionApplicabilityMatch(historicalQuestion, currentDescriptor));
+
+			@Override
+			public List<QuestionApplicabilityMatch> findApplicableToNodesForQuestion(List<CurriculumNode> currentNodes,
+					long questionId, long parentOperationId) {
+				assertEquals(historicalQuestion.getId(), questionId);
+				selectiveCalls.incrementAndGet();
+
+				// This lightweight test repository reuses its broad fixture data.
+				// The production SQLite implementation constrains Question ID in SQL.
+				return findApplicableToNodes(currentNodes).stream()
+						.filter(match -> match.getQuestion().getId() == questionId).toList();
 			}
-			if (currentNodes.contains(noMatchDescriptor)) {
-				return List.of(new QuestionApplicabilityMatch(historicalQuestion, noMatchDescriptor));
-			}
-			return List.of();
 		};
 		QuestionRetrievalService multipleApplicabilityService = new QuestionRetrievalService(
 				multipleApplicabilityRepository, new CurriculumSearchNodeExpansionService(curriculumRepository));
@@ -564,9 +578,6 @@ public class QuestionSearchPaneTest {
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		ListView<QuestionOutputApplicabilityRow> outputList = robot.lookup("#question-search-output-applicability")
 				.queryListView();
-
-		// Working Subject navigation is established automatically before Search is
-		// narrowed to one current Descriptor.
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
 		robot.interact(() -> unitBox.setValue(currentUnit));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> topicBox.getItems().contains(currentTopic));
@@ -578,15 +589,16 @@ public class QuestionSearchPaneTest {
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
 		QuestionSearchResult searchResult = resultsList.getItems().getFirst();
 
-		// Search itself is deliberately narrowed to one Descriptor.
+		// The visible Search contains only the selected Descriptor.
 		assertEquals(List.of(currentDescriptor), searchResult.currentApplicability());
 		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> outputList.getItems().size() == 2);
 
-		// Revision Output applicability is independent of the Search filter and
-		// therefore exposes both Working Subject-wide current placements.
-		assertTrue(outputList.getItems().stream().anyMatch(row -> row.currentNode().equals(currentDescriptor)));
-		assertTrue(outputList.getItems().stream().anyMatch(row -> row.currentNode().equals(noMatchDescriptor)));
+		// Revision Output must have used the selective Question API,
+		// without inheriting the visible Descriptor restriction.
+		assertTrue(selectiveCalls.get() > 0);
+		assertEquals(Set.of(currentDescriptor.getId(), noMatchDescriptor.getId()), outputList.getItems().stream()
+				.map(row -> row.currentNode().getId()).collect(java.util.stream.Collectors.toSet()));
 	}
 
 	@Test

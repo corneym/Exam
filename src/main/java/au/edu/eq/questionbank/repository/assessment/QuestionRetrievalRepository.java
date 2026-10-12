@@ -63,7 +63,6 @@ public interface QuestionRetrievalRepository {
 	 */
 	default List<QuestionApplicabilityMatch> findApplicableToNodesForQuestion(List<CurriculumNode> currentNodes,
 			long questionId, long parentOperationId) {
-
 		if (questionId <= 0) {
 			throw new IllegalArgumentException("questionId must be positive");
 		}

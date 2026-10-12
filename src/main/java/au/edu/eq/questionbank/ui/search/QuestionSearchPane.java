@@ -1187,20 +1187,11 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private List<CurriculumNode> findCompleteCurrentApplicability(Question question, long parentOperationId) {
-		List<QuestionRetrievalResult> results = retrievalService
-				.findQuestionsApplicableTo(question.getExam().getSubject(), parentOperationId);
-		for (QuestionRetrievalResult result : results) {
-			if (result.getQuestion().getId() != question.getId()) {
-				continue;
-			}
 
-			// Output applicability must include every current Subject
-			// placement, not merely the selected Search scope.
-			return result.getCurrentApplicability();
-		}
-
-		// No current applicability is a valid outcome.
-		return List.of();
+		// Revision Output must include every current Subject placement,
+		// regardless of the visible Search filter, All Questions mode
+		// or immutable Dashboard launch constraint.
+		return retrievalService.findCurrentApplicabilityForQuestion(question, parentOperationId);
 	}
 
 	private SyllabusVersion findCurrentSyllabus(Subject subject) {

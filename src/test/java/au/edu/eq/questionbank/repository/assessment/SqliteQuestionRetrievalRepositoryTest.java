@@ -185,39 +185,28 @@ class SqliteQuestionRetrievalRepositoryTest {
 
 	@Test
 	void selectiveApplicabilityMatchesBroadRetrievalWithoutReconstructingOtherQuestions() throws Exception {
-
 		Fixture fixture = createFixture("selective-applicability.db");
-
 		SqliteDatabase database = new SqliteDatabase(fixture.databasePath());
 		database.initialiseSchema();
-
 		CurriculumNode currentDescriptor = reloadCurrentDescriptor(database, fixture);
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
-
 		List<CurriculumNode> nodes = List.of(currentDescriptor);
 		long selectedId = fixture.confirmedQuestionId();
 
 		// Establish the authoritative broad-result comparison.
 		List<QuestionApplicabilityMatch> broadMatches = repository.findApplicableToNodes(nodes);
-
 		List<Long> expectedPlacementIds = broadMatches.stream()
 				.filter(match -> match.getQuestion().getId() == selectedId).map(match -> match.getCurrentNode().getId())
 				.toList();
-
 		assertEquals(3, broadMatches.size());
 		assertEquals(List.of(currentDescriptor.getId()), expectedPlacementIds);
-
 		List<QuestionApplicabilityMatch> selectedMatches;
 		SqliteReadProbe.Snapshot measurements;
-
 		try (SqliteReadProbe probe = SqliteReadProbe.begin()) {
 			selectedMatches = repository.findApplicableToNodesForQuestion(nodes, selectedId, 0);
-
 			measurements = probe.snapshot();
 		}
-
 		List<Long> actualPlacementIds = selectedMatches.stream().map(match -> match.getCurrentNode().getId()).toList();
-
 		assertEquals(expectedPlacementIds, actualPlacementIds);
 		assertEquals(1, selectedMatches.size());
 
@@ -232,27 +221,20 @@ class SqliteQuestionRetrievalRepositoryTest {
 
 	@Test
 	void selectiveApplicabilityReturnsEmptyForUnmappedAndMissingQuestions() throws Exception {
-
 		Fixture fixture = createFixture("selective-no-match.db");
-
 		SqliteDatabase database = new SqliteDatabase(fixture.databasePath());
 		database.initialiseSchema();
-
 		CurriculumNode currentDescriptor = reloadCurrentDescriptor(database, fixture);
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
-
 		List<CurriculumNode> nodes = List.of(currentDescriptor);
 
 		// A suggested mapping must not be treated as confirmed applicability.
 		List<QuestionApplicabilityMatch> suggestedMatches;
 		SqliteReadProbe.Snapshot measurements;
-
 		try (SqliteReadProbe probe = SqliteReadProbe.begin()) {
 			suggestedMatches = repository.findApplicableToNodesForQuestion(nodes, fixture.suggestedQuestionId(), 0);
-
 			measurements = probe.snapshot();
 		}
-
 		assertTrue(suggestedMatches.isEmpty());
 		assertEquals(0, measurements.questionsReconstructed());
 
@@ -261,7 +243,6 @@ class SqliteQuestionRetrievalRepositoryTest {
 
 		// Invalid identifiers must not silently trigger a broad retrieval.
 		assertThrows(IllegalArgumentException.class, () -> repository.findApplicableToNodesForQuestion(nodes, 0, 0));
-
 		assertThrows(IllegalArgumentException.class, () -> repository.findApplicableToNodesForQuestion(nodes, -1, 0));
 	}
 

@@ -822,22 +822,17 @@ class CorpusDashboardPaneTest {
 	void examRowColoursFollowCompletionAndReviewState(FxRobot robot) {
 		@SuppressWarnings("unchecked")
 		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
-
 		BookletCorpusStatus readyBooklet = new BookletCorpusStatus(fixture.activePaper, true, null, 10, 10, 0,
 				new QuestionCorpusSummary(10, 10, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0),
 				EnumSet.noneOf(BookletCorpusFinding.class));
-
 		ExamCorpusStatus readyExam = new ExamCorpusStatus(fixture.activeExam, new ExamAssetExpectations(1, 1, 0, 0),
 				List.of(readyBooklet), new QuestionCorpusSummary(10, 10, 0, 0, 0, 0, 0),
 				new McqExplanationSummary(0, 0, 0), EnumSet.noneOf(ExamCorpusFinding.class));
-
 		ExamCorpusStatus unknownExam = new ExamCorpusStatus(fixture.completeExam,
 				new ExamAssetExpectations(null, 0, null, 0), List.of(), new QuestionCorpusSummary(0, 0, 0, 0, 0, 0, 0),
 				new McqExplanationSummary(0, 0, 0), EnumSet.noneOf(ExamCorpusFinding.class));
-
 		PseudoClass attention = PseudoClass.getPseudoClass("exam-attention");
 		PseudoClass clear = PseudoClass.getPseudoClass("exam-clear");
-
 		robot.interact(() -> {
 			pane.replaceData(List.of(unknownExam, readyExam), List.of());
 			pane.setApplicabilityReviewState(Set.of());
@@ -845,10 +840,8 @@ class CorpusDashboardPaneTest {
 			pane.applyCss();
 			pane.layout();
 		});
-
 		int unknownIndex = exams.getItems().indexOf(unknownExam);
 		int readyIndex = exams.getItems().indexOf(readyExam);
-
 		assertTrue(unknownIndex >= 0);
 		assertTrue(readyIndex >= 0);
 
@@ -858,7 +851,6 @@ class CorpusDashboardPaneTest {
 
 		// Completed capture without applicability review still needs work.
 		assertTrue(dashboardRowAt(exams, readyIndex).getPseudoClassStates().contains(attention));
-
 		robot.interact(() -> {
 			pane.setApplicabilityReviewState(Set.of(fixture.activePaper.getId()));
 			pane.applyCss();
@@ -868,15 +860,10 @@ class CorpusDashboardPaneTest {
 		// Review completes the final readiness dimension.
 		assertTrue(dashboardRowAt(exams, readyIndex).getPseudoClassStates().contains(clear));
 		assertFalse(dashboardRowAt(exams, readyIndex).getPseudoClassStates().contains(attention));
-
 		assertTrue(dashboardRowAt(exams, unknownIndex).getPseudoClassStates().contains(attention));
-
 		Color expectedGreen = readyIndex % 2 == 0 ? Color.web("#f1f8f1") : Color.web("#e5f1e5");
-
 		Color actualGreen = (Color) dashboardRowAt(exams, readyIndex).getBackground().getFills().getFirst().getFill();
-
 		assertEquals(expectedGreen, actualGreen);
-
 		robot.interact(() -> {
 			exams.getSelectionModel().select(readyExam);
 			exams.requestFocus();
@@ -887,10 +874,8 @@ class CorpusDashboardPaneTest {
 		// Selection highlighting takes precedence over status colours.
 		Color selectedColour = (Color) dashboardRowAt(exams, readyIndex).getBackground().getFills().getFirst()
 				.getFill();
-
 		assertFalse(expectedGreen.equals(selectedColour));
 		assertTrue(dashboardRowAt(exams, readyIndex).isSelected());
-
 		robot.interact(() -> {
 			pane.setApplicabilityReviewState(Set.of());
 			pane.applyCss();

@@ -155,9 +155,7 @@ public final class SqliteQuestionSelectSql {
 		if (requestedNodeCount <= 0) {
 			throw new IllegalArgumentException("At least one current node is required");
 		}
-
 		StringBuilder values = new StringBuilder();
-
 		for (int index = 0; index < requestedNodeCount; index++) {
 			if (index > 0) {
 				values.append(", ");
