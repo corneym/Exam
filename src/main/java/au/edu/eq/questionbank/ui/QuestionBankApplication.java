@@ -287,6 +287,7 @@ public class QuestionBankApplication extends Application {
 	// Exam/Assets persistence participates in the same application-level Subject
 	// generation as the shared Question snapshot.
 	private Function<Subject, ExamAssetsPane.SubjectSnapshot> workingSubjectExamAssetsSnapshotLoader;
+	private FocusRefreshRegistration primaryStageFocusRegistration;
 
 	// Legacy workbook intake may pause while the user creates missing authoritative
 	// Exam/booklet structure in Exam/Assets.
@@ -413,11 +414,15 @@ public class QuestionBankApplication extends Application {
 
 	@Override
 	public void stop() throws Exception {
-		if (resourcesClosedForRestore) {
-			return;
-		}
-		if (shutdownCoordinator == null || !shutdownCoordinator.isReadyToExit()) {
-			pdfWorkspace.close();
+		try {
+			if (resourcesClosedForRestore) {
+				return;
+			}
+			if (shutdownCoordinator == null || !shutdownCoordinator.isReadyToExit()) {
+				pdfWorkspace.close();
+			}
+		} finally {
+			removePrimaryStageFocusListener();
 		}
 	}
 
@@ -1226,19 +1231,18 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void configurePrimaryStage(Stage primaryStage, ApplicationConfig config) {
+		removePrimaryStageFocusListener();
 		primaryStage.setOnCloseRequest(event -> handleCloseRequest(event, primaryStage));
 
-		// The system clipboard has no JavaFX change notification. Returning focus to
-		// the application is the reliable point at which a Snipping Tool capture can
-		// make Add From Clipboard newly available.
-		primaryStage.focusedProperty().addListener((_, _, focused) -> {
-			if (focused && questionCapturePane != null) {
+		// The system clipboard has no JavaFX change notification.
+		// Refresh clipboard availability when focus returns to the application.
+		primaryStageFocusRegistration = new FocusRefreshRegistration(primaryStage.focusedProperty(), () -> {
+			if (questionCapturePane != null) {
 				questionCapturePane.refreshClipboardImageAvailability();
 			}
 		});
 
-		// Exam creation and asset management now live entirely in the main-window
-		// Exam/Assets workspace. No modal Exam Setup or Add Exam dialog is constructed.
+		// Exam creation and asset management live in the main-window workspace.
 		showStage(primaryStage, createRootLayout(primaryStage, config));
 	}
 
@@ -3377,6 +3381,13 @@ public class QuestionBankApplication extends Application {
 			// destructive operation.
 			showAlert(Alert.AlertType.ERROR, "Exam / Assets",
 					"The asset was deleted, but Exam / Assets could not be refreshed.", failureMessage(exception));
+		}
+	}
+
+	private void removePrimaryStageFocusListener() {
+		if (primaryStageFocusRegistration != null) {
+			primaryStageFocusRegistration.close();
+			primaryStageFocusRegistration = null;
 		}
 	}
 
