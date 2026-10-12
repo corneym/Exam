@@ -1419,7 +1419,7 @@ public final class CorpusDashboardPane extends VBox {
 
 		// Keep row colouring independent of table cells, sorting and selection.
 		questionTable.setRowFactory(_ -> createQuestionWorkStatusRow());
-		questionTable.getStylesheets().add(getClass().getResource("booklet-row-status.css").toExternalForm());
+		questionTable.getStylesheets().add(CorpusDashboardPane.class.getResource("booklet-row-status.css").toExternalForm());
 	}
 
 	private void configureSelectionActions() {
