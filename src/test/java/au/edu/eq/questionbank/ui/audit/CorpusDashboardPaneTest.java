@@ -68,6 +68,7 @@ import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
+import javafx.scene.control.TableRow;
 import javafx.scene.control.TableView;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -1480,6 +1481,12 @@ class CorpusDashboardPaneTest {
 			// left-aligned data-cell presentation.
 			assertEquals(Pos.CENTER, cell.getAlignment(), table.getId() + " — " + column.getText());
 		}
+	}
+
+	private TableRow<?> bookletRowAt(TableView<BookletCorpusStatus> booklets, int index) {
+		return booklets.lookupAll(".table-row-cell").stream()
+				.filter(node -> node instanceof TableRow<?> row && row.getIndex() == index && !row.isEmpty())
+				.map(node -> (TableRow<?>) node).findFirst().orElseThrow();
 	}
 
 	private static final class Fixture {

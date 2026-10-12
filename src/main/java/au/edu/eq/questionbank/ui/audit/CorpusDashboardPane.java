@@ -36,6 +36,7 @@ import javafx.beans.binding.Bindings;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.beans.property.ReadOnlyStringWrapper;
 import javafx.collections.ListChangeListener;
+import javafx.css.PseudoClass;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
@@ -53,6 +54,7 @@ import javafx.scene.control.SelectionMode;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
+import javafx.scene.control.TableRow;
 import javafx.scene.control.TableView;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.HBox;
@@ -73,6 +75,8 @@ public final class CorpusDashboardPane extends VBox {
 	private static final double QUESTION_TABLE_HEIGHT = 180.0;
 	private static final double BOOKLETS_SECTION_MIN_WIDTH = 360.0;
 	private static final double EXAMS_SECTION_MIN_WIDTH = 340.0;
+	private static final PseudoClass BOOKLET_ROW_ATTENTION = PseudoClass.getPseudoClass("booklet-attention");
+	private static final PseudoClass BOOKLET_ROW_CLEAR = PseudoClass.getPseudoClass("booklet-clear");
 
 	// Booklet scope must retain at least several immediately visible rows even when
 	// the dialog is vertically constrained.
@@ -400,6 +404,7 @@ public final class CorpusDashboardPane extends VBox {
 		// Both status tables and lifecycle readiness depend on these IDs.
 		examTable.refresh();
 		bookletTable.refresh();
+		refreshBookletRowStyles();
 		updateExamLifecycleActionState();
 	}
 
@@ -1084,6 +1089,8 @@ public final class CorpusDashboardPane extends VBox {
 		// Apply this factory AFTER the standard centred-cell setup,
 		// otherwise the ordinary text factory would replace the checkbox.
 		reviewedColumn.setCellFactory(_ -> createApplicabilityReviewCell());
+		bookletTable.setRowFactory(_ -> createBookletStatusRow());
+		bookletTable.getStylesheets().add(getClass().getResource("booklet-row-status.css").toExternalForm());
 	}
 
 	private void configureBulkResponseTypeControls() {
@@ -1551,6 +1558,15 @@ public final class CorpusDashboardPane extends VBox {
 		return label;
 	}
 
+	private TableRow<BookletCorpusStatus> createBookletStatusRow() {
+		TableRow<BookletCorpusStatus> row = new TableRow<>();
+
+		// JavaFX reuses rows when scrolling and replacing table content.
+		row.itemProperty().addListener((_, _, _) -> updateBookletRowState(row));
+		row.emptyProperty().addListener((_, _, _) -> updateBookletRowState(row));
+		return row;
+	}
+
 	private ScrollPane createHorizontalScrollRow(String id, HBox content) {
 		ScrollPane scrollPane = new ScrollPane(content);
 		scrollPane.setId(id);
@@ -1931,6 +1947,17 @@ public final class CorpusDashboardPane extends VBox {
 		return new QuestionCorpusFilter(workingSubject.getId(), null, null, null, completion, selectedQuestionProblem);
 	}
 
+	private void refreshBookletRowStyles() {
+
+		// Re-evaluate existing visible rows when persisted review state changes.
+		// Newly created and reused rows are covered by their property listeners.
+		for (Node node : bookletTable.lookupAll(".table-row-cell")) {
+			if (node instanceof TableRow<?> row) {
+				updateBookletRowState(row);
+			}
+		}
+	}
+
 	private void refreshCurriculumMappingSummary() {
 
 		// Legacy metadata requires an existing syllabus version because workbook
@@ -2219,6 +2246,15 @@ public final class CorpusDashboardPane extends VBox {
 		// Once curriculum exists, ordinary Exam onboarding becomes the next structural
 		// action for an otherwise empty Subject.
 		noExamsLabel.setText("No Exams have been added.");
+	}
+
+	private void updateBookletRowState(TableRow<?> row) {
+		BookletCorpusStatus status = row.isEmpty() || !(row.getItem() instanceof BookletCorpusStatus booklet) ? null
+				: booklet;
+		boolean attention = status != null && status.requiresAttention();
+		boolean clear = status != null && !attention && isBookletApplicabilityReviewed(status);
+		row.pseudoClassStateChanged(BOOKLET_ROW_ATTENTION, attention);
+		row.pseudoClassStateChanged(BOOKLET_ROW_CLEAR, clear);
 	}
 
 	private void updateBulkActionState() {

@@ -1,0 +1,37 @@
+/*
+ * Corpus Dashboard QUESTION BOOKLETS row colour trial.
+ *
+ * Preserve JavaFX's normal neutral zebra striping for rows that
+ * are not authoritatively complete or require attention.
+ */
+
+#corpus-dashboard-booklets .table-row-cell:filled:booklet-attention {
+    -fx-background-color: #fff2f1;
+}
+
+#corpus-dashboard-booklets .table-row-cell:filled:odd:booklet-attention {
+    -fx-background-color: #fae7e5;
+}
+
+#corpus-dashboard-booklets .table-row-cell:filled:booklet-clear {
+    -fx-background-color: #f1f8f1;
+}
+
+#corpus-dashboard-booklets .table-row-cell:filled:odd:booklet-clear {
+    -fx-background-color: #e5f1e5;
+}
+
+/*
+ * Selection must take precedence over both status colours.
+ * Preserve normal focused and unfocused selection behaviour.
+ */
+
+#corpus-dashboard-booklets .table-row-cell:filled:selected:booklet-attention,
+#corpus-dashboard-booklets .table-row-cell:filled:selected:booklet-clear {
+    -fx-background-color: -fx-selection-bar-non-focused;
+}
+
+#corpus-dashboard-booklets:focused .table-row-cell:filled:selected:booklet-attention,
+#corpus-dashboard-booklets:focused .table-row-cell:filled:selected:booklet-clear {
+    -fx-background-color: -fx-selection-bar;
+}
