@@ -901,9 +901,21 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 				Platform.runLater(pulse::countDown);
 				assertTrue(pulse.await(2, TimeUnit.SECONDS), "FX events must run while repository I/O waits");
 				if (index == 0) {
-					fireControl(robot, "#next-pdf-page");
+					ApplicationBusyOverlay overlay = (ApplicationBusyOverlay) primaryStage.getScene().getRoot();
 					PdfWorkspacePane workspace = field(application, "pdfWorkspace", PdfWorkspacePane.class);
-					assertEquals(2, field(workspace, "currentPageNumber", Integer.class));
+					Button nextPage = lookup(robot, "#next-pdf-page", Button.class);
+					AtomicInteger pageBefore = new AtomicInteger();
+					robot.interact(() -> pageBefore.set(workspace.getCurrentPageNumber()));
+
+					// Saving must remain asynchronous, but other application
+					// controls are deliberately blocked until the save completes.
+					assertTrue(evaluateOnFx(robot, overlay::isBusy));
+					assertTrue(evaluateOnFx(robot, nextPage::isDisabled));
+
+					// Even semantic activation must not bypass the busy state.
+					fireControl(robot, nextPage);
+					assertTrue(evaluateOnFx(robot, () -> workspace.getCurrentPageNumber() == pageBefore.get()),
+							"PDF navigation must remain blocked during Question save");
 				}
 				release[index].countDown();
 			}
