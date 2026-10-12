@@ -1095,7 +1095,8 @@ public final class CorpusDashboardPane extends VBox {
 		// otherwise the ordinary text factory would replace the checkbox.
 		reviewedColumn.setCellFactory(_ -> createApplicabilityReviewCell());
 		bookletTable.setRowFactory(_ -> createBookletStatusRow());
-		bookletTable.getStylesheets().add(getClass().getResource("booklet-row-status.css").toExternalForm());
+		bookletTable.getStylesheets()
+				.add(CorpusDashboardPane.class.getResource("booklet-row-status.css").toExternalForm());
 	}
 
 	private void configureBulkResponseTypeControls() {
