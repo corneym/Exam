@@ -524,6 +524,97 @@ public final class AnswerCapturePane extends VBox {
 	}
 
 	/**
+	 * Publishes a prepared Dashboard Answer Capture request and opens its assigned
+	 * Answer PDF asynchronously.
+	 *
+	 * Repository reconstruction and AnswerFile lookup must already have completed
+	 * on a background worker. The caller must have checked the Answer transition
+	 * guard before beginning preparation.
+	 *
+	 * @param question           selected unanswered Question
+	 * @param questions          authoritative Question snapshot
+	 * @param assignedAnswerFile assigned AnswerFile, or null if missing
+	 * @param requestIsCurrent   whether this Dashboard request is still current
+	 * @param completed          callback after PDF preparation, or on failure
+	 * @return false if the Question is no longer available for Answer Capture
+	 */
+	public boolean capturePreparedDashboardAnswer(Question question, List<Question> questions,
+			AnswerFile assignedAnswerFile, BooleanSupplier requestIsCurrent, Consumer<Throwable> completed) {
+		Objects.requireNonNull(question, "question");
+		Objects.requireNonNull(questions, "questions");
+		Objects.requireNonNull(requestIsCurrent, "requestIsCurrent");
+		Objects.requireNonNull(completed, "completed");
+		if (answerSaveInProgress) {
+			return false;
+		}
+		if (question.hasAnswer() || question.getResponseType() == QuestionResponseType.UNKNOWN) {
+			return false;
+		}
+
+		// Consume the authoritative background-loaded snapshot.
+		// No whole-corpus repository read occurs here.
+		refreshQuestions(questions);
+		Question matching = findQuestionById(unansweredQuestionField.getItems(), question);
+		if (matching == null || !requestIsCurrent.getAsBoolean()) {
+			return false;
+		}
+		setUnansweredQuestionSilently(matching);
+
+		// Rebuild ordinary Answer controls without synchronously
+		// resolving or opening an Answer PDF.
+		applyUnansweredQuestionChange(matching, false);
+		answerCaptureCompletionQuestionId = matching.getId();
+		answerCaptureCompletedHandler = () -> {
+
+			// Dashboard navigation remains controlled by its Return action.
+		};
+		answerFile = null;
+		if (assignedAnswerFile == null) {
+
+			// A missing assignment is actionable through Exam / Assets.
+			// Retain the existing incomplete-booklet behaviour.
+			showAnswerFileRequired(matching);
+			completed.accept(null);
+			return true;
+		}
+		String relativePath = assignedAnswerFile.getSourceDocument().getRelativePath();
+		Path pdfPath = pdfStore.resolve(relativePath);
+		if (!Files.isRegularFile(pdfPath)) {
+			completed.accept(new IllegalStateException("The assigned Answer PDF is unavailable: " + pdfPath));
+			return true;
+		}
+		SelectedPdf selected = new SelectedPdf(pdfPath.toFile(), pdfPath, selectedPdfRoot(relativePath));
+		selectedAnswerPdfLabel.setText("Loading Answer PDF...");
+
+		// The existing PDF workspace loader opens the PDF and renders
+		// its first page on a background worker.
+		answerPdfLoader.accept(selected, failure -> {
+
+			// A later request must not receive this PDF's presentation.
+			if (!requestIsCurrent.getAsBoolean()) {
+				completed.accept(new CancellationException("Answer Capture request was superseded"));
+				return;
+			}
+			if (failure != null) {
+				showAnswerFileRequired(matching);
+				refreshSaveButtonState();
+				completed.accept(failure);
+				return;
+			}
+			answerFile = assignedAnswerFile;
+			selectedAnswerPdfLabel.setText(assignedAnswerFile.getName());
+			updateAnswerPdfControlsVisibility(matching);
+			updateAnswerRegionControlsVisibility(matching);
+			refreshSaveButtonState();
+
+			// The callback now represents a usable Answer workspace,
+			// not merely the submission of a PDF-loading task.
+			completed.accept(null);
+		});
+		return true;
+	}
+
+	/**
 	 * Discards an unaccepted region when the displayed page changes.
 	 */
 	public void clearCurrentSelectionForPageChange() {
