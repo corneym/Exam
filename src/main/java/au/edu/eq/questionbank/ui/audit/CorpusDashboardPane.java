@@ -1282,7 +1282,8 @@ public final class CorpusDashboardPane extends VBox {
 		// Apply authoritative Exam readiness without changing table-cell
 		// content, selection or lifecycle controls.
 		examTable.setRowFactory(_ -> createExamStatusRow());
-		examTable.getStylesheets().add(getClass().getResource("booklet-row-status.css").toExternalForm());
+		examTable.getStylesheets()
+				.add(CorpusDashboardPane.class.getResource("booklet-row-status.css").toExternalForm());
 	}
 
 	private void configureFilterActions() {
