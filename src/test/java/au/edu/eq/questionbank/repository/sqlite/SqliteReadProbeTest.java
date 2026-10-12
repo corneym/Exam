@@ -86,6 +86,9 @@ class SqliteReadProbeTest {
 					ResultSet result = statement.executeQuery("SELECT 1")) {
 				assertTrue(result.next());
 			}
+
+			// Verify that the active diagnostic scope recorded the connection.
+			assertEquals(1, probe.snapshot().connectionsOpened());
 		}
 
 		// A new scope must be possible after the first is closed.

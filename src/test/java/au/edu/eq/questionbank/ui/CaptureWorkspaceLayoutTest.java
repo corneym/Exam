@@ -2316,7 +2316,7 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		AtomicInteger reads = new AtomicInteger();
 		QuestionRepository controlled = (QuestionRepository) Proxy.newProxyInstance(
 				QuestionRepository.class.getClassLoader(), new Class<?>[] { QuestionRepository.class },
-				(proxy, method, arguments) -> {
+				(_, method, arguments) -> {
 					if ("findAll".equals(method.getName()) && reads.incrementAndGet() == 1) {
 						readStarted.countDown();
 						try {

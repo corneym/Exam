@@ -35,3 +35,34 @@
 #corpus-dashboard-booklets:focused .table-row-cell:filled:selected:booklet-clear {
     -fx-background-color: -fx-selection-bar;
 }
+
+/*
+ * Exam status: the same subtle colours as Question Booklets.
+ * Keep ordinary zebra shading and selection precedence.
+ */
+
+#corpus-dashboard-exams .table-row-cell:filled:exam-attention {
+    -fx-background-color: #fff2f1;
+}
+
+#corpus-dashboard-exams .table-row-cell:filled:odd:exam-attention {
+    -fx-background-color: #fae7e5;
+}
+
+#corpus-dashboard-exams .table-row-cell:filled:exam-clear {
+    -fx-background-color: #f1f8f1;
+}
+
+#corpus-dashboard-exams .table-row-cell:filled:odd:exam-clear {
+    -fx-background-color: #e5f1e5;
+}
+
+#corpus-dashboard-exams .table-row-cell:filled:selected:exam-attention,
+#corpus-dashboard-exams .table-row-cell:filled:selected:exam-clear {
+    -fx-background-color: -fx-selection-bar-non-focused;
+}
+
+#corpus-dashboard-exams:focused .table-row-cell:filled:selected:exam-attention,
+#corpus-dashboard-exams:focused .table-row-cell:filled:selected:exam-clear {
+    -fx-background-color: -fx-selection-bar;
+}

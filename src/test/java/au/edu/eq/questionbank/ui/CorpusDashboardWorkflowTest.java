@@ -138,7 +138,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		QuestionRepository original = field(application, "questionRepository", QuestionRepository.class);
 		QuestionRepository failingRepository = (QuestionRepository) Proxy.newProxyInstance(
 				QuestionRepository.class.getClassLoader(), new Class<?>[] { QuestionRepository.class },
-				(proxy, method, arguments) -> {
+				(_, method, arguments) -> {
 					if ("findAll".equals(method.getName()) && failFirstRead.compareAndSet(true, false)) {
 						workerStarted.countDown();
 						if (!releaseWorker.await(10, TimeUnit.SECONDS)) {

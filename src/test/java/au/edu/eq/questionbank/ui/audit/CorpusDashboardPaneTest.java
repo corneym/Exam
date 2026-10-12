@@ -52,6 +52,7 @@ import au.edu.eq.questionbank.service.audit.QuestionCorpusWorkItem;
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingCoverage;
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingLevelCoverage;
 import javafx.application.Platform;
+import javafx.css.PseudoClass;
 import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
@@ -133,6 +134,7 @@ class CorpusDashboardPaneTest {
 	void bookletInspectionRequiresPersistedQuestions(FxRobot robot) {
 		Button inspect = robot.lookup("#corpus-dashboard-inspect-booklet-questions").queryButton();
 		Button captureQuestions = robot.lookup("#corpus-dashboard-capture-questions").queryButton();
+		@SuppressWarnings("unchecked")
 		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
 		BookletCorpusStatus emptyBooklet = new BookletCorpusStatus(fixture.activePaper, true, null, 0, 0, 0,
 				new QuestionCorpusSummary(0, 0, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0),
@@ -817,6 +819,90 @@ class CorpusDashboardPaneTest {
 	}
 
 	@Test
+	void examRowColoursFollowCompletionAndReviewState(FxRobot robot) {
+		@SuppressWarnings("unchecked")
+		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+
+		BookletCorpusStatus readyBooklet = new BookletCorpusStatus(fixture.activePaper, true, null, 10, 10, 0,
+				new QuestionCorpusSummary(10, 10, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0),
+				EnumSet.noneOf(BookletCorpusFinding.class));
+
+		ExamCorpusStatus readyExam = new ExamCorpusStatus(fixture.activeExam, new ExamAssetExpectations(1, 1, 0, 0),
+				List.of(readyBooklet), new QuestionCorpusSummary(10, 10, 0, 0, 0, 0, 0),
+				new McqExplanationSummary(0, 0, 0), EnumSet.noneOf(ExamCorpusFinding.class));
+
+		ExamCorpusStatus unknownExam = new ExamCorpusStatus(fixture.completeExam,
+				new ExamAssetExpectations(null, 0, null, 0), List.of(), new QuestionCorpusSummary(0, 0, 0, 0, 0, 0, 0),
+				new McqExplanationSummary(0, 0, 0), EnumSet.noneOf(ExamCorpusFinding.class));
+
+		PseudoClass attention = PseudoClass.getPseudoClass("exam-attention");
+		PseudoClass clear = PseudoClass.getPseudoClass("exam-clear");
+
+		robot.interact(() -> {
+			pane.replaceData(List.of(unknownExam, readyExam), List.of());
+			pane.setApplicabilityReviewState(Set.of());
+			exams.getSelectionModel().clearSelection();
+			pane.applyCss();
+			pane.layout();
+		});
+
+		int unknownIndex = exams.getItems().indexOf(unknownExam);
+		int readyIndex = exams.getItems().indexOf(readyExam);
+
+		assertTrue(unknownIndex >= 0);
+		assertTrue(readyIndex >= 0);
+
+		// Unknown expectations require work even when no finding
+		// has been explicitly recorded in the snapshot.
+		assertTrue(dashboardRowAt(exams, unknownIndex).getPseudoClassStates().contains(attention));
+
+		// Completed capture without applicability review still needs work.
+		assertTrue(dashboardRowAt(exams, readyIndex).getPseudoClassStates().contains(attention));
+
+		robot.interact(() -> {
+			pane.setApplicabilityReviewState(Set.of(fixture.activePaper.getId()));
+			pane.applyCss();
+			pane.layout();
+		});
+
+		// Review completes the final readiness dimension.
+		assertTrue(dashboardRowAt(exams, readyIndex).getPseudoClassStates().contains(clear));
+		assertFalse(dashboardRowAt(exams, readyIndex).getPseudoClassStates().contains(attention));
+
+		assertTrue(dashboardRowAt(exams, unknownIndex).getPseudoClassStates().contains(attention));
+
+		Color expectedGreen = readyIndex % 2 == 0 ? Color.web("#f1f8f1") : Color.web("#e5f1e5");
+
+		Color actualGreen = (Color) dashboardRowAt(exams, readyIndex).getBackground().getFills().getFirst().getFill();
+
+		assertEquals(expectedGreen, actualGreen);
+
+		robot.interact(() -> {
+			exams.getSelectionModel().select(readyExam);
+			exams.requestFocus();
+			pane.applyCss();
+			pane.layout();
+		});
+
+		// Selection highlighting takes precedence over status colours.
+		Color selectedColour = (Color) dashboardRowAt(exams, readyIndex).getBackground().getFills().getFirst()
+				.getFill();
+
+		assertFalse(expectedGreen.equals(selectedColour));
+		assertTrue(dashboardRowAt(exams, readyIndex).isSelected());
+
+		robot.interact(() -> {
+			pane.setApplicabilityReviewState(Set.of());
+			pane.applyCss();
+			pane.layout();
+		});
+
+		// Revoking review restores the outstanding-work state.
+		assertTrue(dashboardRowAt(exams, readyIndex).getPseudoClassStates().contains(attention));
+		assertFalse(dashboardRowAt(exams, readyIndex).getPseudoClassStates().contains(clear));
+	}
+
+	@Test
 	@SuppressWarnings("unchecked")
 	void examStateFilterChangesSummaryExamAndQuestionScope(FxRobot robot) {
 		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
@@ -1483,8 +1569,8 @@ class CorpusDashboardPaneTest {
 		}
 	}
 
-	private TableRow<?> bookletRowAt(TableView<BookletCorpusStatus> booklets, int index) {
-		return booklets.lookupAll(".table-row-cell").stream()
+	private TableRow<?> dashboardRowAt(TableView<?> table, int index) {
+		return table.lookupAll(".table-row-cell").stream()
 				.filter(node -> node instanceof TableRow<?> row && row.getIndex() == index && !row.isEmpty())
 				.map(node -> (TableRow<?>) node).findFirst().orElseThrow();
 	}
