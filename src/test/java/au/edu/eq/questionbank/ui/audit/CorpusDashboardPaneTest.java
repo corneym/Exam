@@ -71,6 +71,7 @@ import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.stage.Stage;
@@ -81,6 +82,84 @@ class CorpusDashboardPaneTest {
 
 	private CorpusDashboardPane pane;
 	private Fixture fixture;
+
+	@Test
+	void bookletActionsSeparateCaptureFromInspectionAndScrollWhenNarrow(FxRobot robot) {
+		ScrollPane actions = robot.lookup("#corpus-dashboard-booklet-actions-scroll").queryAs(ScrollPane.class);
+		HBox row = (HBox) actions.getContent();
+		Button captureQuestions = robot.lookup("#corpus-dashboard-capture-questions").queryButton();
+		Button captureAnswers = robot.lookup("#corpus-dashboard-capture-answers").queryButton();
+		Button captureMcq = robot.lookup("#corpus-dashboard-capture-mcq-explanations").queryButton();
+		Button inspect = robot.lookup("#corpus-dashboard-inspect-booklet-questions").queryButton();
+		Region spacer = robot.lookup("#corpus-dashboard-booklet-action-spacer").queryAs(Region.class);
+
+		// Capture actions precede Inspection in both layout and keyboard order.
+		assertEquals(List.of(captureQuestions, captureAnswers, captureMcq, spacer, inspect), row.getChildren());
+		assertEquals(Priority.ALWAYS, HBox.getHgrow(spacer));
+		assertFalse(spacer.isFocusTraversable());
+		assertTrue(actions.isFitToWidth());
+		assertEquals(Region.USE_PREF_SIZE, row.getMinWidth(), 0.001);
+
+		// Exercise the row at a width with ample space without depending
+		// on the virtual display's physical screen resolution.
+		robot.interact(() -> {
+			pane.applyCss();
+			pane.layout();
+			double wideWidth = row.prefWidth(-1) + 100;
+			row.resize(wideWidth, row.prefHeight(wideWidth));
+			row.layout();
+			assertTrue(spacer.getWidth() >= 50, "The spacer should separate Capture and Inspect");
+			assertEquals(row.getWidth(), inspect.getBoundsInParent().getMaxX(), 2.0);
+			assertTrue(captureMcq.getBoundsInParent().getMaxX() < inspect.getBoundsInParent().getMinX());
+		});
+
+		// At narrow widths, preserve access to every action through
+		// horizontal scrolling rather than overlapping the buttons.
+		robot.interact(() -> pane.getScene().getWindow().setWidth(820));
+		WaitForAsyncUtils.waitForFxEvents();
+		robot.interact(() -> {
+			pane.applyCss();
+			pane.layout();
+		});
+		assertTrue(actions.getViewportBounds().getWidth() > 0);
+		assertTrue(row.getLayoutBounds().getWidth() > actions.getViewportBounds().getWidth() + 5,
+				"The narrow booklet section should scroll horizontally");
+		robot.interact(() -> actions.setHvalue(actions.getHmax()));
+		assertEquals(actions.getHmax(), actions.getHvalue(), 0.001);
+	}
+
+	@Test
+	void bookletInspectionRequiresPersistedQuestions(FxRobot robot) {
+		Button inspect = robot.lookup("#corpus-dashboard-inspect-booklet-questions").queryButton();
+		Button captureQuestions = robot.lookup("#corpus-dashboard-capture-questions").queryButton();
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		BookletCorpusStatus emptyBooklet = new BookletCorpusStatus(fixture.activePaper, true, null, 0, 0, 0,
+				new QuestionCorpusSummary(0, 0, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0),
+				EnumSet.noneOf(BookletCorpusFinding.class));
+		ExamCorpusStatus emptyExam = new ExamCorpusStatus(fixture.activeExam, new ExamAssetExpectations(1, 1, 0, 0),
+				List.of(emptyBooklet), new QuestionCorpusSummary(0, 0, 0, 0, 0, 0, 0),
+				new McqExplanationSummary(0, 0, 0), EnumSet.noneOf(ExamCorpusFinding.class));
+		robot.interact(() -> {
+			pane.replaceData(List.of(emptyExam), List.of());
+			booklets.getSelectionModel().selectFirst();
+		});
+
+		// The booklet is selected but contains no persisted Questions.
+		// New capture remains available; inspection does not.
+		assertTrue(inspect.isDisable());
+		assertFalse(captureQuestions.isDisable());
+
+		// Inspection becomes available for an ordinary populated booklet.
+		robot.interact(() -> {
+			pane.replaceData(List.of(fixture.activeExamStatus), fixture.questions());
+			booklets.getSelectionModel().selectFirst();
+		});
+		assertFalse(inspect.isDisable());
+
+		// Removing the booklet selection disables Inspection again.
+		robot.interact(() -> booklets.getSelectionModel().clearSelection());
+		assertTrue(inspect.isDisable());
+	}
 
 	@Test
 	@SuppressWarnings("unchecked")
