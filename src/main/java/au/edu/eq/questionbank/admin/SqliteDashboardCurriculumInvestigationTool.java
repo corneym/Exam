@@ -66,7 +66,7 @@ public final class SqliteDashboardCurriculumInvestigationTool {
 	private static <T> T instrument(Class<T> interfaceType, T delegate, String category,
 			Map<String, CallStatistics> statistics) {
 		Object proxy = Proxy.newProxyInstance(interfaceType.getClassLoader(), new Class<?>[] { interfaceType },
-				(instance, method, args) -> {
+				(_, method, args) -> {
 					if (method.getDeclaringClass() == Object.class) {
 						return invoke(delegate, method, args);
 					}
@@ -75,7 +75,7 @@ public final class SqliteDashboardCurriculumInvestigationTool {
 						return invoke(delegate, method, args);
 					} finally {
 						String operation = category + "." + method.getName();
-						statistics.computeIfAbsent(operation, ignored -> new CallStatistics())
+						statistics.computeIfAbsent(operation, _ -> new CallStatistics())
 								.record(System.nanoTime() - started);
 					}
 				});
