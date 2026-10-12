@@ -32,6 +32,7 @@ import au.edu.eq.questionbank.service.audit.QuestionCorpusSummary;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusWorkItem;
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingCoverage;
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingLevelCoverage;
+import javafx.beans.binding.Bindings;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.beans.property.ReadOnlyStringWrapper;
 import javafx.collections.ListChangeListener;
@@ -769,13 +770,25 @@ public final class CorpusDashboardPane extends VBox {
 		bookletWarningLabel.setWrapText(true);
 		setVisibleAndManaged(bookletWarningLabel, false);
 
-		// Retain existing actions, order and routing. Their grouping and
-		// alignment will be addressed separately by Issue #127.
-		HBox bookletActionsRow = new HBox(SPACING, inspectBookletQuestionsButton, captureQuestionsButton,
-				captureAnswersButton, captureMcqExplanationsButton);
+		// Keep Capture actions together on the left and Inspection on the right.
+		// The spacer expands only when the booklet section has spare width.
+		Region bookletInspectionSpacer = new Region();
+		bookletInspectionSpacer.setId("corpus-dashboard-booklet-action-spacer");
+		bookletInspectionSpacer.setFocusTraversable(false);
+		HBox.setHgrow(bookletInspectionSpacer, Priority.ALWAYS);
+		HBox bookletActionsRow = new HBox(SPACING, captureQuestionsButton, captureAnswersButton,
+				captureMcqExplanationsButton, bookletInspectionSpacer, inspectBookletQuestionsButton);
 		bookletActionsRow.setAlignment(Pos.CENTER_LEFT);
+
+		// Preserve natural button widths when the user narrows the section.
+		bookletActionsRow.setMinWidth(Region.USE_PREF_SIZE);
 		ScrollPane bookletActionsScroll = createHorizontalScrollRow("corpus-dashboard-booklet-actions-scroll",
 				bookletActionsRow);
+
+		// Fill the viewport when space is available so the spacer can push
+		// Inspect Questions right. Respect the row minimum when space is tight,
+		// allowing horizontal scrolling instead of clipping controls.
+		bookletActionsScroll.setFitToWidth(true);
 		StackPane examsSection = createTitledSection("corpus-dashboard-exams-section", "EXAMS", examEmptyStateScroll,
 				examOperationalContent);
 		bookletsSection = createTitledSection("corpus-dashboard-booklets-section", "QUESTION BOOKLETS", bookletTable,
@@ -1107,8 +1120,13 @@ public final class CorpusDashboardPane extends VBox {
 		inspectBookletQuestionsButton.setId("corpus-dashboard-inspect-booklet-questions");
 		inspectBookletQuestionsButton
 				.setTooltip(new Tooltip("Open Question Search narrowed to the selected Question booklet."));
-		inspectBookletQuestionsButton.disableProperty()
-				.bind(bookletTable.getSelectionModel().selectedItemProperty().isNull());
+		inspectBookletQuestionsButton.disableProperty().bind(Bindings.createBooleanBinding(() -> {
+			BookletCorpusStatus selected = bookletTable.getSelectionModel().getSelectedItem();
+
+			// Inspection requires persisted Questions. An empty booklet
+			// may still permit new Question capture, but not inspection.
+			return selected == null || selected.questionSummary().totalQuestions() == 0;
+		}, bookletTable.getSelectionModel().selectedItemProperty()));
 		inspectExamQuestionsButton.setId("corpus-dashboard-inspect-exam-questions");
 		inspectExamQuestionsButton.setTooltip(new Tooltip("Open Question Search narrowed to the selected Exam."));
 		inspectExamQuestionsButton.disableProperty()
