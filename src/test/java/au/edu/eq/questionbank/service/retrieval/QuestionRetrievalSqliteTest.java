@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.List;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -21,11 +22,13 @@ import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
+import au.edu.eq.questionbank.repository.assessment.SqliteQuestionOutputApplicabilityRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumMappingReviewWriter;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteReadProbe;
 
 class QuestionRetrievalSqliteTest {
 
@@ -87,6 +90,99 @@ class QuestionRetrievalSqliteTest {
 		assertEquals(fixture.historicalDescriptorId(), historicalResult.getQuestion().getClassification().getId());
 		assertSame(historicalResult.getOriginalClassification(), historicalResult.getQuestion().getClassification());
 		assertEquals(reloaded.currentDescriptor().getId(), historicalResult.getCurrentApplicability().get(0).getId());
+	}
+
+	@Test
+	void selectedQuestionApplicabilityEqualsFullSubjectRetrievalAfterReopen() throws Exception {
+		Fixture fixture = createFixture("selected-subject-equivalence.db");
+		ReloadedFixture reloaded = reloadFixture(fixture);
+		Subject subject = reloaded.currentDescriptor().getSyllabusVersion().getSubject();
+
+		// Broad retrieval is the existing authoritative comparison.
+		List<QuestionRetrievalResult> broadResults = reloaded.service().findQuestionsApplicableTo(subject);
+		assertEquals(4, broadResults.size());
+		for (QuestionRetrievalResult broadResult : broadResults) {
+			Question selectedQuestion = broadResult.getQuestion();
+			List<CurriculumNode> selectedPlacements;
+			SqliteReadProbe.Snapshot measurements;
+			try (SqliteReadProbe probe = SqliteReadProbe.begin()) {
+				selectedPlacements = reloaded.service().findCurrentApplicabilityForQuestion(selectedQuestion, 0);
+				measurements = probe.snapshot();
+			}
+
+			// Compare the entire ordered list, not just its count.
+			assertEquals(broadResult.getCurrentApplicability(), selectedPlacements);
+
+			// Each selection must reconstruct its own Question only.
+			assertEquals(1, measurements.questionsReconstructed(),
+					"Unexpected reconstruction count for Question " + selectedQuestion.getId());
+		}
+		QuestionRetrievalResult historicalDescriptorResult = broadResults.stream()
+				.filter(result -> result.getQuestion().getId() == fixture.historicalDescriptorQuestionId()).findFirst()
+				.orElseThrow();
+
+		// The historical one-to-many mapping must produce two distinct
+		// current placements in deterministic order.
+		assertEquals(List.of(reloaded.currentDescriptor(), reloaded.secondCurrentDescriptor()),
+				historicalDescriptorResult.getCurrentApplicability());
+
+		// The originally captured historical classification remains intact.
+		assertEquals(fixture.historicalDescriptorId(), historicalDescriptorResult.getOriginalClassification().getId());
+	}
+
+	@Test
+	void selectedQuestionRetainsExcludedPlacementsAndSubjectBoundary() throws Exception {
+		Fixture fixture = createFixture("selected-exclusions-and-subject.db");
+		SqliteDatabase database = new SqliteDatabase(fixture.databasePath());
+		database.initialiseSchema();
+
+		// Add an unrelated current Subject and Question to detect
+		// accidental cross-Subject applicability.
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		Subject physics = curriculumWriter.insertSubject("Physics");
+		SyllabusVersion physicsVersion = curriculumWriter.insertSyllabusVersion(physics, "2025", true);
+		Unit physicsUnit = curriculumWriter.insertUnit(physicsVersion, "1", "Physics unit", 1);
+		Topic physicsTopic = curriculumWriter.insertTopic(physicsUnit, "1.1", "Physics topic", 1);
+		Descriptor physicsDescriptor = curriculumWriter.insertDescriptor(physicsTopic, "1.1.1", "Physics descriptor",
+				1);
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, new SqliteExamWriter(database));
+		ExamBooklet physicsBooklet = examImporter.importExam(physics, "QCAA", 2025, "External Assessment", "Paper 1",
+				"Physics/2025/paper1.pdf");
+		Question physicsQuestion = new SqliteQuestionRepository(database).save(physicsBooklet, "Q1", "", 2, List.of(),
+				physicsDescriptor, false);
+		ReloadedFixture reloaded = reloadFixture(fixture);
+		Subject chemistry = reloaded.currentDescriptor().getSyllabusVersion().getSubject();
+		List<QuestionRetrievalResult> chemistryResults = reloaded.service().findQuestionsApplicableTo(chemistry);
+
+		// Adding another Subject must not add its Question to Chemistry.
+		assertEquals(4, chemistryResults.size());
+		Question historicalQuestion = chemistryResults.stream()
+				.filter(result -> result.getQuestion().getId() == fixture.historicalDescriptorQuestionId()).findFirst()
+				.orElseThrow().getQuestion();
+		SqliteQuestionOutputApplicabilityRepository exclusions = new SqliteQuestionOutputApplicabilityRepository(
+				database);
+
+		// Exclude one placement, leaving the other included.
+		exclusions.setExcluded(historicalQuestion, reloaded.secondCurrentDescriptor(), true);
+
+		// Reopen persistence, as the normal application does.
+		ReloadedFixture reopened = reloadFixture(fixture);
+		Question reopenedQuestion = reopened.service().findQuestionsApplicableTo(chemistry).stream()
+				.filter(result -> result.getQuestion().getId() == fixture.historicalDescriptorQuestionId()).findFirst()
+				.orElseThrow().getQuestion();
+		List<CurriculumNode> placements = reopened.service().findCurrentApplicabilityForQuestion(reopenedQuestion, 0);
+		assertEquals(List.of(reopened.currentDescriptor(), reopened.secondCurrentDescriptor()), placements);
+		Set<Long> excludedIds = exclusions.findExcludedCurrentNodeIds(reopenedQuestion);
+		assertEquals(Set.of(reopened.secondCurrentDescriptor().getId()), excludedIds);
+
+		// Exclusion changes output status, not derived applicability.
+		assertEquals(List.of(false, true),
+				placements.stream().map(node -> excludedIds.contains(node.getId())).toList());
+
+		// Retrieving the Physics Question must use Physics's current
+		// syllabus, not the previously retrieved Chemistry scope.
+		assertEquals(List.of(physicsDescriptor),
+				reopened.service().findCurrentApplicabilityForQuestion(physicsQuestion, 0));
 	}
 
 	@Test

@@ -102,14 +102,18 @@ public final class SqliteQuestionQueryPlanTool {
 				explain(connection, output, "question.findAll", SqliteQuestionSelectSql.allIds(), List.of());
 				long questionId = firstQuestionId(connection);
 				explain(connection, output, "question.findById", SqliteQuestionSelectSql.byId(), List.of(questionId));
-
-				// Compare one requested node with the full Subject
-				// scope to expose cardinality-sensitive plan choices.
 				explain(connection, output, "search.current.single-node", SqliteQuestionSelectSql.applicability(1),
 						List.of(nodes.getFirst().getId()));
 				explain(connection, output, "search.current.subject",
 						SqliteQuestionSelectSql.applicability(nodes.size()),
 						nodes.stream().map(CurriculumNode::getId).toList());
+
+				// Compare broad and selected-Question plans against the same
+				// Subject nodes and database snapshot.
+				List<Long> selectedParameters = new ArrayList<>(nodes.stream().map(CurriculumNode::getId).toList());
+				selectedParameters.add(questionId);
+				explain(connection, output, "search.current.subject.selected-question",
+						SqliteQuestionSelectSql.applicabilityForQuestion(nodes.size()), selectedParameters);
 			}
 			if (Files.size(snapshot) != originalBytes
 					|| !fingerprint.equals(PerformanceBenchmarkCsvReport.sha256(snapshot))) {
