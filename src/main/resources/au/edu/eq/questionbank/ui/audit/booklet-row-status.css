@@ -66,3 +66,35 @@
 #corpus-dashboard-exams:focused .table-row-cell:filled:selected:exam-clear {
     -fx-background-color: -fx-selection-bar;
 }
+/*
+ * Question Work status uses ordinary Question completeness and
+ * separately required MCQ explanation coverage.
+ */
+
+#corpus-dashboard-question-work .table-row-cell:filled:question-attention {
+    -fx-background-color: #fff2f1;
+}
+
+#corpus-dashboard-question-work .table-row-cell:filled:odd:question-attention {
+    -fx-background-color: #fae7e5;
+}
+
+#corpus-dashboard-question-work .table-row-cell:filled:question-clear {
+    -fx-background-color: #f1f8f1;
+}
+
+#corpus-dashboard-question-work .table-row-cell:filled:odd:question-clear {
+    -fx-background-color: #e5f1e5;
+}
+
+/* Selected rows retain the normal JavaFX selection treatment. */
+
+#corpus-dashboard-question-work .table-row-cell:filled:selected:question-attention,
+#corpus-dashboard-question-work .table-row-cell:filled:selected:question-clear {
+    -fx-background-color: -fx-selection-bar-non-focused;
+}
+
+#corpus-dashboard-question-work:focused .table-row-cell:filled:selected:question-attention,
+#corpus-dashboard-question-work:focused .table-row-cell:filled:selected:question-clear {
+    -fx-background-color: -fx-selection-bar;
+}

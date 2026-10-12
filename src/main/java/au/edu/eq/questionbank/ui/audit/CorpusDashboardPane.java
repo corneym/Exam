@@ -78,8 +78,10 @@ public final class CorpusDashboardPane extends VBox {
 	private static final PseudoClass BOOKLET_ROW_ATTENTION = PseudoClass.getPseudoClass("booklet-attention");
 	private static final PseudoClass BOOKLET_ROW_CLEAR = PseudoClass.getPseudoClass("booklet-clear");
 	private static final PseudoClass EXAM_ROW_ATTENTION = PseudoClass.getPseudoClass("exam-attention");
-
+	private static final PseudoClass QUESTION_ROW_ATTENTION = PseudoClass.getPseudoClass("question-attention");
+	private static final PseudoClass QUESTION_ROW_CLEAR = PseudoClass.getPseudoClass("question-clear");
 	private static final PseudoClass EXAM_ROW_CLEAR = PseudoClass.getPseudoClass("exam-clear");
+
 	// Booklet scope must retain at least several immediately visible rows even when
 	// the dialog is vertically constrained.
 	private static final double BOOKLET_TABLE_MAX_HEIGHT = 280.0;
@@ -1275,10 +1277,10 @@ public final class CorpusDashboardPane extends VBox {
 				.setAll(List.<TableColumn<ExamCorpusStatus, ?>>of(yearColumn, providerColumn, assessmentColumn,
 						stateColumn, questionBookletsColumn, answerBookletsColumn, reviewedColumn, workColumn));
 		centreTableColumns(examTable);
+
 		// Apply authoritative Exam readiness without changing table-cell
 		// content, selection or lifecycle controls.
 		examTable.setRowFactory(_ -> createExamStatusRow());
-
 		examTable.getStylesheets().add(getClass().getResource("booklet-row-status.css").toExternalForm());
 	}
 
@@ -1412,6 +1414,10 @@ public final class CorpusDashboardPane extends VBox {
 		// change table sorting explicitly afterwards.
 		questionTable.getSortOrder().setAll(List.<TableColumn<QuestionCorpusWorkItem, ?>>of(providerColumn, yearColumn,
 				examColumn, bookletColumn, questionColumn));
+
+		// Keep row colouring independent of table cells, sorting and selection.
+		questionTable.setRowFactory(_ -> createQuestionWorkStatusRow());
+		questionTable.getStylesheets().add(getClass().getResource("booklet-row-status.css").toExternalForm());
 	}
 
 	private void configureSelectionActions() {
@@ -1577,10 +1583,8 @@ public final class CorpusDashboardPane extends VBox {
 
 	private TableRow<ExamCorpusStatus> createExamStatusRow() {
 		TableRow<ExamCorpusStatus> row = new TableRow<>();
-
 		row.itemProperty().addListener((_, _, _) -> updateExamRowState(row));
 		row.emptyProperty().addListener((_, _, _) -> updateExamRowState(row));
-
 		return row;
 	}
 
@@ -1602,6 +1606,16 @@ public final class CorpusDashboardPane extends VBox {
 		// Use the default JavaFX theme styling. In particular, do not
 		// override background-related CSS lookups used by text colours.
 		return scrollPane;
+	}
+
+	private TableRow<QuestionCorpusWorkItem> createQuestionWorkStatusRow() {
+		TableRow<QuestionCorpusWorkItem> row = new TableRow<>();
+
+		// Virtualised rows must discard the previous Question's colour state
+		// whenever JavaFX assigns another item or empties the row.
+		row.itemProperty().addListener((_, _, _) -> updateQuestionWorkRowState(row));
+		row.emptyProperty().addListener((_, _, _) -> updateQuestionWorkRowState(row));
+		return row;
 	}
 
 	private StackPane createTitledSection(String id, String title, Node... content) {
@@ -2026,6 +2040,7 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private void refreshExamRowStyles() {
+
 		// Review confirmations can change without replacing Exam records.
 		for (Node node : examTable.lookupAll(".table-row-cell")) {
 			if (node instanceof TableRow<?> row) {
@@ -2379,9 +2394,7 @@ public final class CorpusDashboardPane extends VBox {
 		// Use exactly the readiness rule behind the Needs Work column.
 		// Missing expectations or outstanding reviews cannot appear green.
 		boolean clear = status != null && status.isReadyForCompletion() && isExamApplicabilityReviewed(status);
-
 		boolean attention = status != null && !clear;
-
 		row.pseudoClassStateChanged(EXAM_ROW_ATTENTION, attention);
 		row.pseudoClassStateChanged(EXAM_ROW_CLEAR, clear);
 	}
@@ -2405,6 +2418,19 @@ public final class CorpusDashboardPane extends VBox {
 		// persisted
 		// Question also has Question-content work.
 		completeSelectedQuestionButton.setDisable(!canCompleteSelectedQuestion(selected));
+	}
+
+	private void updateQuestionWorkRowState(TableRow<?> row) {
+		QuestionCorpusWorkItem item = row.isEmpty() || !(row.getItem() instanceof QuestionCorpusWorkItem workItem)
+				? null
+				: workItem;
+
+		// An ordinarily complete MCQ may still require an explanation.
+		// This matches the existing Question Work Problem column.
+		boolean attention = item != null && (!item.status().isComplete() || isMissingMcqExplanation(item.question()));
+		boolean clear = item != null && !attention;
+		row.pseudoClassStateChanged(QUESTION_ROW_ATTENTION, attention);
+		row.pseudoClassStateChanged(QUESTION_ROW_CLEAR, clear);
 	}
 
 	private String workLabel(ExamCorpusStatus status) {
