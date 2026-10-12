@@ -765,6 +765,116 @@ public class QuestionSearchPaneTest {
 	}
 
 	@Test
+	public void rapidSelectionsKeepLatestQuestionApplicabilityResponsive(FxRobot robot) throws TimeoutException {
+		Question second = new Question(350, historicalQuestion.getBooklet(), "R2", "Second rapid-selection Question", 2,
+				List.of(), currentSubtopic, false);
+		Question third = new Question(351, historicalQuestion.getBooklet(), "R3", "Third rapid-selection Question", 2,
+				List.of(), historicalDescriptor, false);
+		List<QuestionApplicabilityMatch> matches = List.of(
+				new QuestionApplicabilityMatch(historicalQuestion, currentDescriptor),
+				new QuestionApplicabilityMatch(second, currentSubtopic),
+				new QuestionApplicabilityMatch(third, noMatchDescriptor));
+		CountDownLatch firstStarted = new CountDownLatch(1);
+		CountDownLatch firstRelease = new CountDownLatch(1);
+		CountDownLatch firstFinished = new CountDownLatch(1);
+		QuestionRetrievalRepository repository = new QuestionRetrievalRepository() {
+
+			@Override
+			public List<QuestionApplicabilityMatch> findApplicableToNodes(List<CurriculumNode> nodes) {
+				return matches.stream().filter(match -> nodes.contains(match.getCurrentNode())).toList();
+			}
+
+			@Override
+			public List<QuestionApplicabilityMatch> findApplicableToNodesForQuestion(List<CurriculumNode> nodes,
+					long questionId, long parentOperationId) {
+				if (questionId == historicalQuestion.getId()) {
+					firstStarted.countDown();
+
+					// Simulate a slow database call that continues after
+					// its JavaFX Task has been superseded.
+					boolean released = false;
+					while (!released) {
+						try {
+							firstRelease.await();
+							released = true;
+						} catch (InterruptedException ignored) {
+
+							// Retain the stale-operation scenario.
+						}
+					}
+					firstFinished.countDown();
+				}
+				return matches.stream().filter(match -> match.getQuestion().getId() == questionId)
+						.filter(match -> nodes.contains(match.getCurrentNode())).toList();
+			}
+		};
+		QuestionRetrievalService service = new QuestionRetrievalService(repository,
+				new CurriculumSearchNodeExpansionService(curriculumRepository));
+		outputApplicabilityRepository.setExcluded(third, noMatchDescriptor, true);
+		replaceSearchPane(robot, curriculumRepository, service, () -> List.of(historicalQuestion, second, third));
+		ComboBox<QuestionSearchScope> scopeBox = robot.lookup("#question-search-scope").queryComboBox();
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		ListView<QuestionOutputApplicabilityRow> output = robot.lookup("#question-search-output-applicability")
+				.queryListView();
+		Label status = robot.lookup("#question-search-output-applicability-status").queryAs(Label.class);
+		try {
+			robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
+			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 3);
+			QuestionSearchResult firstResult = results.getItems().stream()
+					.filter(result -> result.question().getId() == historicalQuestion.getId()).findFirst()
+					.orElseThrow();
+			QuestionSearchResult secondResult = results.getItems().stream()
+					.filter(result -> result.question().getId() == second.getId()).findFirst().orElseThrow();
+			QuestionSearchResult thirdResult = results.getItems().stream()
+					.filter(result -> result.question().getId() == third.getId()).findFirst().orElseThrow();
+			robot.interact(() -> results.getSelectionModel().select(firstResult));
+			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> firstStarted.getCount() == 0);
+
+			// The first Question remains deliberately blocked while
+			// the next selection must complete independently.
+			long secondStarted = System.nanoTime();
+			robot.interact(() -> results.getSelectionModel().select(secondResult));
+			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+					() -> output.getItems().size() == 1
+							&& output.getItems().getFirst().currentNode().equals(currentSubtopic)
+							&& status.getText().equals("1 current placement: 1 included, 0 excluded."));
+			double secondMilliseconds = (System.nanoTime() - secondStarted) / 1_000_000.0;
+			assertEquals(1, firstFinished.getCount());
+			assertEquals(second.getId(), results.getSelectionModel().getSelectedItem().question().getId());
+
+			// Select another Question without releasing the original
+			// slow retrieval. This placement is explicitly excluded.
+			long thirdStarted = System.nanoTime();
+			robot.interact(() -> results.getSelectionModel().select(thirdResult));
+			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+					() -> output.getItems().size() == 1
+							&& output.getItems().getFirst().currentNode().equals(noMatchDescriptor)
+							&& output.getItems().getFirst().excluded()
+							&& status.getText().equals("1 current placement: 0 included, 1 excluded."));
+			double thirdMilliseconds = (System.nanoTime() - thirdStarted) / 1_000_000.0;
+			assertEquals(1, firstFinished.getCount());
+			System.out.printf("Rapid selection while earlier retrieval blocked: " + "second=%.3f ms | third=%.3f ms%n",
+					secondMilliseconds, thirdMilliseconds);
+
+			// The old retrieval now finishes after the third Question
+			// has already published its current applicability.
+			firstRelease.countDown();
+			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> firstFinished.getCount() == 0);
+			WaitForAsyncUtils.waitForFxEvents();
+			assertEquals(third.getId(), results.getSelectionModel().getSelectedItem().question().getId());
+			assertEquals(1, output.getItems().size());
+			assertEquals(noMatchDescriptor, output.getItems().getFirst().currentNode());
+			assertTrue(output.getItems().getFirst().excluded());
+			assertEquals("1 current placement: 0 included, 1 excluded.", status.getText());
+		} finally {
+
+			// Never leave a test-owned background operation blocked
+			// if an assertion or timeout fails.
+			firstRelease.countDown();
+		}
+	}
+
+	@Test
 	public void refreshAfterEditRetainsAllQuestionsScopeAndReselectsUpdatedQuestion(FxRobot robot)
 			throws TimeoutException {
 		AtomicReference<List<Question>> allQuestions = new AtomicReference<>(List.of(historicalQuestion));

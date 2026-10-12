@@ -67,53 +67,36 @@ class PerformanceBenchmarkToolTest {
 
 	@Test
 	void comparesBroadAndSelectiveQuestionRetrievalOnOneSnapshot() throws Exception {
-
 		Fixture fixture = createFixture();
-
 		Path csv = tempDirectory.resolve("selected-question-comparison.csv");
-
 		byte[] original = Files.readAllBytes(fixture.snapshot());
-
 		String broadOperation = "search.output-applicability.broad-question:" + fixture.questionId();
-
 		String selectiveOperation = "search.output-applicability.question:" + fixture.questionId();
-
 		ByteArrayOutputStream outputBytes = new ByteArrayOutputStream();
 		ByteArrayOutputStream errorBytes = new ByteArrayOutputStream();
-
 		int status = PerformanceBenchmarkTool.run(
 				new String[] { "--snapshot", fixture.snapshot().toString(), "--operation", broadOperation,
 						"--operation", selectiveOperation, "--warmups", "1", "--iterations", "3", "--label",
 						"issue-142-test", "--csv", csv.toString() },
 				new PrintStream(outputBytes), new PrintStream(errorBytes));
-
 		assertEquals(0, status, errorBytes.toString());
-
 		String output = outputBytes.toString();
-
 		assertTrue(output.contains("Operation: " + broadOperation));
 		assertTrue(output.contains("Operation: " + selectiveOperation));
 		assertTrue(output.contains("Measured iterations: 3"));
 		assertTrue(output.contains("Result count: 1"));
-
 		List<String> rows = Files.readAllLines(csv);
-
 		assertEquals(3, rows.size());
 		assertEquals(PerformanceBenchmarkCsvReport.HEADER, rows.getFirst());
 
 		// Both measurements must use the same snapshot identity.
 		String fingerprint = PerformanceBenchmarkCsvReport.sha256(fixture.snapshot());
-
 		assertTrue(rows.get(1).contains(fingerprint));
 		assertTrue(rows.get(2).contains(fingerprint));
-
 		assertTrue(rows.get(1).contains(broadOperation));
 		assertTrue(rows.get(2).contains(selectiveOperation));
-
 		assertArrayEquals(original, Files.readAllBytes(fixture.snapshot()));
-
 		assertFalse(Files.exists(fixture.snapshot().resolveSibling(fixture.snapshot().getFileName() + "-wal")));
-
 		assertFalse(Files.exists(fixture.snapshot().resolveSibling(fixture.snapshot().getFileName() + "-shm")));
 	}
 
