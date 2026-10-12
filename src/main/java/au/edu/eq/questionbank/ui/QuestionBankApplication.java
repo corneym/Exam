@@ -165,6 +165,7 @@ import au.edu.eq.questionbank.ui.search.QuestionSearchDialog;
 import au.edu.eq.questionbank.ui.search.QuestionSearchNarrowing;
 import javafx.application.Application;
 import javafx.application.Platform;
+import javafx.beans.value.ChangeListener;
 import javafx.concurrent.Task;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -283,6 +284,9 @@ public class QuestionBankApplication extends Application {
 	// existing pane rather than reconstructing capture controls and their state.
 	private VBox captureWorkspaceModePane;
 	private ExamAssetsPane examAssetsPane;
+
+	private ChangeListener<Boolean> primaryStageFocusListener;
+	private Stage primaryStageFocusListenerStage;
 
 	// Exam/Assets persistence participates in the same application-level Subject
 	// generation as the shared Question snapshot.
@@ -413,11 +417,16 @@ public class QuestionBankApplication extends Application {
 
 	@Override
 	public void stop() throws Exception {
-		if (resourcesClosedForRestore) {
-			return;
-		}
-		if (shutdownCoordinator == null || !shutdownCoordinator.isReadyToExit()) {
-			pdfWorkspace.close();
+		try {
+			if (resourcesClosedForRestore) {
+				return;
+			}
+
+			if (shutdownCoordinator == null || !shutdownCoordinator.isReadyToExit()) {
+				pdfWorkspace.close();
+			}
+		} finally {
+			removePrimaryStageFocusListener();
 		}
 	}
 
@@ -1226,19 +1235,20 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void configurePrimaryStage(Stage primaryStage, ApplicationConfig config) {
+		removePrimaryStageFocusListener();
+
 		primaryStage.setOnCloseRequest(event -> handleCloseRequest(event, primaryStage));
 
-		// The system clipboard has no JavaFX change notification. Returning focus to
-		// the application is the reliable point at which a Snipping Tool capture can
-		// make Add From Clipboard newly available.
-		primaryStage.focusedProperty().addListener((_, _, focused) -> {
+		// The clipboard has no JavaFX change notification. Refresh when focus returns.
+		primaryStageFocusListener = (_, _, focused) -> {
 			if (focused && questionCapturePane != null) {
 				questionCapturePane.refreshClipboardImageAvailability();
 			}
-		});
+		};
 
-		// Exam creation and asset management now live entirely in the main-window
-		// Exam/Assets workspace. No modal Exam Setup or Add Exam dialog is constructed.
+		primaryStageFocusListenerStage = primaryStage;
+		primaryStage.focusedProperty().addListener(primaryStageFocusListener);
+
 		showStage(primaryStage, createRootLayout(primaryStage, config));
 	}
 
@@ -3378,6 +3388,15 @@ public class QuestionBankApplication extends Application {
 			showAlert(Alert.AlertType.ERROR, "Exam / Assets",
 					"The asset was deleted, but Exam / Assets could not be refreshed.", failureMessage(exception));
 		}
+	}
+
+	private void removePrimaryStageFocusListener() {
+		if (primaryStageFocusListenerStage != null && primaryStageFocusListener != null) {
+			primaryStageFocusListenerStage.focusedProperty().removeListener(primaryStageFocusListener);
+		}
+
+		primaryStageFocusListener = null;
+		primaryStageFocusListenerStage = null;
 	}
 
 	private void replaceActiveAnswerPdf(Stage primaryStage, ApplicationConfig config) {
