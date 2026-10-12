@@ -746,10 +746,11 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
 			return null;
 		}).get();
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
-			return robot.lookup("#corpus-dashboard-exam-lifecycle").tryQuery().filter(Button.class::isInstance)
-					.map(Button.class::cast).map(button -> "Mark Active".equals(button.getText())).orElse(false);
-		});
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot,
+						() -> robot.lookup("#corpus-dashboard-exam-lifecycle").tryQuery()
+								.filter(Button.class::isInstance).map(Button.class::cast)
+								.map(button -> "Mark Active".equals(button.getText())).orElse(false)));
 		Button lifecycle = lookup(robot, "#corpus-dashboard-exam-lifecycle", Button.class);
 		HBox progressRow = lookup(robot, "#corpus-dashboard-exam-lifecycle-progress", HBox.class);
 		Label selectedState = lookup(robot, "#corpus-dashboard-selected-exam-state", Label.class);
@@ -808,10 +809,11 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
 			return null;
 		}).get();
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
-			return robot.lookup("#corpus-dashboard-exam-lifecycle").tryQuery().filter(Button.class::isInstance)
-					.map(Button.class::cast).map(button -> "Mark Active".equals(button.getText())).orElse(false);
-		});
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot,
+						() -> robot.lookup("#corpus-dashboard-exam-lifecycle").tryQuery()
+								.filter(Button.class::isInstance).map(Button.class::cast)
+								.map(button -> "Mark Active".equals(button.getText())).orElse(false)));
 		Button lifecycle = lookup(robot, "#corpus-dashboard-exam-lifecycle", Button.class);
 		HBox progressRow = lookup(robot, "#corpus-dashboard-exam-lifecycle-progress", HBox.class);
 		Label selectedState = lookup(robot, "#corpus-dashboard-selected-exam-state", Label.class);

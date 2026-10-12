@@ -224,6 +224,100 @@ class CorpusDashboardPaneTest {
 
 	@Test
 	@SuppressWarnings("unchecked")
+	void bookletRowColoursFollowAuditAndReviewState(FxRobot robot) {
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		ExamBooklet unknownBooklet = new ExamBooklet(80, fixture.activeExam, "Unknown count",
+				new SourceDocument(81, "Chemistry/2024/unknown.pdf"), ExamBookletQuestionFormat.WRITTEN_RESPONSE);
+		ExamBooklet readyOne = new ExamBooklet(82, fixture.activeExam, "Ready one",
+				new SourceDocument(83, "Chemistry/2024/ready-one.pdf"), ExamBookletQuestionFormat.WRITTEN_RESPONSE, 10);
+		ExamBooklet readyTwo = new ExamBooklet(84, fixture.activeExam, "Ready two",
+				new SourceDocument(85, "Chemistry/2024/ready-two.pdf"), ExamBookletQuestionFormat.WRITTEN_RESPONSE, 10);
+		BookletCorpusStatus unknown = new BookletCorpusStatus(unknownBooklet, true, null, 0, 0, 0,
+				new QuestionCorpusSummary(0, 0, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0),
+				EnumSet.noneOf(BookletCorpusFinding.class));
+		BookletCorpusStatus completeOne = new BookletCorpusStatus(readyOne, true, null, 10, 10, 0,
+				new QuestionCorpusSummary(10, 10, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0),
+				EnumSet.noneOf(BookletCorpusFinding.class));
+		BookletCorpusStatus completeTwo = new BookletCorpusStatus(readyTwo, true, null, 10, 10, 0,
+				new QuestionCorpusSummary(10, 10, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0),
+				EnumSet.noneOf(BookletCorpusFinding.class));
+		ExamCorpusStatus examStatus = new ExamCorpusStatus(fixture.activeExam, new ExamAssetExpectations(4, 4, 0, 0),
+				List.of(fixture.activePaperStatus, unknown, completeOne, completeTwo),
+				new QuestionCorpusSummary(28, 28, 0, 0, 0, 0, 0), new McqExplanationSummary(0, 0, 0),
+				EnumSet.noneOf(ExamCorpusFinding.class));
+		PseudoClass attention = PseudoClass.getPseudoClass("booklet-attention");
+		PseudoClass clear = PseudoClass.getPseudoClass("booklet-clear");
+		robot.interact(() -> {
+			pane.replaceData(List.of(examStatus), List.of());
+			pane.setApplicabilityReviewState(Set.of());
+			booklets.getSelectionModel().clearSelection();
+			pane.applyCss();
+			pane.layout();
+		});
+		int problemIndex = booklets.getItems().indexOf(fixture.activePaperStatus);
+		int unknownIndex = booklets.getItems().indexOf(unknown);
+		int firstIndex = booklets.getItems().indexOf(completeOne);
+		int secondIndex = booklets.getItems().indexOf(completeTwo);
+		assertTrue(problemIndex >= 0);
+		assertTrue(unknownIndex >= 0);
+		assertTrue(firstIndex >= 0);
+		assertTrue(secondIndex >= 0);
+		robot.interact(() -> {
+
+			// An audit problem receives red styling.
+			assertTrue(dashboardRowAt(booklets, problemIndex).getPseudoClassStates().contains(attention));
+
+			// Missing expectations cannot be treated as complete.
+			assertFalse(dashboardRowAt(booklets, unknownIndex).getPseudoClassStates().contains(clear));
+
+			// Capture completeness without review remains neutral.
+			assertFalse(dashboardRowAt(booklets, firstIndex).getPseudoClassStates().contains(clear));
+		});
+		robot.interact(() -> {
+
+			// Even a recorded confirmation must not overcome unknown
+			// expectations or invalid review eligibility.
+			pane.setApplicabilityReviewState(Set.of(unknownBooklet.getId(), readyOne.getId(), readyTwo.getId()));
+			booklets.getSelectionModel().clearSelection();
+			pane.applyCss();
+			pane.layout();
+		});
+		robot.interact(() -> {
+			assertFalse(dashboardRowAt(booklets, unknownIndex).getPseudoClassStates().contains(clear));
+			assertTrue(dashboardRowAt(booklets, firstIndex).getPseudoClassStates().contains(clear));
+			assertTrue(dashboardRowAt(booklets, secondIndex).getPseudoClassStates().contains(clear));
+
+			// Adjacent rows preserve alternating green shades.
+			Color firstColour = (Color) dashboardRowAt(booklets, firstIndex).getBackground().getFills().getFirst()
+					.getFill();
+			Color secondColour = (Color) dashboardRowAt(booklets, secondIndex).getBackground().getFills().getFirst()
+					.getFill();
+			assertEquals(Color.web(firstIndex % 2 == 0 ? "#f1f8f1" : "#e5f1e5"), firstColour);
+			assertEquals(Color.web(secondIndex % 2 == 0 ? "#f1f8f1" : "#e5f1e5"), secondColour);
+			assertFalse(firstColour.equals(secondColour));
+		});
+		robot.interact(() -> {
+			booklets.getSelectionModel().select(completeOne);
+			booklets.requestFocus();
+			pane.applyCss();
+			pane.layout();
+			Color selectedColour = (Color) dashboardRowAt(booklets, firstIndex).getBackground().getFills().getFirst()
+					.getFill();
+			assertFalse(Color.web(firstIndex % 2 == 0 ? "#f1f8f1" : "#e5f1e5").equals(selectedColour));
+		});
+		robot.interact(() -> {
+
+			// Revocation must immediately clear the green state.
+			pane.setApplicabilityReviewState(Set.of());
+			pane.applyCss();
+			pane.layout();
+			assertFalse(dashboardRowAt(booklets, firstIndex).getPseudoClassStates().contains(clear));
+			assertFalse(dashboardRowAt(booklets, secondIndex).getPseudoClassStates().contains(clear));
+		});
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
 	void bookletTableDistinguishesCountsProblemsAndNotApplicableValues(FxRobot robot) {
 		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
 
@@ -1356,6 +1450,76 @@ class CorpusDashboardPaneTest {
 
 		// Explicit applicability review closes the final work dimension.
 		assertEquals("—", needsWork.getCellData(exactCounts));
+	}
+
+	@Test
+	void questionWorkColoursIncludeMissingMcqExplanations(FxRobot robot) {
+		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		TableView<QuestionCorpusWorkItem> questions = robot.lookup("#corpus-dashboard-question-work")
+				.queryAs(TableView.class);
+		Button showAll = robot.lookup("#corpus-dashboard-summary-total").queryButton();
+		PseudoClass attention = PseudoClass.getPseudoClass("question-attention");
+		PseudoClass clear = PseudoClass.getPseudoClass("question-clear");
+
+		// Include ordinarily complete Questions as well as incomplete ones.
+		robot.interact(showAll::fire);
+		WaitForAsyncUtils.waitForFxEvents();
+		QuestionCorpusWorkItem mcq = questions.getItems().stream().filter(item -> item.question().getId() == 200)
+				.findFirst().orElseThrow();
+		QuestionCorpusWorkItem incomplete = questions.getItems().stream().filter(item -> item.question().getId() == 201)
+				.findFirst().orElseThrow();
+		int mcqIndex = questions.getItems().indexOf(mcq);
+		int incompleteIndex = questions.getItems().indexOf(incomplete);
+
+		// Q1 has an ordinary complete MCQ answer, but its booklet
+		// requires an explanation region which has not been captured.
+		assertTrue(mcq.status().isComplete());
+		TableColumn<QuestionCorpusWorkItem, ?> problemColumn = questions.getColumns().stream()
+				.filter(column -> "Problem".equals(column.getText())).findFirst().orElseThrow();
+		assertEquals("Missing MCQ explanation", problemColumn.getCellData(mcqIndex));
+		robot.interact(() -> {
+			pane.applyCss();
+			pane.layout();
+		});
+		TableRow<?> mcqRow = dashboardRowAt(questions, mcqIndex);
+		TableRow<?> incompleteRow = dashboardRowAt(questions, incompleteIndex);
+		assertTrue(mcqRow.getPseudoClassStates().contains(attention));
+		assertFalse(mcqRow.getPseudoClassStates().contains(clear));
+
+		// Missing Question content also receives the problem colour.
+		assertFalse(incomplete.status().isComplete());
+		assertTrue(incompleteRow.getPseudoClassStates().contains(attention));
+		Color expectedMcqRed = Color.web(mcqIndex % 2 == 0 ? "#fff2f1" : "#fae7e5");
+		Color actualMcqRed = (Color) mcqRow.getBackground().getFills().getFirst().getFill();
+		assertEquals(expectedMcqRed, actualMcqRed);
+
+		// Selected rows must not retain the red background.
+		robot.interact(() -> {
+			questions.getSelectionModel().select(mcqIndex);
+			questions.requestFocus();
+			pane.applyCss();
+			pane.layout();
+		});
+		TableRow<?> selectedRow = dashboardRowAt(questions, mcqIndex);
+		assertTrue(selectedRow.isSelected());
+		Color selectionColour = (Color) selectedRow.getBackground().getFills().getFirst().getFill();
+		assertFalse(expectedMcqRed.equals(selectionColour));
+
+		// Change Exam scope. A normally complete Question without a
+		// required explanation must become green, not inherit red.
+		robot.interact(() -> {
+			exams.getSelectionModel().select(fixture.activeExamStatus);
+			pane.applyCss();
+			pane.layout();
+		});
+		assertEquals(1, questions.getItems().size());
+		assertEquals(204, questions.getItems().getFirst().question().getId());
+		assertTrue(questions.getItems().getFirst().status().isComplete());
+		TableRow<?> completeRow = dashboardRowAt(questions, 0);
+		assertTrue(completeRow.getPseudoClassStates().contains(clear));
+		assertFalse(completeRow.getPseudoClassStates().contains(attention));
+		Color green = (Color) completeRow.getBackground().getFills().getFirst().getFill();
+		assertEquals(Color.web("#f1f8f1"), green);
 	}
 
 	@Test

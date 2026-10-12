@@ -266,7 +266,8 @@ public final class PerformanceBenchmarkTool {
 		}
 		return switch (operation) {
 		case "question.findById", "dashboard.audit.subject", "search.current.subject", "search.current.unit",
-				"search.current.topic", "search.current.descriptor" ->
+				"search.current.topic", "search.current.descriptor", "search.output-applicability.broad-question",
+				"search.output-applicability.question" ->
 			new Selection(operation, targetId);
 		default -> throw new IllegalArgumentException("Unknown benchmark operation: " + operation);
 		};
@@ -314,6 +315,8 @@ public final class PerformanceBenchmarkTool {
 				  search.current.unit:<unit-id>
 				  search.current.topic:<topic-id>
 				  search.current.descriptor:<descriptor-id>
+				  search.output-applicability.broad-question:<question-id>
+				  search.output-applicability.question:<question-id>
 
 				Defaults:
 				  warmups = 1
@@ -329,6 +332,15 @@ public final class PerformanceBenchmarkTool {
 				  The output directory must already exist.
 				  Existing files are never overwritten.
 				  One row is written per completed benchmark workload.
+
+				Selected-Question comparison:
+				  Both workloads use the same persisted Question and expand
+				  its complete current Subject during every iteration.
+				  broad-question reproduces the former Subject-wide retrieval
+				  and subsequent Question-ID filtering.
+				  question uses the selective retrieval service.
+				  Timings exclude the common output-exclusion lookup,
+				  JavaFX task scheduling and presentation.
 
 				Dashboard audit:
 				  Runs production corpus-audit preparation for one Subject.
@@ -353,6 +365,8 @@ public final class PerformanceBenchmarkTool {
 		case "search.current.unit" -> workloads.findApplicableToNodes(scopes.unit(id));
 		case "search.current.topic" -> workloads.findApplicableToNodes(scopes.topic(id));
 		case "search.current.descriptor" -> workloads.findApplicableToNodes(scopes.descriptor(id));
+		case "search.output-applicability.broad-question" -> workloads.broadQuestionApplicability(id);
+		case "search.output-applicability.question" -> workloads.selectedQuestionApplicability(id);
 		default -> throw new IllegalArgumentException("Unsupported benchmark: " + selection.operation());
 		};
 	}

@@ -293,6 +293,56 @@ class PerformanceBenchmarkWorkloadsTest {
 	}
 
 	@Test
+	void selectedQuestionBenchmarkAvoidsReconstructingUnrelatedQuestions() throws Exception {
+
+		Fixture fixture = createFixture();
+
+		PerformanceBenchmarkWorkloads workloads = new PerformanceBenchmarkWorkloads(fixture.snapshotPath());
+
+		PerformanceBenchmarkRunner.Workload broad = workloads.broadQuestionApplicability(fixture.questionId());
+
+		PerformanceBenchmarkRunner.Workload selective = workloads.selectedQuestionApplicability(fixture.questionId());
+
+		byte[] originalSnapshot = Files.readAllBytes(fixture.snapshotPath());
+
+		long broadPlacements;
+		SqliteReadProbe.Snapshot broadMeasurements;
+
+		try (SqliteReadProbe probe = SqliteReadProbe.begin()) {
+			broadPlacements = broad.execute();
+			broadMeasurements = probe.snapshot();
+		}
+
+		long selectivePlacements;
+		SqliteReadProbe.Snapshot selectiveMeasurements;
+
+		try (SqliteReadProbe probe = SqliteReadProbe.begin()) {
+			selectivePlacements = selective.execute();
+			selectiveMeasurements = probe.snapshot();
+		}
+
+		// Both workloads must find the same current placement.
+		assertEquals(1, broadPlacements);
+		assertEquals(broadPlacements, selectivePlacements);
+
+		// The fixture has two applicable Questions. Only the selected
+		// Question may be reconstructed by the new retrieval path.
+		assertEquals(2, broadMeasurements.questionsReconstructed());
+		assertEquals(1, selectiveMeasurements.questionsReconstructed());
+
+		PerformanceBenchmarkRunner runner = new PerformanceBenchmarkRunner();
+
+		PerformanceBenchmarkResult result = runner.run("search.output-applicability.question", 1, 3, selective);
+
+		assertEquals(1, result.resultCount());
+		assertEquals(3, result.measuredIterations());
+		assertEquals(3, result.elapsedNanos().size());
+
+		// Benchmarking must never modify the authoritative snapshot.
+		assertArrayEquals(originalSnapshot, Files.readAllBytes(fixture.snapshotPath()));
+	}
+
+	@Test
 	void wholeBankReconstructionUsesOneConnection() throws Exception {
 		Fixture fixture = createFixture();
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(
