@@ -59,6 +59,7 @@ public final class SqliteQuestionSelectSql {
 			                target.curriculum_level
 			      )
 			  )
+			  %s
 			ORDER BY q.id, requested.node_id
 			""";
 	private static final String BY_ID_SQL = """
@@ -125,17 +126,19 @@ public final class SqliteQuestionSelectSql {
 	 * @return parameterised applicability SQL
 	 */
 	public static String applicability(int requestedNodeCount) {
-		if (requestedNodeCount <= 0) {
-			throw new IllegalArgumentException("At least one current node is required");
-		}
-		StringBuilder values = new StringBuilder();
-		for (int index = 0; index < requestedNodeCount; index++) {
-			if (index > 0) {
-				values.append(", ");
-			}
-			values.append("(?)");
-		}
-		return APPLICABILITY_SQL.formatted(values);
+		return buildApplicabilitySql(requestedNodeCount, "");
+	}
+
+	/**
+	 * Returns the curriculum-applicability query restricted to one Question.
+	 *
+	 * The Question ID is the final parameter, after the requested node IDs.
+	 *
+	 * @param requestedNodeCount number of current curriculum nodes
+	 * @return parameterised Question-specific applicability SQL
+	 */
+	public static String applicabilityForQuestion(int requestedNodeCount) {
+		return buildApplicabilitySql(requestedNodeCount, "AND q.id = ?");
 	}
 
 	/**
@@ -146,5 +149,24 @@ public final class SqliteQuestionSelectSql {
 	 */
 	public static String byId() {
 		return BY_ID_SQL;
+	}
+
+	private static String buildApplicabilitySql(int requestedNodeCount, String questionPredicate) {
+		if (requestedNodeCount <= 0) {
+			throw new IllegalArgumentException("At least one current node is required");
+		}
+
+		StringBuilder values = new StringBuilder();
+
+		for (int index = 0; index < requestedNodeCount; index++) {
+			if (index > 0) {
+				values.append(", ");
+			}
+			values.append("(?)");
+		}
+
+		// Only internally defined SQL fragments are accepted.
+		// All actual identifiers remain JDBC parameters.
+		return APPLICABILITY_SQL.formatted(values, questionPredicate);
 	}
 }
