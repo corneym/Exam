@@ -341,10 +341,13 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
 			return null;
 		}).get();
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#corpus-dashboard-summary-missing-answer").tryQuery()
-						.filter(Button.class::isInstance).map(Button.class::cast).map(Button::getText)
-						.filter("1 Missing answers"::equals).isPresent());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
+
+			// Dashboard content is replaced asynchronously.
+			// Traverse the scene graph only on the FX thread.
+			Node node = primaryStage.getScene().getRoot().lookup("#corpus-dashboard-summary-missing-answer");
+			return node instanceof Button button && "1 Missing answers".equals(button.getText());
+		}));
 		Button missingAnswers = lookup(robot, "#corpus-dashboard-summary-missing-answer", Button.class);
 		Button totalQuestions = lookup(robot, "#corpus-dashboard-summary-total", Button.class);
 
@@ -355,7 +358,8 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		fireControl(robot, missingAnswers);
 		@SuppressWarnings("unchecked")
 		TableView<Object> questionWork = robot.lookup("#corpus-dashboard-question-work").queryAs(TableView.class);
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> questionWork.getItems().size() == 1);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot, () -> questionWork.getItems().size() == 1));
 
 		// Route the exact Missing Answer row through the task-specific Dashboard
 		// action.
@@ -366,8 +370,8 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		ComboBox<Question> unanswered = unansweredQuestions(robot);
 
 		// The selected persisted Question must own Answer capture.
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> unanswered.getValue() != null && unanswered.getValue().getId() == question.getId());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot,
+				() -> unanswered.getValue() != null && unanswered.getValue().getId() == question.getId()));
 		Button returnDashboard = lookup(robot, "#return-corpus-dashboard", Button.class);
 		Label selectedAnswerPdf = lookup(robot, "#selected-answer-pdf", Label.class);
 		assertTrue(returnDashboard.isVisible());
@@ -398,15 +402,17 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// Saving must leave Dashboard navigation under explicit user control.
 		assertTrue(returnDashboard.isVisible());
-		assertTrue(robot.lookup("#capture-workspace-mode").tryQuery().isPresent());
+		assertTrue(nodePresentOnFx(robot, primaryStage.getScene().getRoot(), "#capture-workspace-mode"));
 		fireControl(robot, returnDashboard);
 
 		// Returning home must reload corpus status from persistence and remove exactly
 		// the completed Missing Answer without creating a replacement Question.
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#corpus-dashboard-summary-missing-answer").tryQuery()
-						.filter(Button.class::isInstance).map(Button.class::cast).map(Button::getText)
-						.filter("0 Missing answers"::equals).isPresent());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
+
+			// The return-to-Dashboard refresh also replaces UI nodes.
+			Node node = primaryStage.getScene().getRoot().lookup("#corpus-dashboard-summary-missing-answer");
+			return node instanceof Button button && "0 Missing answers".equals(button.getText());
+		}));
 		Button refreshedMissingAnswers = lookup(robot, "#corpus-dashboard-summary-missing-answer", Button.class);
 		Button refreshedTotalQuestions = lookup(robot, "#corpus-dashboard-summary-total", Button.class);
 		assertEquals("0 Missing answers", refreshedMissingAnswers.getText());
