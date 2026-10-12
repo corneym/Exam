@@ -64,6 +64,52 @@ public final class QuestionRetrievalService {
 	}
 
 	/**
+	 * Finds every current-syllabus placement of one persisted Question.
+	 *
+	 * Expands the Question's complete Subject, independently of any Search filter
+	 * or Dashboard launch narrowing. The repository constrains the Question ID
+	 * before reconstructing persisted Questions.
+	 *
+	 * @param question          selected persisted Question
+	 * @param parentOperationId enclosing diagnostic operation identifier
+	 * @return distinct current placements in ascending persistent-node ID order
+	 */
+	public List<CurriculumNode> findCurrentApplicabilityForQuestion(Question question, long parentOperationId) {
+		if (question == null) {
+			throw new NullPointerException("question");
+		}
+		List<CurriculumNode> currentNodes;
+		try (PerformanceOperation operation = performanceRecorder.start("search.curriculum.expand",
+				parentOperationId)) {
+			try {
+
+				// Scope is derived from the selected Question's Subject,
+				// never from the current Search navigation or result subset.
+				currentNodes = searchNodeExpansionService.expandSearchSubject(question.getExam().getSubject());
+				operation.resultCount(currentNodes.size());
+			} catch (RuntimeException | Error failure) {
+				operation.failed();
+				throw failure;
+			}
+		}
+		if (currentNodes.isEmpty()) {
+			return List.of();
+		}
+		List<QuestionRetrievalResult> results = retrieveForCurrentNodes(currentNodes, question.getId(),
+				parentOperationId);
+		if (results.isEmpty()) {
+			return List.of();
+		}
+
+		// A selective repository must never return another Question or
+		// multiple distinct Questions for this request.
+		if (results.size() != 1 || results.getFirst().getQuestion().getId() != question.getId()) {
+			throw new IllegalStateException("Selective applicability retrieval returned another Question");
+		}
+		return results.getFirst().getCurrentApplicability();
+	}
+
+	/**
 	 * Finds Questions applicable to a current curriculum node.
 	 *
 	 * @param currentNode selected curriculum search scope
@@ -135,11 +181,22 @@ public final class QuestionRetrievalService {
 
 	private List<QuestionRetrievalResult> retrieveForCurrentNodes(List<CurriculumNode> currentNodes,
 			long parentOperationId) {
+		return retrieveForCurrentNodes(currentNodes, null, parentOperationId);
+	}
+
+	private List<QuestionRetrievalResult> retrieveForCurrentNodes(List<CurriculumNode> currentNodes,
+			Long selectedQuestionId, long parentOperationId) {
 		List<QuestionApplicabilityMatch> matches;
 		try (PerformanceOperation operation = performanceRecorder.start("search.repository.applicability",
 				parentOperationId)) {
 			try {
-				matches = retrievalRepository.findApplicableToNodes(currentNodes, operation.id());
+
+				// Search uses broad retrieval; selected-Question output
+				// applicability uses the Question-constrained repository path.
+				matches = selectedQuestionId == null
+						? retrievalRepository.findApplicableToNodes(currentNodes, operation.id())
+						: retrievalRepository.findApplicableToNodesForQuestion(currentNodes, selectedQuestionId,
+								operation.id());
 				if (matches == null) {
 					throw new IllegalStateException("Question retrieval repository returned null");
 				}
@@ -153,10 +210,11 @@ public final class QuestionRetrievalService {
 				parentOperationId)) {
 			try {
 
-				// Preserve persistent-ID ordering and distinct applicability.
-				Map<Long, Question> questionsById = new TreeMap<Long, Question>();
-				Map<Long, Map<Long, CurriculumNode>> applicabilityByQuestionId = new TreeMap<Long, Map<Long, CurriculumNode>>();
-				Map<Long, CurriculumNode> requestedNodesById = new TreeMap<Long, CurriculumNode>();
+				// Preserve persistent-ID ordering and distinct applicability
+				// in both broad and selected-Question retrieval.
+				Map<Long, Question> questionsById = new TreeMap<>();
+				Map<Long, Map<Long, CurriculumNode>> applicabilityByQuestionId = new TreeMap<>();
+				Map<Long, CurriculumNode> requestedNodesById = new TreeMap<>();
 				for (CurriculumNode currentNode : currentNodes) {
 					requestedNodesById.put(currentNode.getId(), currentNode);
 				}
@@ -166,23 +224,25 @@ public final class QuestionRetrievalService {
 					}
 					Question question = match.getQuestion();
 					CurriculumNode currentNode = match.getCurrentNode();
+					if (selectedQuestionId != null && question.getId() != selectedQuestionId) {
+						throw new IllegalStateException("Selective applicability retrieval returned another Question");
+					}
 					if (!requestedNodesById.containsKey(currentNode.getId())) {
 						throw new IllegalStateException(
-								"Question retrieval repository returned an " + "unrequested current node");
+								"Question retrieval repository returned an unrequested current node");
 					}
 					questionsById.putIfAbsent(question.getId(), question);
 					Map<Long, CurriculumNode> applicability = applicabilityByQuestionId.get(question.getId());
 					if (applicability == null) {
-						applicability = new TreeMap<Long, CurriculumNode>();
+						applicability = new TreeMap<>();
 						applicabilityByQuestionId.put(question.getId(), applicability);
 					}
 					applicability.putIfAbsent(currentNode.getId(), currentNode);
 				}
-				List<QuestionRetrievalResult> results = new ArrayList<QuestionRetrievalResult>();
+				List<QuestionRetrievalResult> results = new ArrayList<>();
 				for (Map.Entry<Long, Question> entry : questionsById.entrySet()) {
 					Map<Long, CurriculumNode> applicability = applicabilityByQuestionId.get(entry.getKey());
-					results.add(new QuestionRetrievalResult(entry.getValue(),
-							new ArrayList<CurriculumNode>(applicability.values())));
+					results.add(new QuestionRetrievalResult(entry.getValue(), new ArrayList<>(applicability.values())));
 				}
 				List<QuestionRetrievalResult> uniqueResults = List.copyOf(results);
 				operation.resultCount(uniqueResults.size());

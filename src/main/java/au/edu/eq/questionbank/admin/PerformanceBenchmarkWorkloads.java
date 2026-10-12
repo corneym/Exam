@@ -9,6 +9,7 @@ import java.util.Objects;
 
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
+import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
@@ -17,6 +18,8 @@ import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.audit.ExamCorpusAuditService;
+import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
+import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 
 /**
  * Defines benchmark workloads backed by production Question repositories.
@@ -59,6 +62,25 @@ public final class PerformanceBenchmarkWorkloads {
 		// mutable development or production PDF assets.
 		Path absoluteSnapshot = snapshotPath.toAbsolutePath().normalize();
 		absentAssetRoot = absoluteSnapshot.resolveSibling(absoluteSnapshot.getFileName() + ".benchmark-no-pdfs");
+	}
+
+	/**
+	 * Benchmarks the former selected-Question applicability retrieval.
+	 *
+	 * Reconstructs all Questions applicable to the selected Question's current
+	 * Subject, then locates the selected Question by ID. Setup is outside measured
+	 * iterations; Subject expansion and retrieval are included in each iteration.
+	 *
+	 * @param questionId persistent Question identifier
+	 * @return the legacy broad-selection workload
+	 */
+	public PerformanceBenchmarkRunner.Workload broadQuestionApplicability(long questionId) {
+		Question selected = selectedQuestion(questionId);
+		QuestionRetrievalService service = new QuestionRetrievalService(questions,
+				new CurriculumSearchNodeExpansionService(new SqliteCurriculumRepository(database)));
+		return () -> service.findQuestionsApplicableTo(selected.getExam().getSubject()).stream()
+				.filter(result -> result.getQuestion().getId() == questionId).findFirst()
+				.map(result -> (long) result.getCurrentApplicability().size()).orElse(0L);
 	}
 
 	/**
@@ -162,9 +184,36 @@ public final class PerformanceBenchmarkWorkloads {
 		};
 	}
 
+	/**
+	 * Benchmarks the production selected-Question applicability retrieval.
+	 *
+	 * Uses complete Subject expansion and Question-ID-constrained persistence.
+	 * Setup is outside measured iterations.
+	 *
+	 * @param questionId persistent Question identifier
+	 * @return the selective applicability workload
+	 */
+	public PerformanceBenchmarkRunner.Workload selectedQuestionApplicability(long questionId) {
+		Question selected = selectedQuestion(questionId);
+		QuestionRetrievalService service = new QuestionRetrievalService(questions,
+				new CurriculumSearchNodeExpansionService(new SqliteCurriculumRepository(database)));
+		return () -> service.findCurrentApplicabilityForQuestion(selected, 0).size();
+	}
+
 	private void requireAbsentAssetRoot() {
 		if (Files.exists(absentAssetRoot, LinkOption.NOFOLLOW_LINKS)) {
 			throw new IllegalStateException("Reserved benchmark asset root must not exist: " + absentAssetRoot);
 		}
+	}
+
+	private Question selectedQuestion(long questionId) {
+		if (questionId <= 0) {
+			throw new IllegalArgumentException("Question ID must be positive");
+		}
+
+		// Resolve the stable target before timing, rather than adding
+		// Question discovery to one benchmark and not the other.
+		return questions.findById(questionId)
+				.orElseThrow(() -> new IllegalArgumentException("Benchmark Question does not exist: " + questionId));
 	}
 }

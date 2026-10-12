@@ -78,9 +78,9 @@ public final class CorpusDashboardPane extends VBox {
 	private static final PseudoClass BOOKLET_ROW_ATTENTION = PseudoClass.getPseudoClass("booklet-attention");
 	private static final PseudoClass BOOKLET_ROW_CLEAR = PseudoClass.getPseudoClass("booklet-clear");
 	private static final PseudoClass EXAM_ROW_ATTENTION = PseudoClass.getPseudoClass("exam-attention");
+	private static final PseudoClass EXAM_ROW_CLEAR = PseudoClass.getPseudoClass("exam-clear");
 	private static final PseudoClass QUESTION_ROW_ATTENTION = PseudoClass.getPseudoClass("question-attention");
 	private static final PseudoClass QUESTION_ROW_CLEAR = PseudoClass.getPseudoClass("question-clear");
-	private static final PseudoClass EXAM_ROW_CLEAR = PseudoClass.getPseudoClass("exam-clear");
 
 	// Booklet scope must retain at least several immediately visible rows even when
 	// the dialog is vertically constrained.
@@ -1419,7 +1419,8 @@ public final class CorpusDashboardPane extends VBox {
 
 		// Keep row colouring independent of table cells, sorting and selection.
 		questionTable.setRowFactory(_ -> createQuestionWorkStatusRow());
-		questionTable.getStylesheets().add(CorpusDashboardPane.class.getResource("booklet-row-status.css").toExternalForm());
+		questionTable.getStylesheets()
+				.add(CorpusDashboardPane.class.getResource("booklet-row-status.css").toExternalForm());
 	}
 
 	private void configureSelectionActions() {

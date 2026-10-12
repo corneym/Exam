@@ -185,6 +185,85 @@ class QuestionRetrievalServiceTest {
 		assertThrows(IllegalStateException.class, () -> service.findQuestionsApplicableTo(fixture.currentDescriptor));
 	}
 
+	@Test
+	void selectedQuestionApplicabilityRejectsAnotherQuestion() {
+		Fixture fixture = new Fixture();
+		QuestionRetrievalRepository repository = new QuestionRetrievalRepository() {
+
+			@Override
+			public List<QuestionApplicabilityMatch> findApplicableToNodes(List<CurriculumNode> currentNodes) {
+				throw new AssertionError("Selected-Question retrieval must not call broad retrieval");
+			}
+
+			@Override
+			public List<QuestionApplicabilityMatch> findApplicableToNodesForQuestion(List<CurriculumNode> currentNodes,
+					long questionId, long parentOperationId) {
+				return List.of(new QuestionApplicabilityMatch(fixture.secondQuestion, fixture.currentDescriptor));
+			}
+		};
+		QuestionRetrievalService service = fixture.createService(repository);
+		assertThrows(IllegalStateException.class,
+				() -> service.findCurrentApplicabilityForQuestion(fixture.firstQuestion, 0));
+	}
+
+	@Test
+	void selectedQuestionApplicabilityReturnsEmptyForNoCurrentPlacements() {
+		Fixture fixture = new Fixture();
+		QuestionRetrievalRepository repository = new QuestionRetrievalRepository() {
+
+			@Override
+			public List<QuestionApplicabilityMatch> findApplicableToNodes(List<CurriculumNode> currentNodes) {
+				throw new AssertionError("Selected-Question retrieval must not call broad retrieval");
+			}
+
+			@Override
+			public List<QuestionApplicabilityMatch> findApplicableToNodesForQuestion(List<CurriculumNode> currentNodes,
+					long questionId, long parentOperationId) {
+				assertEquals(fixture.firstQuestion.getId(), questionId);
+				return List.of();
+			}
+		};
+		QuestionRetrievalService service = fixture.createService(repository);
+		assertEquals(List.of(), service.findCurrentApplicabilityForQuestion(fixture.firstQuestion, 0));
+		assertThrows(NullPointerException.class, () -> service.findCurrentApplicabilityForQuestion(null, 0));
+	}
+
+	@Test
+	void selectedQuestionApplicabilityUsesSelectiveRepositoryAndDeduplicatesPlacements() {
+		Fixture fixture = new Fixture();
+		QuestionRetrievalRepository repository = new QuestionRetrievalRepository() {
+
+			@Override
+			public List<QuestionApplicabilityMatch> findApplicableToNodes(List<CurriculumNode> currentNodes) {
+				throw new AssertionError("Selected-Question retrieval must not call broad retrieval");
+			}
+
+			@Override
+			public List<QuestionApplicabilityMatch> findApplicableToNodesForQuestion(List<CurriculumNode> currentNodes,
+					long questionId, long parentOperationId) {
+
+				// The requested nodes must span the entire current Subject,
+				// not only the first Descriptor that matched Search.
+				assertEquals(
+						List.of(fixture.currentSubtopic, fixture.currentDescriptor, fixture.otherCurrentDescriptor),
+						currentNodes);
+				assertEquals(fixture.firstQuestion.getId(), questionId);
+
+				// Return placements out of order and repeat one mapping
+				// to verify the existing aggregation contract.
+				return List.of(new QuestionApplicabilityMatch(fixture.firstQuestion, fixture.otherCurrentDescriptor),
+						new QuestionApplicabilityMatch(fixture.firstQuestion, fixture.currentDescriptor),
+						new QuestionApplicabilityMatch(fixture.firstQuestion, fixture.currentDescriptor));
+			}
+		};
+		QuestionRetrievalService service = fixture.createService(repository);
+		List<CurriculumNode> placements = service.findCurrentApplicabilityForQuestion(fixture.firstQuestion, 0);
+		assertEquals(List.of(fixture.currentDescriptor, fixture.otherCurrentDescriptor), placements);
+
+		// Applicability does not rewrite the historical provenance.
+		assertSame(fixture.historicalDescriptor, fixture.firstQuestion.getClassification());
+	}
+
 	private static final class Fixture {
 
 		private final Subject chemistry;

@@ -71,6 +71,7 @@ class SqliteQuestionQueryPlanToolTest {
 		assertTrue(report.contains("Plan: question.findById"));
 		assertTrue(report.contains("Plan: search.current.single-node"));
 		assertTrue(report.contains("Plan: search.current.subject"));
+		assertTrue(report.contains("Plan: search.current.subject.selected-question"));
 		assertTrue(report.contains("Read-only investigation completed."));
 
 		// Plan details vary by SQLite version, but a non-empty

@@ -45,4 +45,31 @@ public interface QuestionRetrievalRepository {
 			long parentOperationId) {
 		return findApplicableToNodes(currentNodes);
 	}
+
+	/**
+	 * Finds current-curriculum applicability matches for one Question.
+	 *
+	 * Implementations backed by persistence should constrain the Question
+	 * identifier before reconstructing Question objects.
+	 *
+	 * The default implementation preserves compatibility with lightweight retrieval
+	 * repositories used in tests.
+	 *
+	 * @param currentNodes      all requested current classification nodes
+	 * @param questionId        persistent Question identifier
+	 * @param parentOperationId enclosing diagnostic operation identifier
+	 * @return matches belonging only to the requested Question
+	 * @throws IllegalArgumentException if the Question ID is not positive
+	 */
+	default List<QuestionApplicabilityMatch> findApplicableToNodesForQuestion(List<CurriculumNode> currentNodes,
+			long questionId, long parentOperationId) {
+		if (questionId <= 0) {
+			throw new IllegalArgumentException("questionId must be positive");
+		}
+
+		// The fallback is intentionally broad for compatibility.
+		// SQLite supplies an overriding selective implementation.
+		return findApplicableToNodes(currentNodes, parentOperationId).stream()
+				.filter(match -> match.getQuestion().getId() == questionId).toList();
+	}
 }

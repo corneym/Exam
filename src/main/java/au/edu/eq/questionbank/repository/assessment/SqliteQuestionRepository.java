@@ -161,67 +161,30 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 		return findApplicableToNodes(currentNodes, 0);
 	}
 
-	/**
-	 * Retrieves applicability matches and records the repository phases.
-	 *
-	 * @param currentNodes      requested current curriculum nodes
-	 * @param parentOperationId enclosing applicability operation ID
-	 * @return matching Question and current-node pairs
-	 */
 	@Override
 	public List<QuestionApplicabilityMatch> findApplicableToNodes(List<CurriculumNode> currentNodes,
 			long parentOperationId) {
-		Map<Long, CurriculumNode> requestedNodesById = validateRetrievalNodes(currentNodes);
+		return retrieveApplicabilityMatches(currentNodes, null, parentOperationId);
+	}
 
-		// The investigation tool uses this same production SQL definition.
-		String sql = SqliteQuestionSelectSql.applicability(requestedNodesById.size());
-		List<ApplicabilityRow> rows = new ArrayList<ApplicabilityRow>();
-		try (PerformanceOperation sqlOperation = performanceRecorder.start("search.repository.sql",
-				parentOperationId)) {
-			try (Connection connection = database.openConnection();
-					PreparedStatement statement = connection.prepareStatement(sql)) {
-				int parameterIndex = 1;
-				for (CurriculumNode currentNode : requestedNodesById.values()) {
-					statement.setLong(parameterIndex, currentNode.getId());
-					parameterIndex++;
-				}
-				try (ResultSet result = statement.executeQuery()) {
-					try (PerformanceOperation rowsOperation = performanceRecorder.start("search.repository.rows",
-							sqlOperation.id())) {
-						try {
-							while (result.next()) {
-								rows.add(new ApplicabilityRow(result.getLong("question_id"),
-										result.getLong("current_node_id")));
-							}
-							rowsOperation.resultCount(rows.size());
-						} catch (SQLException | RuntimeException | Error failure) {
-							rowsOperation.failed();
-							throw failure;
-						}
-					}
-				}
-			} catch (SQLException failure) {
-				sqlOperation.failed();
-				throw new IllegalStateException("Could not retrieve questions by curriculum applicability", failure);
-			} catch (RuntimeException | Error failure) {
-				sqlOperation.failed();
-				throw failure;
-			}
-			sqlOperation.resultCount(rows.size());
+	/**
+	 * Retrieves current-curriculum applicability for one persisted Question.
+	 *
+	 * The Question ID is constrained in SQL before any complete Question
+	 * reconstruction occurs.
+	 *
+	 * @param currentNodes      current Subtopic/Descriptor retrieval nodes
+	 * @param questionId        persistent Question identifier
+	 * @param parentOperationId enclosing diagnostic operation identifier
+	 * @return the selected Question's applicable current-node matches
+	 */
+	@Override
+	public List<QuestionApplicabilityMatch> findApplicableToNodesForQuestion(List<CurriculumNode> currentNodes,
+			long questionId, long parentOperationId) {
+		if (questionId <= 0) {
+			throw new IllegalArgumentException("questionId must be positive");
 		}
-
-		// Question reconstruction is separate from the applicability SQL.
-		try (PerformanceOperation reconstructionOperation = performanceRecorder.start("search.repository.reconstruct",
-				parentOperationId)) {
-			try {
-				List<QuestionApplicabilityMatch> matches = reconstructApplicabilityMatches(rows, requestedNodesById);
-				reconstructionOperation.resultCount(matches.size());
-				return matches;
-			} catch (RuntimeException | Error failure) {
-				reconstructionOperation.failed();
-				throw failure;
-			}
-		}
+		return retrieveApplicabilityMatches(currentNodes, questionId, parentOperationId);
 	}
 
 	@Override
@@ -649,6 +612,66 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 			}
 		}
 		return List.copyOf(regions);
+	}
+
+	private List<QuestionApplicabilityMatch> retrieveApplicabilityMatches(List<CurriculumNode> currentNodes,
+			Long questionId, long parentOperationId) {
+		Map<Long, CurriculumNode> requestedNodesById = validateRetrievalNodes(currentNodes);
+
+		// Broad and Question-specific retrieval share the same applicability SQL
+		// semantics. Only the optional Question-ID predicate differs.
+		String sql = questionId == null ? SqliteQuestionSelectSql.applicability(requestedNodesById.size())
+				: SqliteQuestionSelectSql.applicabilityForQuestion(requestedNodesById.size());
+		List<ApplicabilityRow> rows = new ArrayList<>();
+		try (PerformanceOperation sqlOperation = performanceRecorder.start("search.repository.sql",
+				parentOperationId)) {
+			try (Connection connection = database.openConnection();
+					PreparedStatement statement = connection.prepareStatement(sql)) {
+				int parameterIndex = 1;
+				for (CurriculumNode currentNode : requestedNodesById.values()) {
+					statement.setLong(parameterIndex++, currentNode.getId());
+				}
+				if (questionId != null) {
+					statement.setLong(parameterIndex, questionId);
+				}
+				try (ResultSet result = statement.executeQuery()) {
+					try (PerformanceOperation rowsOperation = performanceRecorder.start("search.repository.rows",
+							sqlOperation.id())) {
+						try {
+							while (result.next()) {
+								rows.add(new ApplicabilityRow(result.getLong("question_id"),
+										result.getLong("current_node_id")));
+							}
+							rowsOperation.resultCount(rows.size());
+						} catch (SQLException | RuntimeException | Error failure) {
+							rowsOperation.failed();
+							throw failure;
+						}
+					}
+				}
+			} catch (SQLException failure) {
+				sqlOperation.failed();
+				throw new IllegalStateException("Could not retrieve questions by curriculum applicability", failure);
+			} catch (RuntimeException | Error failure) {
+				sqlOperation.failed();
+				throw failure;
+			}
+			sqlOperation.resultCount(rows.size());
+		}
+
+		// Reconstruction remains a separate measured phase.
+		// The selective SQL path produces rows for at most one Question ID.
+		try (PerformanceOperation reconstructionOperation = performanceRecorder.start("search.repository.reconstruct",
+				parentOperationId)) {
+			try {
+				List<QuestionApplicabilityMatch> matches = reconstructApplicabilityMatches(rows, requestedNodesById);
+				reconstructionOperation.resultCount(matches.size());
+				return matches;
+			} catch (RuntimeException | Error failure) {
+				reconstructionOperation.failed();
+				throw failure;
+			}
+		}
 	}
 
 	private Map<Long, CurriculumNode> validateRetrievalNodes(List<CurriculumNode> currentNodes) {

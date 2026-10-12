@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.List;
+import java.util.Locale;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -238,6 +239,56 @@ class PerformanceBenchmarkWorkloadsTest {
 	}
 
 	@Test
+	void increasingUnrelatedSubjectQuestionsDoesNotIncreaseSelectiveReconstruction() throws Exception {
+		PerformanceBenchmarkRunner runner = new PerformanceBenchmarkRunner();
+		for (int unrelatedCount : List.of(0, 50, 200)) {
+			Fixture fixture = createFixture(unrelatedCount, "scaling-" + unrelatedCount);
+			byte[] original = Files.readAllBytes(fixture.snapshotPath());
+			PerformanceBenchmarkWorkloads workloads = new PerformanceBenchmarkWorkloads(fixture.snapshotPath());
+			PerformanceBenchmarkRunner.Workload broad = workloads.broadQuestionApplicability(fixture.questionId());
+			PerformanceBenchmarkRunner.Workload selective = workloads
+					.selectedQuestionApplicability(fixture.questionId());
+			long broadPlacements;
+			SqliteReadProbe.Snapshot broadMeasurements;
+			try (SqliteReadProbe probe = SqliteReadProbe.begin()) {
+				broadPlacements = broad.execute();
+				broadMeasurements = probe.snapshot();
+			}
+			long selectivePlacements;
+			SqliteReadProbe.Snapshot selectiveMeasurements;
+			try (SqliteReadProbe probe = SqliteReadProbe.begin()) {
+				selectivePlacements = selective.execute();
+				selectiveMeasurements = probe.snapshot();
+			}
+
+			// Additional Questions share the Subject and syllabus but
+			// must not be reconstructed to inspect the selected Question.
+			assertEquals(1, broadPlacements);
+			assertEquals(broadPlacements, selectivePlacements);
+			assertEquals(2 + unrelatedCount, broadMeasurements.questionsReconstructed());
+			assertEquals(1, selectiveMeasurements.questionsReconstructed());
+
+			// Compare both production retrieval paths against the same
+			// immutable snapshot at each corpus size.
+			PerformanceBenchmarkResult broadTiming = runner.run("search.output-applicability.broad-question", 1, 5,
+					broad);
+			PerformanceBenchmarkResult selectiveTiming = runner.run("search.output-applicability.question", 1, 5,
+					selective);
+			assertEquals(1, broadTiming.resultCount());
+			assertEquals(1, selectiveTiming.resultCount());
+			System.out.printf(Locale.ROOT,
+					"Subject Questions=%d | Broad reconstructed=%d | " + "Selective reconstructed=%d | "
+							+ "Broad median=%.3f ms | " + "Selective median=%.3f ms%n",
+					unrelatedCount + 2, broadMeasurements.questionsReconstructed(),
+					selectiveMeasurements.questionsReconstructed(), broadTiming.medianMilliseconds(),
+					selectiveTiming.medianMilliseconds());
+
+			// Measurement must leave the test snapshot unchanged.
+			assertArrayEquals(original, Files.readAllBytes(fixture.snapshotPath()));
+		}
+	}
+
+	@Test
 	void rejectsInvalidCurriculumRetrievalScope() throws Exception {
 		Fixture fixture = createFixture();
 		SqliteDatabase database = SqliteDatabase.readOnly(fixture.snapshotPath());
@@ -293,6 +344,44 @@ class PerformanceBenchmarkWorkloadsTest {
 	}
 
 	@Test
+	void selectedQuestionBenchmarkAvoidsReconstructingUnrelatedQuestions() throws Exception {
+		Fixture fixture = createFixture();
+		PerformanceBenchmarkWorkloads workloads = new PerformanceBenchmarkWorkloads(fixture.snapshotPath());
+		PerformanceBenchmarkRunner.Workload broad = workloads.broadQuestionApplicability(fixture.questionId());
+		PerformanceBenchmarkRunner.Workload selective = workloads.selectedQuestionApplicability(fixture.questionId());
+		byte[] originalSnapshot = Files.readAllBytes(fixture.snapshotPath());
+		long broadPlacements;
+		SqliteReadProbe.Snapshot broadMeasurements;
+		try (SqliteReadProbe probe = SqliteReadProbe.begin()) {
+			broadPlacements = broad.execute();
+			broadMeasurements = probe.snapshot();
+		}
+		long selectivePlacements;
+		SqliteReadProbe.Snapshot selectiveMeasurements;
+		try (SqliteReadProbe probe = SqliteReadProbe.begin()) {
+			selectivePlacements = selective.execute();
+			selectiveMeasurements = probe.snapshot();
+		}
+
+		// Both workloads must find the same current placement.
+		assertEquals(1, broadPlacements);
+		assertEquals(broadPlacements, selectivePlacements);
+
+		// The fixture has two applicable Questions. Only the selected
+		// Question may be reconstructed by the new retrieval path.
+		assertEquals(2, broadMeasurements.questionsReconstructed());
+		assertEquals(1, selectiveMeasurements.questionsReconstructed());
+		PerformanceBenchmarkRunner runner = new PerformanceBenchmarkRunner();
+		PerformanceBenchmarkResult result = runner.run("search.output-applicability.question", 1, 3, selective);
+		assertEquals(1, result.resultCount());
+		assertEquals(3, result.measuredIterations());
+		assertEquals(3, result.elapsedNanos().size());
+
+		// Benchmarking must never modify the authoritative snapshot.
+		assertArrayEquals(originalSnapshot, Files.readAllBytes(fixture.snapshotPath()));
+	}
+
+	@Test
 	void wholeBankReconstructionUsesOneConnection() throws Exception {
 		Fixture fixture = createFixture();
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(
@@ -314,8 +403,15 @@ class PerformanceBenchmarkWorkloadsTest {
 	}
 
 	private Fixture createFixture() throws Exception {
-		Path sourcePath = tempDirectory.resolve("source.db");
-		Path snapshotPath = tempDirectory.resolve("benchmark.db");
+		return createFixture(0, "benchmark");
+	}
+
+	private Fixture createFixture(int unrelatedQuestionCount, String prefix) throws Exception {
+		if (unrelatedQuestionCount < 0) {
+			throw new IllegalArgumentException("Unrelated Question count must not be negative");
+		}
+		Path sourcePath = tempDirectory.resolve(prefix + "-source.db");
+		Path snapshotPath = tempDirectory.resolve(prefix + "-snapshot.db");
 		SqliteDatabase database = new SqliteDatabase(sourcePath);
 		database.initialiseSchema();
 		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
@@ -329,13 +425,16 @@ class PerformanceBenchmarkWorkloadsTest {
 		ExamBooklet booklet = importer.importExam(subject, "QCAA", 2025, "External Assessment", "Paper 1",
 				"Chemistry/2025/paper-1.pdf");
 		SqliteQuestionRepository questions = new SqliteQuestionRepository(database);
-		Question first = questions.save(booklet, "Q1", "", 2, List.of(), descriptor, false);
+		Question selected = questions.save(booklet, "Q1", "", 2, List.of(), descriptor, false);
 		questions.save(booklet, "Q2", "", 3, List.of(), subtopic, false);
+		for (int index = 0; index < unrelatedQuestionCount; index++) {
 
-		// Benchmark execution must use a consistent, separate
-		// snapshot rather than the writable fixture database.
+			// Every additional Question is applicable to the same
+			// current Subject but has a different persistent ID.
+			questions.save(booklet, "EXTRA-" + (index + 1), "", 2, List.of(), descriptor, false);
+		}
 		database.createConsistentSnapshot(snapshotPath);
-		return new Fixture(snapshotPath, first.getId(), version.getId());
+		return new Fixture(snapshotPath, selected.getId(), version.getId());
 	}
 
 	private record Fixture(Path snapshotPath, long questionId, long syllabusId) {
