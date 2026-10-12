@@ -8,6 +8,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
@@ -45,6 +47,7 @@ import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
+import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
@@ -58,6 +61,7 @@ import javafx.event.EventHandler;
 import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.ContextMenu;
@@ -72,6 +76,7 @@ import javafx.scene.input.ContextMenuEvent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
+import javafx.stage.Window;
 
 @Tag("ui")
 @Tag("workflow-ui")
@@ -1788,6 +1793,87 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void questionSaveFailureClearsOverlayBeforeErrorDialog(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		stageQuestionForBusyTest(robot, "FAIL-119");
+		CountDownLatch readStarted = new CountDownLatch(1);
+		CountDownLatch releaseRead = new CountDownLatch(1);
+		installControlledQuestionRead(readStarted, releaseRead, true);
+		ApplicationBusyOverlay overlay = (ApplicationBusyOverlay) primaryStage.getScene().getRoot();
+		Node shield = overlay.lookup("#workspace-busy-overlay");
+		Button save = lookup(robot, "#save-question", Button.class);
+		try {
+			fireControl(robot, save);
+			assertTrue(readStarted.await(5, TimeUnit.SECONDS));
+			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> evaluateOnFx(robot, shield::isVisible));
+			assertTrue(evaluateOnFx(robot, overlay::isBusy));
+		} finally {
+			releaseRead.countDown();
+		}
+
+		// The background repository read now fails. Wait for the
+		// actual error dialog rather than a transient busy flag.
+		AtomicReference<DialogPane> error = new AtomicReference<>();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
+			error.set(questionSaveErrorDialog(robot));
+			return error.get() != null;
+		});
+		assertEquals("Question could not be saved.", error.get().getHeaderText());
+
+		// Controls must be restored before the modal dialog appears.
+		assertFalse(evaluateOnFx(robot, overlay::isBusy));
+		assertFalse(evaluateOnFx(robot, shield::isVisible));
+		assertFalse(evaluateOnFx(robot, questionCapturePane()::isDisabled));
+		assertFalse(evaluateOnFx(robot, questionCapturePane()::isSaveInProgress));
+		Button ok = (Button) error.get().lookupButton(ButtonType.OK);
+		robot.interact(ok::fire);
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		assertFalse(repository.findAll().stream().anyMatch(q -> "FAIL-119".equals(q.getQuestionCode())));
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		assertEquals("FAIL-119", questionCode.getText());
+	}
+
+	@Test
+	void questionSaveUsesApplicationOverlayAndPreventsDuplicateSave(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		stageQuestionForBusyTest(robot, "BUSY-119");
+		CountDownLatch readStarted = new CountDownLatch(1);
+		CountDownLatch releaseRead = new CountDownLatch(1);
+		AtomicInteger reads = installControlledQuestionRead(readStarted, releaseRead, false);
+		ApplicationBusyOverlay overlay = (ApplicationBusyOverlay) primaryStage.getScene().getRoot();
+		Node shield = overlay.lookup("#workspace-busy-overlay");
+		Label message = (Label) overlay.lookup("#workspace-busy-label");
+		Button save = lookup(robot, "#save-question", Button.class);
+		try {
+			fireControl(robot, save);
+			assertTrue(readStarted.await(5, TimeUnit.SECONDS));
+
+			// Saving must protect the application before the
+			// delayed visual spinner has appeared.
+			assertTrue(evaluateOnFx(robot, overlay::isBusy));
+			assertTrue(evaluateOnFx(robot, save::isDisabled));
+			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> evaluateOnFx(robot, shield::isVisible));
+			assertEquals("Saving Question...", message.getText());
+
+			// An attempted second activation cannot initiate another save.
+			robot.interact(save::fire);
+			assertEquals(1, reads.get());
+		} finally {
+			releaseRead.countDown();
+		}
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findAll().stream().anyMatch(q -> "BUSY-119".equals(q.getQuestionCode()))
+						&& evaluateOnFx(robot, () -> !overlay.isBusy()));
+		long savedCount = repository.findAll().stream().filter(q -> "BUSY-119".equals(q.getQuestionCode())).count();
+		assertEquals(1L, savedCount);
+		assertEquals(2, reads.get());
+		assertFalse(evaluateOnFx(robot, shield::isVisible));
+		assertFalse(evaluateOnFx(robot, questionCapturePane()::isSaveInProgress));
+		assertFalse(evaluateOnFx(robot, questionCapturePane()::isDisabled));
+	}
+
+	@Test
 	void questionStatusWrapsAtMinimumWorkspaceWidth(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Label status = lookup(robot, "#question-save-status", Label.class);
@@ -2224,6 +2310,37 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		return path;
 	}
 
+	private AtomicInteger installControlledQuestionRead(CountDownLatch readStarted, CountDownLatch releaseRead,
+			boolean failFirstRead) throws Exception {
+		QuestionRepository original = field(questionCapturePane(), "questionRepository", QuestionRepository.class);
+		AtomicInteger reads = new AtomicInteger();
+		QuestionRepository controlled = (QuestionRepository) Proxy.newProxyInstance(
+				QuestionRepository.class.getClassLoader(), new Class<?>[] { QuestionRepository.class },
+				(proxy, method, arguments) -> {
+					if ("findAll".equals(method.getName()) && reads.incrementAndGet() == 1) {
+						readStarted.countDown();
+						try {
+							if (!releaseRead.await(10, TimeUnit.SECONDS)) {
+								throw new IllegalStateException("Timed out waiting to release save worker");
+							}
+						} catch (InterruptedException exception) {
+							Thread.currentThread().interrupt();
+							throw new IllegalStateException("Question save worker interrupted", exception);
+						}
+						if (failFirstRead) {
+							throw new IllegalStateException("Injected Question save read failure");
+						}
+					}
+					try {
+						return method.invoke(original, arguments);
+					} catch (InvocationTargetException exception) {
+						throw exception.getCause();
+					}
+				});
+		setField(questionCapturePane(), "questionRepository", controlled);
+		return reads;
+	}
+
 	private boolean isDescendantOf(Node node, Node ancestor) {
 		Parent parent = node.getParent();
 		while (parent != null) {
@@ -2233,5 +2350,39 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 			parent = parent.getParent();
 		}
 		return false;
+	}
+
+	private DialogPane questionSaveErrorDialog(FxRobot robot) {
+		AtomicReference<DialogPane> result = new AtomicReference<>();
+		robot.interact(() -> {
+			for (Window window : Window.getWindows()) {
+				if (!window.isShowing() || window.getScene() == null) {
+					continue;
+				}
+				Node root = window.getScene().getRoot();
+				DialogPane dialog = root instanceof DialogPane pane ? pane
+						: root.lookup(".dialog-pane") instanceof DialogPane pane ? pane : null;
+				if (dialog != null && "Question could not be saved.".equals(dialog.getHeaderText())) {
+					result.set(dialog);
+					break;
+				}
+			}
+		});
+		return result.get();
+	}
+
+	private void stageQuestionForBusyTest(FxRobot robot, String code) throws Exception {
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		robot.interact(() -> {
+			questionCode.setText(code);
+			marks.setText("1");
+		});
+
+		// Region geometry is genuinely pointer-based behaviour.
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-question-region");
+		Button save = lookup(robot, "#save-question", Button.class);
+		assertFalse(save.isDisabled());
 	}
 }
