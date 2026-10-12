@@ -16,6 +16,12 @@ public final class SqliteQuestionInvestigationTool {
 	private SqliteQuestionInvestigationTool() {
 	}
 
+	/**
+	 * Runs the SQLite Question investigation tool from the command line.
+	 *
+	 * @param args command-line arguments specifying the database snapshot and
+	 *             investigation operation
+	 */
 	public static void main(String[] args) {
 		int status = run(args, System.out, System.err);
 		if (status != 0) {

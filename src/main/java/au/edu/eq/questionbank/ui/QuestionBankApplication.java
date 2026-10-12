@@ -253,6 +253,7 @@ public class QuestionBankApplication extends Application {
 	private BookletApplicabilityReviewService bookletApplicabilityReviewService;
 	private boolean corpusDashboardReviewChangeRunning;
 	private ExamLifecycleService examLifecycleService;
+	private long questionSaveBusyRequest;
 
 	// Curriculum persistence joins the application-owned Working Subject refresh
 	// rather than being read by CurriculumSelectorPane on the JavaFX thread.
@@ -2417,6 +2418,28 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void handleQuestionSaveBusy(boolean busy) {
+		if (applicationBusyOverlay == null) {
+			return;
+		}
+		if (busy) {
+			if (questionSaveBusyRequest != 0) {
+				return;
+			}
+
+			// begin() returns zero if another operation already owns
+			// the overlay. Save must never take over that operation.
+			questionSaveBusyRequest = applicationBusyOverlay.begin("Saving Question...");
+			return;
+		}
+
+		// Release only the overlay request owned by Question Save.
+		// A superseded save cannot dismiss a newer navigation overlay.
+		long request = questionSaveBusyRequest;
+		questionSaveBusyRequest = 0;
+		applicationBusyOverlay.finish(request);
+	}
+
 	private void handleRegionSelection(PdfWorkspacePane.RegionSelection selection) {
 		if (selection.documentMode() == PdfWorkspacePane.DocumentMode.ANSWER) {
 
@@ -2728,6 +2751,7 @@ public class QuestionBankApplication extends Application {
 				this::confirmDiscardAcceptedQuestionRegions, this::transferQuestionSelectionToSharedContext,
 				() -> clearCaptureSelection(CaptureSelectionOwner.QUESTION), answerCapturePane::refreshQuestions);
 		questionCapturePane.setPerformanceRecorder(performanceRecorder);
+		questionCapturePane.setQuestionSaveBusyHandler(this::handleQuestionSaveBusy);
 		questionCapturePane.refreshImportedQuestions();
 	}
 

@@ -172,6 +172,8 @@ public final class QuestionCapturePane extends VBox {
 	private boolean refreshingImportedQuestions;
 	private boolean importedCaptureMode;
 	private QuestionRegion currentSelection;
+	private Consumer<Boolean> questionSaveBusyHandler = _ -> {
+	};
 
 	// This list is the authoritative transient assembly order for the Question
 	// body.
@@ -812,6 +814,19 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	/**
+	 * Configures application-level busy presentation for Question persistence.
+	 *
+	 * The handler receives true when saving begins and false when the save
+	 * finishes, fails or is cancelled. Notifications run on the JavaFX Application
+	 * Thread.
+	 *
+	 * @param handler application busy-state callback
+	 */
+	public void setQuestionSaveBusyHandler(Consumer<Boolean> handler) {
+		questionSaveBusyHandler = Objects.requireNonNull(handler, "handler");
+	}
+
+	/**
 	 * Changes the transient Subject used to filter the imported Question-capture
 	 * queue.
 	 *
@@ -1260,6 +1275,15 @@ public final class QuestionCapturePane extends VBox {
 		return started;
 	}
 
+	private void beginQuestionSaveBusy() {
+		questionSaveInProgress = true;
+		setDisable(true);
+
+		// The application becomes logically busy immediately.
+		// The shared overlay controls delayed visual appearance.
+		questionSaveBusyHandler.accept(true);
+	}
+
 	private void buildContent() {
 		legacyCaptureBox.getChildren().addAll(importedQuestionQueueLabel, createImportedQuestionControls(),
 				importedClassificationLabel, captureHintLabel);
@@ -1403,14 +1427,15 @@ public final class QuestionCapturePane extends VBox {
 			saveStatusLabel.setText("Split Question " + sourceCode + " into "
 					+ result.splitResult().questions().stream().map(Question::getQuestionCode).toList());
 			if (result.refreshFailure() != null) {
+
+				// Release application input before the modal warning.
+				finishQuestionSaveBusy();
 				showAlert(Alert.AlertType.WARNING, "Question split saved; lists could not be fully refreshed.",
 						"The split is stored. Reopen Search or capture to reload the question lists.");
 			}
 		} finally {
-			questionSaveInProgress = false;
-			setDisable(false);
 			try {
-				refreshSaveButtonState();
+				finishQuestionSaveBusy();
 			} finally {
 				completionQuestions = null;
 			}
@@ -1420,8 +1445,6 @@ public final class QuestionCapturePane extends VBox {
 		}
 	}
 
-	// Publish the committed result on the FX thread before handing control back to
-	// an edit caller.
 	private void completeQuestionSave(QuestionSaveResult result, boolean editing, boolean imported,
 			int previousImportedIndex, boolean hadStoredContent) {
 		completionQuestions = result.questions();
@@ -1429,6 +1452,9 @@ public final class QuestionCapturePane extends VBox {
 		try {
 			if (result.validationError() != null) {
 				saveStatusLabel.setText("Question not saved — check question details");
+
+				// Validation feedback must remain actionable.
+				finishQuestionSaveBusy();
 				showAlert(Alert.AlertType.WARNING, "Question could not be saved.", result.validationError());
 				return;
 			}
@@ -1438,9 +1464,6 @@ public final class QuestionCapturePane extends VBox {
 				completedHandler = finishQuestionEditState();
 			} else {
 				if (imported) {
-
-					// A Dashboard-launched imported correction returns only after its
-					// requested Question has been durably saved.
 					completedHandler = takeImportedCaptureCompletion(question);
 				}
 				resetAfterQuestionSave(previousImportedIndex);
@@ -1454,14 +1477,17 @@ public final class QuestionCapturePane extends VBox {
 			showSavedQuestionStatus(action, question);
 			if (result.refreshFailure() != null) {
 				saveStatusLabel.setText("Saved " + question.getQuestionCode() + " — list refresh failed");
+
+				// Persistence succeeded. Remove busy presentation
+				// before explaining that the Question must not be saved again.
+				finishQuestionSaveBusy();
 				showAlert(Alert.AlertType.WARNING, "Question saved; lists could not be fully refreshed.",
-						"The question is stored. Do not save it again. Reopen capture to reload the question lists.");
+						"The question is stored. Do not save it again. "
+								+ "Reopen capture to reload the question lists.");
 			}
 		} finally {
-			questionSaveInProgress = false;
-			setDisable(false);
 			try {
-				refreshSaveButtonState();
+				finishQuestionSaveBusy();
 			} finally {
 				completionQuestions = null;
 			}
@@ -2043,6 +2069,22 @@ public final class QuestionCapturePane extends VBox {
 		return editCompletedHandler;
 	}
 
+	private void finishQuestionSaveBusy() {
+		if (!questionSaveInProgress) {
+			return;
+		}
+
+		// Idempotent cleanup is required because warning paths
+		// dismiss the overlay before entering a modal dialog.
+		questionSaveInProgress = false;
+		try {
+			setDisable(false);
+			refreshSaveButtonState();
+		} finally {
+			questionSaveBusyHandler.accept(false);
+		}
+	}
+
 	private void finishSharedContextRecapture(Runnable completedHandler) {
 
 		// Shared Context correction is complete. Return to the idle Question
@@ -2450,25 +2492,30 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private void persistLegacyQuestionSplit(SplitRequest request) {
-		questionSaveInProgress = true;
-		setDisable(true);
-		saveStatusLabel.setText("Saving split Question " + request.sourceQuestionCode() + "...");
-		Task<LegacySplitSaveResult> saveTask = createLegacySplitSaveTask(request);
-		saveTask.setOnSucceeded(_ -> completeLegacyQuestionSplit(saveTask.getValue()));
-		saveTask.setOnFailed(_ -> {
+		try {
+			beginQuestionSaveBusy();
+			saveStatusLabel.setText("Saving split Question " + request.sourceQuestionCode() + "...");
+			Task<LegacySplitSaveResult> saveTask = createLegacySplitSaveTask(request);
+			saveTask.setOnSucceeded(_ -> completeLegacyQuestionSplit(saveTask.getValue()));
+			saveTask.setOnFailed(_ -> {
 
-			// A failed background split leaves the staged capture available so the
-			// teacher can retry without rebuilding it.
-			questionSaveInProgress = false;
-			setDisable(false);
-			saveStatusLabel.setText("Split save failed — staged parts retained");
-			showAlert(Alert.AlertType.ERROR, "Question split could not be saved.",
-					"The original Question remains unchanged. " + "The staged split regions have been retained.");
-			refreshSaveButtonState();
-		});
-		Thread saveThread = new Thread(saveTask, "legacy-question-split-save");
-		saveThread.setDaemon(true);
-		saveThread.start();
+				// Keep staged split regions available for retry.
+				saveStatusLabel.setText("Split save failed — staged parts retained");
+				finishQuestionSaveBusy();
+				showAlert(Alert.AlertType.ERROR, "Question split could not be saved.",
+						"The original Question remains unchanged. " + "The staged split regions have been retained.");
+			});
+			saveTask.setOnCancelled(_ -> {
+				saveStatusLabel.setText("Split save cancelled — staged parts retained");
+				finishQuestionSaveBusy();
+			});
+			Thread saveThread = new Thread(saveTask, "legacy-question-split-save");
+			saveThread.setDaemon(true);
+			saveThread.start();
+		} catch (RuntimeException | Error failure) {
+			finishQuestionSaveBusy();
+			throw failure;
+		}
 	}
 
 	private LegacySplitSaveResult persistLegacyQuestionSplitTransaction(SplitRequest request) {
@@ -2924,8 +2971,7 @@ public final class QuestionCapturePane extends VBox {
 		boolean savedHadStoredContent = hadStoredContent;
 		PerformanceOperation operation = performanceRecorder.start("capture.question.save");
 		try {
-			questionSaveInProgress = true;
-			setDisable(true);
+			beginQuestionSaveBusy();
 			saveStatusLabel.setText("Saving " + request.questionCode() + "...");
 			Task<QuestionSaveResult> saveTask = createQuestionSaveTask(request, operation.id());
 			saveTask.setOnSucceeded(_ -> {
@@ -2951,29 +2997,47 @@ public final class QuestionCapturePane extends VBox {
 					operation.failed();
 					throw failure;
 				} finally {
-					operation.close();
+					try {
+
+						// Also protects against unexpected publication errors.
+						finishQuestionSaveBusy();
+					} finally {
+						operation.close();
+					}
 				}
 			});
 			saveTask.setOnFailed(_ -> {
+				operation.failed();
 				try {
-					operation.failed();
-					questionSaveInProgress = false;
-					setDisable(false);
 					saveStatusLabel.setText("Save failed — current question retained");
+					finishQuestionSaveBusy();
 				} finally {
-
-					// Finish timing before the modal error acknowledgement.
 					operation.close();
 				}
+
+				// The overlay has been dismissed before the modal error.
 				showAlert(Alert.AlertType.ERROR, "Question could not be saved.", "The question was not saved. "
 						+ "Your current question details and " + "accepted content have been retained.");
+			});
+			saveTask.setOnCancelled(_ -> {
+				operation.failed();
+				try {
+					saveStatusLabel.setText("Save cancelled — current question retained");
+					finishQuestionSaveBusy();
+				} finally {
+					operation.close();
+				}
 			});
 			Thread saveThread = new Thread(saveTask, "question-save");
 			saveThread.setDaemon(true);
 			saveThread.start();
 		} catch (RuntimeException | Error failure) {
 			operation.failed();
-			operation.close();
+			try {
+				finishQuestionSaveBusy();
+			} finally {
+				operation.close();
+			}
 			throw failure;
 		}
 	}
