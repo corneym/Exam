@@ -165,7 +165,6 @@ import au.edu.eq.questionbank.ui.search.QuestionSearchDialog;
 import au.edu.eq.questionbank.ui.search.QuestionSearchNarrowing;
 import javafx.application.Application;
 import javafx.application.Platform;
-import javafx.beans.value.ChangeListener;
 import javafx.concurrent.Task;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -285,12 +284,10 @@ public class QuestionBankApplication extends Application {
 	private VBox captureWorkspaceModePane;
 	private ExamAssetsPane examAssetsPane;
 
-	private ChangeListener<Boolean> primaryStageFocusListener;
-	private Stage primaryStageFocusListenerStage;
-
 	// Exam/Assets persistence participates in the same application-level Subject
 	// generation as the shared Question snapshot.
 	private Function<Subject, ExamAssetsPane.SubjectSnapshot> workingSubjectExamAssetsSnapshotLoader;
+	private FocusRefreshRegistration primaryStageFocusRegistration;
 
 	// Legacy workbook intake may pause while the user creates missing authoritative
 	// Exam/booklet structure in Exam/Assets.
@@ -421,7 +418,6 @@ public class QuestionBankApplication extends Application {
 			if (resourcesClosedForRestore) {
 				return;
 			}
-
 			if (shutdownCoordinator == null || !shutdownCoordinator.isReadyToExit()) {
 				pdfWorkspace.close();
 			}
@@ -1236,19 +1232,17 @@ public class QuestionBankApplication extends Application {
 
 	private void configurePrimaryStage(Stage primaryStage, ApplicationConfig config) {
 		removePrimaryStageFocusListener();
-
 		primaryStage.setOnCloseRequest(event -> handleCloseRequest(event, primaryStage));
 
-		// The clipboard has no JavaFX change notification. Refresh when focus returns.
-		primaryStageFocusListener = (_, _, focused) -> {
-			if (focused && questionCapturePane != null) {
+		// The system clipboard has no JavaFX change notification.
+		// Refresh clipboard availability when focus returns to the application.
+		primaryStageFocusRegistration = new FocusRefreshRegistration(primaryStage.focusedProperty(), () -> {
+			if (questionCapturePane != null) {
 				questionCapturePane.refreshClipboardImageAvailability();
 			}
-		};
+		});
 
-		primaryStageFocusListenerStage = primaryStage;
-		primaryStage.focusedProperty().addListener(primaryStageFocusListener);
-
+		// Exam creation and asset management live in the main-window workspace.
 		showStage(primaryStage, createRootLayout(primaryStage, config));
 	}
 
@@ -3391,12 +3385,10 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void removePrimaryStageFocusListener() {
-		if (primaryStageFocusListenerStage != null && primaryStageFocusListener != null) {
-			primaryStageFocusListenerStage.focusedProperty().removeListener(primaryStageFocusListener);
+		if (primaryStageFocusRegistration != null) {
+			primaryStageFocusRegistration.close();
+			primaryStageFocusRegistration = null;
 		}
-
-		primaryStageFocusListener = null;
-		primaryStageFocusListenerStage = null;
 	}
 
 	private void replaceActiveAnswerPdf(Stage primaryStage, ApplicationConfig config) {
