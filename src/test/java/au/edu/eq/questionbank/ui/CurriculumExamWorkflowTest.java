@@ -521,10 +521,15 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		prepareExamAndClassification(robot);
 		Question question = captureQuestion(robot, "DASH-ANSWER");
 		AtomicBoolean returned = new AtomicBoolean();
-		Boolean started = WaitForAsyncUtils.asyncFx(() -> (Boolean) invoke(application, "showDashboardAnswerCapture",
-				new Class<?>[] { Question.class, Runnable.class, long.class }, question,
-				(Runnable) () -> returned.set(true), 0L)).get();
-		assertTrue(started.booleanValue());
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "startDashboardAnswerCapture", new Class<?>[] { Question.class, Runnable.class },
+					question, (Runnable) () -> returned.set(true));
+			return null;
+		}).get();
+		ApplicationBusyOverlay overlay = (ApplicationBusyOverlay) primaryStage.getScene().getRoot();
+		ComboBox<Question> unanswered = unansweredQuestions(robot);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> unanswered.getValue() != null
+				&& unanswered.getValue().getId() == question.getId() && !overlay.isBusy()));
 		Button returnToDashboard = lookup(robot, "#return-corpus-dashboard", Button.class);
 		assertTrue(returnToDashboard.isVisible());
 		assertTrue(returnToDashboard.isManaged());
@@ -546,10 +551,15 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(classification.isManaged());
 		assertFalse(classification.isDisable());
 		AtomicBoolean returned = new AtomicBoolean();
-		Boolean started = WaitForAsyncUtils.asyncFx(() -> (Boolean) invoke(application, "showDashboardAnswerCapture",
-				new Class<?>[] { Question.class, Runnable.class, long.class }, question,
-				(Runnable) () -> returned.set(true), 0L)).get();
-		assertTrue(started.booleanValue());
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "startDashboardAnswerCapture", new Class<?>[] { Question.class, Runnable.class },
+					question, (Runnable) () -> returned.set(true));
+			return null;
+		}).get();
+		ApplicationBusyOverlay overlay = (ApplicationBusyOverlay) primaryStage.getScene().getRoot();
+		ComboBox<Question> unanswered = unansweredQuestions(robot);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> unanswered.getValue() != null
+				&& unanswered.getValue().getId() == question.getId() && !overlay.isBusy()));
 
 		// Answer capture uses already-persisted Question classification. Classification
 		// is therefore removed from layout entirely rather than merely disabled.
@@ -1667,31 +1677,32 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	@Test
 	void workspaceBusyOverlayShowsAndClears(FxRobot robot) throws Exception {
 		WaitForAsyncUtils.asyncFx(() -> {
-
-			// Reproduce the real Dashboard transition that previously removed the busy
-			// overlay from the workspace host.
 			invoke(application, "showCaptureWorkspaceMode", new Class<?>[0]);
 			invoke(application, "showWorkspaceBusy", new Class<?>[] { String.class }, "Opening Question booklet...");
 			return null;
 		}).get();
-
-		// The workspace was dynamically re-parented into the application body. Wait for
-		// its JavaFX pulse before locating controls through TestFX.
-		WaitForAsyncUtils.waitForFxEvents();
+		ApplicationBusyOverlay applicationOverlay = (ApplicationBusyOverlay) primaryStage.getScene().getRoot();
 		Node overlay = lookup(robot, "#workspace-busy-overlay", Node.class);
 		Label message = lookup(robot, "#workspace-busy-label", Label.class);
-		assertTrue(overlay.isVisible());
-		assertTrue(overlay.isManaged());
+
+		// Logical busy state begins immediately.
+		assertTrue(evaluateOnFx(robot, applicationOverlay::isBusy));
 		assertEquals("Opening Question booklet...", message.getText());
+
+		// The visual presentation must appear after the intentional
+		// 180 ms delay while the operation remains active.
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> evaluateOnFx(robot, overlay::isVisible));
+		assertTrue(evaluateOnFx(robot, overlay::isManaged));
 		WaitForAsyncUtils.asyncFx(() -> {
 			invoke(application, "hideWorkspaceBusy", new Class<?>[0]);
 			return null;
 		}).get();
+		assertFalse(evaluateOnFx(robot, applicationOverlay::isBusy));
+		assertFalse(evaluateOnFx(robot, overlay::isVisible));
+		assertFalse(evaluateOnFx(robot, overlay::isManaged));
 
-		// Completion hides progress without removing it from the reusable workspace.
-		assertFalse(overlay.isVisible());
-		assertFalse(overlay.isManaged());
-		assertNotNull(overlay.getParent());
+		// The overlay remains permanently mounted at application root.
+		assertEquals(applicationOverlay, overlay.getParent());
 	}
 
 	private Path createReplacementQuestionPdf(Path path) throws Exception {
