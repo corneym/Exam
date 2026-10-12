@@ -229,6 +229,26 @@ abstract class QuestionBankApplicationUiTestBase {
 		return robot.lookup(selector).queryAs(type);
 	}
 
+	static <T extends Node> T lookupInShowingDialog(FxRobot robot, String dialogTitle, String selector, Class<T> type) {
+		DialogPane dialog = showingDialogPane(robot, dialogTitle);
+		if (dialog == null) {
+			throw new AssertionError("Dialog is not showing: " + dialogTitle);
+		}
+		Node node = dialog.lookup(selector);
+		if (node == null) {
+
+			// CSS IDs can remain present on controls belonging to hidden reusable dialogs.
+			// Restricting lookup to this DialogPane proves the requested control belongs
+			// to the modal workflow the test is currently driving.
+			throw new AssertionError("Showing dialog " + dialogTitle + " has no node matching " + selector);
+		}
+		if (!type.isInstance(node)) {
+			throw new AssertionError(
+					"Node " + selector + " in showing dialog " + dialogTitle + " is not a " + type.getSimpleName());
+		}
+		return type.cast(node);
+	}
+
 	static <T extends Node> T lookupOnFx(FxRobot robot, Node root, String selector, Class<T> type) {
 		AtomicReference<T> result = new AtomicReference<>();
 		robot.interact(() -> {
@@ -252,26 +272,6 @@ abstract class QuestionBankApplicationUiTestBase {
 		// A null result is the stable FX-thread observation used while polling an
 		// asynchronous workspace transition.
 		return lookupOnFx(robot, root, selector, Node.class) != null;
-	}
-
-	static <T extends Node> T lookupInShowingDialog(FxRobot robot, String dialogTitle, String selector, Class<T> type) {
-		DialogPane dialog = showingDialogPane(robot, dialogTitle);
-		if (dialog == null) {
-			throw new AssertionError("Dialog is not showing: " + dialogTitle);
-		}
-		Node node = dialog.lookup(selector);
-		if (node == null) {
-
-			// CSS IDs can remain present on controls belonging to hidden reusable dialogs.
-			// Restricting lookup to this DialogPane proves the requested control belongs
-			// to the modal workflow the test is currently driving.
-			throw new AssertionError("Showing dialog " + dialogTitle + " has no node matching " + selector);
-		}
-		if (!type.isInstance(node)) {
-			throw new AssertionError(
-					"Node " + selector + " in showing dialog " + dialogTitle + " is not a " + type.getSimpleName());
-		}
-		return type.cast(node);
 	}
 
 	static void setField(Object owner, String fieldName, Object value) throws Exception {
@@ -591,7 +591,10 @@ abstract class QuestionBankApplicationUiTestBase {
 
 	@AfterEach
 	void stopApplication() throws Exception {
-		application.stop();
+		WaitForAsyncUtils.asyncFx(() -> {
+			application.stop();
+			return null;
+		}).get();
 	}
 
 	ComboBox<Question> unansweredQuestions(FxRobot robot) {
