@@ -872,17 +872,20 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 				.get();
 		assertTrue(started.booleanValue());
 		ImageView pageView = lookup(robot, "#pdf-page-view", ImageView.class);
-
-		// Prove the Dashboard route really opened the managed Question PDF before
-		// exercising the return path.
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> pageView.getImage() != null);
 		Button returnToDashboard = lookup(robot, "#return-corpus-dashboard", Button.class);
-		robot.interact(returnToDashboard::fire);
+		ApplicationBusyOverlay overlay = (ApplicationBusyOverlay) primaryStage.getScene().getRoot();
+
+		// PDF rendering completes before the separate Question-corpus refresh.
+		// Both operations must finish before Return becomes actionable.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot,
+				() -> pageView.getImage() != null && !overlay.isBusy() && !returnToDashboard.isDisabled()));
+		fireControl(robot, returnToDashboard);
+
+		// The real Dashboard return action must execute.
 		assertTrue(returned.get());
 
-		// Returning from Dashboard-owned capture must not leave the temporary Exam PDF
-		// visible underneath the Dashboard.
-		assertNull(pageView.getImage());
+		// The managed PDF must be closed, not merely hidden.
+		assertTrue(evaluateOnFx(robot, () -> pageView.getImage() == null));
 	}
 
 	@Test
