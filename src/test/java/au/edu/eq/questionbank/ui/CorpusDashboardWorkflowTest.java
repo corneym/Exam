@@ -6,10 +6,14 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
@@ -29,6 +33,7 @@ import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
@@ -40,6 +45,7 @@ import au.edu.eq.questionbank.ui.exam.ExamAssetsPane;
 import javafx.application.Platform;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBase;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
@@ -102,6 +108,80 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// The retired concatenated work-item presentation must not return.
 		assertFalse(nodePresentOnFx(robot, applicationRoot, "#corpus-work-items"));
+	}
+
+	@Test
+	void dashboardAnswerCaptureBusyOverlayClearsAfterRepositoryFailure(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1");
+		Question question = captureQuestion(robot, "DASH-FAIL1");
+		openAnswerPdfForTest(question);
+		WaitForAsyncUtils.asyncFx(() -> {
+			pdfWorkspace().closeManagedPdfSessions();
+			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-summary-missing-answer").tryQuery().isPresent());
+		Button missingAnswers = lookup(robot, "#corpus-dashboard-summary-missing-answer", Button.class);
+		fireControl(robot, missingAnswers);
+		@SuppressWarnings("unchecked")
+		TableView<Object> questionWork = lookup(robot, "#corpus-dashboard-question-work", TableView.class);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> questionWork.getItems().size() == 1);
+		robot.interact(() -> questionWork.getSelectionModel().selectFirst());
+
+		// The first worker read waits until the test has observed the
+		// visible spinner, then deliberately fails. Later repository
+		// reads remain functional so Dashboard recovery can complete.
+		CountDownLatch workerStarted = new CountDownLatch(1);
+		CountDownLatch releaseWorker = new CountDownLatch(1);
+		AtomicBoolean failFirstRead = new AtomicBoolean(true);
+		QuestionRepository original = field(application, "questionRepository", QuestionRepository.class);
+		QuestionRepository failingRepository = (QuestionRepository) Proxy.newProxyInstance(
+				QuestionRepository.class.getClassLoader(), new Class<?>[] { QuestionRepository.class },
+				(proxy, method, arguments) -> {
+					if ("findAll".equals(method.getName()) && failFirstRead.compareAndSet(true, false)) {
+						workerStarted.countDown();
+						if (!releaseWorker.await(10, TimeUnit.SECONDS)) {
+							throw new IllegalStateException("Test worker was not released");
+						}
+						throw new IllegalStateException("Injected Answer Capture queue failure");
+					}
+					try {
+						return method.invoke(original, arguments);
+					} catch (InvocationTargetException failure) {
+						throw failure.getCause();
+					}
+				});
+		setField(application, "questionRepository", failingRepository);
+		ApplicationBusyOverlay overlay = (ApplicationBusyOverlay) primaryStage.getScene().getRoot();
+		Node shield = overlay.lookup("#workspace-busy-overlay");
+		Button completeAnswer = lookup(robot, "#corpus-dashboard-complete-answer", Button.class);
+		fireControl(robot, completeAnswer);
+		try {
+			assertTrue(workerStarted.await(5, TimeUnit.SECONDS));
+
+			// The worker remains blocked longer than the visual
+			// display threshold. The JavaFX thread must still be
+			// able to display the window-wide overlay.
+			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> evaluateOnFx(robot, shield::isVisible));
+			assertTrue(evaluateOnFx(robot, overlay::isBusy));
+		} finally {
+			releaseWorker.countDown();
+		}
+
+		// Failed preparation must report the error and release busy
+		// ownership before the modal error is acknowledged.
+		waitForDialogShowing(robot, "Capture Answers");
+		assertFalse(evaluateOnFx(robot, overlay::isBusy));
+		assertFalse(evaluateOnFx(robot, shield::isVisible));
+		DialogPane dialog = showingDialogPane(robot, "Capture Answers");
+		Node okNode = dialog.lookupButton(ButtonType.OK);
+		assertTrue(okNode instanceof ButtonBase);
+		robot.interact(((ButtonBase) okNode)::fire);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
+		assertFalse(evaluateOnFx(robot, overlay::isBusy));
+		assertFalse(evaluateOnFx(robot, shield::isVisible));
 	}
 
 	@Test
@@ -261,10 +341,13 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
 			return null;
 		}).get();
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#corpus-dashboard-summary-missing-answer").tryQuery()
-						.filter(Button.class::isInstance).map(Button.class::cast).map(Button::getText)
-						.filter("1 Missing answers"::equals).isPresent());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
+
+			// Dashboard content is replaced asynchronously.
+			// Traverse the scene graph only on the FX thread.
+			Node node = primaryStage.getScene().getRoot().lookup("#corpus-dashboard-summary-missing-answer");
+			return node instanceof Button button && "1 Missing answers".equals(button.getText());
+		}));
 		Button missingAnswers = lookup(robot, "#corpus-dashboard-summary-missing-answer", Button.class);
 		Button totalQuestions = lookup(robot, "#corpus-dashboard-summary-total", Button.class);
 
@@ -275,7 +358,8 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		fireControl(robot, missingAnswers);
 		@SuppressWarnings("unchecked")
 		TableView<Object> questionWork = robot.lookup("#corpus-dashboard-question-work").queryAs(TableView.class);
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> questionWork.getItems().size() == 1);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot, () -> questionWork.getItems().size() == 1));
 
 		// Route the exact Missing Answer row through the task-specific Dashboard
 		// action.
@@ -286,8 +370,8 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		ComboBox<Question> unanswered = unansweredQuestions(robot);
 
 		// The selected persisted Question must own Answer capture.
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> unanswered.getValue() != null && unanswered.getValue().getId() == question.getId());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot,
+				() -> unanswered.getValue() != null && unanswered.getValue().getId() == question.getId()));
 		Button returnDashboard = lookup(robot, "#return-corpus-dashboard", Button.class);
 		Label selectedAnswerPdf = lookup(robot, "#selected-answer-pdf", Label.class);
 		assertTrue(returnDashboard.isVisible());
@@ -295,7 +379,10 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// Dashboard Answer capture must reopen the authoritative assigned AnswerFile
 		// rather than depending on whichever document happened to be open previously.
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> "exam.pdf".equals(selectedAnswerPdf.getText()));
+		ApplicationBusyOverlay busyOverlay = (ApplicationBusyOverlay) primaryStage.getScene().getRoot();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot,
+				() -> "exam.pdf".equals(selectedAnswerPdf.getText()) && !busyOverlay.isBusy()));
+		assertFalse(busyOverlay.isBusy());
 
 		// Written Response completion is region-based. Use the real pointer gesture
 		// only
@@ -315,15 +402,17 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// Saving must leave Dashboard navigation under explicit user control.
 		assertTrue(returnDashboard.isVisible());
-		assertTrue(robot.lookup("#capture-workspace-mode").tryQuery().isPresent());
+		assertTrue(nodePresentOnFx(robot, primaryStage.getScene().getRoot(), "#capture-workspace-mode"));
 		fireControl(robot, returnDashboard);
 
 		// Returning home must reload corpus status from persistence and remove exactly
 		// the completed Missing Answer without creating a replacement Question.
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#corpus-dashboard-summary-missing-answer").tryQuery()
-						.filter(Button.class::isInstance).map(Button.class::cast).map(Button::getText)
-						.filter("0 Missing answers"::equals).isPresent());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
+
+			// The return-to-Dashboard refresh also replaces UI nodes.
+			Node node = primaryStage.getScene().getRoot().lookup("#corpus-dashboard-summary-missing-answer");
+			return node instanceof Button button && "0 Missing answers".equals(button.getText());
+		}));
 		Button refreshedMissingAnswers = lookup(robot, "#corpus-dashboard-summary-missing-answer", Button.class);
 		Button refreshedTotalQuestions = lookup(robot, "#corpus-dashboard-summary-total", Button.class);
 		assertEquals("0 Missing answers", refreshedMissingAnswers.getText());
@@ -504,6 +593,11 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(assetsReturn.isVisible());
 		assertTrue(assetsReturn.isManaged());
 		Node busyOverlay = lookup(robot, "#workspace-busy-overlay", Node.class);
+
+		// The busy overlay now belongs directly to the application
+		// Scene root, so it covers both Dashboard and Capture workspaces.
+		assertTrue(primaryStage.getScene().getRoot() instanceof ApplicationBusyOverlay);
+		assertEquals(primaryStage.getScene().getRoot(), busyOverlay.getParent());
 		assertFalse(busyOverlay.isVisible());
 		assertFalse(busyOverlay.isManaged());
 

@@ -246,6 +246,15 @@ class ApplicationLifecycleWorkflowTest extends QuestionBankApplicationUiTestBase
 		assertEquals(1, automaticBackupCount());
 	}
 
+	private MenuBar applicationMenuBar() {
+
+		// The scene root now owns the full-window busy overlay.
+		// The original BorderPane remains its first content child.
+		ApplicationBusyOverlay overlay = (ApplicationBusyOverlay) primaryStage.getScene().getRoot();
+		BorderPane root = (BorderPane) overlay.getChildren().getFirst();
+		return (MenuBar) root.getTop();
+	}
+
 	private long automaticBackupCount() throws IOException {
 		Path automaticBackupDirectory = applicationConfig.dataRoot().resolve("backups").resolve("automatic");
 		if (!Files.isDirectory(automaticBackupDirectory)) {
@@ -259,8 +268,7 @@ class ApplicationLifecycleWorkflowTest extends QuestionBankApplicationUiTestBase
 	}
 
 	private MenuItem fileExitMenuItem() {
-		BorderPane root = (BorderPane) primaryStage.getScene().getRoot();
-		MenuBar menuBar = (MenuBar) root.getTop();
+		MenuBar menuBar = applicationMenuBar();
 		for (MenuItem item : menuBar.getMenus().get(0).getItems()) {
 			if ("E_xit".equals(item.getText())) {
 				return item;
@@ -270,8 +278,7 @@ class ApplicationLifecycleWorkflowTest extends QuestionBankApplicationUiTestBase
 	}
 
 	private MenuItem fileOptionsMenuItem() {
-		BorderPane root = (BorderPane) primaryStage.getScene().getRoot();
-		MenuBar menuBar = (MenuBar) root.getTop();
+		MenuBar menuBar = applicationMenuBar();
 		for (MenuItem item : menuBar.getMenus().get(0).getItems()) {
 			if ("Op_tions...".equals(item.getText())) {
 				return item;
@@ -281,8 +288,7 @@ class ApplicationLifecycleWorkflowTest extends QuestionBankApplicationUiTestBase
 	}
 
 	private MenuItem fileRestoreMenuItem() {
-		BorderPane root = (BorderPane) primaryStage.getScene().getRoot();
-		MenuBar menuBar = (MenuBar) root.getTop();
+		MenuBar menuBar = applicationMenuBar();
 		for (MenuItem item : menuBar.getMenus().get(0).getItems()) {
 			if ("_Restore Backup...".equals(item.getText())) {
 				return item;
@@ -292,8 +298,7 @@ class ApplicationLifecycleWorkflowTest extends QuestionBankApplicationUiTestBase
 	}
 
 	private MenuItem helpAboutMenuItem() {
-		BorderPane root = (BorderPane) primaryStage.getScene().getRoot();
-		MenuBar menuBar = (MenuBar) root.getTop();
+		MenuBar menuBar = applicationMenuBar();
 		for (Menu menu : menuBar.getMenus()) {
 			if (!"_Help".equals(menu.getText())) {
 				continue;
@@ -308,8 +313,7 @@ class ApplicationLifecycleWorkflowTest extends QuestionBankApplicationUiTestBase
 	}
 
 	private MenuItem helpContentsMenuItem() {
-		BorderPane root = (BorderPane) primaryStage.getScene().getRoot();
-		MenuBar menuBar = (MenuBar) root.getTop();
+		MenuBar menuBar = applicationMenuBar();
 		for (Menu menu : menuBar.getMenus()) {
 			if (!"_Help".equals(menu.getText())) {
 				continue;

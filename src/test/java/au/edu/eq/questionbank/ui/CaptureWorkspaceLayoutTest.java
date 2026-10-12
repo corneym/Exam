@@ -596,29 +596,28 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 				QuestionResponseType.WRITTEN_RESPONSE);
 		Node busyOverlay = lookup(robot, "#workspace-busy-overlay", Node.class);
 		Label busyLabel = lookup(robot, "#workspace-busy-label", Label.class);
-		AtomicBoolean busyWasShown = new AtomicBoolean(false);
+		ApplicationBusyOverlay applicationOverlay = (ApplicationBusyOverlay) primaryStage.getScene().getRoot();
+		AtomicBoolean busyWasStarted = new AtomicBoolean(false);
 		AtomicReference<String> busyMessage = new AtomicReference<>();
-		robot.interact(() -> busyOverlay.visibleProperty().addListener((_, _, visible) -> {
-			if (visible) {
-
-				// Record the transient state itself rather than racing the asynchronous PDF
-				// load to inspect it later.
-				busyWasShown.set(true);
-				busyMessage.set(busyLabel.getText());
-			}
-		}));
 		WaitForAsyncUtils.asyncFx(() -> {
 			invoke(application, "showCorpusDashboardQuestionCorrection", new Class<?>[] { Question.class }, first);
+
+			// Busy ownership begins immediately. The visual spinner
+			// appears only if the operation exceeds 180 milliseconds.
+			busyWasStarted.set(applicationOverlay.isBusy());
+			busyMessage.set(busyLabel.getText());
 			return null;
 		}).get();
 		ComboBox<Question> importedQuestions = comboBox(robot, "#imported-question");
 
 		// Completion of the transition is observable when the requested persisted
 		// Question owns the imported queue and the busy overlay has been dismissed.
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> importedQuestions.getValue() != null
-				&& importedQuestions.getValue().getId() == first.getId() && !busyOverlay.isVisible());
-		assertTrue(busyWasShown.get());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot, () -> importedQuestions.getValue() != null
+						&& importedQuestions.getValue().getId() == first.getId() && !applicationOverlay.isBusy()));
+		assertTrue(busyWasStarted.get());
 		assertEquals("Opening Question booklet...", busyMessage.get());
+		assertFalse(evaluateOnFx(robot, busyOverlay::isVisible));
 		Button returnDashboard = lookup(robot, "#return-corpus-dashboard", Button.class);
 		ToggleButton importedEntry = lookup(robot, "#capture-mode-imported", ToggleButton.class);
 		Label queueLabel = lookup(robot, "#imported-question-queue-label", Label.class);
@@ -663,14 +662,19 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 
 		// Enter the same application-owned Answer workflow used by the Dashboard's
 		// Complete Selected Answer action for one exact persisted Question.
-		AtomicBoolean started = new AtomicBoolean();
 		WaitForAsyncUtils.asyncFx(() -> {
-			started.set((Boolean) invoke(application, "showDashboardAnswerCapture",
-					new Class<?>[] { Question.class, Runnable.class, long.class }, first, dashboardReturn, 0L));
+			invoke(application, "startDashboardAnswerCapture", new Class<?>[] { Question.class, Runnable.class }, first,
+					dashboardReturn);
 			return null;
 		}).get();
-		WaitForAsyncUtils.waitForFxEvents();
-		assertTrue(started.get());
+		ApplicationBusyOverlay applicationOverlay = (ApplicationBusyOverlay) primaryStage.getScene().getRoot();
+		ComboBox<Question> preparedAnswerTarget = unansweredQuestions(robot);
+
+		// The asynchronous entry is complete only when the exact
+		// requested Question is selected and the overlay is idle.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot, () -> preparedAnswerTarget.getValue() != null
+						&& preparedAnswerTarget.getValue().getId() == first.getId() && !applicationOverlay.isBusy()));
 		ComboBox<Question> unanswered = unansweredQuestions(robot);
 		Button returnDashboard = lookup(robot, "#return-corpus-dashboard", Button.class);
 		Node classification = lookup(robot, "#classification-context", Node.class);
