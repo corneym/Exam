@@ -95,6 +95,7 @@ public class QuestionSearchPane extends BorderPane {
 	private final ComboBox<CurriculumNode> selectedDescriptorBox = new ComboBox<>();
 	private final GridPane selectedClassificationPane = new GridPane();
 	private final PauseTransition previewDelay = new PauseTransition(Duration.millis(PREVIEW_DELAY_MILLIS));
+	private long outputApplicabilityDisplayedQuestionId = -1;
 
 	// Search presentation uses its own result type so current-curriculum matches
 	// and future all-bank results can coexist without weakening retrieval
@@ -490,8 +491,11 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void clearOutputApplicability() {
+		outputApplicabilityDisplayedQuestionId = -1;
 		outputApplicabilityList.getItems().clear();
+		outputApplicabilityList.getSelectionModel().clearSelection();
 		outputApplicabilityStatusLabel.setText("");
+		updateOutputApplicabilityActionState();
 	}
 
 	private void clearPreview() {
@@ -560,6 +564,7 @@ public class QuestionSearchPane extends BorderPane {
 		onSucceeded.accept(task.getValue());
 	}
 
+	@SuppressWarnings("unused")
 	private void completeOutputApplicabilityLoad(Task<List<QuestionOutputApplicabilityRow>> task, long generation,
 			long questionId) {
 
@@ -591,6 +596,52 @@ public class QuestionSearchPane extends BorderPane {
 		}
 	}
 
+	private void completeOutputApplicabilityLoad(Task<List<QuestionOutputApplicabilityRow>> task, long generation,
+			long questionId, long preferredNodeId) {
+
+		// Only the current selection is permitted to publish results.
+		if (generation != outputApplicabilityGeneration || task != activeOutputApplicabilityTask) {
+			return;
+		}
+		activeOutputApplicabilityTask = null;
+		PerformanceOperation operation = activeOutputApplicabilityOperation;
+		activeOutputApplicabilityOperation = null;
+		try {
+			Question selectedQuestion = getSelectedQuestion();
+			if (selectedQuestion == null || selectedQuestion.getId() != questionId) {
+				operation.failed();
+				return;
+			}
+			List<QuestionOutputApplicabilityRow> rows = task.getValue();
+			outputApplicabilityList.getItems().setAll(rows);
+			outputApplicabilityDisplayedQuestionId = questionId;
+			if (rows.isEmpty()) {
+				outputApplicabilityList.getSelectionModel().clearSelection();
+			} else {
+				int selectedIndex = 0;
+
+				// Preserve the existing placement when
+				// refreshing the same Question. If that placement
+				// has disappeared, use the first remaining row.
+				for (int index = 0; index < rows.size(); index++) {
+					if (rows.get(index).currentNode().getId() == preferredNodeId) {
+						selectedIndex = index;
+						break;
+					}
+				}
+				outputApplicabilityList.getSelectionModel().select(selectedIndex);
+			}
+			updateOutputApplicabilityStatus();
+			updateOutputApplicabilityActionState();
+			operation.resultCount(rows.size());
+		} catch (RuntimeException | Error failure) {
+			operation.failed();
+			throw failure;
+		} finally {
+			operation.close();
+		}
+	}
+
 	private void completeOutputApplicabilityUpdate(Task<Void> task, long questionId, CurriculumNode currentNode,
 			boolean excluded) {
 		if (task != activeOutputApplicabilityUpdateTask) {
@@ -611,8 +662,8 @@ public class QuestionSearchPane extends BorderPane {
 			return;
 		}
 
-		// If an intervening reload removed the edited row, rebuild applicability from
-		// persistence rather than manufacturing replacement UI state.
+		// If an intervening reload removed the edited row, rebuild applicability
+		// from persistence rather than manufacturing replacement UI state.
 		reloadSelectedOutputApplicability();
 	}
 
@@ -747,7 +798,8 @@ public class QuestionSearchPane extends BorderPane {
 		includeOutputApplicabilityButton.setMinWidth(Region.USE_PREF_SIZE);
 		excludeOutputApplicabilityButton.setMinWidth(Region.USE_PREF_SIZE);
 
-		// No applicability action exists until the teacher selects one placement.
+		// No action is available until a placement has loaded.
+		// The first available placement will be selected automatically.
 		includeOutputApplicabilityButton.setDisable(true);
 		excludeOutputApplicabilityButton.setDisable(true);
 	}
@@ -2124,6 +2176,13 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void startOutputApplicabilityLoad(QuestionSearchResult result) {
+
+		// Preserve a placement only when reloading the same Question.
+		// A newly selected Question must receive its own default row.
+		QuestionOutputApplicabilityRow previousSelection = outputApplicabilityList.getSelectionModel()
+				.getSelectedItem();
+		long preferredNodeId = result != null && result.question().getId() == outputApplicabilityDisplayedQuestionId
+				&& previousSelection != null ? previousSelection.currentNode().getId() : -1;
 		cancelActiveOutputApplicabilityLoad();
 		clearOutputApplicability();
 		if (disposed || result == null) {
@@ -2132,15 +2191,12 @@ public class QuestionSearchPane extends BorderPane {
 		long generation = outputApplicabilityGeneration;
 		long questionId = result.question().getId();
 		outputApplicabilityStatusLabel.setText("Loading revision output applicability...");
-
-		// The outer measurement ends when JavaFX publishes the result,
-		// or when this selection is failed or superseded.
 		PerformanceOperation operation = performanceRecorder.start("search.output-applicability.load");
 		activeOutputApplicabilityOperation = operation;
 		Task<List<QuestionOutputApplicabilityRow>> task = new BackgroundTask<>(
 				() -> loadOutputApplicability(result, operation.id()));
 		activeOutputApplicabilityTask = task;
-		task.setOnSucceeded(_ -> completeOutputApplicabilityLoad(task, generation, questionId));
+		task.setOnSucceeded(_ -> completeOutputApplicabilityLoad(task, generation, questionId, preferredNodeId));
 		task.setOnFailed(_ -> failOutputApplicabilityLoad(task, generation, questionId));
 		task.setOnCancelled(_ -> {
 			if (generation != outputApplicabilityGeneration || task != activeOutputApplicabilityTask) {

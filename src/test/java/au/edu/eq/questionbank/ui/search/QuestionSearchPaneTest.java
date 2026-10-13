@@ -1069,6 +1069,78 @@ public class QuestionSearchPaneTest {
 	}
 
 	@Test
+	public void multipleApplicabilityPlacementsPreserveSelectionOnRefresh(FxRobot robot) throws TimeoutException {
+		Question secondQuestion = new Question(8301, historicalQuestion.getBooklet(), "24",
+				"Second placement test Question.", 2, List.of(), currentSubtopic, false);
+		AtomicReference<List<QuestionApplicabilityMatch>> matches = new AtomicReference<>(
+				List.of(new QuestionApplicabilityMatch(historicalQuestion, currentDescriptor),
+						new QuestionApplicabilityMatch(historicalQuestion, noMatchDescriptor),
+						new QuestionApplicabilityMatch(secondQuestion, currentDescriptor)));
+		QuestionRetrievalRepository repository = nodes -> matches.get().stream()
+				.filter(match -> nodes.contains(match.getCurrentNode())).toList();
+		QuestionRetrievalService service = new QuestionRetrievalService(repository,
+				new CurriculumSearchNodeExpansionService(curriculumRepository));
+		QuestionSearchPane pane = replaceSearchPane(robot, curriculumRepository, service,
+				() -> List.of(historicalQuestion, secondQuestion));
+		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		ListView<QuestionOutputApplicabilityRow> output = robot.lookup("#question-search-output-applicability")
+				.queryListView();
+		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+		QuestionSearchResult firstResult = results.getItems().stream()
+				.filter(result -> result.question().getId() == historicalQuestion.getId()).findFirst().orElseThrow();
+		QuestionSearchResult secondResult = results.getItems().stream()
+				.filter(result -> result.question().getId() == secondQuestion.getId()).findFirst().orElseThrow();
+		robot.interact(() -> results.getSelectionModel().select(firstResult));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> output.getItems().size() == 2 && output.getSelectionModel().getSelectedItem() != null);
+		assertEquals(currentDescriptor, output.getSelectionModel().getSelectedItem().currentNode());
+
+		// Select the second placement rather than accepting the default.
+		robot.interact(() -> output.getSelectionModel().select(1));
+		assertEquals(noMatchDescriptor, output.getSelectionModel().getSelectedItem().currentNode());
+		AtomicInteger reloadPublications = new AtomicInteger();
+		output.getItems().addListener((ListChangeListener<QuestionOutputApplicabilityRow>) change -> {
+			while (change.next()) {
+				if (change.wasAdded()) {
+					reloadPublications.incrementAndGet();
+				}
+			}
+		});
+		int nextPublication = reloadPublications.get() + 1;
+		robot.interact(() -> pane.refreshAfterEdit(historicalQuestion.getId()));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> reloadPublications.get() >= nextPublication
+						&& output.getSelectionModel().getSelectedItem() != null
+						&& output.getSelectionModel().getSelectedItem().currentNode().equals(noMatchDescriptor));
+
+		// Switching Questions must not carry the old placement into
+		// the new Question's list.
+		robot.interact(() -> results.getSelectionModel().select(secondResult));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> output.getItems().size() == 1 && output.getSelectionModel().getSelectedItem() != null
+						&& output.getSelectionModel().getSelectedItem().currentNode().equals(currentDescriptor));
+
+		// Returning to the first Question starts with its first row.
+		robot.interact(() -> results.getSelectionModel().select(firstResult));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> output.getItems().size() == 2 && output.getSelectionModel().getSelectedItem() != null
+						&& output.getSelectionModel().getSelectedItem().currentNode().equals(currentDescriptor));
+		robot.interact(() -> output.getSelectionModel().select(1));
+
+		// The selected placement disappears from persistence.
+		// Refresh must fall back to the first remaining placement.
+		matches.set(List.of(new QuestionApplicabilityMatch(historicalQuestion, currentDescriptor),
+				new QuestionApplicabilityMatch(secondQuestion, currentDescriptor)));
+		int expectedPublication = reloadPublications.get() + 1;
+		robot.interact(() -> pane.refreshAfterEdit(historicalQuestion.getId()));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> reloadPublications.get() >= expectedPublication
+				&& output.getItems().size() == 1 && output.getSelectionModel().getSelectedItem() != null);
+		assertEquals(currentDescriptor, output.getSelectionModel().getSelectedItem().currentNode());
+	}
+
+	@Test
 	public void multipleCurrentSyllabusesAreReportedAsNavigationFailure(FxRobot robot) throws TimeoutException {
 		Subject physics = new Subject(40, "Physics");
 		SyllabusVersion firstCurrent = new SyllabusVersion(41, physics, "2025", true);
@@ -2196,6 +2268,34 @@ public class QuestionSearchPaneTest {
 	}
 
 	@Test
+	public void singleApplicabilityPlacementIsSelectedWithoutPersistingChanges(FxRobot robot) throws TimeoutException {
+		outputApplicabilityRepository.setExcluded(historicalQuestion, currentDescriptor, true);
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		ListView<QuestionOutputApplicabilityRow> output = robot.lookup("#question-search-output-applicability")
+				.queryListView();
+		Button include = robot.lookup("#question-search-output-include").queryButton();
+		Button exclude = robot.lookup("#question-search-output-exclude").queryButton();
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1);
+		robot.interact(() -> results.getSelectionModel().selectFirst());
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> output.getItems().size() == 1
+				&& output.getSelectionModel().getSelectedItem() != null && !include.isDisable());
+		QuestionOutputApplicabilityRow selected = output.getSelectionModel().getSelectedItem();
+		assertEquals(currentDescriptor, selected.currentNode());
+		assertTrue(selected.excluded());
+		assertTrue(exclude.isDisable());
+
+		// Automatic selection must not persist anything.
+		assertEquals(Set.of(currentDescriptor.getId()),
+				outputApplicabilityRepository.findExcludedCurrentNodeIds(historicalQuestion));
+		robot.interact(include::fire);
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> output.getSelectionModel().getSelectedItem() != null
+				&& !output.getSelectionModel().getSelectedItem().excluded() && !exclude.isDisable());
+		assertEquals(currentDescriptor, output.getSelectionModel().getSelectedItem().currentNode());
+		assertTrue(include.isDisable());
+		assertEquals(Set.of(), outputApplicabilityRepository.findExcludedCurrentNodeIds(historicalQuestion));
+	}
+
+	@Test
 	public void staleAllQuestionsCompletionCannotOverwriteNewerCurrentSyllabusSearch(FxRobot robot)
 			throws TimeoutException {
 		DelayedAllQuestionsSupplier allQuestions = new DelayedAllQuestionsSupplier(List.of(historicalQuestion));
@@ -2466,6 +2566,30 @@ public class QuestionSearchPaneTest {
 		assertTrue(unitBox.getItems().isEmpty());
 		assertTrue(unitBox.isDisable());
 		assertTrue(resultsList.getItems().isEmpty());
+	}
+
+	@Test
+	public void zeroApplicabilityPlacementsLeaveActionsDisabled(FxRobot robot) throws TimeoutException {
+		QuestionRetrievalRepository repository = _ -> List.of();
+		QuestionRetrievalService service = new QuestionRetrievalService(repository,
+				new CurriculumSearchNodeExpansionService(curriculumRepository));
+		replaceSearchPane(robot, curriculumRepository, service, () -> List.of(historicalQuestion));
+		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		ListView<QuestionOutputApplicabilityRow> output = robot.lookup("#question-search-output-applicability")
+				.queryListView();
+		Label status = robot.lookup("#question-search-output-applicability-status").queryAs(Label.class);
+		Button include = robot.lookup("#question-search-output-include").queryButton();
+		Button exclude = robot.lookup("#question-search-output-exclude").queryButton();
+		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1);
+		robot.interact(() -> results.getSelectionModel().selectFirst());
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> "No current revision applicability.".equals(status.getText()));
+		assertTrue(output.getItems().isEmpty());
+		assertEquals(null, output.getSelectionModel().getSelectedItem());
+		assertTrue(include.isDisable());
+		assertTrue(exclude.isDisable());
 	}
 
 	@Test
