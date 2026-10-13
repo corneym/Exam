@@ -6,6 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -16,7 +19,16 @@ import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
+import au.edu.eq.questionbank.model.Descriptor;
+import au.edu.eq.questionbank.model.Exam;
+import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ExamProvider;
+import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.model.Topic;
+import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.assessment.InMemoryQuestionOutputApplicabilityRepository;
@@ -31,6 +43,8 @@ import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.ComboBox;
+import javafx.scene.control.ListView;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.Screen;
@@ -95,6 +109,69 @@ class QuestionSearchDialogTest {
 		assertEquals(new Insets(12), leftColumn.getPadding());
 		assertEquals(new Insets(12), rightColumn.getPadding());
 		robot.interact(dialog::close);
+	}
+
+	@Test
+	void allQuestionsIsDefaultOnFirstOpenAndEveryReopen(FxRobot robot) throws TimeoutException {
+		Subject chemistry = new Subject(100, "Chemistry");
+		Subject physics = new Subject(101, "Physics");
+		Question chemistryQuestion = scopeTestQuestion(chemistry, 1000);
+		Question physicsQuestion = scopeTestQuestion(physics, 2000);
+		AtomicInteger allQuestionsLoads = new AtomicInteger();
+		QuestionSearchDialog[] holder = new QuestionSearchDialog[1];
+		robot.interact(() -> {
+			holder[0] = createScopeTestDialog(chemistry, List.of(chemistryQuestion, physicsQuestion),
+					QuestionSearchNarrowing.unrestricted(), allQuestionsLoads);
+		});
+		QuestionSearchDialog dialog = holder[0];
+
+		// First opening must start in All Questions without
+		// requiring the teacher to change the scope.
+		robot.interact(dialog::show);
+		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> scope.getValue() == QuestionSearchScope.ALL_QUESTIONS
+				&& results.getItems().size() == 1 && allQuestionsLoads.get() >= 1);
+		assertEquals(QuestionSearchScope.ALL_QUESTIONS, scope.getValue());
+		assertEquals(chemistryQuestion.getId(), results.getItems().getFirst().question().getId());
+		assertEquals(QuestionSearchScope.ALL_QUESTIONS, results.getItems().getFirst().scope());
+
+		// Physics must not enter a Search whose authoritative
+		// Working Subject is Chemistry.
+		assertFalse(
+				results.getItems().stream().anyMatch(result -> result.question().getId() == physicsQuestion.getId()));
+
+		// Changing the scope remains possible during the session.
+		robot.interact(() -> scope.setValue(QuestionSearchScope.CURRENT_SYLLABUS));
+		assertEquals(QuestionSearchScope.CURRENT_SYLLABUS, scope.getValue());
+
+		// Hide the existing Dialog, as the application does when
+		// leaving Search for a Question-edit workflow.
+		robot.interact(dialog::hide);
+		WaitForAsyncUtils.waitForFxEvents();
+		int previousLoads = allQuestionsLoads.get();
+
+		// Reopening the SAME Dialog must not retain Current Syllabus.
+		robot.interact(dialog::show);
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> scope.getValue() == QuestionSearchScope.ALL_QUESTIONS && results.getItems().size() == 1
+						&& results.getItems().getFirst().scope() == QuestionSearchScope.ALL_QUESTIONS
+						&& allQuestionsLoads.get() > previousLoads);
+		assertEquals(chemistryQuestion.getId(), results.getItems().getFirst().question().getId());
+		assertFalse(scope.isDisable());
+
+		// Even when All Questions was the final scope, reopening
+		// must perform a fresh retrieval, not reuse a stale list.
+		robot.interact(dialog::hide);
+		WaitForAsyncUtils.waitForFxEvents();
+		int secondOpeningLoads = allQuestionsLoads.get();
+		robot.interact(dialog::show);
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> allQuestionsLoads.get() > secondOpeningLoads
+				&& results.getItems().size() == 1 && scope.getValue() == QuestionSearchScope.ALL_QUESTIONS);
+		robot.interact(() -> {
+			dialog.close();
+			dialog.dispose();
+		});
 	}
 
 	@Test
@@ -202,6 +279,22 @@ class QuestionSearchDialogTest {
 		robot.interact(dialog::close);
 	}
 
+	private QuestionSearchDialog createScopeTestDialog(Subject workingSubject, List<Question> questions,
+			QuestionSearchNarrowing narrowing, AtomicInteger allQuestionsLoads) {
+		InMemoryCurriculumRepository curriculumRepository = new InMemoryCurriculumRepository();
+		QuestionRetrievalRepository retrievalRepository = _ -> List.of();
+		QuestionRetrievalService retrievalService = new QuestionRetrievalService(retrievalRepository,
+				new CurriculumSearchNodeExpansionService(curriculumRepository));
+		QuestionPreviewService previewService = new QuestionPreviewService(new PdfStore(tempDirectory),
+				new QuestionExtractor());
+		return new QuestionSearchDialog(stage, workingSubject, curriculumRepository, retrievalService, () -> {
+			allQuestionsLoads.incrementAndGet();
+			return questions;
+		}, previewService, new InMemoryQuestionOutputApplicabilityRepository(), (_, _) -> {
+			throw new AssertionError("Classification persistence was not expected");
+		}, narrowing);
+	}
+
 	private QuestionSearchDialog extracted(InMemoryCurriculumRepository curriculumRepository,
 			QuestionRetrievalService retrievalService, QuestionPreviewService previewService,
 			QuestionSearchDialog[] dialogHolder) {
@@ -230,5 +323,21 @@ class QuestionSearchDialogTest {
 					// Geometry tests must never attempt Question persistence.
 					throw new AssertionError("Classification update was not expected");
 				});
+	}
+
+	private Question scopeTestQuestion(Subject subject, long baseId) {
+		SyllabusVersion historicalVersion = new SyllabusVersion(baseId, subject, "2019", false);
+		Unit unit = new Unit(baseId + 1, historicalVersion, "1", "Historical Unit", 1);
+		Topic topic = new Topic(baseId + 2, historicalVersion, unit, "1.1", "Historical Topic", 1);
+		Descriptor descriptor = new Descriptor(baseId + 3, historicalVersion, topic, "1.1.1", "Historical Descriptor",
+				1);
+		ExamProvider provider = new ExamProvider(baseId + 4, "QCAA");
+		Exam exam = new Exam(baseId + 5, subject, provider, 2020, "Test Examination");
+		SourceDocument document = new SourceDocument(baseId + 6, "test-" + baseId + ".pdf");
+		ExamBooklet booklet = new ExamBooklet(baseId + 7, exam, "Paper 1", document);
+
+		// Metadata-only Question: preview rendering is irrelevant
+		// to testing the Search scope and contextual constraints.
+		return new Question(baseId + 8, booklet, "Q1", "Test Question", 1, List.of(), descriptor, false);
 	}
 }

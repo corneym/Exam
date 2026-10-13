@@ -382,9 +382,12 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 		});
 		setOnShown(_ -> {
 
-			// Windows may still apply native snap/full-height geometry after onShown.
-			// Restore the remembered size on the next FX turn, then restore position
-			// after that size has settled.
+			// Each opening starts a fresh All Questions search, including
+			// when this Dialog is reused after a Question-edit workflow.
+			searchPane.resetToAllQuestionsOnOpen();
+
+			// Retain the established window geometry restoration behaviour.
+			// Windows may apply native snap/full-height geometry after onShown.
 			Platform.runLater(this::restoreRememberedGeometry);
 		});
 	}

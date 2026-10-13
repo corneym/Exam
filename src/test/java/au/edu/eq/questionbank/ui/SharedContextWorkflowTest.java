@@ -3,9 +3,11 @@ package au.edu.eq.questionbank.ui;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -20,6 +22,7 @@ import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
+import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
@@ -32,6 +35,7 @@ import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionCaptureService;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
+import au.edu.eq.questionbank.repository.assessment.SqliteSharedContextCorrectionService;
 import au.edu.eq.questionbank.repository.assessment.SqliteSharedQuestionContextRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteSourceQuestionRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
@@ -405,7 +409,6 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// two context regions from two pages.
 		openMissingSharedContextCaptureFromSearch(robot, partC.getId());
 		TextField label = lookup(robot, "#shared-context-label", TextField.class);
-
 		robot.interact(() -> label.setText("Question 74 shared context"));
 
 		// Correction opens at the selected Question's stored page.
@@ -413,10 +416,8 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.interact(() -> pdfWorkspace().showPage(PdfWorkspacePane.DocumentMode.EXAM, 1));
 		WaitForAsyncUtils.waitForFxEvents();
 		assertEquals(1, pdfWorkspace().getCurrentPageNumber());
-
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-shared-context-region");
-
 		robot.interact(() -> pdfWorkspace().showPage(PdfWorkspacePane.DocumentMode.EXAM, 2));
 		WaitForAsyncUtils.waitForFxEvents();
 		dragRegionOnDisplayedPage(robot);
@@ -481,30 +482,51 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void failedMissingContextSaveRetainsRegionsAndCanBeRetried(FxRobot robot) throws Exception {
-
+	void completeExamBlocksMissingContextCorrectionUntilReactivated(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
-
 		ExamBooklet booklet = examMetadataPane().getBooklet();
 		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
 				.getClassification();
-
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		SqliteQuestionRepository questions = new SqliteQuestionRepository(database);
 		SqliteSourceQuestionRepository sources = new SqliteSourceQuestionRepository(database);
 		SqliteSharedQuestionContextRepository contexts = new SqliteSharedQuestionContextRepository(database);
-
-		SourceQuestion source = sources.save(booklet, "75");
-		sources.updateSharedContextStatus(source, SharedContextStatus.NONE);
-
-		Question partA = questions.save(booklet, "75a", "", 2,
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SourceQuestion source = sources.save(booklet, "76");
+		source = sources.updateSharedContextStatus(source, SharedContextStatus.NONE);
+		Question partA = questions.save(booklet, "76a", "", 2,
 				List.of(new QuestionRegion(booklet, 1, 0.10, 0.30, 0.70, 0.10)), classification, false, source, null,
 				QuestionResponseType.WRITTEN_RESPONSE);
-
-		Question partB = questions.save(booklet, "75b", "", 3,
-				List.of(new QuestionRegion(booklet, 1, 0.10, 0.50, 0.70, 0.10)), classification, false, source, null,
+		Question partB = questions.save(booklet, "76b", "", 3,
+				List.of(new QuestionRegion(booklet, 2, 0.10, 0.30, 0.70, 0.10)), classification, false, source, null,
 				QuestionResponseType.WRITTEN_RESPONSE);
+		SharedQuestionContext reusable = contexts.save(booklet, "Existing context for Question 76",
+				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.70, 0.15)));
 
+		// Simulate an already completed Exam. The ordinary COMPLETE
+		// command requires prior booklet-review approvals, which are
+		// unrelated to this correction-boundary regression.
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						UPDATE exams
+						SET capture_state = 'COMPLETE'
+						WHERE id = ?
+						""")) {
+			statement.setLong(1, booklet.getExam().getId());
+			assertEquals(1, statement.executeUpdate());
+		}
+		Question completePart = questions.findById(partB.getId()).orElseThrow();
+		assertTrue(completePart.getExam().isComplete());
+		SqliteSharedContextCorrectionService correctionService = new SqliteSharedContextCorrectionService(database);
+
+		// The persistence service must independently reject both
+		// correction operations, even if called without the UI.
+		assertThrows(IllegalStateException.class, () -> correctionService.captureNew(partB.getId(),
+				"New Question 76 context", List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.70, 0.15))));
+		assertThrows(IllegalStateException.class,
+				() -> correctionService.linkExisting(partB.getId(), reusable.getId()));
+
+		// Open Search with the persisted COMPLETE Exam state.
 		Platform.runLater(() -> {
 			try {
 				invoke(application, "showQuestionSearch", new Class<?>[] { Stage.class, ApplicationConfig.class },
@@ -513,13 +535,82 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 				throw new RuntimeException(exception);
 			}
 		});
+		waitForDialogShowing(robot, "Search Questions");
+		selectSearchResult(robot, partB.getId());
+		Button edit = lookupInShowingDialog(robot, "Search Questions", "#question-search-recapture-shared-context",
+				Button.class);
+		assertFalse(edit.isDisabled());
+		fireControlLater(edit);
 
+		// A COMPLETE Exam must produce an explicit reactivation
+		// warning instead of opening the correction editor.
+		waitForDialogShowing(robot, "Correct Shared Context");
+		DialogPane warning = showingDialogPane(robot, "Correct Shared Context");
+		assertEquals("This Exam is COMPLETE.", warning.getHeaderText());
+		assertTrue(warning.getContentText().contains("Reactivate the Exam"));
+		assertEquals(List.of(ButtonType.OK), warning.getButtonTypes());
+		Button acknowledge = (Button) warning.lookupButton(ButtonType.OK);
+		fireControlLater(acknowledge);
+		waitForDialogHidden(robot, "Correct Shared Context");
+		waitForDialogShowing(robot, "Search Questions");
+
+		// Neither the UI attempt nor the direct service attempts
+		// may change the existing source relationship.
+		assertEquals(1, contexts.findByBooklet(booklet).size());
+		assertEquals(SharedContextStatus.NONE,
+				sources.findByBookletAndCode(booklet, "76").orElseThrow().getSharedContextStatus());
+		assertFalse(questions.findById(partA.getId()).orElseThrow().hasSharedContext());
+		assertFalse(questions.findById(partB.getId()).orElseThrow().hasSharedContext());
+		closeDialog(robot, "Search Questions");
+
+		// Explicitly reactivate through the supported Exam writer.
+		ExamCaptureState active = examWriter.setExamCaptureState(completePart.getExam(), ExamCaptureState.ACTIVE)
+				.getCaptureState();
+		assertEquals(ExamCaptureState.ACTIVE, active);
+
+		// The same correction is now permitted. No existing
+		// Question needs to be recaptured or replaced.
+		correctionService.linkExisting(partB.getId(), reusable.getId());
+		for (Question original : List.of(partA, partB)) {
+			Question corrected = questions.findById(original.getId()).orElseThrow();
+			assertEquals(original.getId(), corrected.getId());
+			assertEquals(original.getMarks(), corrected.getMarks());
+			assertEquals(reusable.getId(), corrected.getSharedContext().getId());
+			assertEquals(SharedContextStatus.PRESENT, corrected.getSourceQuestion().getSharedContextStatus());
+		}
+		assertEquals(1, contexts.findByBooklet(booklet).size());
+	}
+
+	@Test
+	void failedMissingContextSaveRetainsRegionsAndCanBeRetried(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteQuestionRepository questions = new SqliteQuestionRepository(database);
+		SqliteSourceQuestionRepository sources = new SqliteSourceQuestionRepository(database);
+		SqliteSharedQuestionContextRepository contexts = new SqliteSharedQuestionContextRepository(database);
+		SourceQuestion source = sources.save(booklet, "75");
+		sources.updateSharedContextStatus(source, SharedContextStatus.NONE);
+		Question partA = questions.save(booklet, "75a", "", 2,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.30, 0.70, 0.10)), classification, false, source, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		Question partB = questions.save(booklet, "75b", "", 3,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.50, 0.70, 0.10)), classification, false, source, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		Platform.runLater(() -> {
+			try {
+				invoke(application, "showQuestionSearch", new Class<?>[] { Stage.class, ApplicationConfig.class },
+						primaryStage, applicationConfig);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
 		waitForDialogShowing(robot, "Search Questions");
 		openMissingSharedContextCaptureFromSearch(robot, partB.getId());
-
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-shared-context-region");
-
 		assertEquals("Regions: 1", lookup(robot, "#shared-context-region-count", Label.class).getText());
 
 		// Force the final source-status update to fail after
@@ -536,35 +627,28 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 					END
 					""");
 		}
-
 		fireControlLater(robot, "#save-shared-context");
 
 		// The failure must be reported to the user, not
 		// silently interpreted as a successful save.
 		waitForDialogShowing(robot, "Warning");
-
 		DialogPane warning = showingDialogPane(robot, "Warning");
 		assertEquals("Shared Context could not be saved", warning.getHeaderText());
-
 		Button acknowledge = (Button) warning.lookupButton(ButtonType.OK);
 		fireControl(robot, acknowledge);
 		waitForDialogHidden(robot, "Warning");
 
 		// The transaction must have rolled back completely.
 		assertTrue(contexts.findByBooklet(booklet).isEmpty());
-
 		assertEquals(SharedContextStatus.NONE,
 				sources.findByBookletAndCode(booklet, "75").orElseThrow().getSharedContextStatus());
-
 		assertFalse(questions.findById(partA.getId()).orElseThrow().hasSharedContext());
 		assertFalse(questions.findById(partB.getId()).orElseThrow().hasSharedContext());
 
 		// The user must still have the accepted region and
 		// an active correction workspace after the error.
 		assertTrue(questionCapturePane().isCapturingSharedContext());
-
 		assertEquals("Regions: 1", lookup(robot, "#shared-context-region-count", Label.class).getText());
-
 		assertEquals("Save and Link Context", lookup(robot, "#save-shared-context", Button.class).getText());
 
 		// Remove the simulated database failure and retry
@@ -572,27 +656,19 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.execute("DROP TRIGGER reject_context_correction");
 		}
-
 		fireControlLater(robot, "#save-shared-context");
 		waitForDialogShowing(robot, "Search Questions");
-
 		List<SharedQuestionContext> savedContexts = contexts.findByBooklet(booklet);
-
 		assertEquals(1, savedContexts.size());
 		SharedQuestionContext saved = savedContexts.getFirst();
 		assertEquals(1, saved.getRegions().size());
-
 		Question reloadedA = questions.findById(partA.getId()).orElseThrow();
 		Question reloadedB = questions.findById(partB.getId()).orElseThrow();
-
 		assertEquals(saved.getId(), reloadedA.getSharedContext().getId());
 		assertEquals(saved.getId(), reloadedB.getSharedContext().getId());
-
 		assertEquals(SharedContextStatus.PRESENT, reloadedA.getSourceQuestion().getSharedContextStatus());
-
 		assertEquals(partA.getId(), reloadedA.getId());
 		assertEquals(partB.getId(), reloadedB.getId());
-
 		closeDialog(robot, "Search Questions");
 	}
 

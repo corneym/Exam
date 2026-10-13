@@ -347,6 +347,37 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	/**
+	 * Starts a newly opened Search session in All Questions scope. Invoked by the
+	 * owning Dialog on every show, including reshow of an existing Dialog instance.
+	 *
+	 * The immutable Working Subject and Dashboard launch narrowing remain
+	 * unchanged.
+	 */
+	void resetToAllQuestionsOnOpen() {
+		if (disposed) {
+			return;
+		}
+
+		// Set the scope without invoking the ordinary ComboBox handler.
+		// The reset below must run exactly once, even when the scope
+		// was already All Questions on the previous opening.
+		updatingControls = true;
+		try {
+			searchScopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS);
+		} finally {
+			updatingControls = false;
+		}
+
+		// Cancel searches and hierarchy loads from the previous scope.
+		// Generation checks prevent their late results from appearing.
+		prepareSearchScopeTransition();
+
+		// Always requery the authoritative Working Subject. Existing
+		// Exam/booklet narrowing remains applied by the Search pipeline.
+		activateAllQuestionsScope();
+	}
+
+	/**
 	 * @return the selected search result property, whose value may be {@code null}
 	 */
 	ReadOnlyObjectProperty<QuestionSearchResult> selectedResultProperty() {
