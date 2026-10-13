@@ -1622,7 +1622,7 @@ public class QuestionSearchPane extends BorderPane {
 		// reusing the context. Refresh every result rather than replacing
 		// only the selected Question and leaving stale relationships.
 		boolean sharedContextChanged = (previousContext == null) != (updatedContext == null);
-		if (!sharedContextChanged && previousContext != null) {
+		if (!sharedContextChanged && previousContext != null && updatedContext != null) {
 			sharedContextChanged = previousContext.getId() != updatedContext.getId()
 					|| !previousContext.getRegions().equals(updatedContext.getRegions())
 					|| !Objects.equals(previousContext.getLabel(), updatedContext.getLabel());
