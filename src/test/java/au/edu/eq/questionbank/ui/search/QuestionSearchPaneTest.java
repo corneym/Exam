@@ -73,6 +73,7 @@ import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.collections.ListChangeListener;
+import javafx.geometry.HPos;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
 import javafx.scene.Node;
@@ -90,6 +91,7 @@ import javafx.scene.control.SplitPane;
 import javafx.scene.control.TextArea;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.scene.layout.GridPane;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
@@ -416,6 +418,72 @@ public class QuestionSearchPaneTest {
 		System.out.printf("Burst sampled heap high-water: %.2f MiB%n",
 				Math.max(previewProbe.sampledHeapBytes(), applicabilityProbe.sampledHeapBytes()) / 1048576.0);
 		System.out.println("Burst performance CSV: " + performanceCsv);
+	}
+
+	@Test
+	public void classificationControlsUseAlignedRowsAndSaveBelowDescriptor(FxRobot robot) throws TimeoutException {
+		Question subtopicQuestion = new Question(8100, historicalQuestion.getBooklet(), "23a",
+				"Question requiring Descriptor refinement.", 2, List.of(), currentSubtopic, false);
+		QuestionSearchPane pane = replaceSearchPane(robot, curriculumRepository, retrievalService,
+				() -> List.of(subtopicQuestion));
+		GridPane classificationPane = robot.lookup("#question-search-selected-classification").queryAs(GridPane.class);
+		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		ComboBox<CurriculumNode> unit = robot.lookup("#question-search-selected-unit").queryComboBox();
+		ComboBox<CurriculumNode> topic = robot.lookup("#question-search-selected-topic").queryComboBox();
+		ComboBox<CurriculumNode> subtopic = robot.lookup("#question-search-selected-subtopic").queryComboBox();
+		ComboBox<CurriculumNode> descriptor = robot.lookup("#question-search-selected-descriptor").queryComboBox();
+		Button save = robot.lookup("#question-search-save-classification").queryButton();
+		AtomicInteger saveRequests = new AtomicInteger();
+		robot.interact(() -> pane.setClassificationSaveHandler(saveRequests::incrementAndGet));
+		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1);
+		robot.interact(() -> results.getSelectionModel().selectFirst());
+		assertTrue(classificationPane.isVisible());
+		assertTrue(classificationPane.isManaged());
+		List<String> labels = List.of("Unit", "Topic", "Subtopic", "Descriptor");
+		List<ComboBox<CurriculumNode>> controls = List.of(unit, topic, subtopic, descriptor);
+		for (int index = 0; index < labels.size(); index++) {
+			String expectedLabel = labels.get(index);
+			int expectedRow = index + 2;
+			Label label = classificationPane.getChildren().stream().filter(node -> node instanceof Label)
+					.map(node -> (Label) node).filter(node -> expectedLabel.equals(node.getText())).findFirst()
+					.orElseThrow();
+			ComboBox<CurriculumNode> control = controls.get(index);
+			assertEquals(Integer.valueOf(0), GridPane.getColumnIndex(label));
+			assertEquals(Integer.valueOf(expectedRow), GridPane.getRowIndex(label));
+			assertEquals(Integer.valueOf(1), GridPane.getColumnIndex(control));
+			assertEquals(Integer.valueOf(expectedRow), GridPane.getRowIndex(control));
+			assertEquals(Priority.ALWAYS, GridPane.getHgrow(control));
+		}
+
+		// Save must be on a separate row, with no third column.
+		assertEquals(Integer.valueOf(0), GridPane.getColumnIndex(save));
+		assertEquals(Integer.valueOf(6), GridPane.getRowIndex(save));
+		assertEquals(2, GridPane.getColumnSpan(save));
+		assertEquals(HPos.LEFT, GridPane.getHalignment(save));
+
+		// Exercise the Search dialog's nominal minimum width.
+		robot.interact(() -> stage.setWidth(1100));
+		WaitForAsyncUtils.waitForFxEvents();
+		robot.interact(() -> {
+			classificationPane.applyCss();
+			classificationPane.layout();
+			Label unitLabel = classificationPane.getChildren().stream().filter(node -> node instanceof Label)
+					.map(node -> (Label) node).filter(label -> "Unit".equals(label.getText())).findFirst()
+					.orElseThrow();
+			assertEquals(unitLabel.getBoundsInParent().getMinX(), save.getBoundsInParent().getMinX(), 1.0);
+			assertTrue(descriptor.getWidth() > 150, "Descriptor must remain usable at minimum width");
+			assertTrue(save.getBoundsInParent().getMaxX() <= classificationPane.getWidth(),
+					"Save must remain within the classification pane");
+		});
+
+		// Moving the existing button must not alter its behaviour.
+		assertTrue(save.isDisable());
+		robot.interact(() -> descriptor.setValue(currentDescriptor));
+		assertFalse(save.isDisable());
+		robot.interact(save::fire);
+		assertEquals(1, saveRequests.get());
 	}
 
 	@Test

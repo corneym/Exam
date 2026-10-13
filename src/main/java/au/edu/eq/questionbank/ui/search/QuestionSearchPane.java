@@ -34,6 +34,7 @@ import javafx.beans.property.ReadOnlyObjectProperty;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.concurrent.Task;
 import javafx.embed.swing.SwingFXUtils;
+import javafx.geometry.HPos;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
 import javafx.scene.control.Button;
@@ -858,7 +859,8 @@ public class QuestionSearchPane extends BorderPane {
 		saveClassificationButton
 				.setTooltip(new Tooltip("Persist the selected Descriptor as this Question's classification."));
 
-		// Keep the complete action label visible beside the Descriptor selector.
+		// Preserve the complete Save label when it occupies its own row
+		// beneath the Descriptor selector.
 		saveClassificationButton.setMinWidth(Region.USE_PREF_SIZE);
 
 		// Save becomes meaningful only when the selected Descriptor differs from the
@@ -983,6 +985,9 @@ public class QuestionSearchPane extends BorderPane {
 		Label heading = new Label("Selected question classification");
 		heading.setStyle("-fx-font-weight: bold;");
 		selectedClassificationPane.add(heading, 0, 0, 2, 1);
+
+		// All classification labels occupy the first column.
+		// Their shared column width keeps the drop-downs aligned.
 		selectedClassificationPane.add(createSelectorLabel("Syllabus"), 0, 1);
 		selectedClassificationPane.add(selectedSyllabusValue, 1, 1);
 		selectedClassificationPane.add(createSelectorLabel("Unit"), 0, 2);
@@ -994,9 +999,13 @@ public class QuestionSearchPane extends BorderPane {
 		selectedClassificationPane.add(createSelectorLabel("Descriptor"), 0, 5);
 		selectedClassificationPane.add(selectedDescriptorBox, 1, 5);
 
-		// Descriptor refinement is the only classification change saved directly
-		// from Search, so its Save action remains beside that control.
-		selectedClassificationPane.add(saveClassificationButton, 2, 5);
+		// Save is on its own row, directly below Descriptor.
+		// Align it with the left edge of the classification pane.
+		selectedClassificationPane.add(saveClassificationButton, 0, 6, 2, 1);
+		GridPane.setHalignment(saveClassificationButton, HPos.LEFT);
+
+		// The label column takes its natural width.
+		// Every classification drop-down expands into the second column.
 		GridPane.setHgrow(selectedUnitBox, Priority.ALWAYS);
 		GridPane.setHgrow(selectedTopicBox, Priority.ALWAYS);
 		GridPane.setHgrow(selectedSubtopicBox, Priority.ALWAYS);
