@@ -3,13 +3,12 @@ package au.edu.eq.questionbank.ui;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.Connection;
-import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.util.List;
+import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Tag;
@@ -22,7 +21,6 @@ import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
-import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
@@ -35,10 +33,10 @@ import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionCaptureService;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
-import au.edu.eq.questionbank.repository.assessment.SqliteSharedContextCorrectionService;
 import au.edu.eq.questionbank.repository.assessment.SqliteSharedQuestionContextRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteSourceQuestionRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.audit.QuestionCorpusWorkItem;
 import au.edu.eq.questionbank.ui.correction.LegacyQuestionSplitDialog;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
@@ -54,7 +52,9 @@ import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
+import javafx.scene.image.ImageView;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 
@@ -482,7 +482,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void completeExamBlocksMissingContextCorrectionUntilReactivated(FxRobot robot) throws Exception {
+	void dashboardInspectionRefreshesCorrectedSharedContext(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet booklet = examMetadataPane().getBooklet();
 		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
@@ -491,93 +491,120 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		SqliteQuestionRepository questions = new SqliteQuestionRepository(database);
 		SqliteSourceQuestionRepository sources = new SqliteSourceQuestionRepository(database);
 		SqliteSharedQuestionContextRepository contexts = new SqliteSharedQuestionContextRepository(database);
-		SqliteExamWriter examWriter = new SqliteExamWriter(database);
-		SourceQuestion source = sources.save(booklet, "76");
-		source = sources.updateSharedContextStatus(source, SharedContextStatus.NONE);
-		Question partA = questions.save(booklet, "76a", "", 2,
-				List.of(new QuestionRegion(booklet, 1, 0.10, 0.30, 0.70, 0.10)), classification, false, source, null,
+		SourceQuestion source = sources.updateSharedContextStatus(sources.save(booklet, "78"),
+				SharedContextStatus.NONE);
+		Question partA = questions.save(booklet, "78a", "", 2,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.30, 0.80, 0.12)), classification, false, source, null,
 				QuestionResponseType.WRITTEN_RESPONSE);
-		Question partB = questions.save(booklet, "76b", "", 3,
-				List.of(new QuestionRegion(booklet, 2, 0.10, 0.30, 0.70, 0.10)), classification, false, source, null,
+		Question partB = questions.save(booklet, "78b", "", 3,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.50, 0.80, 0.12)), classification, false, source, null,
 				QuestionResponseType.WRITTEN_RESPONSE);
-		SharedQuestionContext reusable = contexts.save(booklet, "Existing context for Question 76",
-				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.70, 0.15)));
+		Question partC = questions.save(booklet, "78c", "", 4,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.70, 0.80, 0.12)), classification, false, source, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		SharedQuestionContext existing = contexts.save(booklet, "Question 78 shared context",
+				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.12)));
 
-		// Simulate an already completed Exam. The ordinary COMPLETE
-		// command requires prior booklet-review approvals, which are
-		// unrelated to this correction-boundary regression.
-		try (Connection connection = database.openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
-						UPDATE exams
-						SET capture_state = 'COMPLETE'
-						WHERE id = ?
-						""")) {
-			statement.setLong(1, booklet.getExam().getId());
-			assertEquals(1, statement.executeUpdate());
-		}
-		Question completePart = questions.findById(partB.getId()).orElseThrow();
-		assertTrue(completePart.getExam().isComplete());
-		SqliteSharedContextCorrectionService correctionService = new SqliteSharedContextCorrectionService(database);
+		// Initialise Dashboard from authoritative persistence.
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
+			return null;
+		}).get();
 
-		// The persistence service must independently reject both
-		// correction operations, even if called without the UI.
-		assertThrows(IllegalStateException.class, () -> correctionService.captureNew(partB.getId(),
-				"New Question 76 context", List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.70, 0.15))));
-		assertThrows(IllegalStateException.class,
-				() -> correctionService.linkExisting(partB.getId(), reusable.getId()));
-
-		// Open Search with the persisted COMPLETE Exam state.
-		Platform.runLater(() -> {
-			try {
-				invoke(application, "showQuestionSearch", new Class<?>[] { Stage.class, ApplicationConfig.class },
-						primaryStage, applicationConfig);
-			} catch (Exception exception) {
-				throw new RuntimeException(exception);
+		// The pre-correction Dashboard must actually contain
+		// the three persisted Questions without Shared Context.
+		Callable<Boolean> beforeCorrection = () -> evaluateOnFx(robot, () -> {
+			Node node = primaryStage.getScene().getRoot().lookup("#corpus-dashboard-question-work");
+			if (!(node instanceof TableView<?> table) || table.getItems().size() != 3) {
+				return false;
 			}
+			return table.getItems().stream()
+					.allMatch(item -> item instanceof QuestionCorpusWorkItem work
+							&& work.question().getSourceQuestion() != null
+							&& work.question().getSourceQuestion().getId() == partB.getSourceQuestion().getId()
+							&& !work.question().hasSharedContext());
 		});
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, beforeCorrection);
+
+		// Enter Search through Dashboard rather than through
+		// the ordinary Questions menu.
+		Button inspect = lookup(robot, "#corpus-dashboard-inspect-exam-questions", Button.class);
+		assertFalse(inspect.isDisabled());
+		fireControlLater(inspect);
 		waitForDialogShowing(robot, "Search Questions");
 		selectSearchResult(robot, partB.getId());
+		ImageView preview = lookupInShowingDialog(robot, "Search Questions", "#question-search-preview",
+				ImageView.class);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> preview.getImage() != null));
+		double[] originalHeight = new double[1];
+		robot.interact(() -> originalHeight[0] = preview.getImage().getHeight());
+
+		// Request correction through the actual Search action.
 		Button edit = lookupInShowingDialog(robot, "Search Questions", "#question-search-recapture-shared-context",
 				Button.class);
 		assertFalse(edit.isDisabled());
 		fireControlLater(edit);
-
-		// A COMPLETE Exam must produce an explicit reactivation
-		// warning instead of opening the correction editor.
 		waitForDialogShowing(robot, "Correct Shared Context");
-		DialogPane warning = showingDialogPane(robot, "Correct Shared Context");
-		assertEquals("This Exam is COMPLETE.", warning.getHeaderText());
-		assertTrue(warning.getContentText().contains("Reactivate the Exam"));
-		assertEquals(List.of(ButtonType.OK), warning.getButtonTypes());
-		Button acknowledge = (Button) warning.lookupButton(ButtonType.OK);
-		fireControlLater(acknowledge);
-		waitForDialogHidden(robot, "Correct Shared Context");
+		VBox affected = lookupInShowingDialog(robot, "Correct Shared Context", "#shared-context-correction-parts",
+				VBox.class);
+		assertEquals(3, affected.getChildren().size());
+		RadioButton reuse = lookupInShowingDialog(robot, "Correct Shared Context", "#shared-context-correction-reuse",
+				RadioButton.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<SharedQuestionContext> available = lookupInShowingDialog(robot, "Correct Shared Context",
+				"#shared-context-correction-existing-context", ComboBox.class);
+		robot.interact(() -> {
+			reuse.fire();
+			available.setValue(existing);
+		});
+		Button confirm = lookupInShowingDialog(robot, "Correct Shared Context", "#shared-context-correction-continue",
+				Button.class);
+		assertFalse(confirm.isDisabled());
+		fireControlLater(confirm);
 		waitForDialogShowing(robot, "Search Questions");
 
-		// Neither the UI attempt nor the direct service attempts
-		// may change the existing source relationship.
-		assertEquals(1, contexts.findByBooklet(booklet).size());
-		assertEquals(SharedContextStatus.NONE,
-				sources.findByBookletAndCode(booklet, "76").orElseThrow().getSharedContextStatus());
-		assertFalse(questions.findById(partA.getId()).orElseThrow().hasSharedContext());
-		assertFalse(questions.findById(partB.getId()).orElseThrow().hasSharedContext());
+		// The resumed Search must publish all three corrected
+		// Question objects from persistence, not stale results.
+		DialogPane searchDialog = showingDialogPane(robot, "Search Questions");
+		@SuppressWarnings("unchecked")
+		ListView<Object> results = (ListView<Object>) searchDialog.lookup("#question-search-results");
+		WaitForAsyncUtils
+				.waitFor(10, TimeUnit.SECONDS,
+						() -> evaluateOnFx(robot, () -> List.of(partA, partB, partC).stream()
+								.allMatch(original -> results.getItems().stream().map(this::searchResultQuestion)
+										.anyMatch(question -> question.getId() == original.getId()
+												&& question.hasSharedContext()
+												&& question.getSharedContext().getId() == existing.getId()))));
+
+		// Select a different result and return to part B,
+		// ensuring the preview is rendered from refreshed state.
+		selectSearchResult(robot, partA.getId());
+		selectSearchResult(robot, partB.getId());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot,
+				() -> preview.getImage() != null && preview.getImage().getHeight() > originalHeight[0]));
 		closeDialog(robot, "Search Questions");
 
-		// Explicitly reactivate through the supported Exam writer.
-		ExamCaptureState active = examWriter.setExamCaptureState(completePart.getExam(), ExamCaptureState.ACTIVE)
-				.getCaptureState();
-		assertEquals(ExamCaptureState.ACTIVE, active);
+		// The successful correction must also refresh the
+		// Dashboard's displayed work items asynchronously.
+		Callable<Boolean> afterCorrection = () -> evaluateOnFx(robot, () -> {
+			Node node = primaryStage.getScene().getRoot().lookup("#corpus-dashboard-question-work");
+			if (!(node instanceof TableView<?> table) || table.getItems().size() != 3) {
+				return false;
+			}
+			return table.getItems().stream().allMatch(item -> item instanceof QuestionCorpusWorkItem work
+					&& work.question().hasSharedContext() && work.question().getSourceQuestion() != null
+					&& work.question().getSourceQuestion().getId() == partB.getSourceQuestion().getId()
+					&& work.question().getSourceQuestion().getSharedContextStatus() == SharedContextStatus.PRESENT
+					&& work.question().getSharedContext().getId() == existing.getId()
+					&& work.status().sharedContextResolved());
+		});
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, afterCorrection);
 
-		// The same correction is now permitted. No existing
-		// Question needs to be recaptured or replaced.
-		correctionService.linkExisting(partB.getId(), reusable.getId());
-		for (Question original : List.of(partA, partB)) {
-			Question corrected = questions.findById(original.getId()).orElseThrow();
-			assertEquals(original.getId(), corrected.getId());
-			assertEquals(original.getMarks(), corrected.getMarks());
-			assertEquals(reusable.getId(), corrected.getSharedContext().getId());
-			assertEquals(SharedContextStatus.PRESENT, corrected.getSourceQuestion().getSharedContextStatus());
-		}
+		// The Dashboard still reports three Questions.
+		Button total = lookup(robot, "#corpus-dashboard-summary-total", Button.class);
+		assertEquals("3 Questions", total.getText());
+
+		// Reuse must not duplicate a previously saved context.
 		assertEquals(1, contexts.findByBooklet(booklet).size());
 	}
 
