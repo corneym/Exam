@@ -44,6 +44,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
@@ -172,6 +173,59 @@ class QuestionSearchDialogTest {
 			dialog.close();
 			dialog.dispose();
 		});
+	}
+
+	@Test
+	void examAndBookletNarrowingSurvivesAllQuestionsReset(FxRobot robot) throws TimeoutException {
+		Subject chemistry = new Subject(110, "Chemistry");
+		Question selectedQuestion = scopeTestQuestion(chemistry, 3000);
+		Question otherQuestion = scopeTestQuestion(chemistry, 4000);
+		List<Question> allQuestions = List.of(selectedQuestion, otherQuestion);
+
+		// Verify both supported Dashboard launch constraints.
+		List<QuestionSearchNarrowing> narrowings = List.of(
+				QuestionSearchNarrowing.forBooklet(selectedQuestion.getBooklet()),
+				QuestionSearchNarrowing.forExam(selectedQuestion.getExam()));
+		for (QuestionSearchNarrowing narrowing : narrowings) {
+			AtomicInteger allQuestionsLoads = new AtomicInteger();
+			QuestionSearchDialog[] holder = new QuestionSearchDialog[1];
+			robot.interact(() -> {
+				holder[0] = createScopeTestDialog(chemistry, allQuestions, narrowing, allQuestionsLoads);
+			});
+			QuestionSearchDialog dialog = holder[0];
+			robot.interact(dialog::show);
+			ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
+			ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+			Label narrowingLabel = robot.lookup("#question-search-narrowing").queryAs(Label.class);
+			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+					() -> scope.getValue() == QuestionSearchScope.ALL_QUESTIONS && results.getItems().size() == 1
+							&& results.getItems().getFirst().scope() == QuestionSearchScope.ALL_QUESTIONS);
+			assertEquals(narrowing.description(), narrowingLabel.getText());
+			assertEquals(selectedQuestion.getId(), results.getItems().getFirst().question().getId());
+
+			// Change the scope during the current Search session.
+			robot.interact(() -> scope.setValue(QuestionSearchScope.CURRENT_SYLLABUS));
+			assertEquals(QuestionSearchScope.CURRENT_SYLLABUS, scope.getValue());
+			robot.interact(dialog::hide);
+			WaitForAsyncUtils.waitForFxEvents();
+			int previousLoads = allQuestionsLoads.get();
+			robot.interact(dialog::show);
+			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+					() -> scope.getValue() == QuestionSearchScope.ALL_QUESTIONS && results.getItems().size() == 1
+							&& results.getItems().getFirst().scope() == QuestionSearchScope.ALL_QUESTIONS
+							&& allQuestionsLoads.get() > previousLoads);
+
+			// The opening reset must not discard the immutable
+			// Dashboard Exam or booklet constraint.
+			assertEquals(narrowing.description(), narrowingLabel.getText());
+			assertEquals(selectedQuestion.getId(), results.getItems().getFirst().question().getId());
+			assertFalse(
+					results.getItems().stream().anyMatch(result -> result.question().getId() == otherQuestion.getId()));
+			robot.interact(() -> {
+				dialog.close();
+				dialog.dispose();
+			});
+		}
 	}
 
 	@Test
