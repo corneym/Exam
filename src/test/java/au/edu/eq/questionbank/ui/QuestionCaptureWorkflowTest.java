@@ -11,6 +11,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -43,11 +44,15 @@ import javafx.scene.control.ListCell;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.RadioButton;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleButton;
+import javafx.scene.image.ImageView;
 import javafx.scene.image.WritableImage;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
+import javafx.scene.input.MouseEvent;
+import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.stage.Stage;
 
@@ -1075,6 +1080,66 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	@Start
 	void start(Stage stage) throws Exception {
 		super.start(stage);
+	}
+
+	@Test
+	void tallAcceptedRegionsExpandWithoutAdditionalInteraction(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		QuestionCapturePane capture = questionCapturePane();
+		ScrollPane scroll = field(capture, "regionsScrollPane", ScrollPane.class);
+		VBox previews = field(capture, "regionPreviewBox", VBox.class);
+		ImageView page = lookup(robot, "#pdf-page-view", ImageView.class);
+
+		// Use a tall PDF selection rather than the normal small
+		// rectangle used by the other workflow tests.
+		AtomicReference<Double> pageHeightValue = new AtomicReference<>();
+		robot.interact(() -> pageHeightValue.set(page.getBoundsInLocal().getHeight()));
+		double pageHeight = pageHeightValue.get();
+		assertTrue(pageHeight > 210, "The fixture must provide room for a tall region");
+		double bottom = Math.min(pageHeight - 20, 400);
+		robot.interact(() -> {
+			fireMouseEvent(page, MouseEvent.MOUSE_PRESSED, 30, 20, true);
+			fireMouseEvent(page, MouseEvent.MOUSE_DRAGGED, 160, bottom, true);
+			fireMouseEvent(page, MouseEvent.MOUSE_RELEASED, 160, bottom, false);
+		});
+		fireControl(robot, "#add-question-region");
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals("Content parts: 1", lookup(robot, "#question-region-count", Label.class).getText());
+
+		// The first accepted preview must establish its layout
+		// without a subsequent click or focus change.
+		assertTrue(scroll.isVisible());
+		assertTrue(scroll.isManaged());
+		assertTrue(scroll.getHeight() >= 96);
+		assertTrue(scroll.getHeight() <= 300.5);
+
+		// Accept another tall region in the same Question.
+		robot.interact(() -> {
+			fireMouseEvent(page, MouseEvent.MOUSE_PRESSED, 35, 25, true);
+			fireMouseEvent(page, MouseEvent.MOUSE_DRAGGED, 165, bottom, true);
+			fireMouseEvent(page, MouseEvent.MOUSE_RELEASED, 165, bottom, false);
+		});
+		fireControl(robot, "#add-question-region");
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals("Content parts: 2", lookup(robot, "#question-region-count", Label.class).getText());
+		Node first = lookup(robot, "#question-content-part-0", Node.class);
+		Node second = lookup(robot, "#question-content-part-1", Node.class);
+
+		// Both previews must be laid out, without overlapping.
+		assertTrue(first.getBoundsInParent().getHeight() > 0);
+		assertTrue(second.getBoundsInParent().getHeight() > 0);
+		assertTrue(second.getBoundsInParent().getMinY() >= first.getBoundsInParent().getMaxY());
+
+		// The viewport must expand to its cap, rather than
+		// clipping the assembled content at its original size.
+		assertTrue(scroll.getHeight() >= 96);
+		assertTrue(scroll.getHeight() <= 300.5);
+		assertTrue(previews.getLayoutBounds().getHeight() > scroll.getHeight());
+
+		// Both content parts must remain managed and available
+		// for navigation inside the bounded scrolling area.
+		assertTrue(first.isManaged());
+		assertTrue(second.isManaged());
 	}
 
 	@Test
