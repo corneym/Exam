@@ -16,15 +16,21 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -63,6 +69,7 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
 import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
+import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
@@ -84,6 +91,7 @@ import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 import javafx.stage.Window;
+import javafx.util.Duration;
 
 @Tag("ui")
 @ExtendWith(ApplicationExtension.class)
@@ -175,6 +183,235 @@ public class QuestionSearchPaneTest {
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1
 				&& resultsList.getItems().getFirst().question().getId() == historicalQuestion.getId());
 		assertEquals(historicalQuestion.getId(), resultsList.getItems().getFirst().question().getId());
+	}
+
+	@Test
+	public void burstSelectionsPreserveLatestResultWithHeavyPdfAndSqlite(FxRobot robot) throws Exception {
+		final int selectionChanges = 20;
+		final int heldWorkers = 3;
+		Path directory = Files.createTempDirectory("question-search-burst-");
+		Path pdfRoot = directory.resolve("pdf");
+		Files.createDirectories(pdfRoot);
+		createDensePdf(pdfRoot.resolve("questions.pdf"));
+		Path databasePath = directory.resolve("questions.db");
+		Path performanceCsv = directory.resolve("performance.csv");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+		PerformanceRecorder recorder = new PerformanceRecorder(true, performanceCsv);
+		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
+		Subject subject = writer.insertSubject("Burst Chemistry");
+		SyllabusVersion version = writer.insertSyllabusVersion(subject, "2025", true);
+		Unit unit = writer.insertUnit(version, "1", "Unit 1", 1);
+		Topic topic = writer.insertTopic(unit, "1.1", "Topic 1", 1);
+		Subtopic subtopic = writer.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
+		Descriptor descriptor = writer.insertDescriptor(subtopic, "1.1.1.1", "Descriptor 1", 1);
+		SqliteExamImporter importer = new SqliteExamImporter(database, new SqliteExamWriter(database));
+		ExamBooklet booklet = importer.importExam(subject, "QCAA", 2025, "External Assessment", "Paper 1",
+				"questions.pdf");
+		SqliteQuestionRepository sqliteQuestions = new SqliteQuestionRepository(database, recorder);
+		List<Question> questions = new ArrayList<>();
+		Map<QuestionRegion, Long> questionIdsByRegion = new HashMap<>();
+		for (int index = 0; index <= selectionChanges; index++) {
+			double x = 0.10 + index * 0.01;
+			double width = index == selectionChanges ? 0.65 : 0.40;
+			QuestionRegion region = new QuestionRegion(booklet, 1, x, 0.10, width, 0.20);
+			Question question = sqliteQuestions.save(booklet, "B" + index, "", 2, List.of(region), descriptor, false);
+			questions.add(question);
+			questionIdsByRegion.put(region, question.getId());
+		}
+		List<Question> sourceQuestions = List.copyOf(questions);
+		long finalQuestionId = sourceQuestions.getLast().getId();
+		Set<Long> heldQuestionIds = sourceQuestions.subList(0, heldWorkers).stream().map(Question::getId)
+				.collect(Collectors.toSet());
+		PostWorkGate pdfGate = new PostWorkGate(heldQuestionIds);
+		PostWorkGate sqliteGate = new PostWorkGate(heldQuestionIds);
+		RealSelectionWorkProbe previewProbe = new RealSelectionWorkProbe();
+		RealSelectionWorkProbe applicabilityProbe = new RealSelectionWorkProbe();
+		AtomicLong actualPdfNanos = new AtomicLong();
+		AtomicLong actualSqliteNanos = new AtomicLong();
+		QuestionRetrievalRepository measuredRepository = new QuestionRetrievalRepository() {
+
+			@Override
+			public List<QuestionApplicabilityMatch> findApplicableToNodes(List<CurriculumNode> nodes) {
+				return sqliteQuestions.findApplicableToNodes(nodes);
+			}
+
+			@Override
+			public List<QuestionApplicabilityMatch> findApplicableToNodesForQuestion(List<CurriculumNode> nodes,
+					long questionId, long parentOperationId) {
+				try {
+					return applicabilityProbe.measure(questionId, () -> {
+						long startedAt = System.nanoTime();
+						List<QuestionApplicabilityMatch> matches = sqliteQuestions
+								.findApplicableToNodesForQuestion(nodes, questionId, parentOperationId);
+						actualSqliteNanos.addAndGet(System.nanoTime() - startedAt);
+
+						// Retrieval has finished, but the Task remains
+						// in flight until the test releases it.
+						sqliteGate.awaitAfterWork(questionId);
+						return matches;
+					});
+				} catch (RuntimeException failure) {
+					throw failure;
+				} catch (Exception failure) {
+					throw new IllegalStateException("Burst SQLite retrieval failed", failure);
+				}
+			}
+		};
+		QuestionExtractor measuredExtractor = new QuestionExtractor() {
+
+			@Override
+			public BufferedImage extractRegion(PdfSession session, QuestionRegion region) throws IOException {
+				Long questionId = questionIdsByRegion.get(region);
+				if (questionId == null) {
+					throw new IOException("Unknown burst PDF region");
+				}
+				try {
+					return previewProbe.measure(questionId, () -> {
+						long startedAt = System.nanoTime();
+
+						// Execute the real PDFBox render and crop before
+						// introducing any controlled waiting.
+						BufferedImage image = super.extractRegion(session, region);
+						actualPdfNanos.addAndGet(System.nanoTime() - startedAt);
+
+						// The owning renderer retains its PDF session
+						// until this extraction returns.
+						pdfGate.awaitAfterWork(questionId);
+						return image;
+					});
+				} catch (IOException failure) {
+					throw failure;
+				} catch (Exception failure) {
+					throw new IOException("Burst PDF extraction failed", failure);
+				}
+			}
+		};
+		SqliteCurriculumRepository curriculum = new SqliteCurriculumRepository(database);
+		QuestionRetrievalService service = new QuestionRetrievalService(measuredRepository,
+				new CurriculumSearchNodeExpansionService(curriculum), recorder);
+		QuestionPreviewService measuredPreviewService = new QuestionPreviewService(new PdfStore(pdfRoot),
+				measuredExtractor);
+		InMemoryQuestionOutputApplicabilityRepository exclusions = new InMemoryQuestionOutputApplicabilityRepository();
+		exclusions.setExcluded(sourceQuestions.getLast(), descriptor, true);
+		robot.interact(() -> {
+			QuestionSearchPane previous = (QuestionSearchPane) stage.getScene().getRoot();
+			previous.dispose();
+			QuestionSearchPane pane = new QuestionSearchPane(subject, curriculum, service, () -> sourceQuestions,
+					measuredPreviewService, exclusions, QuestionSearchNarrowing.unrestricted(), recorder);
+			stage.setScene(new Scene(pane, 700, 600));
+		});
+		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		ListView<QuestionOutputApplicabilityRow> output = robot.lookup("#question-search-output-applicability")
+				.queryListView();
+		ImageView preview = robot.lookup("#question-search-preview").queryAs(ImageView.class);
+		Label previewStatus = robot.lookup("#question-search-preview-status").queryAs(Label.class);
+		Label applicabilityStatus = robot.lookup("#question-search-output-applicability-status").queryAs(Label.class);
+		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> results.getItems().size() == selectionChanges + 1);
+		List<QuestionSearchResult> orderedResults = sourceQuestions.stream()
+				.map(question -> results.getItems().stream()
+						.filter(result -> result.question().getId() == question.getId()).findFirst().orElseThrow())
+				.toList();
+		double burstDispatchMilliseconds;
+		double finalResponseMilliseconds;
+		try {
+
+			// Start three actual PDF renders and three actual SQLite
+			// retrievals. Hold them after their expensive work finishes.
+			for (int index = 0; index < heldWorkers; index++) {
+				QuestionSearchResult result = orderedResults.get(index);
+				long questionId = result.question().getId();
+				long expectedRemaining = heldWorkers - index - 1L;
+				previewProbe.select(questionId);
+				applicabilityProbe.select(questionId);
+				robot.interact(() -> results.getSelectionModel().select(result));
+				WaitForAsyncUtils.waitFor(20, TimeUnit.SECONDS,
+						() -> pdfGate.remaining() == expectedRemaining && sqliteGate.remaining() == expectedRemaining);
+			}
+			assertEquals(heldWorkers, previewProbe.active());
+			assertEquals(heldWorkers, applicabilityProbe.active());
+			long burstStartedAt = System.nanoTime();
+
+			// Process all remaining selections within one JavaFX turn.
+			// This removes the inter-selection waits that allowed
+			// Batch 02 workers to finish before supersession.
+			robot.interact(() -> {
+				for (int index = heldWorkers; index < orderedResults.size(); index++) {
+					QuestionSearchResult result = orderedResults.get(index);
+					long questionId = result.question().getId();
+					previewProbe.select(questionId);
+					applicabilityProbe.select(questionId);
+					results.getSelectionModel().select(result);
+				}
+			});
+			burstDispatchMilliseconds = (System.nanoTime() - burstStartedAt) / 1_000_000.0;
+			try {
+				WaitForAsyncUtils.waitFor(30, TimeUnit.SECONDS,
+						() -> results.getSelectionModel().getSelectedItem() != null
+								&& results.getSelectionModel().getSelectedItem().question().getId() == finalQuestionId
+								&& output.getItems().size() == 1 && output.getItems().getFirst().excluded()
+								&& preview.getImage() != null && preview.getImage().getWidth() > 700.0);
+			} catch (TimeoutException failure) {
+				System.out.printf(
+						"Issue 28 burst timeout | " + "preview=%s | applicability=%s | "
+								+ "PDF active=%d | SQLite active=%d%n",
+						previewStatus.getText(), applicabilityStatus.getText(), previewProbe.active(),
+						applicabilityProbe.active());
+				throw failure;
+			}
+			finalResponseMilliseconds = (System.nanoTime() - burstStartedAt) / 1_000_000.0;
+
+			// Final content must publish while obsolete operations
+			// are still held and their PDF sessions remain owned
+			// by their original background renderers.
+			assertEquals(heldWorkers, pdfGate.heldCount());
+			assertEquals(heldWorkers, sqliteGate.heldCount());
+			assertEquals(finalQuestionId, results.getSelectionModel().getSelectedItem().question().getId());
+			assertEquals(descriptor, output.getItems().getFirst().currentNode());
+			assertTrue(output.getItems().getFirst().excluded());
+			System.out.printf("Issue 28 burst | changes=%d | " + "dispatch=%.3f ms | final=%.3f ms%n", selectionChanges,
+					burstDispatchMilliseconds, finalResponseMilliseconds);
+		} finally {
+
+			// Never strand virtual threads or their PDF sessions,
+			// including when an assertion or timeout fails.
+			pdfGate.release();
+			sqliteGate.release();
+		}
+		WaitForAsyncUtils.waitFor(30, TimeUnit.SECONDS,
+				() -> previewProbe.active() == 0 && applicabilityProbe.active() == 0
+						&& previewProbe.completed() >= heldWorkers + 1
+						&& applicabilityProbe.completed() >= heldWorkers + 1);
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// The now-completed obsolete workers must not publish stale
+		// images or restore obsolete Include/Exclude state.
+		assertEquals(finalQuestionId, results.getSelectionModel().getSelectedItem().question().getId());
+		assertTrue(preview.getImage() != null && preview.getImage().getWidth() > 700.0);
+		assertEquals(1, output.getItems().size());
+		assertEquals(descriptor, output.getItems().getFirst().currentNode());
+		assertTrue(output.getItems().getFirst().excluded());
+		assertEquals(previewProbe.started(), previewProbe.completed());
+		assertEquals(applicabilityProbe.started(), applicabilityProbe.completed());
+		assertTrue(previewProbe.superseded() >= heldWorkers);
+		assertTrue(applicabilityProbe.superseded() >= heldWorkers);
+		System.out.printf(
+				"Burst PDF | started=%d completed=%d superseded=%d " + "peakConcurrent=%d actualRender=%.3f ms "
+						+ "supersededElapsed=%.3f ms%n",
+				previewProbe.started(), previewProbe.completed(), previewProbe.superseded(),
+				previewProbe.peakConcurrent(), actualPdfNanos.get() / 1_000_000.0,
+				previewProbe.supersededMilliseconds());
+		System.out.printf(
+				"Burst SQLite | started=%d completed=%d superseded=%d " + "peakConcurrent=%d actualRetrieval=%.3f ms "
+						+ "supersededElapsed=%.3f ms%n",
+				applicabilityProbe.started(), applicabilityProbe.completed(), applicabilityProbe.superseded(),
+				applicabilityProbe.peakConcurrent(), actualSqliteNanos.get() / 1_000_000.0,
+				applicabilityProbe.supersededMilliseconds());
+		System.out.printf("Burst sampled heap high-water: %.2f MiB%n",
+				Math.max(previewProbe.sampledHeapBytes(), applicabilityProbe.sampledHeapBytes()) / 1048576.0);
+		System.out.println("Burst performance CSV: " + performanceCsv);
 	}
 
 	@Test
@@ -399,6 +636,60 @@ public class QuestionSearchPaneTest {
 		WaitForAsyncUtils.waitForFxEvents();
 		assertTrue(resultsList.getItems().isEmpty());
 		assertEquals("", statusLabel.getText());
+	}
+
+	@Test
+	public void disposingWithPendingPreviewDoesNotStartRendering(FxRobot robot) throws Exception {
+		Path pdfRoot = Files.createTempDirectory("question-search-pending-dispose-");
+		createOnePagePdf(pdfRoot.resolve("questions.pdf"));
+		SourceDocument document = new SourceDocument(800, "questions.pdf");
+		ExamBooklet booklet = new ExamBooklet(801, historicalQuestion.getExam(), "Pending preview booklet", document);
+		QuestionRegion region = new QuestionRegion(booklet, 1, 0.10, 0.10, 0.50, 0.20);
+		Question question = new Question(802, booklet, "D1", "", 2, List.of(region), currentDescriptor, false);
+		AtomicInteger renderCount = new AtomicInteger();
+		QuestionExtractor extractor = new QuestionExtractor() {
+
+			@Override
+			public BufferedImage extractRegion(PdfSession session, QuestionRegion requestedRegion) throws IOException {
+				renderCount.incrementAndGet();
+				return new BufferedImage(22, 22, BufferedImage.TYPE_INT_RGB);
+			}
+		};
+		QuestionPreviewService measuredPreviewService = new QuestionPreviewService(new PdfStore(pdfRoot), extractor);
+		QuestionRetrievalRepository repository = currentNodes -> currentNodes.contains(currentDescriptor)
+				? List.of(new QuestionApplicabilityMatch(question, currentDescriptor))
+				: List.of();
+		QuestionRetrievalService service = new QuestionRetrievalService(repository,
+				new CurriculumSearchNodeExpansionService(curriculumRepository));
+		QuestionSearchPane[] replacement = new QuestionSearchPane[1];
+		robot.interact(() -> {
+			QuestionSearchPane previous = (QuestionSearchPane) stage.getScene().getRoot();
+			previous.dispose();
+			replacement[0] = new QuestionSearchPane(chemistry, curriculumRepository, service, () -> List.of(question),
+					measuredPreviewService, outputApplicabilityRepository);
+			stage.setScene(new Scene(replacement[0], 700, 600));
+		});
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		ImageView preview = robot.lookup("#question-search-preview").queryAs(ImageView.class);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> results.getItems().size() == 1);
+		CountDownLatch verificationDelay = new CountDownLatch(1);
+		robot.interact(() -> {
+
+			// Selection schedules a preview, then immediate disposal
+			// must cancel that pending request.
+			results.getSelectionModel().selectFirst();
+			replacement[0].dispose();
+
+			// Wait using the JavaFX clock so the cancelled delay
+			// would have expired if it were still active.
+			PauseTransition verification = new PauseTransition(Duration.millis(200));
+			verification.setOnFinished(_ -> verificationDelay.countDown());
+			verification.play();
+		});
+		assertTrue(verificationDelay.await(5, TimeUnit.SECONDS));
+		assertEquals(0, renderCount.get());
+		assertEquals(null, preview.getImage());
+		assertTrue(results.getItems().isEmpty());
 	}
 
 	@Test
@@ -760,6 +1051,125 @@ public class QuestionSearchPaneTest {
 	}
 
 	@Test
+	public void prototypeDebounceAvoidsObsoletePdfRenders() throws Exception {
+		final int selectionChanges = 20;
+		final int debounceMilliseconds = 40;
+		Path directory = Files.createTempDirectory("question-search-debounce-");
+		Path pdfPath = createDensePdf(directory.resolve("questions.pdf"));
+		QuestionExtractor extractor = new QuestionExtractor();
+		List<QuestionRegion> regions = new ArrayList<>();
+		ExamBooklet booklet = historicalQuestion.getBooklet();
+		for (int index = 0; index <= selectionChanges; index++) {
+			double x = 0.10 + index * 0.01;
+			double width = index == selectionChanges ? 0.65 : 0.40;
+			regions.add(new QuestionRegion(booklet, 1, x, 0.10, width, 0.20));
+		}
+
+		// Measure an eager strategy that renders every requested
+		// Question using the same real PDF and region geometry.
+		long eagerRenderNanos = 0;
+		for (QuestionRegion region : regions) {
+			try (PdfSession session = PdfSession.open(pdfPath)) {
+				long startedAt = System.nanoTime();
+				BufferedImage image = extractor.extractRegion(session, region);
+				assertTrue(image.getWidth() > 0);
+				eagerRenderNanos += System.nanoTime() - startedAt;
+			}
+		}
+		CountDownLatch firstRendered = new CountDownLatch(1);
+		CountDownLatch releaseFirst = new CountDownLatch(1);
+		CountDownLatch finalPublished = new CountDownLatch(1);
+		AtomicInteger actualRenders = new AtomicInteger();
+		AtomicInteger publishedWidth = new AtomicInteger();
+		AtomicLong actualRenderNanos = new AtomicLong();
+		AtomicLong publishedQuestionId = new AtomicLong(-1);
+		AtomicReference<Throwable> workerFailure = new AtomicReference<>();
+		long firstQuestionId = 1000;
+		long finalQuestionId = firstQuestionId + selectionChanges;
+		try (LatestPreviewDebouncer scheduler = new LatestPreviewDebouncer(debounceMilliseconds)) {
+
+			// Allow the first Question to begin real PDF work.
+			// Hold its result afterwards, as in Batch 03.
+			scheduler.select(firstQuestionId, () -> {
+				try (PdfSession session = PdfSession.open(pdfPath)) {
+					long startedAt = System.nanoTime();
+					BufferedImage image = extractor.extractRegion(session, regions.getFirst());
+					actualRenderNanos.addAndGet(System.nanoTime() - startedAt);
+					actualRenders.incrementAndGet();
+					firstRendered.countDown();
+					if (!releaseFirst.await(15, TimeUnit.SECONDS)) {
+						throw new IllegalStateException("First PDF release timed out");
+					}
+					if (scheduler.isCurrent(firstQuestionId)) {
+						publishedQuestionId.set(firstQuestionId);
+						publishedWidth.set(image.getWidth());
+					}
+				} catch (Exception | Error failure) {
+					workerFailure.compareAndSet(null, failure);
+				}
+			});
+			assertTrue(firstRendered.await(15, TimeUnit.SECONDS));
+			long burstStartedAt = System.nanoTime();
+
+			// Rapidly replace pending work. These 20 requests
+			// have the same order and PDF regions as Batch 03,
+			// but no TestFX inter-selection delay.
+			for (int index = 1; index <= selectionChanges; index++) {
+				final int capturedIndex = index;
+				final long questionId = firstQuestionId + index;
+				final QuestionRegion region = regions.get(index);
+				scheduler.select(questionId, () -> {
+					try (PdfSession session = PdfSession.open(pdfPath)) {
+						long startedAt = System.nanoTime();
+						BufferedImage image = extractor.extractRegion(session, region);
+						actualRenderNanos.addAndGet(System.nanoTime() - startedAt);
+						actualRenders.incrementAndGet();
+						if (scheduler.isCurrent(questionId)) {
+							publishedQuestionId.set(questionId);
+							publishedWidth.set(image.getWidth());
+							if (capturedIndex == selectionChanges) {
+								finalPublished.countDown();
+							}
+						}
+					} catch (Exception | Error failure) {
+						workerFailure.compareAndSet(null, failure);
+					}
+				});
+			}
+
+			// The last preview must be available without requiring
+			// the first, already-rendered worker to finish.
+			try {
+				assertTrue(finalPublished.await(15, TimeUnit.SECONDS), "Final preview did not complete");
+			} finally {
+				releaseFirst.countDown();
+			}
+			double latestResponseMilliseconds = (System.nanoTime() - burstStartedAt) / 1_000_000.0;
+			WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> scheduler.active() == 0);
+			assertEquals(null, workerFailure.get());
+			assertEquals(finalQuestionId, publishedQuestionId.get());
+			assertTrue(publishedWidth.get() > 700);
+			assertEquals(actualRenders.get(), scheduler.completed());
+
+			// At least 16 of the 20 pending changes should be
+			// eliminated under this rapid burst.
+			assertTrue(scheduler.skipped() >= 16);
+
+			// The held initial render and latest render may overlap,
+			// but intermediate selections should mostly be skipped.
+			assertTrue(actualRenders.get() <= 5);
+			System.out.printf("Issue 28 coalescing experiment | changes=%d " + "delay=%d ms | final=%.3f ms%n",
+					selectionChanges, debounceMilliseconds, latestResponseMilliseconds);
+			System.out.printf("Eager PDF | renders=%d | " + "aggregateRender=%.3f ms%n", regions.size(),
+					eagerRenderNanos / 1_000_000.0);
+			System.out.printf(
+					"Coalesced PDF | renders=%d | skipped=%d " + "peakConcurrent=%d | " + "aggregateRender=%.3f ms%n",
+					actualRenders.get(), scheduler.skipped(), scheduler.peakConcurrent(),
+					actualRenderNanos.get() / 1_000_000.0);
+		}
+	}
+
+	@Test
 	public void questionPreviewFitsAvailableColumnWidth(FxRobot robot) throws TimeoutException {
 		ScrollPane previewPane = robot.lookup("#question-search-preview-scroll").queryAs(ScrollPane.class);
 		ImageView preview = robot.lookup("#question-search-preview").queryAs(ImageView.class);
@@ -773,6 +1183,93 @@ public class QuestionSearchPaneTest {
 		// requiring horizontal scrolling.
 		assertEquals(ScrollPane.ScrollBarPolicy.NEVER, previewPane.getHbarPolicy());
 		assertTrue(preview.isPreserveRatio());
+	}
+
+	@Test
+	public void rapidPreviewSelectionsCoalescePendingRenderWork(FxRobot robot) throws Exception {
+		final int selectionChanges = 20;
+		final long finalQuestionId = 900 + selectionChanges;
+		Path pdfRoot = Files.createTempDirectory("question-search-production-coalescing-");
+		createOnePagePdf(pdfRoot.resolve("questions.pdf"));
+		SourceDocument document = new SourceDocument(898, "questions.pdf");
+		ExamBooklet booklet = new ExamBooklet(899, historicalQuestion.getExam(), "Coalescing booklet", document);
+		List<Question> questions = new ArrayList<>();
+		Map<QuestionRegion, Long> questionIdsByRegion = new HashMap<>();
+		for (int index = 0; index <= selectionChanges; index++) {
+			long questionId = 900 + index;
+			QuestionRegion region = new QuestionRegion(booklet, 1, 0.10 + index * 0.01, 0.10, 0.50, 0.20);
+			Question question = new Question(questionId, booklet, "C" + index, "", 2, List.of(region),
+					currentDescriptor, false);
+			questions.add(question);
+			questionIdsByRegion.put(region, questionId);
+		}
+		List<Question> sourceQuestions = List.copyOf(questions);
+		AtomicInteger renderCount = new AtomicInteger();
+		QuestionExtractor extractor = new QuestionExtractor() {
+
+			@Override
+			public BufferedImage extractRegion(PdfSession session, QuestionRegion region) throws IOException {
+				Long questionId = questionIdsByRegion.get(region);
+				if (questionId == null) {
+					throw new IOException("Unknown coalescing test region");
+				}
+				renderCount.incrementAndGet();
+
+				// The final preview has a distinguishable width.
+				return new BufferedImage(questionId == finalQuestionId ? 22 : 11, 22, BufferedImage.TYPE_INT_RGB);
+			}
+		};
+		QuestionPreviewService measuredPreviewService = new QuestionPreviewService(new PdfStore(pdfRoot), extractor);
+		QuestionRetrievalRepository repository = currentNodes -> {
+			if (!currentNodes.contains(currentDescriptor)) {
+				return List.of();
+			}
+			return sourceQuestions.stream().map(question -> new QuestionApplicabilityMatch(question, currentDescriptor))
+					.toList();
+		};
+		QuestionRetrievalService service = new QuestionRetrievalService(repository,
+				new CurriculumSearchNodeExpansionService(curriculumRepository));
+		outputApplicabilityRepository.setExcluded(sourceQuestions.getLast(), currentDescriptor, true);
+		robot.interact(() -> {
+			QuestionSearchPane previous = (QuestionSearchPane) stage.getScene().getRoot();
+			previous.dispose();
+			QuestionSearchPane pane = new QuestionSearchPane(chemistry, curriculumRepository, service,
+					() -> sourceQuestions, measuredPreviewService, outputApplicabilityRepository);
+			stage.setScene(new Scene(pane, 700, 600));
+		});
+		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		ListView<QuestionOutputApplicabilityRow> output = robot.lookup("#question-search-output-applicability")
+				.queryListView();
+		ImageView preview = robot.lookup("#question-search-preview").queryAs(ImageView.class);
+		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> results.getItems().size() == selectionChanges + 1);
+		long startedAt = System.nanoTime();
+
+		// Dispatch every selection within a single JavaFX turn.
+		// Only the final pending preview should reach PDF rendering.
+		robot.interact(() -> {
+			for (Question question : sourceQuestions) {
+				QuestionSearchResult result = results.getItems().stream()
+						.filter(candidate -> candidate.question().getId() == question.getId()).findFirst()
+						.orElseThrow();
+				results.getSelectionModel().select(result);
+			}
+		});
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> results.getSelectionModel().getSelectedItem() != null
+						&& results.getSelectionModel().getSelectedItem().question().getId() == finalQuestionId
+						&& preview.getImage() != null && preview.getImage().getWidth() == 22.0
+						&& output.getItems().size() == 1 && output.getItems().getFirst().excluded());
+		double responseMilliseconds = (System.nanoTime() - startedAt) / 1_000_000.0;
+		assertEquals(1, renderCount.get());
+		assertEquals(finalQuestionId, results.getSelectionModel().getSelectedItem().question().getId());
+		assertEquals(22.0, preview.getImage().getWidth());
+		assertEquals(currentDescriptor, output.getItems().getFirst().currentNode());
+		assertTrue(output.getItems().getFirst().excluded());
+		System.out.printf(
+				"Issue 28 production coalescing | " + "changes=%d | PDF renders=%d | " + "avoided=%d | final=%.3f ms%n",
+				selectionChanges, renderCount.get(), selectionChanges + 1 - renderCount.get(), responseMilliseconds);
 	}
 
 	@Test
@@ -1732,6 +2229,30 @@ public class QuestionSearchPaneTest {
 		assertEquals(null, preview.getImage());
 	}
 
+	private Path createDensePdf(Path path) throws IOException {
+		try (PDDocument document = new PDDocument()) {
+			PDPage page = new PDPage(PDRectangle.A4);
+			document.addPage(page);
+			try (PDPageContentStream content = new PDPageContentStream(document, page)) {
+				content.setLineWidth(0.4f);
+
+				// Use real vector drawing operations to create a
+				// more demanding PDFBox rendering workload than
+				// the previously empty one-page PDF.
+				for (int row = 0; row < 45; row++) {
+					for (int column = 0; column < 26; column++) {
+						float x = 24 + column * 20;
+						float y = 24 + row * 16;
+						content.addRect(x, y, 12, 8);
+					}
+				}
+				content.stroke();
+			}
+			document.save(path.toFile());
+		}
+		return path;
+	}
+
 	private Path createOnePagePdf(Path path) throws IOException {
 		try (PDDocument document = new PDDocument()) {
 			document.addPage(new PDPage());
@@ -2107,6 +2628,124 @@ public class QuestionSearchPaneTest {
 		private void releaseDelayedRequest() {
 			delayedNode = null;
 			delayRelease.countDown();
+		}
+	}
+
+	private static final class LatestPreviewDebouncer implements AutoCloseable {
+
+		private final AtomicInteger active = new AtomicInteger();
+		private final AtomicInteger completed = new AtomicInteger();
+		private final AtomicLong currentQuestionId = new AtomicLong(-1);
+		private final int delayMilliseconds;
+		private final AtomicInteger peakConcurrent = new AtomicInteger();
+		private final AtomicInteger skipped = new AtomicInteger();
+		private final ScheduledExecutorService timer = Executors
+				.newSingleThreadScheduledExecutor(Thread.ofVirtual().factory());
+		private ScheduledFuture<?> pending;
+
+		private LatestPreviewDebouncer(int delayMilliseconds) {
+			if (delayMilliseconds < 0) {
+				throw new IllegalArgumentException("Delay must not be negative");
+			}
+			this.delayMilliseconds = delayMilliseconds;
+		}
+
+		@Override
+		public void close() {
+			timer.shutdownNow();
+		}
+
+		private int active() {
+			return active.get();
+		}
+
+		private int completed() {
+			return completed.get();
+		}
+
+		private boolean isCurrent(long questionId) {
+			return currentQuestionId.get() == questionId;
+		}
+
+		private int peakConcurrent() {
+			return peakConcurrent.get();
+		}
+
+		private synchronized void select(long questionId, Runnable rendering) {
+			currentQuestionId.set(questionId);
+
+			// Replace a pending request before it starts expensive
+			// PDF work. Never interrupt an already-running renderer.
+			if (pending != null && pending.cancel(false)) {
+				skipped.incrementAndGet();
+			}
+			pending = timer.schedule(() -> {
+				if (!isCurrent(questionId)) {
+					return;
+				}
+				Thread.ofVirtual().name("coalesced-question-preview").start(() -> {
+					if (!isCurrent(questionId)) {
+						return;
+					}
+					int concurrent = active.incrementAndGet();
+					peakConcurrent.accumulateAndGet(concurrent, Math::max);
+					try {
+						rendering.run();
+					} finally {
+						active.decrementAndGet();
+						completed.incrementAndGet();
+					}
+				});
+			}, delayMilliseconds, TimeUnit.MILLISECONDS);
+		}
+
+		private int skipped() {
+			return skipped.get();
+		}
+	}
+
+	private static final class PostWorkGate {
+
+		private final Set<Long> heldQuestionIds;
+		private final CountDownLatch reached;
+		private final CountDownLatch releaseLatch = new CountDownLatch(1);
+
+		private PostWorkGate(Set<Long> heldQuestionIds) {
+			this.heldQuestionIds = Set.copyOf(heldQuestionIds);
+			this.reached = new CountDownLatch(heldQuestionIds.size());
+		}
+
+		private void awaitAfterWork(long questionId) {
+			if (!heldQuestionIds.contains(questionId)) {
+				return;
+			}
+
+			// This signal occurs only after the actual PDF or
+			// SQLite work has finished.
+			reached.countDown();
+			boolean released = false;
+			while (!released) {
+				try {
+					releaseLatch.await();
+					released = true;
+				} catch (InterruptedException ignored) {
+
+					// Preserve the already-executing stale-worker
+					// scenario without interrupting PDFBox or SQLite.
+				}
+			}
+		}
+
+		private int heldCount() {
+			return heldQuestionIds.size() - (int) reached.getCount();
+		}
+
+		private void release() {
+			releaseLatch.countDown();
+		}
+
+		private long remaining() {
+			return reached.getCount();
 		}
 	}
 

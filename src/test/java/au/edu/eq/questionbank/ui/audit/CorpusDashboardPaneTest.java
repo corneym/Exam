@@ -1454,7 +1454,9 @@ class CorpusDashboardPaneTest {
 
 	@Test
 	void questionWorkColoursIncludeMissingMcqExplanations(FxRobot robot) {
+		@SuppressWarnings("unchecked")
 		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		@SuppressWarnings("unchecked")
 		TableView<QuestionCorpusWorkItem> questions = robot.lookup("#corpus-dashboard-question-work")
 				.queryAs(TableView.class);
 		Button showAll = robot.lookup("#corpus-dashboard-summary-total").queryButton();

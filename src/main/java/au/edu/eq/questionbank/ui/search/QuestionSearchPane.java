@@ -24,6 +24,7 @@ import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
 import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalResult;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
+import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
 import javafx.beans.property.BooleanProperty;
@@ -50,6 +51,7 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
+import javafx.util.Duration;
 
 /**
  * Curriculum-aware question search pane.
@@ -75,6 +77,7 @@ public class QuestionSearchPane extends BorderPane {
 	private static final int SELECTOR_ROW_GAP = 6;
 	private static final double COLUMN_DIVIDER_POSITION = 0.35;
 	private static final double LEFT_CONTENT_DIVIDER_POSITION = 0.52;
+	private static final double PREVIEW_DELAY_MILLIS = 40;
 	private final CurriculumRepository curriculumRepository;
 	private final QuestionRetrievalService retrievalService;
 	private final Label syllabusValue = new Label();
@@ -89,6 +92,7 @@ public class QuestionSearchPane extends BorderPane {
 	private final ComboBox<CurriculumNode> selectedSubtopicBox = new ComboBox<>();
 	private final ComboBox<CurriculumNode> selectedDescriptorBox = new ComboBox<>();
 	private final GridPane selectedClassificationPane = new GridPane();
+	private final PauseTransition previewDelay = new PauseTransition(Duration.millis(PREVIEW_DELAY_MILLIS));
 
 	// Search presentation uses its own result type so current-curriculum matches
 	// and future all-bank results can coexist without weakening retrieval
@@ -412,14 +416,21 @@ public class QuestionSearchPane extends BorderPane {
 
 	private void cancelActivePreview() {
 		previewGeneration++;
+
+		// Discard any preview that has not yet entered a worker.
+		// Clear the handler so it does not retain an obsolete Question.
+		previewDelay.stop();
+		previewDelay.setOnFinished(null);
 		if (activePreviewTask != null) {
+
+			// Do not interrupt an already-running PDFBox operation.
 			activePreviewTask.cancel(false);
 			activePreviewTask = null;
 		}
 		if (activePreviewOperation != null) {
 
-			// A superseded preview must be recorded as unsuccessful.
-			// Its background renderer may nevertheless finish later.
+			// Superseded requests, including those cancelled before
+			// rendering began, are unsuccessful diagnostic operations.
 			activePreviewOperation.failed();
 			activePreviewOperation.close();
 			activePreviewOperation = null;
@@ -2063,23 +2074,18 @@ public class QuestionSearchPane extends BorderPane {
 		startBackgroundTask("question-output-applicability-save", task);
 	}
 
-	private void startQuestionPreview(Question question) {
-		if (disposed) {
+	private void startPreviewRendering(Question question, long generation, PerformanceOperation operation) {
+
+		// The timer may have been invalidated by a newer selection
+		// or disposal. Never start a worker for that request.
+		if (disposed || generation != previewGeneration || activePreviewOperation != operation) {
 			return;
 		}
-		if (question.getRegions().isEmpty()) {
-			previewStatusLabel.setText("No stored question image.");
-			return;
-		}
-		long generation = previewGeneration;
-		PerformanceOperation operation = performanceRecorder.start("search.preview.load");
-		activePreviewOperation = operation;
 		try {
-			previewStatusLabel.setText("Loading preview...");
 			Task<Optional<BufferedImage>> task = new BackgroundTask<>(() -> {
 
-				// Measure rendering separately from the JavaFX
-				// publication phase.
+				// Measure actual rendering independently of
+				// the preceding coalescing delay.
 				try (PerformanceOperation rendering = performanceRecorder.start("search.preview.render",
 						operation.id())) {
 					try {
@@ -2098,12 +2104,47 @@ public class QuestionSearchPane extends BorderPane {
 			startBackgroundTask("question-preview", task);
 		} catch (RuntimeException | Error failure) {
 
-			// A failure before the Task can start must also close
-			// the outer timing operation.
+			// Fail the enclosing operation when worker creation
+			// or launch fails before normal Task completion.
 			activePreviewTask = null;
 			activePreviewOperation = null;
 			operation.failed();
 			operation.close();
+			throw failure;
+		}
+	}
+
+	private void startQuestionPreview(Question question) {
+		if (disposed) {
+			return;
+		}
+		if (question.getRegions().isEmpty()) {
+			previewStatusLabel.setText("No stored question image.");
+			return;
+		}
+		long generation = previewGeneration;
+
+		// Start the end-to-end measurement at selection time.
+		// Cancelled pending previews will be recorded as failed
+		// loads without a corresponding rendering operation.
+		PerformanceOperation operation = performanceRecorder.start("search.preview.load");
+		activePreviewOperation = operation;
+		previewStatusLabel.setText("Loading preview...");
+		try {
+			previewDelay.setOnFinished(_ -> {
+
+				// Release the handler's reference to the Question
+				// before handing the request to its worker.
+				previewDelay.setOnFinished(null);
+				startPreviewRendering(question, generation, operation);
+			});
+
+			// Restart the short delay for the latest selection.
+			// Earlier pending preview requests have already been
+			// cancelled by showResultDetails().
+			previewDelay.playFromStart();
+		} catch (RuntimeException | Error failure) {
+			cancelActivePreview();
 			throw failure;
 		}
 	}
