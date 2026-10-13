@@ -35,6 +35,7 @@ import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteSharedQuestionContextRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteSourceQuestionRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.audit.QuestionCorpusWorkItem;
 import au.edu.eq.questionbank.ui.correction.LegacyQuestionSplitDialog;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
@@ -51,6 +52,7 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
+import javafx.scene.image.ImageView;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 
@@ -475,6 +477,131 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 					&& question.getSharedContext().getId() == saved.getId();
 		}));
 		closeDialog(robot, "Search Questions");
+	}
+
+	@Test
+	void dashboardInspectionRefreshesCorrectedSharedContext(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteQuestionRepository questions = new SqliteQuestionRepository(database);
+		SqliteSourceQuestionRepository sources = new SqliteSourceQuestionRepository(database);
+		SqliteSharedQuestionContextRepository contexts = new SqliteSharedQuestionContextRepository(database);
+		SourceQuestion source = sources.updateSharedContextStatus(sources.save(booklet, "78"),
+				SharedContextStatus.NONE);
+		Question partA = questions.save(booklet, "78a", "", 2,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.30, 0.80, 0.12)), classification, false, source, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		Question partB = questions.save(booklet, "78b", "", 3,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.50, 0.80, 0.12)), classification, false, source, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		Question partC = questions.save(booklet, "78c", "", 4,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.70, 0.80, 0.12)), classification, false, source, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		SharedQuestionContext existing = contexts.save(booklet, "Question 78 shared context",
+				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.12)));
+
+		// Initialise Dashboard from authoritative persistence.
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
+			return null;
+		}).get();
+
+		// The pre-correction Dashboard must actually contain
+		// the three persisted Questions without Shared Context.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
+			Node node = primaryStage.getScene().getRoot().lookup("#corpus-dashboard-question-work");
+			if (!(node instanceof TableView<?> table) || table.getItems().size() != 3) {
+				return false;
+			}
+			return table.getItems().stream()
+					.allMatch(item -> item instanceof QuestionCorpusWorkItem work
+							&& work.question().getSourceQuestion() != null
+							&& work.question().getSourceQuestion().getId() == source.getId()
+							&& !work.question().hasSharedContext());
+		}));
+
+		// Enter Search through Dashboard rather than through
+		// the ordinary Questions menu.
+		Button inspect = lookup(robot, "#corpus-dashboard-inspect-exam-questions", Button.class);
+		assertFalse(inspect.isDisabled());
+		fireControlLater(inspect);
+		waitForDialogShowing(robot, "Search Questions");
+		selectSearchResult(robot, partB.getId());
+		ImageView preview = lookupInShowingDialog(robot, "Search Questions", "#question-search-preview",
+				ImageView.class);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> preview.getImage() != null));
+		double[] originalHeight = new double[1];
+		robot.interact(() -> originalHeight[0] = preview.getImage().getHeight());
+
+		// Request correction through the actual Search action.
+		Button edit = lookupInShowingDialog(robot, "Search Questions", "#question-search-recapture-shared-context",
+				Button.class);
+		assertFalse(edit.isDisabled());
+		fireControlLater(edit);
+		waitForDialogShowing(robot, "Correct Shared Context");
+		VBox affected = lookupInShowingDialog(robot, "Correct Shared Context", "#shared-context-correction-parts",
+				VBox.class);
+		assertEquals(3, affected.getChildren().size());
+		RadioButton reuse = lookupInShowingDialog(robot, "Correct Shared Context", "#shared-context-correction-reuse",
+				RadioButton.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<SharedQuestionContext> available = lookupInShowingDialog(robot, "Correct Shared Context",
+				"#shared-context-correction-existing-context", ComboBox.class);
+		robot.interact(() -> {
+			reuse.fire();
+			available.setValue(existing);
+		});
+		Button confirm = lookupInShowingDialog(robot, "Correct Shared Context", "#shared-context-correction-continue",
+				Button.class);
+		assertFalse(confirm.isDisabled());
+		fireControlLater(confirm);
+		waitForDialogShowing(robot, "Search Questions");
+
+		// The resumed Search must publish all three corrected
+		// Question objects from persistence, not stale results.
+		DialogPane searchDialog = showingDialogPane(robot, "Search Questions");
+		@SuppressWarnings("unchecked")
+		ListView<Object> results = (ListView<Object>) searchDialog.lookup("#question-search-results");
+		WaitForAsyncUtils
+				.waitFor(10, TimeUnit.SECONDS,
+						() -> evaluateOnFx(robot, () -> List.of(partA, partB, partC).stream()
+								.allMatch(original -> results.getItems().stream().map(this::searchResultQuestion)
+										.anyMatch(question -> question.getId() == original.getId()
+												&& question.hasSharedContext()
+												&& question.getSharedContext().getId() == existing.getId()))));
+
+		// Select a different result and return to part B,
+		// ensuring the preview is rendered from refreshed state.
+		selectSearchResult(robot, partA.getId());
+		selectSearchResult(robot, partB.getId());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot,
+				() -> preview.getImage() != null && preview.getImage().getHeight() > originalHeight[0]));
+		closeDialog(robot, "Search Questions");
+
+		// The successful correction must also refresh the
+		// Dashboard's displayed work items asynchronously.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
+			Node node = primaryStage.getScene().getRoot().lookup("#corpus-dashboard-question-work");
+			if (!(node instanceof TableView<?> table) || table.getItems().size() != 3) {
+				return false;
+			}
+			return table.getItems().stream().allMatch(item -> item instanceof QuestionCorpusWorkItem work
+					&& work.question().hasSharedContext()
+					&& work.question().getSourceQuestion().getId() == source.getId()
+					&& work.question().getSourceQuestion().getSharedContextStatus() == SharedContextStatus.PRESENT
+					&& work.question().getSharedContext().getId() == existing.getId()
+					&& work.status().sharedContextResolved());
+		}));
+
+		// The Dashboard still reports three Questions.
+		Button total = lookup(robot, "#corpus-dashboard-summary-total", Button.class);
+		assertEquals("3 Questions", total.getText());
+
+		// Reuse must not duplicate a previously saved context.
+		assertEquals(1, contexts.findByBooklet(booklet).size());
 	}
 
 	@Test
