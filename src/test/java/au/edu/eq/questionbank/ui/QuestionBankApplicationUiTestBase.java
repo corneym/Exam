@@ -45,6 +45,7 @@ import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import au.edu.eq.questionbank.ui.pdf.SelectedPdf;
 import javafx.application.Platform;
 import javafx.event.Event;
+import javafx.event.EventType;
 import javafx.scene.Node;
 import javafx.scene.control.ButtonBase;
 import javafx.scene.control.ButtonType;
@@ -213,6 +214,12 @@ abstract class QuestionBankApplicationUiTestBase {
 		WaitForAsyncUtils.waitForFxEvents();
 	}
 
+	static void fireMouseEvent(ImageView pageView, EventType<MouseEvent> eventType, double x, double y,
+			boolean primaryButtonDown) {
+		Event.fireEvent(pageView, new MouseEvent(eventType, x, y, x, y, MouseButton.PRIMARY, 1, false, false, false,
+				false, primaryButtonDown, false, false, false, false, false, null));
+	}
+
 	static Object invoke(Object owner, String methodName, Class<?>[] parameterTypes, Object... arguments)
 			throws Exception {
 		Method method = owner.getClass().getDeclaredMethod(methodName, parameterTypes);
@@ -331,12 +338,6 @@ abstract class QuestionBankApplicationUiTestBase {
 			// low-level TestFX query failure.
 			throw new AssertionError("Timed out waiting for dialog: " + dialogTitle, exception);
 		}
-	}
-
-	private static void fireMouseEvent(ImageView pageView, javafx.event.EventType<MouseEvent> eventType, double x,
-			double y, boolean primaryButtonDown) {
-		Event.fireEvent(pageView, new MouseEvent(eventType, x, y, x, y, MouseButton.PRIMARY, 1, false, false, false,
-				false, primaryButtonDown, false, false, false, false, false, null));
 	}
 
 	AnswerCapturePane answerCapturePane() {
