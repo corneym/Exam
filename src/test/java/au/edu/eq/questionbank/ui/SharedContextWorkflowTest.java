@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.sql.Connection;
+import java.sql.Statement;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -475,6 +477,122 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 			return question.getId() == partC.getId() && question.hasSharedContext()
 					&& question.getSharedContext().getId() == saved.getId();
 		}));
+		closeDialog(robot, "Search Questions");
+	}
+
+	@Test
+	void failedMissingContextSaveRetainsRegionsAndCanBeRetried(FxRobot robot) throws Exception {
+
+		prepareExamAndClassification(robot);
+
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteQuestionRepository questions = new SqliteQuestionRepository(database);
+		SqliteSourceQuestionRepository sources = new SqliteSourceQuestionRepository(database);
+		SqliteSharedQuestionContextRepository contexts = new SqliteSharedQuestionContextRepository(database);
+
+		SourceQuestion source = sources.save(booklet, "75");
+		sources.updateSharedContextStatus(source, SharedContextStatus.NONE);
+
+		Question partA = questions.save(booklet, "75a", "", 2,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.30, 0.70, 0.10)), classification, false, source, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+
+		Question partB = questions.save(booklet, "75b", "", 3,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.50, 0.70, 0.10)), classification, false, source, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+
+		Platform.runLater(() -> {
+			try {
+				invoke(application, "showQuestionSearch", new Class<?>[] { Stage.class, ApplicationConfig.class },
+						primaryStage, applicationConfig);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
+
+		waitForDialogShowing(robot, "Search Questions");
+		openMissingSharedContextCaptureFromSearch(robot, partB.getId());
+
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-shared-context-region");
+
+		assertEquals("Regions: 1", lookup(robot, "#shared-context-region-count", Label.class).getText());
+
+		// Force the final source-status update to fail after
+		// context creation and Question linking are attempted.
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					CREATE TRIGGER reject_context_correction
+					BEFORE UPDATE OF shared_context_status
+					ON source_questions
+					WHEN NEW.shared_context_status = 'PRESENT'
+					BEGIN
+					    SELECT RAISE(ABORT,
+					        'Forced context correction failure');
+					END
+					""");
+		}
+
+		fireControlLater(robot, "#save-shared-context");
+
+		// The failure must be reported to the user, not
+		// silently interpreted as a successful save.
+		waitForDialogShowing(robot, "Warning");
+
+		DialogPane warning = showingDialogPane(robot, "Warning");
+		assertEquals("Shared Context could not be saved", warning.getHeaderText());
+
+		Button acknowledge = (Button) warning.lookupButton(ButtonType.OK);
+		fireControl(robot, acknowledge);
+		waitForDialogHidden(robot, "Warning");
+
+		// The transaction must have rolled back completely.
+		assertTrue(contexts.findByBooklet(booklet).isEmpty());
+
+		assertEquals(SharedContextStatus.NONE,
+				sources.findByBookletAndCode(booklet, "75").orElseThrow().getSharedContextStatus());
+
+		assertFalse(questions.findById(partA.getId()).orElseThrow().hasSharedContext());
+		assertFalse(questions.findById(partB.getId()).orElseThrow().hasSharedContext());
+
+		// The user must still have the accepted region and
+		// an active correction workspace after the error.
+		assertTrue(questionCapturePane().isCapturingSharedContext());
+
+		assertEquals("Regions: 1", lookup(robot, "#shared-context-region-count", Label.class).getText());
+
+		assertEquals("Save and Link Context", lookup(robot, "#save-shared-context", Button.class).getText());
+
+		// Remove the simulated database failure and retry
+		// without capturing the PDF rectangle again.
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("DROP TRIGGER reject_context_correction");
+		}
+
+		fireControlLater(robot, "#save-shared-context");
+		waitForDialogShowing(robot, "Search Questions");
+
+		List<SharedQuestionContext> savedContexts = contexts.findByBooklet(booklet);
+
+		assertEquals(1, savedContexts.size());
+		SharedQuestionContext saved = savedContexts.getFirst();
+		assertEquals(1, saved.getRegions().size());
+
+		Question reloadedA = questions.findById(partA.getId()).orElseThrow();
+		Question reloadedB = questions.findById(partB.getId()).orElseThrow();
+
+		assertEquals(saved.getId(), reloadedA.getSharedContext().getId());
+		assertEquals(saved.getId(), reloadedB.getSharedContext().getId());
+
+		assertEquals(SharedContextStatus.PRESENT, reloadedA.getSourceQuestion().getSharedContextStatus());
+
+		assertEquals(partA.getId(), reloadedA.getId());
+		assertEquals(partB.getId(), reloadedB.getId());
+
 		closeDialog(robot, "Search Questions");
 	}
 
