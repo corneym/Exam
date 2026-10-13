@@ -38,6 +38,7 @@ import javafx.application.Platform;
 import javafx.geometry.Bounds;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
@@ -46,6 +47,7 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
+import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 
 @Tag("ui")
@@ -683,6 +685,94 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		WaitForAsyncUtils.waitForFxEvents();
 		assertTrue(contextStatus.isVisible());
 		assertTrue(contextStatus.getText().contains("Using shared context from the previous question"));
+	}
+
+	@Test
+	void retroactiveSharedContextReuseFromSearch(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteQuestionRepository questions = new SqliteQuestionRepository(database);
+		SqliteSourceQuestionRepository sources = new SqliteSourceQuestionRepository(database);
+		SqliteSharedQuestionContextRepository contexts = new SqliteSharedQuestionContextRepository(database);
+		SourceQuestion source = sources.save(booklet, "73");
+		source = sources.updateSharedContextStatus(source, SharedContextStatus.NONE);
+		Question partA = questions.save(booklet, "73a", "", 2,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.30, 0.70, 0.10)), classification, false, source, null);
+		Question partB = questions.save(booklet, "73b", "", 3,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.50, 0.70, 0.10)), classification, false, source, null);
+		Question partC = questions.save(booklet, "73c", "", 4,
+				List.of(new QuestionRegion(booklet, 2, 0.10, 0.30, 0.70, 0.10)), classification, false, source, null);
+		SharedQuestionContext existing = contexts.save(booklet, "Existing Question 73 context",
+				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.70, 0.15)));
+		Platform.runLater(() -> {
+			try {
+				invoke(application, "showQuestionSearch", new Class<?>[] { Stage.class, ApplicationConfig.class },
+						primaryStage, applicationConfig);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
+		waitForDialogShowing(robot, "Search Questions");
+		selectSearchResult(robot, partB.getId());
+		Button edit = lookupInShowingDialog(robot, "Search Questions", "#question-search-recapture-shared-context",
+				Button.class);
+		assertFalse(edit.isDisabled());
+		fireControlLater(edit);
+		waitForDialogShowing(robot, "Correct Shared Context");
+
+		// Review identifies all three persisted parts.
+		VBox affectedParts = lookupInShowingDialog(robot, "Correct Shared Context", "#shared-context-correction-parts",
+				VBox.class);
+		assertEquals(3, affectedParts.getChildren().size());
+
+		// Cancel must leave both the source decision and
+		// every Question relationship untouched.
+		Button cancel = (Button) showingDialogPane(robot, "Correct Shared Context").lookupButton(ButtonType.CANCEL);
+		fireControlLater(cancel);
+		waitForDialogShowing(robot, "Search Questions");
+		assertEquals(SharedContextStatus.NONE,
+				sources.findByBookletAndCode(booklet, "73").orElseThrow().getSharedContextStatus());
+		assertFalse(questions.findById(partA.getId()).orElseThrow().hasSharedContext());
+		assertFalse(questions.findById(partB.getId()).orElseThrow().hasSharedContext());
+		assertFalse(questions.findById(partC.getId()).orElseThrow().hasSharedContext());
+
+		// Reopen correction and explicitly select reuse.
+		selectSearchResult(robot, partC.getId());
+		edit = lookupInShowingDialog(robot, "Search Questions", "#question-search-recapture-shared-context",
+				Button.class);
+		fireControlLater(edit);
+		waitForDialogShowing(robot, "Correct Shared Context");
+		RadioButton reuse = lookupInShowingDialog(robot, "Correct Shared Context", "#shared-context-correction-reuse",
+				RadioButton.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<SharedQuestionContext> contextBox = lookupInShowingDialog(robot, "Correct Shared Context",
+				"#shared-context-correction-existing-context", ComboBox.class);
+		robot.interact(() -> {
+			reuse.fire();
+			contextBox.setValue(existing);
+		});
+		Button confirm = lookupInShowingDialog(robot, "Correct Shared Context", "#shared-context-correction-continue",
+				Button.class);
+		assertFalse(confirm.isDisabled());
+		fireControlLater(confirm);
+
+		// Persistence completes before Search is reopened.
+		waitForDialogShowing(robot, "Search Questions");
+		for (Question original : List.of(partA, partB, partC)) {
+			Question reloaded = questions.findById(original.getId()).orElseThrow();
+			assertEquals(original.getId(), reloaded.getId());
+			assertEquals(original.getMarks(), reloaded.getMarks());
+			assertEquals(existing.getId(), reloaded.getSharedContext().getId());
+			assertEquals(source.getId(), reloaded.getSourceQuestion().getId());
+			assertEquals(SharedContextStatus.PRESENT, reloaded.getSourceQuestion().getSharedContextStatus());
+		}
+
+		// Reuse must not create another context.
+		assertEquals(1, contexts.findByBooklet(booklet).size());
+		closeDialog(robot, "Search Questions");
 	}
 
 	@Test
