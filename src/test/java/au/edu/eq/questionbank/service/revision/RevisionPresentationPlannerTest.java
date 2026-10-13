@@ -39,8 +39,13 @@ import au.edu.eq.questionbank.repository.assessment.LegacyQuestionSplitService.S
 import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
+import au.edu.eq.questionbank.repository.assessment.SqliteSharedContextCorrectionService;
+import au.edu.eq.questionbank.repository.assessment.SqliteSourceQuestionRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.audit.QuestionCorpusAudit;
+import au.edu.eq.questionbank.service.audit.QuestionCorpusProblem;
+import au.edu.eq.questionbank.service.audit.QuestionCorpusStatus;
 
 class RevisionPresentationPlannerTest {
 
@@ -58,6 +63,89 @@ class RevisionPresentationPlannerTest {
 		Question partB = fixture.question(2, "24b", 3, source, secondContext);
 		RevisionCorpus corpus = fixture.corpus(List.of(partA, partB), List.of());
 		assertThrows(IllegalStateException.class, () -> planner.plan(corpus));
+	}
+
+	@Test
+	void correctedSourceQuestionsReachCorpusAuditAndRevisionPlanning() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("corrected-revision-source.db"));
+		database.initialiseSchema();
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
+		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2019", false);
+		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
+		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
+		Descriptor classification = curriculumWriter.insertDescriptor(topic, "1.1.1", "Descriptor 1", 1);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2019,
+				"External Assessment", "Paper 1", "Chemistry/2019/paper1.pdf");
+		SqliteQuestionRepository questions = new SqliteQuestionRepository(database);
+		SqliteSourceQuestionRepository sources = new SqliteSourceQuestionRepository(database);
+		SourceQuestion source = sources.save(booklet, "36");
+		sources.updateSharedContextStatus(source, SharedContextStatus.NONE);
+		Question partA = questions.save(booklet, "36a", "", 2,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.30, 0.80, 0.15)), classification, false, source, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		Question partB = questions.save(booklet, "36b", "", 3,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.50, 0.80, 0.15)), classification, false, source, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		Question partC = questions.save(booklet, "36c", "", 4,
+				List.of(new QuestionRegion(booklet, 2, 0.10, 0.30, 0.80, 0.15)), classification, false, source, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+
+		// The three Questions already exist, with their own
+		// regions and no linked Shared Context.
+		for (Question original : List.of(partA, partB, partC)) {
+			Question before = questions.findById(original.getId()).orElseThrow();
+			assertFalse(before.hasSharedContext());
+			assertEquals(SharedContextStatus.NONE, before.getSourceQuestion().getSharedContextStatus());
+		}
+		SqliteSharedContextCorrectionService correction = new SqliteSharedContextCorrectionService(database);
+		var result = correction.captureNew(partB.getId(), "Question 36 shared context",
+				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.15),
+						new SharedQuestionContextRegion(2, 0.10, 0.10, 0.80, 0.15)));
+		assertEquals(3, result.affectedQuestionIds().size());
+
+		// Reload from persistence rather than testing the
+		// objects originally supplied to the correction.
+		SqliteQuestionRepository reloadedRepository = new SqliteQuestionRepository(database);
+		Question reloadedA = reloadedRepository.findById(partA.getId()).orElseThrow();
+		Question reloadedB = reloadedRepository.findById(partB.getId()).orElseThrow();
+		Question reloadedC = reloadedRepository.findById(partC.getId()).orElseThrow();
+		List<Question> corrected = List.of(reloadedA, reloadedB, reloadedC);
+		for (Question part : corrected) {
+			assertTrue(part.hasSharedContext());
+			assertEquals(SharedContextStatus.PRESENT, part.getSourceQuestion().getSharedContextStatus());
+			assertEquals(result.context().getId(), part.getSharedContext().getId());
+			assertEquals(2, part.getSharedContext().getRegions().size());
+
+			// Dashboard audit must read the corrected
+			// Question without reporting an unresolved context.
+			QuestionCorpusStatus audit = QuestionCorpusAudit.assess(part);
+			assertTrue(audit.questionContentCaptured());
+			assertTrue(audit.sharedContextResolved());
+			assertFalse(audit.hasProblem(QuestionCorpusProblem.UNRESOLVED_SHARED_CONTEXT));
+		}
+
+		// Revision planning must use the reloaded corrected
+		// records, not the earlier Question snapshots.
+		Fixture presentationFixture = new Fixture();
+		RevisionPresentationPlan plan = planner
+				.plan(presentationFixture.corpus(List.of(reloadedC, reloadedA, reloadedB), List.of()));
+		List<RevisionQuestionPresentation> presentations = presentationFixture.presentations(plan,
+				presentationFixture.firstDescriptor);
+		assertEquals(1, presentations.size());
+		RevisionQuestionPresentation presentation = presentations.getFirst();
+		assertTrue(presentation.isMultipart());
+		assertTrue(presentation.shouldRenderSharedContext());
+		assertEquals(9, presentation.getTotalMarks());
+		assertEquals(List.of("36a", "36b", "36c"),
+				presentation.getMembers().stream().map(Question::getQuestionCode).toList());
+		assertEquals(source.getId(), presentation.getSourceQuestion().getId());
+		assertEquals(result.context().getId(), presentation.getSharedContext().getId());
+
+		// The revision presentation references the same
+		// persistent context, not separate copies per part.
+		assertEquals(2, presentation.getSharedContext().getRegions().size());
 	}
 
 	@Test
