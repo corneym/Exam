@@ -606,6 +606,65 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void mixedBookletExplanationActionFollowsSelectedResponseType(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2024, "External Assessment", "Mixed booklet",
+				ExamBookletQuestionFormat.MIXED);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		Question mcq = repository.save(booklet, "1", "", 1,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.50, 0.20)), classification, false, null, null,
+				QuestionResponseType.MULTIPLE_CHOICE);
+		Question written = repository.save(booklet, "2", "", 2,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.35, 0.50, 0.20)), classification, false, null, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+
+		// Register a real Answer PDF and mark it as explanation-capable.
+		Path answerPath = pdfDataRoot.resolve("mixed-answers.pdf");
+		Files.copy(examPdf, answerPath);
+		String relativePath = pdfDataRoot.relativize(answerPath).toString().replace('\\', '/');
+		AnswerFile answerFile = answerWriter.findOrCreateAnswerFile(booklet, "Mixed Answers", relativePath);
+		answerWriter.setContainsAnswerExplanations(answerFile, true);
+		robot.interact(() -> refreshAnswerQuestionsForTest(repository.findAll()));
+		WaitForAsyncUtils.waitForFxEvents();
+		ComboBox<Question> questions = unansweredQuestions(robot);
+		Button explanations = lookup(robot, "#capture-mcq-explanations", Button.class);
+		Button addRegion = lookup(robot, "#add-answer-region", Button.class);
+		Question selectedWritten = questions.getItems().stream().filter(question -> question.getId() == written.getId())
+				.findFirst().orElseThrow();
+		Question selectedMcq = questions.getItems().stream().filter(question -> question.getId() == mcq.getId())
+				.findFirst().orElseThrow();
+
+		// Written response must suppress the MCQ-only action.
+		robot.interact(() -> questions.getSelectionModel().select(selectedWritten));
+		WaitForAsyncUtils.waitForFxEvents();
+		assertFalse(explanations.isVisible());
+		assertFalse(explanations.isManaged());
+
+		// Ordinary written-response region capture must remain available.
+		assertTrue(addRegion.isVisible());
+		assertTrue(addRegion.isManaged());
+
+		// Switching to an eligible MCQ restores the explanation action.
+		robot.interact(() -> questions.getSelectionModel().select(selectedMcq));
+		WaitForAsyncUtils.waitForFxEvents();
+		assertTrue(explanations.isVisible());
+		assertTrue(explanations.isManaged());
+		assertFalse(explanations.isDisabled());
+
+		// Switching back must remove the action without stale state.
+		robot.interact(() -> questions.getSelectionModel().select(selectedWritten));
+		WaitForAsyncUtils.waitForFxEvents();
+		assertFalse(explanations.isVisible());
+		assertFalse(explanations.isManaged());
+		assertTrue(addRegion.isVisible());
+	}
+
+	@Test
 	void multipleChoiceCanSaveChoiceWithOptionalExplanationRegion(FxRobot robot) throws Exception {
 		BookletAnswerFixture fixture = createBookletAnswerFixture(robot);
 		SqliteDatabase database = new SqliteDatabase(databasePath);
