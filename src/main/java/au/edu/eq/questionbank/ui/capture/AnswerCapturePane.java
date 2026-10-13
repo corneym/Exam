@@ -999,6 +999,7 @@ public final class AnswerCapturePane extends VBox {
 		clearMultipleChoiceAnswer();
 		if (question == null) {
 			showNoAnswerQuestion();
+			refreshMcqExplanationActionState();
 			return;
 		}
 		boolean usesAnswerDocument = usesAnswerDocument(question);
@@ -1006,11 +1007,11 @@ public final class AnswerCapturePane extends VBox {
 		restoreAnswerState(question);
 		if (loadDocument && usesAnswerDocument) {
 
-			// Resolve the source from the Question's own booklet rather than carrying
-			// another booklet's AnswerFile into this target.
+			// Resolve the source from this Question's own booklet.
 			loadAssignedAnswerFile(question);
 		}
 		refreshAnswerPresentation(question);
+		refreshMcqExplanationActionState();
 	}
 
 	private void beginAnswerSave() {
@@ -2018,13 +2019,21 @@ public final class AnswerCapturePane extends VBox {
 
 	private void refreshMcqExplanationActionState() {
 		ExamBooklet activeBooklet = activeBookletSupplier.get();
+		Question selectedQuestion = unansweredQuestionField.getValue();
+		boolean bookletSupportsExplanations = activeBookletSupportsMcqExplanations(activeBooklet);
 
-		// The button represents real available work, so expose it only when the active
-		// booklet's persisted AnswerFile explicitly supports MCQ explanations.
-		boolean unavailable = workingSubject == null || mcqExplanationLoadInProgress || mcqExplanationMode
-				|| answerSaveInProgress || editingAnswerQuestion != null
-				|| !activeBookletSupportsMcqExplanations(activeBooklet);
-		captureMcqExplanationsButton.setDisable(unavailable);
+		// A selected Question's response type takes precedence over
+		// the mixed-format booklet and AnswerFile metadata.
+		boolean selectedQuestionEligible = selectedQuestion == null || isMultipleChoiceQuestion(selectedQuestion);
+		boolean available = workingSubject != null && bookletSupportsExplanations && selectedQuestionEligible
+				&& !mcqExplanationLoadInProgress && !mcqExplanationMode && !answerSaveInProgress
+				&& editingAnswerQuestion == null;
+
+		// Keep visibility and layout participation consistent.
+		// No selection retains the booklet-wide correction entry point.
+		setVisibleAndManaged(captureMcqExplanationsButton,
+				bookletSupportsExplanations && selectedQuestionEligible && !mcqExplanationMode);
+		captureMcqExplanationsButton.setDisable(!available);
 	}
 
 	private void refreshSaveButtonState() {
