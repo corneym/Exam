@@ -50,6 +50,7 @@ import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.ImageQuestionContentPart;
+import au.edu.eq.questionbank.model.PdfQuestionContentPart;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
@@ -701,6 +702,90 @@ public class QuestionSearchPaneTest {
 	}
 
 	@Test
+	public void descriptorSaveKeepsTallPreviewAndApplicabilityUsable(FxRobot robot) throws Exception {
+		Path pdfRoot = Files.createTempDirectory("search-tall-save-");
+		createOnePagePdf(pdfRoot.resolve("questions.pdf"));
+		SourceDocument document = new SourceDocument(9810, "questions.pdf");
+		ExamBooklet booklet = new ExamBooklet(9811, historicalQuestion.getExam(), "Tall preview booklet", document);
+		QuestionRegion region = new QuestionRegion(booklet, 1, 0.10, 0.10, 0.70, 0.70);
+		Question original = new Question(9812, booklet, "T1", "", 2, List.of(region), currentSubtopic, false);
+		Question updated = new Question(9812, booklet, "T1", "", 2, List.of(region), currentDescriptor, false);
+		AtomicReference<List<Question>> stored = new AtomicReference<>(List.of(original));
+		QuestionRetrievalRepository repository = nodes -> List
+				.of(new QuestionApplicabilityMatch(stored.get().getFirst(), currentDescriptor),
+						new QuestionApplicabilityMatch(stored.get().getFirst(), noMatchDescriptor))
+				.stream().filter(match -> nodes.contains(match.getCurrentNode())).toList();
+		QuestionRetrievalService retrieval = new QuestionRetrievalService(repository,
+				new CurriculumSearchNodeExpansionService(curriculumRepository));
+		AtomicInteger renderCount = new AtomicInteger();
+		QuestionExtractor extractor = new QuestionExtractor() {
+
+			@Override
+			public BufferedImage extractRegion(PdfSession session, QuestionRegion requested) throws IOException {
+				renderCount.incrementAndGet();
+				return new BufferedImage(500, 2500, BufferedImage.TYPE_INT_RGB);
+			}
+		};
+		QuestionPreviewService service = new QuestionPreviewService(new PdfStore(pdfRoot), extractor);
+		QuestionSearchPane[] pane = new QuestionSearchPane[1];
+		robot.interact(() -> {
+			((QuestionSearchPane) stage.getScene().getRoot()).dispose();
+			pane[0] = new QuestionSearchPane(chemistry, curriculumRepository, retrieval, stored::get, service,
+					outputApplicabilityRepository);
+			pane[0].setClassificationSaveHandler(() -> {
+				assertEquals(currentDescriptor, pane[0].getPendingClassification());
+
+				// Simulate the authoritative persistence change.
+				stored.set(List.of(updated));
+				pane[0].classificationSaved(original.getId());
+				pane[0].refreshAfterEdit(original.getId());
+			});
+			stage.setScene(new Scene(pane[0], 1100, 760));
+		});
+		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		ListView<QuestionOutputApplicabilityRow> output = robot.lookup("#question-search-output-applicability")
+				.queryListView();
+		ComboBox<CurriculumNode> descriptor = robot.lookup("#question-search-selected-descriptor").queryComboBox();
+		Button save = robot.lookup("#question-search-save-classification").queryButton();
+		ImageView preview = robot.lookup("#question-search-preview").queryAs(ImageView.class);
+		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1);
+		robot.interact(() -> results.getSelectionModel().selectFirst());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> preview.getImage() != null && output.getItems().size() == 2 && renderCount.get() == 1);
+		Image originalImage = preview.getImage();
+
+		// Save while the second current-curriculum placement is selected.
+		robot.interact(() -> output.getSelectionModel().select(1));
+		assertEquals(noMatchDescriptor, output.getSelectionModel().getSelectedItem().currentNode());
+		AtomicInteger applicabilityReloads = new AtomicInteger();
+		output.getItems().addListener((ListChangeListener<QuestionOutputApplicabilityRow>) change -> {
+			while (change.next()) {
+				if (change.wasAdded() && change.getAddedSize() == 2) {
+					applicabilityReloads.incrementAndGet();
+				}
+			}
+		});
+		robot.interact(() -> descriptor.setValue(currentDescriptor));
+		assertFalse(save.isDisable());
+		robot.interact(save::fire);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> pane[0].getSelectedQuestion() != null
+						&& pane[0].getSelectedQuestion().getClassification().equals(currentDescriptor)
+						&& applicabilityReloads.get() > 0 && output.getItems().size() == 2
+						&& output.getSelectionModel().getSelectedItem() != null);
+		assertSame(originalImage, preview.getImage());
+		assertEquals(1, renderCount.get());
+		assertEquals(noMatchDescriptor, output.getSelectionModel().getSelectedItem().currentNode());
+
+		// Exercise the same tall-preview layout after classification Save.
+		assertOversizedPreviewLayout(robot);
+		assertSame(originalImage, preview.getImage());
+		assertEquals(1, renderCount.get());
+	}
+
+	@Test
 	public void descriptorSearchDisplaysResultAndProvenance(FxRobot robot) throws TimeoutException {
 		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
 		ComboBox<CurriculumNode> topicBox = robot.lookup("#question-search-topic").queryComboBox();
@@ -1072,6 +1157,64 @@ public class QuestionSearchPaneTest {
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
 				() -> previewStatus.getText().startsWith("Question preview unavailable:"));
 		assertEquals(null, preview.getImage());
+	}
+
+	@Test
+	public void multipartPreviewRetainsContentAndStableSizing(FxRobot robot) throws Exception {
+		Path pdfRoot = Files.createTempDirectory("search-multipart-");
+		createOnePagePdf(pdfRoot.resolve("questions.pdf"));
+		SourceDocument document = new SourceDocument(9820, "questions.pdf");
+		ExamBooklet booklet = new ExamBooklet(9821, historicalQuestion.getExam(), "Multipart booklet", document);
+		QuestionRegion first = new QuestionRegion(booklet, 1, 0.10, 0.10, 0.60, 0.20);
+		QuestionRegion second = new QuestionRegion(booklet, 1, 0.10, 0.40, 0.60, 0.20);
+		BufferedImage captured = new BufferedImage(280, 120, BufferedImage.TYPE_INT_RGB);
+		ByteArrayOutputStream png = new ByteArrayOutputStream();
+		assertTrue(ImageIO.write(captured, "png", png));
+		Question mixed = new Question(9822, booklet, "M1", "", 2, List.of(first, second), historicalDescriptor, false,
+				null, null, QuestionResponseType.UNKNOWN, List.of(new PdfQuestionContentPart(first),
+						new ImageQuestionContentPart(png.toByteArray()), new PdfQuestionContentPart(second)));
+		AtomicInteger renders = new AtomicInteger();
+		QuestionExtractor extractor = new QuestionExtractor() {
+
+			@Override
+			public BufferedImage extractRegion(PdfSession session, QuestionRegion region) throws IOException {
+				renders.incrementAndGet();
+				return new BufferedImage(320, region.equals(first) ? 160 : 80, BufferedImage.TYPE_INT_RGB);
+			}
+		};
+		QuestionPreviewService service = new QuestionPreviewService(new PdfStore(pdfRoot), extractor);
+		openOversizedPreviewFixture(robot, mixed, service);
+		ImageView preview = robot.lookup("#question-search-preview").queryAs(ImageView.class);
+		ScrollPane scroll = robot.lookup("#question-search-preview-scroll").queryAs(ScrollPane.class);
+		ListView<QuestionOutputApplicabilityRow> output = robot.lookup("#question-search-output-applicability")
+				.queryListView();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> preview.getImage() != null
+				&& output.getItems().size() == 2 && scroll.getViewportBounds().getWidth() > 0);
+		Image assembled = preview.getImage();
+
+		// Two PDF fragments and one stored image, in their supplied order.
+		assertEquals(320.0, assembled.getWidth());
+		assertEquals(360.0, assembled.getHeight());
+		assertEquals(2, renders.get());
+		double[][] sizes = { { 1100, 760 }, { 900, 650 }, { 1140, 790 } };
+		for (double[] size : sizes) {
+			robot.interact(() -> {
+				stage.setWidth(size[0]);
+				stage.setHeight(size[1]);
+			});
+			WaitForAsyncUtils.waitForFxEvents();
+			robot.interact(() -> {
+				scroll.applyCss();
+				scroll.layout();
+				assertEquals(scroll.getViewportBounds().getWidth(), preview.getFitWidth(), 1.0);
+				assertTrue(output.getHeight() >= 90.0);
+				assertTrue(preview.isPreserveRatio());
+			});
+		}
+
+		// Layout and window resizing must not reconstruct source content.
+		assertSame(assembled, preview.getImage());
+		assertEquals(2, renders.get());
 	}
 
 	@Test
