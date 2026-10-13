@@ -2259,6 +2259,7 @@ public class QuestionSearchPane extends BorderPane {
 		if (disposed) {
 			return;
 		}
+
 		// The authoritative content includes both PDF regions and stored
 		// clipboard images. A clipboard-only Question has no PDF regions
 		// but still requires a preview.
