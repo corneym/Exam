@@ -9,6 +9,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.function.BiFunction;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
@@ -492,6 +493,61 @@ public final class QuestionCapturePane extends VBox {
 			importedCaptureCompletedHandler = completedHandler;
 		}
 		return activated;
+	}
+
+	/**
+	 * Starts capture of a missing context for an existing multipart SourceQuestion.
+	 * Ordinary Question metadata and content remain read-only throughout the
+	 * correction.
+	 *
+	 * @param question         an existing multipart Question without context
+	 * @param saveHandler      transactional source-wide persistence callback
+	 * @param completedHandler invoked after successful save or cancellation
+	 * @return true when the capture workspace was prepared
+	 */
+	public boolean captureMissingSharedContext(Question question,
+			BiFunction<String, List<SharedQuestionContextRegion>, SharedQuestionContext> saveHandler,
+			Runnable completedHandler) {
+		Objects.requireNonNull(question, "question");
+		Objects.requireNonNull(saveHandler, "saveHandler");
+		Objects.requireNonNull(completedHandler, "completedHandler");
+		if (!question.hasSourceQuestion() || question.hasSharedContext()) {
+			throw new IllegalArgumentException(
+					"Question must have a SourceQuestion " + "but no existing Shared Context");
+		}
+		if (!captureModeChangeAllowed()) {
+			restoreCaptureModeToggle();
+			return false;
+		}
+		if (!importedQuestionActivationHandler.test(question)) {
+			restoreCaptureModeToggle();
+			return false;
+		}
+
+		// The authoritative source PDF is active. This correction
+		// must not enter ordinary Question editing or change its regions.
+		importedQuestion = null;
+		importedCaptureMode = false;
+		editingQuestion = null;
+		questionEditCompletedHandler = () -> {
+		};
+		selectCaptureModeToggle(false);
+		setLegacyCaptureControlsVisible(false);
+		resetQuestionEntry();
+		showSharedContextCorrectionQuestion(question);
+		sharedContextCapturePane.refreshForCurrentBooklet();
+		setSharedContextCorrectionVisible(true);
+		String label = "Question " + question.getSourceQuestion().getSourceQuestionCode() + " shared context";
+		boolean started = sharedContextCapturePane.captureMissingContext(label, saveHandler,
+				() -> finishSharedContextRecapture(completedHandler));
+		if (!started) {
+			setSharedContextCorrectionVisible(false);
+			resetQuestionEntry();
+			showCaptureIdleMode();
+			return false;
+		}
+		saveStatusLabel.setText("Capturing missing Shared Context for Question " + question.getQuestionCode());
+		return true;
 	}
 
 	/**

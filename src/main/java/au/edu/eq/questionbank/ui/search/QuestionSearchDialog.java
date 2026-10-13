@@ -47,7 +47,7 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	private final ButtonType editAnswerButtonType = new ButtonType("Edit Answer", ButtonBar.ButtonData.OTHER);
 	private final ButtonType editMetadataButtonType = new ButtonType("Edit Metadata", ButtonBar.ButtonData.OTHER);
 	private final ButtonType editQuestionButtonType = new ButtonType("Edit Question", ButtonBar.ButtonData.OTHER);
-	private final ButtonType recaptureSharedContextButtonType = new ButtonType("Recapture Shared Context",
+	private final ButtonType recaptureSharedContextButtonType = new ButtonType("Edit Shared Context",
 			ButtonBar.ButtonData.OTHER);
 	private final ButtonType splitQuestionButtonType = new ButtonType("Split Question...", ButtonBar.ButtonData.OTHER);
 	private boolean persistedClassificationChange;
@@ -185,7 +185,11 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 				Bindings.or(searchPane.selectedResultProperty().isNull(), searchPane.classificationDirtyProperty()));
 		recaptureSharedContextButton.disableProperty().bind(Bindings.createBooleanBinding(() -> {
 			Question selected = searchPane.getSelectedQuestion();
-			return searchPane.isClassificationDirty() || selected == null || !selected.hasSharedContext();
+
+			// Existing contexts permit recapture. Multipart parts
+			// without context permit source-wide correction.
+			return searchPane.isClassificationDirty() || selected == null
+					|| (!selected.hasSharedContext() && !selected.hasSourceQuestion());
 		}, searchPane.selectedResultProperty(), searchPane.classificationDirtyProperty()));
 		editAnswerButton.disableProperty().bind(Bindings.createBooleanBinding(() -> {
 			Question selected = searchPane.getSelectedQuestion();
@@ -209,8 +213,8 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 				new Tooltip("Convert one legacy Question into multipart Questions after capturing every part."));
 		editMetadataButton.setTooltip(
 				new Tooltip("Correct this Question's code, marks, response type and Shared Context requirement."));
-		recaptureSharedContextButton
-				.setTooltip(new Tooltip("Replace the reusable Shared Context linked to this Question."));
+		recaptureSharedContextButton.setTooltip(new Tooltip("Add missing Shared Context to all parts of a multipart "
+				+ "Question, or recapture an existing Shared Context."));
 		editAnswerButton.setTooltip(new Tooltip("Replace this Question's stored Answer content."));
 	}
 

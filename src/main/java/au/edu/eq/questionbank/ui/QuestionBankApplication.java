@@ -75,6 +75,7 @@ import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionCaptureService;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionOutputApplicabilityRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
+import au.edu.eq.questionbank.repository.assessment.SqliteSharedContextCorrectionService;
 import au.edu.eq.questionbank.repository.assessment.SqliteSharedQuestionContextRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteSourceQuestionRepository;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumImportConflictException;
@@ -143,6 +144,7 @@ import au.edu.eq.questionbank.ui.capture.QuestionCapturePane;
 import au.edu.eq.questionbank.ui.capture.SharedContextCapturePane;
 import au.edu.eq.questionbank.ui.correction.LegacyQuestionMetadataDialog;
 import au.edu.eq.questionbank.ui.correction.LegacyQuestionSplitDialog;
+import au.edu.eq.questionbank.ui.correction.SharedContextCorrectionDialog;
 import au.edu.eq.questionbank.ui.curriculum.CurriculumAuthoringPane;
 import au.edu.eq.questionbank.ui.curriculum.CurriculumImportDialog;
 import au.edu.eq.questionbank.ui.curriculum.CurriculumMappingReviewDialog;
@@ -1575,6 +1577,72 @@ public class QuestionBankApplication extends Application {
 			}
 			throw failure;
 		}
+	}
+
+	private void correctMissingSharedContextFromSearch(Stage primaryStage, QuestionSearchDialog searchDialog,
+			Question question, CurriculumRepository curriculumRepository,
+			LegacyQuestionMetadataService metadataService) {
+		SqliteDatabase database = new SqliteDatabase(applicationConfig.databasePath());
+		SqliteSharedContextCorrectionService service = new SqliteSharedContextCorrectionService(database);
+		SqliteSharedContextCorrectionService.Review review;
+		try {
+			review = service.review(question.getId());
+		} catch (RuntimeException exception) {
+			showAlert(Alert.AlertType.ERROR, "Correct Shared Context", "The multipart Question could not be inspected.",
+					exception.getMessage());
+			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
+			return;
+		}
+		if (question.getBooklet().getExam().isComplete()) {
+			showAlert(Alert.AlertType.WARNING, "Correct Shared Context", "This Exam is COMPLETE.",
+					"Reactivate the Exam from the Corpus Dashboard " + "before changing its Shared Context structure.");
+			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
+			return;
+		}
+		SharedContextCorrectionDialog correctionDialog = new SharedContextCorrectionDialog(primaryStage, review);
+		Optional<SharedContextCorrectionDialog.Decision> result = correctionDialog.showAndWait();
+		if (result.isEmpty()) {
+
+			// Cancel has made no persistence changes.
+			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
+			return;
+		}
+		SharedContextCorrectionDialog.Decision decision = result.get();
+		if (decision.mode() == SharedContextCorrectionDialog.Mode.REUSE_EXISTING) {
+			try {
+				service.linkExisting(question.getId(), decision.contextId());
+				resumeSearchAfterEdit(primaryStage, searchDialog, question.getId(), curriculumRepository,
+						metadataService);
+			} catch (RuntimeException exception) {
+				showAlert(Alert.AlertType.ERROR, "Correct Shared Context",
+						"The existing Shared Context could not be linked.", exception.getMessage());
+				showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
+			}
+			return;
+		}
+
+		// Start capture against the actual booklet PDF. The callback
+		// performs the complete transaction only when Save is pressed.
+		boolean started;
+		try {
+			started = questionCapturePane.captureMissingSharedContext(question,
+					(label, regions) -> service.captureNew(question.getId(), label, regions).context(), () -> {
+						pdfWorkspace.closeExamPdf();
+						resumeSearchAfterEdit(primaryStage, searchDialog, question.getId(), curriculumRepository,
+								metadataService);
+					});
+		} catch (RuntimeException exception) {
+			showAlert(Alert.AlertType.ERROR, "Correct Shared Context", "Shared Context capture could not be started.",
+					exception.getMessage());
+			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
+			return;
+		}
+		if (!started) {
+			showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService);
+			return;
+		}
+		showSearchQuestionCaptureWorkspace(question);
+		focusStoredQuestionRegions(question);
 	}
 
 	private VBox createActiveExamContextPane() {
@@ -4628,10 +4696,15 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 		if (request.target() == QuestionSearchDialog.EditTarget.SHARED_CONTEXT) {
-			boolean correctionStarted = questionCapturePane.recaptureSharedContext(question, () -> {
+			if (!question.hasSharedContext()) {
+				correctMissingSharedContextFromSearch(primaryStage, dialog, question, curriculumRepository,
+						metadataService);
+				return;
+			}
 
-				// Shared-context correction temporarily owns the Question's Exam PDF.
-				// Release it after either Save or Cancel.
+			// Retain the established recapture workflow for
+			// Questions that already possess Shared Context.
+			boolean correctionStarted = questionCapturePane.recaptureSharedContext(question, () -> {
 				pdfWorkspace.closeExamPdf();
 				resumeSearchAfterEdit(primaryStage, dialog, question.getId(), curriculumRepository, metadataService);
 			});
@@ -4639,9 +4712,6 @@ public class QuestionBankApplication extends Application {
 				showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 				return;
 			}
-
-			// Search closed before starting the correction. Explicitly replace Dashboard
-			// Home with read-only context for this persisted Question.
 			showSearchQuestionCaptureWorkspace(question);
 			return;
 		}

@@ -6,15 +6,20 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.Statement;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import au.edu.eq.questionbank.model.Answer;
 import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.QuestionResponseType;
+import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceQuestion;
@@ -79,6 +84,84 @@ class SqliteQuestionRelationshipPersistenceTest {
 		assertEquals(sourceQuestion.getId(), reloaded.getSourceQuestion().getId());
 		assertEquals(sharedContext.getId(), reloaded.getSharedContext().getId());
 		assertFalse(reloaded.isSharedContextUnresolved());
+	}
+
+	@Test
+	void capturesNewContextForExistingMultipartParts() throws Exception {
+		Fixture fixture = createFixture("retroactive-context.db");
+		SqliteQuestionRepository questions = new SqliteQuestionRepository(fixture.database());
+		SqliteSourceQuestionRepository sources = new SqliteSourceQuestionRepository(fixture.database());
+		SourceQuestion source = sources.save(fixture.firstBooklet(), "3");
+		source = sources.updateSharedContextStatus(source, SharedContextStatus.NONE);
+		Question partA = questions.save(fixture.firstBooklet(), "3a", "", 2,
+				List.of(new QuestionRegion(fixture.firstBooklet(), 1, 0.10, 0.30, 0.70, 0.10)),
+				fixture.classification(), false, source, null, QuestionResponseType.WRITTEN_RESPONSE);
+		Question partB = questions.save(fixture.firstBooklet(), "3b", "", 3,
+				List.of(new QuestionRegion(fixture.firstBooklet(), 1, 0.10, 0.50, 0.70, 0.10)), fixture.descriptor(),
+				false, source, null, QuestionResponseType.WRITTEN_RESPONSE);
+		Question partC = questions.save(fixture.firstBooklet(), "3c", "", 4,
+				List.of(new QuestionRegion(fixture.firstBooklet(), 2, 0.10, 0.20, 0.70, 0.10)),
+				fixture.classification(), false, source, null, QuestionResponseType.WRITTEN_RESPONSE);
+		SqliteAnswerWriter answers = new SqliteAnswerWriter(fixture.database(),
+				new SqliteExamWriter(fixture.database()));
+		Answer storedAnswer = answers.insertAnswer(partB, "Previously captured answer", List.of());
+		SqliteSharedContextCorrectionService service = new SqliteSharedContextCorrectionService(fixture.database());
+
+		// Review from part B must discover all three members
+		// through the persisted SourceQuestion identity.
+		var review = service.review(partB.getId());
+		assertEquals(SharedContextStatus.NONE, review.sourceQuestion().getSharedContextStatus());
+		assertEquals(List.of(partA.getId(), partB.getId(), partC.getId()),
+				review.parts().stream().map(Question::getId).toList());
+		List<SharedQuestionContextRegion> contextRegions = List.of(
+				new SharedQuestionContextRegion(1, 0.10, 0.10, 0.70, 0.15),
+				new SharedQuestionContextRegion(2, 0.10, 0.05, 0.70, 0.10));
+		var result = service.captureNew(partB.getId(), "Question 3 Shared Context", contextRegions);
+		assertEquals(3, result.affectedQuestionIds().size());
+
+		// Reload authoritative persistence rather than relying
+		// on the pre-correction Question objects.
+		Question reloadedA = questions.findById(partA.getId()).orElseThrow();
+		Question reloadedB = questions.findById(partB.getId()).orElseThrow();
+		Question reloadedC = questions.findById(partC.getId()).orElseThrow();
+		for (Question part : List.of(reloadedA, reloadedB, reloadedC)) {
+			assertEquals(source.getId(), part.getSourceQuestion().getId());
+			assertEquals(SharedContextStatus.PRESENT, part.getSourceQuestion().getSharedContextStatus());
+			assertEquals(result.context().getId(), part.getSharedContext().getId());
+			assertEquals(contextRegions, part.getSharedContext().getRegions());
+		}
+
+		// Question-specific persistence must remain unchanged.
+		List<Question> originals = List.of(partA, partB, partC);
+		List<Question> reloaded = List.of(reloadedA, reloadedB, reloadedC);
+		for (int index = 0; index < originals.size(); index++) {
+			Question originalQuestion = originals.get(index);
+			Question reloadedQuestion = reloaded.get(index);
+			assertEquals(originalQuestion.getId(), reloadedQuestion.getId());
+			assertEquals(originalQuestion.getMarks(), reloadedQuestion.getMarks());
+			List<QuestionRegion> before = originalQuestion.getRegions();
+			List<QuestionRegion> after = reloadedQuestion.getRegions();
+			assertEquals(before.size(), after.size());
+			for (int regionIndex = 0; regionIndex < before.size(); regionIndex++) {
+				QuestionRegion original = before.get(regionIndex);
+				QuestionRegion persisted = after.get(regionIndex);
+				assertEquals(original.booklet().getId(), persisted.booklet().getId());
+				assertEquals(original.pageNumber(), persisted.pageNumber());
+				assertEquals(original.x(), persisted.x());
+				assertEquals(original.y(), persisted.y());
+				assertEquals(original.width(), persisted.width());
+				assertEquals(original.height(), persisted.height());
+			}
+		}
+		assertEquals(partA.getClassification().getId(), reloadedA.getClassification().getId());
+		assertEquals(partB.getClassification().getId(), reloadedB.getClassification().getId());
+		assertEquals(partC.getClassification().getId(), reloadedC.getClassification().getId());
+		assertEquals(QuestionResponseType.WRITTEN_RESPONSE, reloadedB.getResponseType());
+
+		// The captured Answer must retain its persistent identity.
+		assertTrue(reloadedB.hasAnswer());
+		assertEquals(storedAnswer.getId(), reloadedB.getAnswer().getId());
+		assertEquals("Previously captured answer", reloadedB.getAnswer().getAnswerText());
 	}
 
 	@Test
@@ -200,6 +283,83 @@ class SqliteQuestionRelationshipPersistenceTest {
 		assertEquals(4, reloaded.getRegions().getFirst().pageNumber());
 		assertEquals(fixture.descriptor().getId(), reloaded.getClassification().getId());
 		assertEquals(sharedContext.getId(), reloaded.getSharedContext().getId());
+	}
+
+	@Test
+	void reusesContextOnlyForMatchingSourceAndBooklet() throws Exception {
+		Fixture fixture = createFixture("reuse-context.db");
+		SqliteQuestionRepository questions = new SqliteQuestionRepository(fixture.database());
+		SqliteSourceQuestionRepository sources = new SqliteSourceQuestionRepository(fixture.database());
+		SqliteSharedQuestionContextRepository contexts = new SqliteSharedQuestionContextRepository(fixture.database());
+		SourceQuestion source = sources.save(fixture.firstBooklet(), "3");
+		source = sources.updateSharedContextStatus(source, SharedContextStatus.NONE);
+		Question partA = questions.save(fixture.firstBooklet(), "3a", "", 2,
+				List.of(new QuestionRegion(fixture.firstBooklet(), 1, 0.10, 0.30, 0.50, 0.10)),
+				fixture.classification(), false, source, null);
+		Question partB = questions.save(fixture.firstBooklet(), "3b", "", 2,
+				List.of(new QuestionRegion(fixture.firstBooklet(), 1, 0.10, 0.50, 0.50, 0.10)),
+				fixture.classification(), false, source, null);
+		SharedQuestionContext existing = contexts.save(fixture.firstBooklet(), "Existing Context",
+				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.50, 0.15)));
+		SharedQuestionContext wrongBooklet = contexts.save(fixture.secondBooklet(), "Other Booklet Context",
+				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.50, 0.15)));
+		SqliteSharedContextCorrectionService service = new SqliteSharedContextCorrectionService(fixture.database());
+
+		// Cross-booklet attachment must fail without changing
+		// either of the already captured Question parts.
+		assertThrows(IllegalArgumentException.class, () -> service.linkExisting(partB.getId(), wrongBooklet.getId()));
+		assertFalse(questions.findById(partA.getId()).orElseThrow().hasSharedContext());
+		assertFalse(questions.findById(partB.getId()).orElseThrow().hasSharedContext());
+		var result = service.linkExisting(partB.getId(), existing.getId());
+		assertEquals(existing.getId(), result.context().getId());
+		assertEquals(2, result.affectedQuestionIds().size());
+		assertEquals(existing.getId(), questions.findById(partA.getId()).orElseThrow().getSharedContext().getId());
+		assertEquals(existing.getId(), questions.findById(partB.getId()).orElseThrow().getSharedContext().getId());
+
+		// Reuse must not duplicate the original context.
+		assertEquals(1, contexts.findByBooklet(fixture.firstBooklet()).size());
+	}
+
+	@Test
+	void rollsBackNewContextWhenSourceStatusUpdateFails() throws Exception {
+		Fixture fixture = createFixture("context-rollback.db");
+		SqliteQuestionRepository questions = new SqliteQuestionRepository(fixture.database());
+		SqliteSourceQuestionRepository sources = new SqliteSourceQuestionRepository(fixture.database());
+		SourceQuestion source = sources.save(fixture.firstBooklet(), "3");
+		source = sources.updateSharedContextStatus(source, SharedContextStatus.NONE);
+		Question partA = questions.save(fixture.firstBooklet(), "3a", "", 2,
+				List.of(new QuestionRegion(fixture.firstBooklet(), 1, 0.10, 0.30, 0.50, 0.10)),
+				fixture.classification(), false, source, null);
+		Question partB = questions.save(fixture.firstBooklet(), "3b", "", 2,
+				List.of(new QuestionRegion(fixture.firstBooklet(), 1, 0.10, 0.50, 0.50, 0.10)),
+				fixture.classification(), false, source, null);
+
+		// Force the final source-status write to fail after
+		// context creation and sibling linking have been attempted.
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
+			statement.execute("""
+					CREATE TRIGGER reject_context_correction
+					BEFORE UPDATE OF shared_context_status
+					ON source_questions
+					WHEN NEW.shared_context_status = 'PRESENT'
+					BEGIN
+					    SELECT RAISE(ABORT,
+					        'Forced context correction failure');
+					END
+					""");
+		}
+		SqliteSharedContextCorrectionService service = new SqliteSharedContextCorrectionService(fixture.database());
+		assertThrows(IllegalStateException.class, () -> service.captureNew(partB.getId(), "Question 3 Context",
+				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.50, 0.15))));
+		assertFalse(questions.findById(partA.getId()).orElseThrow().hasSharedContext());
+		assertFalse(questions.findById(partB.getId()).orElseThrow().hasSharedContext());
+		assertEquals(SharedContextStatus.NONE,
+				sources.findByBookletAndCode(fixture.firstBooklet(), "3").orElseThrow().getSharedContextStatus());
+
+		// The new context and its regions must also be absent.
+		assertTrue(new SqliteSharedQuestionContextRepository(fixture.database()).findByBooklet(fixture.firstBooklet())
+				.isEmpty());
 	}
 
 	@Test
