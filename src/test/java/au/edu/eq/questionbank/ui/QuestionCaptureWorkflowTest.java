@@ -1110,8 +1110,14 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// without a subsequent click or focus change.
 		assertTrue(scroll.isVisible());
 		assertTrue(scroll.isManaged());
-		assertTrue(scroll.getHeight() >= 96);
-		assertTrue(scroll.getHeight() <= 300.5);
+		double firstContentHeight = previews.getLayoutBounds().getHeight();
+		double firstExpectedHeight = Math.max(96.0, Math.min(300.0, firstContentHeight + 4.0));
+
+		// The preferred viewport must accommodate the actual rendered
+		// content, subject to the established minimum and maximum.
+		assertEquals(firstExpectedHeight, scroll.getPrefHeight(), 2.0, "First preview preferred height: content="
+				+ firstContentHeight + ", viewport=" + scroll.getPrefHeight());
+		assertEquals(firstExpectedHeight, scroll.getHeight(), 3.0, "First preview must expand without another click");
 
 		// Accept another tall region in the same Question.
 		robot.interact(() -> {
@@ -1132,9 +1138,13 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// The viewport must expand to its cap, rather than
 		// clipping the assembled content at its original size.
-		assertTrue(scroll.getHeight() >= 96);
-		assertTrue(scroll.getHeight() <= 300.5);
-		assertTrue(previews.getLayoutBounds().getHeight() > scroll.getHeight());
+		double secondContentHeight = previews.getLayoutBounds().getHeight();
+		assertTrue(secondContentHeight > firstContentHeight,
+				"Adding a second content part must increase " + "the accepted preview height");
+		double secondExpectedHeight = Math.max(96.0, Math.min(300.0, secondContentHeight + 4.0));
+		assertEquals(secondExpectedHeight, scroll.getPrefHeight(), 2.0, "Second preview preferred height: content="
+				+ secondContentHeight + ", viewport=" + scroll.getPrefHeight());
+		assertEquals(secondExpectedHeight, scroll.getHeight(), 3.0, "Second preview must expand without another click");
 
 		// Both content parts must remain managed and available
 		// for navigation inside the bounded scrolling area.
