@@ -80,6 +80,9 @@ public class QuestionSearchPane extends BorderPane {
 	private static final double COLUMN_DIVIDER_POSITION = 0.35;
 	private static final double LEFT_CONTENT_DIVIDER_POSITION = 0.52;
 	private static final double PREVIEW_DELAY_MILLIS = 40;
+	private static final double OUTPUT_LIST_MIN_HEIGHT = 90.0;
+	private static final double PREVIEW_VIEWPORT_MIN_HEIGHT = 96.0;
+	private static final double PREVIEW_VIEWPORT_PREF_HEIGHT = 210.0;
 	private final CurriculumRepository curriculumRepository;
 	private final QuestionRetrievalService retrievalService;
 	private final Label syllabusValue = new Label();
@@ -751,6 +754,9 @@ public class QuestionSearchPane extends BorderPane {
 
 		// Each row represents one current-curriculum placement derived for the
 		// selected Question.
+		// A preferred height alone can be discarded when a large
+		// Question preview puts pressure on the parent layout.
+		outputApplicabilityList.setMinHeight(OUTPUT_LIST_MIN_HEIGHT);
 		outputApplicabilityList.setPrefHeight(110);
 		outputApplicabilityList.setCellFactory(_ -> new DisplayListCell<>(this::outputApplicabilityText));
 		outputApplicabilityList.setTooltip(new Tooltip(
@@ -925,17 +931,19 @@ public class QuestionSearchPane extends BorderPane {
 		outputApplicabilityLabel.setStyle("-fx-font-weight: bold;");
 		HBox outputApplicabilityActions = new HBox(SECTION_SPACING, includeOutputApplicabilityButton,
 				excludeOutputApplicabilityButton);
-
-		// Include and Exclude alter only revision-output placement. They remain
-		// separate from the historical classification controls above.
+		outputApplicabilityActions.setId("question-search-output-actions");
 		VBox pane = new VBox(SECTION_SPACING, outputApplicabilityLabel, outputApplicabilityStatusLabel,
 				outputApplicabilityList, outputApplicabilityActions);
 		pane.setId("question-search-output-section");
 		pane.setPadding(new Insets(SECTION_TOP_PADDING, 0, 0, 0));
 
-		// The ListView retains its configured preferred height and scrolls internally
-		// when many current placements exist. It must not compete with Preview for all
-		// available vertical space.
+		// Reserve enough height for the list, status and action row.
+		// A tall preview must not compress these into one another.
+		pane.setMinHeight(Region.USE_PREF_SIZE);
+
+		// The list scrolls internally rather than absorbing all
+		// of the vertical space in the Search column.
+		VBox.setVgrow(outputApplicabilityList, Priority.NEVER);
 		return pane;
 	}
 
@@ -957,17 +965,28 @@ public class QuestionSearchPane extends BorderPane {
 		label.setStyle("-fx-font-weight: bold;");
 		ScrollPane previewPane = new ScrollPane(previewImageView);
 		previewPane.setId("question-search-preview-scroll");
-		previewPane.setFitToWidth(true);
 
-		// Question images belong entirely within the right-hand preview column.
-		// Bind the rendered width to the actual ScrollPane viewport rather than
-		// retaining the old full-width Search-dialog dimension.
+		// ImageView is explicitly sized to the viewport.
+		// Do not let ScrollPane separately resize its content.
+		previewPane.setFitToWidth(false);
+
+		// Reserve the vertical scrollbar width permanently.
+		// Otherwise a tall image can create a feedback loop:
+		// scrollbar appears -> viewport narrows -> image shrinks
+		// -> scrollbar disappears -> viewport widens -> repeat.
+		previewPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.ALWAYS);
+		previewPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+
+		// The source image must not determine the preferred
+		// height of the entire right-hand Search column.
+		previewPane.setMinHeight(PREVIEW_VIEWPORT_MIN_HEIGHT);
+		previewPane.setPrefHeight(PREVIEW_VIEWPORT_PREF_HEIGHT);
+		previewPane.setMaxHeight(Double.MAX_VALUE);
+
+		// Fit horizontally while preserving the source aspect
+		// ratio. Excess height is handled by vertical scrolling.
 		previewImageView.fitWidthProperty().bind(Bindings.createDoubleBinding(
 				() -> Math.max(0.0, previewPane.getViewportBounds().getWidth()), previewPane.viewportBoundsProperty()));
-
-		// Width is always fitted to the viewport. Long Questions may still scroll
-		// vertically so their text is not shrunk merely to fit the available height.
-		previewPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
 		VBox pane = new VBox(SECTION_SPACING, label, previewStatusLabel, previewPane);
 		pane.setId("question-search-preview-section");
 		pane.setPadding(new Insets(SECTION_TOP_PADDING, 0, 0, 0));

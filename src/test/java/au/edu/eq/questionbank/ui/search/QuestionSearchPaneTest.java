@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -28,6 +29,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
+import javax.imageio.ImageIO;
+
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
@@ -46,8 +49,10 @@ import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
+import au.edu.eq.questionbank.model.ImageQuestionContentPart;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.Subtopic;
@@ -92,6 +97,7 @@ import javafx.scene.control.TextArea;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.GridPane;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
@@ -1281,6 +1287,60 @@ public class QuestionSearchPaneTest {
 		// persisting the Descriptor refinement.
 		assertFalse(pane.isClassificationDirty());
 		robot.interact(dialog::dispose);
+	}
+
+	@Test
+	public void oversizedClipboardImageKeepsApplicabilityUsable(FxRobot robot) throws Exception {
+		BufferedImage capturedImage = new BufferedImage(900, 2900, BufferedImage.TYPE_INT_RGB);
+		ByteArrayOutputStream png = new ByteArrayOutputStream();
+		assertTrue(ImageIO.write(capturedImage, "png", png));
+
+		// Represent the persisted content of a clipboard capture,
+		// not a PDF-derived QuestionRegion.
+		ImageQuestionContentPart imagePart = new ImageQuestionContentPart(png.toByteArray());
+		Question question = new Question(9701, historicalQuestion.getBooklet(), "IMG1", "Oversized clipboard image.", 2,
+				List.of(), historicalDescriptor, false, null, null, QuestionResponseType.UNKNOWN, List.of(imagePart));
+		QuestionPreviewService service = new QuestionPreviewService(new PdfStore(Path.of(".")),
+				new QuestionExtractor());
+		openOversizedPreviewFixture(robot, question, service);
+		assertOversizedPreviewLayout(robot);
+		ListView<QuestionOutputApplicabilityRow> output = robot.lookup("#question-search-output-applicability")
+				.queryListView();
+		Button exclude = robot.lookup("#question-search-output-exclude").queryButton();
+
+		// The first of two placements is automatically selected.
+		assertEquals(2, output.getItems().size());
+		assertNotNull(output.getSelectionModel().getSelectedItem());
+		assertFalse(exclude.isDisable());
+	}
+
+	@Test
+	public void oversizedPdfRegionPreviewIsStableAcrossResizes(FxRobot robot) throws Exception {
+		Path pdfRoot = Files.createTempDirectory("search-oversized-pdf-");
+		createOnePagePdf(pdfRoot.resolve("questions.pdf"));
+		SourceDocument document = new SourceDocument(9600, "questions.pdf");
+		ExamBooklet booklet = new ExamBooklet(9601, historicalQuestion.getExam(), "Oversized PDF booklet", document);
+		QuestionRegion region = new QuestionRegion(booklet, 1, 0.10, 0.10, 0.70, 0.70);
+		Question question = new Question(9602, booklet, "PDF1", "", 2, List.of(region), historicalDescriptor, false);
+		AtomicInteger renders = new AtomicInteger();
+		QuestionExtractor extractor = new QuestionExtractor() {
+
+			@Override
+			public BufferedImage extractRegion(PdfSession session, QuestionRegion requested) throws IOException {
+				renders.incrementAndGet();
+
+				// Simulate a very tall PDF-derived region while
+				// retaining the actual PDF-backed preview workflow.
+				return new BufferedImage(500, 2500, BufferedImage.TYPE_INT_RGB);
+			}
+		};
+		QuestionPreviewService service = new QuestionPreviewService(new PdfStore(pdfRoot), extractor);
+		openOversizedPreviewFixture(robot, question, service);
+		assertOversizedPreviewLayout(robot);
+
+		// Window resizing and layout pulses must not cause another
+		// PDF extraction for the same selected Question.
+		assertEquals(1, renders.get());
 	}
 
 	@Test
@@ -2607,6 +2667,58 @@ public class QuestionSearchPaneTest {
 		assertEquals(null, preview.getImage());
 	}
 
+	private void assertOversizedPreviewLayout(FxRobot robot) throws TimeoutException {
+		VBox rightColumn = robot.lookup("#question-search-right-column").queryAs(VBox.class);
+		ScrollPane previewScroll = robot.lookup("#question-search-preview-scroll").queryAs(ScrollPane.class);
+		ImageView preview = robot.lookup("#question-search-preview").queryAs(ImageView.class);
+		ListView<QuestionOutputApplicabilityRow> output = robot.lookup("#question-search-output-applicability")
+				.queryListView();
+		HBox actions = robot.lookup("#question-search-output-actions").queryAs(HBox.class);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> preview.getImage() != null
+				&& output.getItems().size() == 2 && previewScroll.getViewportBounds().getWidth() > 0);
+		assertTrue(preview.isPreserveRatio());
+		assertEquals(ScrollPane.ScrollBarPolicy.NEVER, previewScroll.getHbarPolicy());
+
+		// The vertical scrollbar always has reserved space, so
+		// its appearance cannot change the image fit width.
+		assertEquals(ScrollPane.ScrollBarPolicy.ALWAYS, previewScroll.getVbarPolicy());
+		double[][] sizes = { { 1100, 760 }, { 900, 650 }, { 1140, 790 } };
+		for (double[] size : sizes) {
+			robot.interact(() -> {
+				stage.setWidth(size[0]);
+				stage.setHeight(size[1]);
+			});
+			WaitForAsyncUtils.waitForFxEvents();
+			robot.interact(() -> {
+				rightColumn.applyCss();
+				rightColumn.layout();
+				previewScroll.layout();
+				assertTrue(output.getHeight() >= 90.0, "Applicability list has collapsed");
+				assertTrue(actions.getBoundsInParent().getMinY() >= output.getBoundsInParent().getMaxY(),
+						"Include/Exclude overlaps the placement list");
+				double viewportWidth = previewScroll.getViewportBounds().getWidth();
+				double viewportHeight = previewScroll.getViewportBounds().getHeight();
+				assertTrue(viewportWidth > 0);
+				assertTrue(viewportHeight > 0);
+				assertEquals(viewportWidth, preview.getFitWidth(), 1.0);
+				double fittedWidth = preview.getBoundsInLocal().getWidth();
+				double fittedHeight = preview.getBoundsInLocal().getHeight();
+				double expectedHeight = fittedWidth * preview.getImage().getHeight() / preview.getImage().getWidth();
+				assertEquals(expectedHeight, fittedHeight, 2.0, "Preview must preserve the source aspect ratio");
+				assertTrue(fittedHeight > viewportHeight, "Tall preview must remain vertically scrollable");
+
+				// Repeated layout must converge to the same geometry.
+				for (int pulse = 0; pulse < 8; pulse++) {
+					rightColumn.requestLayout();
+					rightColumn.layout();
+					previewScroll.layout();
+					assertEquals(fittedWidth, preview.getBoundsInLocal().getWidth(), 1.0);
+					assertEquals(fittedHeight, preview.getBoundsInLocal().getHeight(), 1.0);
+				}
+			});
+		}
+	}
+
 	private Path createDensePdf(Path path) throws IOException {
 		try (PDDocument document = new PDDocument()) {
 			PDPage page = new PDPage(PDRectangle.A4);
@@ -2691,6 +2803,35 @@ public class QuestionSearchPaneTest {
 				break;
 			}
 		}
+	}
+
+	private void openOversizedPreviewFixture(FxRobot robot, Question question, QuestionPreviewService service)
+			throws TimeoutException {
+		QuestionRetrievalRepository repository = nodes -> {
+			List<QuestionApplicabilityMatch> matches = new ArrayList<>();
+			if (nodes.contains(currentDescriptor)) {
+				matches.add(new QuestionApplicabilityMatch(question, currentDescriptor));
+			}
+			if (nodes.contains(noMatchDescriptor)) {
+				matches.add(new QuestionApplicabilityMatch(question, noMatchDescriptor));
+			}
+			return matches;
+		};
+		QuestionRetrievalService retrieval = new QuestionRetrievalService(repository,
+				new CurriculumSearchNodeExpansionService(curriculumRepository));
+		robot.interact(() -> {
+			QuestionSearchPane previous = (QuestionSearchPane) stage.getScene().getRoot();
+			previous.dispose();
+			QuestionSearchPane pane = new QuestionSearchPane(chemistry, curriculumRepository, retrieval,
+					() -> List.of(question), service, outputApplicabilityRepository);
+			stage.setScene(new Scene(pane, 1100, 760));
+		});
+		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& results.getItems().getFirst().scope() == QuestionSearchScope.ALL_QUESTIONS);
+		robot.interact(() -> results.getSelectionModel().selectFirst());
 	}
 
 	private QuestionSearchPane replaceSearchPane(FxRobot robot, InMemoryCurriculumRepository repository,
