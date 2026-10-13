@@ -17,6 +17,7 @@ import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.repository.assessment.QuestionOutputApplicabilityRepository;
@@ -661,11 +662,15 @@ public class QuestionSearchPane extends BorderPane {
 		try {
 			activeSearchTask = null;
 			List<QuestionSearchResult> results = task.getValue();
-			resultsList.getItems().setAll(results);
-			reselectEditedQuestion(results);
-			updateSearchStatus();
 
-			// Measure until the accepted results are published on the FX thread.
+			// A post-edit refresh normally changes one Question.
+			// Avoid replacing the entire ListView when membership
+			// and ordering are unchanged.
+			if (!publishEditedResultInPlace(results)) {
+				resultsList.getItems().setAll(results);
+				reselectEditedQuestion(results);
+			}
+			updateSearchStatus();
 			if (operation != null) {
 				operation.resultCount(results.size());
 			}
@@ -1516,6 +1521,90 @@ public class QuestionSearchPane extends BorderPane {
 		// previous scope so late asynchronous results cannot restore stale UI state.
 		cancelActiveHierarchyLoad();
 		invalidateCurrentSearch();
+	}
+
+	private boolean previewSourceUnchanged(Question previous, Question updated) {
+		if (previous.getBooklet().getId() != updated.getBooklet().getId()) {
+			return false;
+		}
+		if (!previous.getContentParts().equals(updated.getContentParts())) {
+			return false;
+		}
+		SharedQuestionContext previousContext = previous.getSharedContext();
+		SharedQuestionContext updatedContext = updated.getSharedContext();
+		if (previousContext == null || updatedContext == null) {
+			return previousContext == null && updatedContext == null;
+		}
+
+		// The same shared-context identity and regions mean
+		// classification or metadata changes do not require
+		// another expensive preview render.
+		return previousContext.getId() == updatedContext.getId()
+				&& previousContext.getRegions().equals(updatedContext.getRegions());
+	}
+
+	private boolean publishEditedResultInPlace(List<QuestionSearchResult> refreshedResults) {
+		if (questionIdToReselect < 1 || resultsList.getItems().size() != refreshedResults.size()) {
+			return false;
+		}
+		int editedIndex = -1;
+		for (int index = 0; index < refreshedResults.size(); index++) {
+			QuestionSearchResult previous = resultsList.getItems().get(index);
+			QuestionSearchResult updated = refreshedResults.get(index);
+
+			// A changed result set or ordering needs the ordinary
+			// full publication path. Do not retain out-of-scope rows.
+			if (previous.question().getId() != updated.question().getId() || previous.scope() != updated.scope()) {
+				return false;
+			}
+			if (updated.question().getId() == questionIdToReselect) {
+				editedIndex = index;
+			}
+		}
+		if (editedIndex < 0) {
+			return false;
+		}
+		QuestionSearchResult previous = resultsList.getItems().get(editedIndex);
+		QuestionSearchResult updated = refreshedResults.get(editedIndex);
+		QuestionSearchResult selected = resultsList.getSelectionModel().getSelectedItem();
+		boolean editedQuestionWasSelected = selected != null
+				&& selected.question().getId() == updated.question().getId();
+		boolean keepPreview = previewSourceUnchanged(previous.question(), updated.question());
+
+		// Suppress transient selection notifications while the
+		// selected row is replaced with its persisted version.
+		restoringResultSelection = true;
+		try {
+			resultsList.getItems().set(editedIndex, updated);
+			if (editedQuestionWasSelected) {
+				resultsList.getSelectionModel().select(updated);
+			}
+		} finally {
+			restoringResultSelection = false;
+		}
+		questionIdToReselect = -1;
+		if (editedQuestionWasSelected) {
+
+			// Refresh textual and classification information without
+			// restarting the preview when its source is unchanged.
+			if (keepPreview) {
+				detailsArea.setText(questionDetailsText(updated));
+			} else {
+				showResultDetails(updated);
+			}
+			showSelectedClassification(updated);
+
+			// Applicability can change when a classification changes.
+			// Always reload it from authoritative persistence.
+			startOutputApplicabilityLoad(updated);
+		} else {
+
+			// Preserve the existing refreshAfterEdit contract when
+			// the caller requested another Question to be selected.
+			resultsList.getSelectionModel().select(updated);
+			resultsList.scrollTo(editedIndex);
+		}
+		return true;
 	}
 
 	private String questionDetailsText(QuestionSearchResult result) {

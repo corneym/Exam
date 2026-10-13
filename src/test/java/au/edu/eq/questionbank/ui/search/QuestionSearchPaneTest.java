@@ -3,6 +3,7 @@ package au.edu.eq.questionbank.ui.search;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.awt.image.BufferedImage;
@@ -71,6 +72,7 @@ import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 import javafx.animation.PauseTransition;
 import javafx.application.Platform;
+import javafx.collections.ListChangeListener;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
 import javafx.scene.Node;
@@ -412,6 +414,65 @@ public class QuestionSearchPaneTest {
 		System.out.printf("Burst sampled heap high-water: %.2f MiB%n",
 				Math.max(previewProbe.sampledHeapBytes(), applicabilityProbe.sampledHeapBytes()) / 1048576.0);
 		System.out.println("Burst performance CSV: " + performanceCsv);
+	}
+
+	@Test
+	public void classificationSaveRefreshesOnlyEditedSearchRow(FxRobot robot) throws TimeoutException {
+		Question subtopicQuestion = new Question(8000, historicalQuestion.getBooklet(), "22a",
+				"Question needing a Descriptor.", 2, List.of(), currentSubtopic, false);
+		Question classifiedQuestion = new Question(subtopicQuestion.getId(), subtopicQuestion.getBooklet(),
+				subtopicQuestion.getQuestionCode(), subtopicQuestion.getQuestionText(), subtopicQuestion.getMarks(),
+				subtopicQuestion.getRegions(), currentDescriptor, false);
+		AtomicReference<List<Question>> questions = new AtomicReference<>(
+				List.of(historicalQuestion, subtopicQuestion));
+		QuestionSearchPane pane = replaceSearchPane(robot, curriculumRepository, retrievalService, questions::get);
+		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		ComboBox<CurriculumNode> descriptor = robot.lookup("#question-search-selected-descriptor").queryComboBox();
+		TextArea details = robot.lookup("#question-search-details").queryAs(TextArea.class);
+		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+		QuestionSearchResult original = results.getItems().stream()
+				.filter(result -> result.question().getId() == subtopicQuestion.getId()).findFirst().orElseThrow();
+		QuestionSearchResult unaffected = results.getItems().stream()
+				.filter(result -> result.question().getId() == historicalQuestion.getId()).findFirst().orElseThrow();
+		robot.interact(() -> results.getSelectionModel().select(original));
+		int selectedIndex = results.getSelectionModel().getSelectedIndex();
+
+		// Detect a wholesale ListView replacement, rather than
+		// merely checking that the final Question is correct.
+		AtomicInteger wholesaleReplacements = new AtomicInteger();
+		results.getItems().addListener((ListChangeListener<QuestionSearchResult>) change -> {
+			while (change.next()) {
+				if (change.getRemovedSize() > 1 || change.getAddedSize() > 1) {
+					wholesaleReplacements.incrementAndGet();
+				}
+			}
+		});
+		robot.interact(() -> {
+			descriptor.setValue(currentDescriptor);
+			assertTrue(pane.isClassificationDirty());
+
+			// Simulate successful persistence at the same boundary
+			// used by the containing Search Dialog.
+			questions.set(List.of(historicalQuestion, classifiedQuestion));
+			pane.classificationSaved(subtopicQuestion.getId());
+			pane.refreshAfterEdit(subtopicQuestion.getId());
+		});
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> pane.getSelectedQuestion() != null
+				&& pane.getSelectedQuestion().getClassification().equals(currentDescriptor));
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(0, wholesaleReplacements.get());
+		assertEquals(2, results.getItems().size());
+		assertEquals(selectedIndex, results.getSelectionModel().getSelectedIndex());
+		assertEquals(subtopicQuestion.getId(), pane.getSelectedQuestion().getId());
+		assertEquals(currentDescriptor, pane.getSelectedQuestion().getClassification());
+		assertEquals(currentDescriptor, descriptor.getValue());
+		assertTrue(details.getText().contains("Question needing a Descriptor."));
+		QuestionSearchResult remaining = results.getItems().stream()
+				.filter(result -> result.question().getId() == historicalQuestion.getId()).findFirst().orElseThrow();
+		assertSame(unaffected, remaining);
+		assertEquals(QuestionSearchScope.ALL_QUESTIONS, scope.getValue());
 	}
 
 	@Test
