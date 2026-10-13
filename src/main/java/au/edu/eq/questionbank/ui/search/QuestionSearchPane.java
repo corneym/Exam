@@ -2259,7 +2259,10 @@ public class QuestionSearchPane extends BorderPane {
 		if (disposed) {
 			return;
 		}
-		if (question.getRegions().isEmpty()) {
+		// The authoritative content includes both PDF regions and stored
+		// clipboard images. A clipboard-only Question has no PDF regions
+		// but still requires a preview.
+		if (question.getContentParts().isEmpty()) {
 			previewStatusLabel.setText("No stored question image.");
 			return;
 		}
