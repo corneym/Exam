@@ -84,9 +84,11 @@ import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
+import javafx.scene.control.ScrollBar;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.TextArea;
+import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
@@ -414,6 +416,129 @@ public class QuestionSearchPaneTest {
 		System.out.printf("Burst sampled heap high-water: %.2f MiB%n",
 				Math.max(previewProbe.sampledHeapBytes(), applicabilityProbe.sampledHeapBytes()) / 1048576.0);
 		System.out.println("Burst performance CSV: " + performanceCsv);
+	}
+
+	@Test
+	public void classificationRefreshPreservesPreviewAndScrollPosition(FxRobot robot) throws Exception {
+		Path pdfRoot = Files.createTempDirectory("search-refresh-preview-");
+		createOnePagePdf(pdfRoot.resolve("questions.pdf"));
+		SourceDocument document = new SourceDocument(4601, "questions.pdf");
+		ExamBooklet booklet = new ExamBooklet(4602, historicalQuestion.getExam(), "Refresh booklet", document);
+		List<Question> originalQuestions = new ArrayList<>();
+		final int targetPosition = 40;
+		for (int index = 0; index < 48; index++) {
+			QuestionRegion region = new QuestionRegion(booklet, 1, 0.10 + index * 0.001, 0.10, 0.50, 0.20);
+			originalQuestions.add(
+					new Question(4700 + index, booklet, String.format("%02d", index + 1), "Question " + (index + 1), 2,
+							List.of(region), index == targetPosition ? currentSubtopic : currentDescriptor, false));
+		}
+		Question originalTarget = originalQuestions.get(targetPosition);
+		Question updatedTarget = new Question(originalTarget.getId(), originalTarget.getBooklet(),
+				originalTarget.getQuestionCode(), originalTarget.getQuestionText(), originalTarget.getMarks(),
+				originalTarget.getRegions(), currentDescriptor, false);
+		AtomicReference<List<Question>> source = new AtomicReference<>(List.copyOf(originalQuestions));
+		AtomicInteger renderCount = new AtomicInteger();
+		QuestionExtractor extractor = new QuestionExtractor() {
+
+			@Override
+			public BufferedImage extractRegion(PdfSession session, QuestionRegion region) throws IOException {
+				renderCount.incrementAndGet();
+				return new BufferedImage(45, 34, BufferedImage.TYPE_INT_RGB);
+			}
+		};
+		QuestionPreviewService measuredPreviewService = new QuestionPreviewService(new PdfStore(pdfRoot), extractor);
+		QuestionSearchPane[] pane = new QuestionSearchPane[1];
+		robot.interact(() -> {
+			QuestionSearchPane previous = (QuestionSearchPane) stage.getScene().getRoot();
+			previous.dispose();
+			pane[0] = new QuestionSearchPane(chemistry, curriculumRepository, retrievalService, source::get,
+					measuredPreviewService, outputApplicabilityRepository);
+			stage.setScene(new Scene(pane[0], 700, 600));
+		});
+		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		ComboBox<CurriculumNode> descriptor = robot.lookup("#question-search-selected-descriptor").queryComboBox();
+		ImageView preview = robot.lookup("#question-search-preview").queryAs(ImageView.class);
+		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == originalQuestions.size());
+		QuestionSearchResult targetResult = results.getItems().stream()
+				.filter(result -> result.question().getId() == originalTarget.getId()).findFirst().orElseThrow();
+		QuestionSearchResult unaffectedResult = results.getItems().getFirst();
+		robot.interact(() -> results.getSelectionModel().select(targetResult));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> preview.getImage() != null && renderCount.get() == 1);
+		Image originalImage = preview.getImage();
+		int selectedIndex = results.getSelectionModel().getSelectedIndex();
+		AtomicReference<ScrollBar> verticalScroll = new AtomicReference<>();
+		robot.interact(() -> {
+			results.applyCss();
+			results.layout();
+			verticalScroll.set(results.lookupAll(".scroll-bar").stream().filter(ScrollBar.class::isInstance)
+					.map(ScrollBar.class::cast).filter(bar -> bar.getOrientation() == Orientation.VERTICAL).findFirst()
+					.orElseThrow());
+			results.scrollTo(selectedIndex);
+		});
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> verticalScroll.get().getValue() > verticalScroll.get().getMin());
+		AtomicReference<Double> originalScrollPosition = new AtomicReference<>();
+		robot.interact(() -> originalScrollPosition.set(verticalScroll.get().getValue()));
+		robot.interact(() -> {
+			descriptor.setValue(currentDescriptor);
+			assertTrue(pane[0].isClassificationDirty());
+			List<Question> replacements = new ArrayList<>(originalQuestions);
+			replacements.set(targetPosition, updatedTarget);
+			source.set(List.copyOf(replacements));
+			pane[0].classificationSaved(originalTarget.getId());
+			pane[0].refreshAfterEdit(originalTarget.getId());
+		});
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> pane[0].getSelectedQuestion() != null
+				&& pane[0].getSelectedQuestion().getClassification().equals(currentDescriptor));
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(originalTarget.getId(), pane[0].getSelectedQuestion().getId());
+		assertEquals(selectedIndex, results.getSelectionModel().getSelectedIndex());
+		assertSame(originalImage, preview.getImage(), "Classification-only Save must retain the existing preview");
+		assertEquals(1, renderCount.get(), "Classification-only Save must not render the PDF again");
+		assertEquals(originalScrollPosition.get(), verticalScroll.get().getValue(), 0.001,
+				"Classification Save must preserve list scroll position");
+		assertSame(unaffectedResult, results.getItems().getFirst());
+		assertEquals(currentDescriptor, descriptor.getValue());
+	}
+
+	@Test
+	public void classificationRefreshRemovesQuestionThatLeavesSearchScope(FxRobot robot) throws TimeoutException {
+		Question removableQuestion = new Question(9801, historicalQuestion.getBooklet(), "21b",
+				"Question leaving the current search.", 2, List.of(), currentSubtopic, false);
+		AtomicReference<List<QuestionApplicabilityMatch>> matches = new AtomicReference<>(
+				List.of(new QuestionApplicabilityMatch(historicalQuestion, currentDescriptor),
+						new QuestionApplicabilityMatch(removableQuestion, currentDescriptor)));
+		QuestionRetrievalRepository repository = nodes -> matches.get().stream()
+				.filter(match -> nodes.contains(match.getCurrentNode())).toList();
+		QuestionRetrievalService service = new QuestionRetrievalService(repository,
+				new CurriculumSearchNodeExpansionService(curriculumRepository));
+		QuestionSearchPane pane = replaceSearchPane(robot, curriculumRepository, service,
+				() -> List.of(historicalQuestion, removableQuestion));
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		Label status = robot.lookup("#question-search-status").queryAs(Label.class);
+		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> results.getItems().size() == 2 && scope.getValue() == QuestionSearchScope.CURRENT_SYLLABUS);
+		QuestionSearchResult selectedResult = results.getItems().stream()
+				.filter(result -> result.question().getId() == removableQuestion.getId()).findFirst().orElseThrow();
+		robot.interact(() -> results.getSelectionModel().select(selectedResult));
+		robot.interact(() -> {
+
+			// Simulate a persisted classification change that
+			// removes this Question from the active retrieval scope.
+			matches.set(List.of(new QuestionApplicabilityMatch(historicalQuestion, currentDescriptor)));
+			pane.refreshAfterEdit(removableQuestion.getId());
+		});
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> results.getItems().size() == 1
+						&& results.getItems().getFirst().question().getId() == historicalQuestion.getId()
+						&& "1 question found.".equals(status.getText()));
+		assertEquals(QuestionSearchScope.CURRENT_SYLLABUS, scope.getValue());
+		assertFalse(
+				results.getItems().stream().anyMatch(result -> result.question().getId() == removableQuestion.getId()));
+		assertEquals(historicalQuestion.getId(), results.getItems().getFirst().question().getId());
 	}
 
 	@Test
