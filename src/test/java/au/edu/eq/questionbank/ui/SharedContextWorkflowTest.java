@@ -403,9 +403,18 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// two context regions from two pages.
 		openMissingSharedContextCaptureFromSearch(robot, partC.getId());
 		TextField label = lookup(robot, "#shared-context-label", TextField.class);
+
 		robot.interact(() -> label.setText("Question 74 shared context"));
+
+		// Correction opens at the selected Question's stored page.
+		// Navigate explicitly to page 1 for the first context region.
+		robot.interact(() -> pdfWorkspace().showPage(PdfWorkspacePane.DocumentMode.EXAM, 1));
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(1, pdfWorkspace().getCurrentPageNumber());
+
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-shared-context-region");
+
 		robot.interact(() -> pdfWorkspace().showPage(PdfWorkspacePane.DocumentMode.EXAM, 2));
 		WaitForAsyncUtils.waitForFxEvents();
 		dragRegionOnDisplayedPage(robot);
