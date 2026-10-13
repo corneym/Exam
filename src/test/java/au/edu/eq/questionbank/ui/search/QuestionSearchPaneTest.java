@@ -2366,7 +2366,22 @@ public class QuestionSearchPaneTest {
 
 		// Search uses a narrower navigation/results column and gives the larger share
 		// of horizontal space to classification, applicability and Question preview.
-		assertEquals(0.35, workspace.getDividerPositions()[0], 0.01);
+		// The requested divider is 0.35, but JavaFX may move it to
+		// respect child minimum widths. Font metrics under Xvfb can
+		// produce a different effective position from local Windows.
+		double dividerPosition = workspace.getDividerPositions()[0];
+		assertTrue(dividerPosition > 0.0 && dividerPosition < 0.5,
+				"Search/results must remain narrower than Question information");
+
+		// Verify the rendered columns as well as the divider position.
+		robot.interact(() -> {
+			workspace.applyCss();
+			workspace.layout();
+			double leftWidth = leftColumn.getBoundsInParent().getWidth();
+			double rightWidth = rightColumn.getBoundsInParent().getWidth();
+			assertTrue(leftWidth > 0.0);
+			assertTrue(rightWidth > leftWidth, "Question information should receive more horizontal space");
+		});
 
 		// Search, results and basic Question details belong together on the left.
 		assertTrue(isDescendantOf(robot.lookup("#question-search-filter-section").query(), leftColumn));
