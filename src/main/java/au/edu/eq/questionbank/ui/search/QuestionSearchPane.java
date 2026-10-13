@@ -564,38 +564,6 @@ public class QuestionSearchPane extends BorderPane {
 		onSucceeded.accept(task.getValue());
 	}
 
-	@SuppressWarnings("unused")
-	private void completeOutputApplicabilityLoad(Task<List<QuestionOutputApplicabilityRow>> task, long generation,
-			long questionId) {
-
-		// Only the current selection is permitted to publish results.
-		if (generation != outputApplicabilityGeneration || task != activeOutputApplicabilityTask) {
-			return;
-		}
-		activeOutputApplicabilityTask = null;
-		PerformanceOperation operation = activeOutputApplicabilityOperation;
-		activeOutputApplicabilityOperation = null;
-		try {
-			Question selectedQuestion = getSelectedQuestion();
-			if (selectedQuestion == null || selectedQuestion.getId() != questionId) {
-				operation.failed();
-				return;
-			}
-			List<QuestionOutputApplicabilityRow> rows = task.getValue();
-			outputApplicabilityList.getItems().setAll(rows);
-			updateOutputApplicabilityStatus();
-			updateOutputApplicabilityActionState();
-
-			// Finish after the results have been published to JavaFX.
-			operation.resultCount(rows.size());
-		} catch (RuntimeException | Error failure) {
-			operation.failed();
-			throw failure;
-		} finally {
-			operation.close();
-		}
-	}
-
 	private void completeOutputApplicabilityLoad(Task<List<QuestionOutputApplicabilityRow>> task, long generation,
 			long questionId, long preferredNodeId) {
 

@@ -2,6 +2,8 @@ package au.edu.eq.questionbank.ui.pdf;
 
 import java.io.File;
 import java.nio.file.Path;
+import java.util.Objects;
+import java.util.function.BiFunction;
 
 import javafx.scene.control.Alert;
 import javafx.stage.FileChooser;
@@ -13,6 +15,8 @@ import javafx.stage.Stage;
 public final class PdfFilePicker {
 
 	private final Path dataRoot;
+	private final BiFunction<FileChooser, Stage, File> chooserOpener;
+	private Path lastSelectedDirectory;
 
 	/**
 	 * Creates a picker restricted to one data root.
@@ -20,50 +24,20 @@ public final class PdfFilePicker {
 	 * @param dataRoot the configured PDF data root
 	 */
 	public PdfFilePicker(Path dataRoot) {
-		if (dataRoot == null) {
-			throw new NullPointerException("dataRoot");
-		}
-		this.dataRoot = dataRoot.toAbsolutePath().normalize();
+		this(dataRoot, FileChooser::showOpenDialog);
 	}
 
-	private FileChooser createFileChooser(String title) {
-		FileChooser chooser = new FileChooser();
-		chooser.setTitle(title);
-		chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("PDF files", "*.pdf"));
-		File root = dataRoot.toFile();
-		if (root.isDirectory()) {
-			chooser.setInitialDirectory(root);
-		}
-		return chooser;
+	PdfFilePicker(Path dataRoot, BiFunction<FileChooser, Stage, File> chooserOpener) {
+		this.dataRoot = Objects.requireNonNull(dataRoot, "dataRoot").toAbsolutePath().normalize();
+		this.chooserOpener = Objects.requireNonNull(chooserOpener, "chooserOpener");
 	}
 
-	private void showInvalidPathAlert(String invalidPathMessage) {
-		Alert alert = new Alert(Alert.AlertType.ERROR);
-		alert.setHeaderText(invalidPathMessage);
-		alert.setContentText(dataRoot.toString());
-		alert.showAndWait();
-	}
-
-	/**
-	 * Shows a PDF chooser and validates the selected path.
-	 *
-	 * @param stage              the owner stage
-	 * @param title              the chooser title
-	 * @param invalidPathMessage alert heading used for an out-of-root selection
-	 * @return the selected PDF, or {@code null} when cancelled or rejected
-	 */
-	SelectedPdf choose(Stage stage, String title, String invalidPathMessage) {
-		FileChooser chooser = createFileChooser(title);
-		File selectedFile = chooser.showOpenDialog(stage);
-		if (selectedFile == null) {
-			return null;
+	private static boolean isUsableDirectory(Path directory) {
+		if (directory == null) {
+			return false;
 		}
-		Path selectedPath = selectedFile.toPath().toAbsolutePath().normalize();
-		if (!isInsideDataRoot(selectedPath)) {
-			showInvalidPathAlert(invalidPathMessage);
-			return null;
-		}
-		return new SelectedPdf(selectedFile, selectedPath, dataRoot);
+		File file = directory.toFile();
+		return file.isDirectory() && file.canRead();
 	}
 
 	/**
@@ -76,11 +50,15 @@ public final class PdfFilePicker {
 	 */
 	public Path chooseAnyPdf(Stage stage, String title) {
 		FileChooser chooser = createFileChooser(title);
-		File selectedFile = chooser.showOpenDialog(stage);
+		File selectedFile = chooserOpener.apply(chooser, stage);
+
+		// Cancellation must preserve the previous successful directory.
 		if (selectedFile == null) {
 			return null;
 		}
-		return selectedFile.toPath().toAbsolutePath().normalize();
+		Path selectedPath = selectedFile.toPath().toAbsolutePath().normalize();
+		rememberSelectedDirectory(selectedPath);
+		return selectedPath;
 	}
 
 	/**
@@ -93,6 +71,31 @@ public final class PdfFilePicker {
 	}
 
 	/**
+	 * Shows a PDF chooser and validates the selected path.
+	 *
+	 * @param stage              the owner stage
+	 * @param title              the chooser title
+	 * @param invalidPathMessage alert heading used for an out-of-root selection
+	 * @return the selected PDF, or {@code null} when cancelled or rejected
+	 */
+	SelectedPdf choose(Stage stage, String title, String invalidPathMessage) {
+		FileChooser chooser = createFileChooser(title);
+		File selectedFile = chooserOpener.apply(chooser, stage);
+		if (selectedFile == null) {
+			return null;
+		}
+		Path selectedPath = selectedFile.toPath().toAbsolutePath().normalize();
+
+		// Preserve the existing managed-data-root validation.
+		if (!isInsideDataRoot(selectedPath)) {
+			showInvalidPathAlert(invalidPathMessage);
+			return null;
+		}
+		rememberSelectedDirectory(selectedPath);
+		return new SelectedPdf(selectedFile, selectedPath, dataRoot);
+	}
+
+	/**
 	 * Tests whether a path resolves within the configured data root.
 	 *
 	 * @param path the path to test
@@ -100,5 +103,35 @@ public final class PdfFilePicker {
 	 */
 	boolean isInsideDataRoot(Path path) {
 		return path.toAbsolutePath().normalize().startsWith(dataRoot);
+	}
+
+	private FileChooser createFileChooser(String title) {
+		FileChooser chooser = new FileChooser();
+		chooser.setTitle(title);
+		chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("PDF files", "*.pdf"));
+		Path initialDirectory = lastSelectedDirectory;
+
+		// A removed or inaccessible directory must never prevent
+		// the next file chooser from opening.
+		if (!isUsableDirectory(initialDirectory)) {
+			initialDirectory = dataRoot;
+		}
+		if (isUsableDirectory(initialDirectory)) {
+			chooser.setInitialDirectory(initialDirectory.toFile());
+		}
+
+		// Do not set initialFileName: only the folder is remembered.
+		return chooser;
+	}
+
+	private void rememberSelectedDirectory(Path selectedPath) {
+		lastSelectedDirectory = selectedPath.getParent();
+	}
+
+	private void showInvalidPathAlert(String invalidPathMessage) {
+		Alert alert = new Alert(Alert.AlertType.ERROR);
+		alert.setHeaderText(invalidPathMessage);
+		alert.setContentText(dataRoot.toString());
+		alert.showAndWait();
 	}
 }

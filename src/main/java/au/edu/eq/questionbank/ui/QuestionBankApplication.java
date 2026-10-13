@@ -968,12 +968,8 @@ public class QuestionBankApplication extends Application {
 		thread.start();
 	}
 
-	private Path chooseAnswerBookletSource(Stage primaryStage, ApplicationConfig config) {
-		PdfFilePicker picker = new PdfFilePicker(config.pdfDataRoot());
-
-		// Source selection is application-owned because it interacts with the native
-		// filesystem rather than Exam/Assets presentation state.
-		return picker.chooseAnyPdf(primaryStage, "Choose Answer booklet PDF");
+	private Path chooseAnswerBookletSource(Stage primaryStage, PdfFilePicker bookletPicker) {
+		return bookletPicker.chooseAnyPdf(primaryStage, "Choose Answer booklet PDF");
 	}
 
 	private CurriculumAuthoringSession chooseExistingCurriculum(Stage primaryStage, List<SyllabusVersion> versions,
@@ -999,12 +995,8 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
-	private Path chooseQuestionBookletSource(Stage primaryStage, ApplicationConfig config) {
-		PdfFilePicker picker = new PdfFilePicker(config.pdfDataRoot());
-
-		// Native filesystem interaction remains outside ExamAssetsPane so the pane can
-		// be workflow-tested without automating a platform FileChooser.
-		return picker.chooseAnyPdf(primaryStage, "Choose Question booklet PDF");
+	private Path chooseQuestionBookletSource(Stage primaryStage, PdfFilePicker bookletPicker) {
+		return bookletPicker.chooseAnyPdf(primaryStage, "Choose Question booklet PDF");
 	}
 
 	/**
@@ -2803,6 +2795,10 @@ public class QuestionBankApplication extends Application {
 			SqliteAnswerWriter answerWriter) {
 		SqliteExamImporter examImporter = new SqliteExamImporter(database, examWriter);
 
+		// Both Question and Answer booklet selection callbacks
+		// share this application-session directory history.
+		PdfFilePicker bookletPicker = new PdfFilePicker(config.pdfDataRoot());
+
 		// Exam correction owns both filesystem relocation and the atomic Exam /
 		// SourceDocument database update.
 		// Both the transitional capture metadata pane and the new Exam/Assets workspace
@@ -2836,7 +2832,7 @@ public class QuestionBankApplication extends Application {
 
 				// Native file selection remains application-owned rather than being
 				// embedded in the Exam/Assets presentation component.
-				() -> chooseAnswerBookletSource(primaryStage, config),
+				() -> chooseAnswerBookletSource(primaryStage, bookletPicker),
 
 				// The application imports the chosen PDF into managed storage, hashes
 				// it and persists the AnswerFile plus its explanation metadata.
@@ -2844,7 +2840,7 @@ public class QuestionBankApplication extends Application {
 						sourcePath, name, containsAnswerExplanations, config),
 
 				// Native Question-PDF selection remains application-owned.
-				() -> chooseQuestionBookletSource(primaryStage, config),
+				() -> chooseQuestionBookletSource(primaryStage, bookletPicker),
 
 				// The selected pre-persistence source opens immediately in read-only VIEWER
 				// mode.
