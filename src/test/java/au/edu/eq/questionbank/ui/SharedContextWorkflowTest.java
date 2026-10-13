@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.sql.Connection;
 import java.sql.Statement;
 import java.util.List;
+import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Tag;
@@ -51,6 +52,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.VBox;
@@ -511,7 +513,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// The pre-correction Dashboard must actually contain
 		// the three persisted Questions without Shared Context.
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
+		Callable<Boolean> beforeCorrection = () -> evaluateOnFx(robot, () -> {
 			Node node = primaryStage.getScene().getRoot().lookup("#corpus-dashboard-question-work");
 			if (!(node instanceof TableView<?> table) || table.getItems().size() != 3) {
 				return false;
@@ -519,9 +521,10 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 			return table.getItems().stream()
 					.allMatch(item -> item instanceof QuestionCorpusWorkItem work
 							&& work.question().getSourceQuestion() != null
-							&& work.question().getSourceQuestion().getId() == source.getId()
+							&& work.question().getSourceQuestion().getId() == partB.getSourceQuestion().getId()
 							&& !work.question().hasSharedContext());
-		}));
+		});
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, beforeCorrection);
 
 		// Enter Search through Dashboard rather than through
 		// the ordinary Questions menu.
@@ -583,18 +586,19 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// The successful correction must also refresh the
 		// Dashboard's displayed work items asynchronously.
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
+		Callable<Boolean> afterCorrection = () -> evaluateOnFx(robot, () -> {
 			Node node = primaryStage.getScene().getRoot().lookup("#corpus-dashboard-question-work");
 			if (!(node instanceof TableView<?> table) || table.getItems().size() != 3) {
 				return false;
 			}
 			return table.getItems().stream().allMatch(item -> item instanceof QuestionCorpusWorkItem work
-					&& work.question().hasSharedContext()
-					&& work.question().getSourceQuestion().getId() == source.getId()
+					&& work.question().hasSharedContext() && work.question().getSourceQuestion() != null
+					&& work.question().getSourceQuestion().getId() == partB.getSourceQuestion().getId()
 					&& work.question().getSourceQuestion().getSharedContextStatus() == SharedContextStatus.PRESENT
 					&& work.question().getSharedContext().getId() == existing.getId()
 					&& work.status().sharedContextResolved());
-		}));
+		});
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, afterCorrection);
 
 		// The Dashboard still reports three Questions.
 		Button total = lookup(robot, "#corpus-dashboard-summary-total", Button.class);

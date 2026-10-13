@@ -1595,6 +1595,25 @@ public class QuestionSearchPane extends BorderPane {
 		}
 		QuestionSearchResult previous = resultsList.getItems().get(editedIndex);
 		QuestionSearchResult updated = refreshedResults.get(editedIndex);
+		SharedQuestionContext previousContext = previous.question().getSharedContext();
+		SharedQuestionContext updatedContext = updated.question().getSharedContext();
+
+		// Shared Context changes can affect multiple Questions, including
+		// other parts of the same SourceQuestion and independent Questions
+		// reusing the context. Refresh every result rather than replacing
+		// only the selected Question and leaving stale relationships.
+		boolean sharedContextChanged = (previousContext == null) != (updatedContext == null);
+		if (!sharedContextChanged && previousContext != null) {
+			sharedContextChanged = previousContext.getId() != updatedContext.getId()
+					|| !previousContext.getRegions().equals(updatedContext.getRegions())
+					|| !Objects.equals(previousContext.getLabel(), updatedContext.getLabel());
+		}
+		if (sharedContextChanged) {
+
+			// Let completeSearch() publish the entire refreshed result set
+			// and reselect the edited Question using its persistent ID.
+			return false;
+		}
 		QuestionSearchResult selected = resultsList.getSelectionModel().getSelectedItem();
 		boolean editedQuestionWasSelected = selected != null
 				&& selected.question().getId() == updated.question().getId();
