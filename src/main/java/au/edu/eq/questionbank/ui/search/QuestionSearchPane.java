@@ -17,6 +17,7 @@ import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.repository.assessment.QuestionOutputApplicabilityRepository;
@@ -33,6 +34,7 @@ import javafx.beans.property.ReadOnlyObjectProperty;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.concurrent.Task;
 import javafx.embed.swing.SwingFXUtils;
+import javafx.geometry.HPos;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
 import javafx.scene.control.Button;
@@ -93,6 +95,7 @@ public class QuestionSearchPane extends BorderPane {
 	private final ComboBox<CurriculumNode> selectedDescriptorBox = new ComboBox<>();
 	private final GridPane selectedClassificationPane = new GridPane();
 	private final PauseTransition previewDelay = new PauseTransition(Duration.millis(PREVIEW_DELAY_MILLIS));
+	private long outputApplicabilityDisplayedQuestionId = -1;
 
 	// Search presentation uses its own result type so current-curriculum matches
 	// and future all-bank results can coexist without weakening retrieval
@@ -488,8 +491,11 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void clearOutputApplicability() {
+		outputApplicabilityDisplayedQuestionId = -1;
 		outputApplicabilityList.getItems().clear();
+		outputApplicabilityList.getSelectionModel().clearSelection();
 		outputApplicabilityStatusLabel.setText("");
+		updateOutputApplicabilityActionState();
 	}
 
 	private void clearPreview() {
@@ -558,6 +564,7 @@ public class QuestionSearchPane extends BorderPane {
 		onSucceeded.accept(task.getValue());
 	}
 
+	@SuppressWarnings("unused")
 	private void completeOutputApplicabilityLoad(Task<List<QuestionOutputApplicabilityRow>> task, long generation,
 			long questionId) {
 
@@ -589,6 +596,52 @@ public class QuestionSearchPane extends BorderPane {
 		}
 	}
 
+	private void completeOutputApplicabilityLoad(Task<List<QuestionOutputApplicabilityRow>> task, long generation,
+			long questionId, long preferredNodeId) {
+
+		// Only the current selection is permitted to publish results.
+		if (generation != outputApplicabilityGeneration || task != activeOutputApplicabilityTask) {
+			return;
+		}
+		activeOutputApplicabilityTask = null;
+		PerformanceOperation operation = activeOutputApplicabilityOperation;
+		activeOutputApplicabilityOperation = null;
+		try {
+			Question selectedQuestion = getSelectedQuestion();
+			if (selectedQuestion == null || selectedQuestion.getId() != questionId) {
+				operation.failed();
+				return;
+			}
+			List<QuestionOutputApplicabilityRow> rows = task.getValue();
+			outputApplicabilityList.getItems().setAll(rows);
+			outputApplicabilityDisplayedQuestionId = questionId;
+			if (rows.isEmpty()) {
+				outputApplicabilityList.getSelectionModel().clearSelection();
+			} else {
+				int selectedIndex = 0;
+
+				// Preserve the existing placement when
+				// refreshing the same Question. If that placement
+				// has disappeared, use the first remaining row.
+				for (int index = 0; index < rows.size(); index++) {
+					if (rows.get(index).currentNode().getId() == preferredNodeId) {
+						selectedIndex = index;
+						break;
+					}
+				}
+				outputApplicabilityList.getSelectionModel().select(selectedIndex);
+			}
+			updateOutputApplicabilityStatus();
+			updateOutputApplicabilityActionState();
+			operation.resultCount(rows.size());
+		} catch (RuntimeException | Error failure) {
+			operation.failed();
+			throw failure;
+		} finally {
+			operation.close();
+		}
+	}
+
 	private void completeOutputApplicabilityUpdate(Task<Void> task, long questionId, CurriculumNode currentNode,
 			boolean excluded) {
 		if (task != activeOutputApplicabilityUpdateTask) {
@@ -609,8 +662,8 @@ public class QuestionSearchPane extends BorderPane {
 			return;
 		}
 
-		// If an intervening reload removed the edited row, rebuild applicability from
-		// persistence rather than manufacturing replacement UI state.
+		// If an intervening reload removed the edited row, rebuild applicability
+		// from persistence rather than manufacturing replacement UI state.
 		reloadSelectedOutputApplicability();
 	}
 
@@ -661,11 +714,15 @@ public class QuestionSearchPane extends BorderPane {
 		try {
 			activeSearchTask = null;
 			List<QuestionSearchResult> results = task.getValue();
-			resultsList.getItems().setAll(results);
-			reselectEditedQuestion(results);
-			updateSearchStatus();
 
-			// Measure until the accepted results are published on the FX thread.
+			// A post-edit refresh normally changes one Question.
+			// Avoid replacing the entire ListView when membership
+			// and ordering are unchanged.
+			if (!publishEditedResultInPlace(results)) {
+				resultsList.getItems().setAll(results);
+				reselectEditedQuestion(results);
+			}
+			updateSearchStatus();
 			if (operation != null) {
 				operation.resultCount(results.size());
 			}
@@ -741,7 +798,8 @@ public class QuestionSearchPane extends BorderPane {
 		includeOutputApplicabilityButton.setMinWidth(Region.USE_PREF_SIZE);
 		excludeOutputApplicabilityButton.setMinWidth(Region.USE_PREF_SIZE);
 
-		// No applicability action exists until the teacher selects one placement.
+		// No action is available until a placement has loaded.
+		// The first available placement will be selected automatically.
 		includeOutputApplicabilityButton.setDisable(true);
 		excludeOutputApplicabilityButton.setDisable(true);
 	}
@@ -853,7 +911,8 @@ public class QuestionSearchPane extends BorderPane {
 		saveClassificationButton
 				.setTooltip(new Tooltip("Persist the selected Descriptor as this Question's classification."));
 
-		// Keep the complete action label visible beside the Descriptor selector.
+		// Preserve the complete Save label when it occupies its own row
+		// beneath the Descriptor selector.
 		saveClassificationButton.setMinWidth(Region.USE_PREF_SIZE);
 
 		// Save becomes meaningful only when the selected Descriptor differs from the
@@ -978,6 +1037,9 @@ public class QuestionSearchPane extends BorderPane {
 		Label heading = new Label("Selected question classification");
 		heading.setStyle("-fx-font-weight: bold;");
 		selectedClassificationPane.add(heading, 0, 0, 2, 1);
+
+		// All classification labels occupy the first column.
+		// Their shared column width keeps the drop-downs aligned.
 		selectedClassificationPane.add(createSelectorLabel("Syllabus"), 0, 1);
 		selectedClassificationPane.add(selectedSyllabusValue, 1, 1);
 		selectedClassificationPane.add(createSelectorLabel("Unit"), 0, 2);
@@ -989,9 +1051,13 @@ public class QuestionSearchPane extends BorderPane {
 		selectedClassificationPane.add(createSelectorLabel("Descriptor"), 0, 5);
 		selectedClassificationPane.add(selectedDescriptorBox, 1, 5);
 
-		// Descriptor refinement is the only classification change saved directly
-		// from Search, so its Save action remains beside that control.
-		selectedClassificationPane.add(saveClassificationButton, 2, 5);
+		// Save is on its own row, directly below Descriptor.
+		// Align it with the left edge of the classification pane.
+		selectedClassificationPane.add(saveClassificationButton, 0, 6, 2, 1);
+		GridPane.setHalignment(saveClassificationButton, HPos.LEFT);
+
+		// The label column takes its natural width.
+		// Every classification drop-down expands into the second column.
 		GridPane.setHgrow(selectedUnitBox, Priority.ALWAYS);
 		GridPane.setHgrow(selectedTopicBox, Priority.ALWAYS);
 		GridPane.setHgrow(selectedSubtopicBox, Priority.ALWAYS);
@@ -1518,6 +1584,90 @@ public class QuestionSearchPane extends BorderPane {
 		invalidateCurrentSearch();
 	}
 
+	private boolean previewSourceUnchanged(Question previous, Question updated) {
+		if (previous.getBooklet().getId() != updated.getBooklet().getId()) {
+			return false;
+		}
+		if (!previous.getContentParts().equals(updated.getContentParts())) {
+			return false;
+		}
+		SharedQuestionContext previousContext = previous.getSharedContext();
+		SharedQuestionContext updatedContext = updated.getSharedContext();
+		if (previousContext == null || updatedContext == null) {
+			return previousContext == null && updatedContext == null;
+		}
+
+		// The same shared-context identity and regions mean
+		// classification or metadata changes do not require
+		// another expensive preview render.
+		return previousContext.getId() == updatedContext.getId()
+				&& previousContext.getRegions().equals(updatedContext.getRegions());
+	}
+
+	private boolean publishEditedResultInPlace(List<QuestionSearchResult> refreshedResults) {
+		if (questionIdToReselect < 1 || resultsList.getItems().size() != refreshedResults.size()) {
+			return false;
+		}
+		int editedIndex = -1;
+		for (int index = 0; index < refreshedResults.size(); index++) {
+			QuestionSearchResult previous = resultsList.getItems().get(index);
+			QuestionSearchResult updated = refreshedResults.get(index);
+
+			// A changed result set or ordering needs the ordinary
+			// full publication path. Do not retain out-of-scope rows.
+			if (previous.question().getId() != updated.question().getId() || previous.scope() != updated.scope()) {
+				return false;
+			}
+			if (updated.question().getId() == questionIdToReselect) {
+				editedIndex = index;
+			}
+		}
+		if (editedIndex < 0) {
+			return false;
+		}
+		QuestionSearchResult previous = resultsList.getItems().get(editedIndex);
+		QuestionSearchResult updated = refreshedResults.get(editedIndex);
+		QuestionSearchResult selected = resultsList.getSelectionModel().getSelectedItem();
+		boolean editedQuestionWasSelected = selected != null
+				&& selected.question().getId() == updated.question().getId();
+		boolean keepPreview = previewSourceUnchanged(previous.question(), updated.question());
+
+		// Suppress transient selection notifications while the
+		// selected row is replaced with its persisted version.
+		restoringResultSelection = true;
+		try {
+			resultsList.getItems().set(editedIndex, updated);
+			if (editedQuestionWasSelected) {
+				resultsList.getSelectionModel().select(updated);
+			}
+		} finally {
+			restoringResultSelection = false;
+		}
+		questionIdToReselect = -1;
+		if (editedQuestionWasSelected) {
+
+			// Refresh textual and classification information without
+			// restarting the preview when its source is unchanged.
+			if (keepPreview) {
+				detailsArea.setText(questionDetailsText(updated));
+			} else {
+				showResultDetails(updated);
+			}
+			showSelectedClassification(updated);
+
+			// Applicability can change when a classification changes.
+			// Always reload it from authoritative persistence.
+			startOutputApplicabilityLoad(updated);
+		} else {
+
+			// Preserve the existing refreshAfterEdit contract when
+			// the caller requested another Question to be selected.
+			resultsList.getSelectionModel().select(updated);
+			resultsList.scrollTo(editedIndex);
+		}
+		return true;
+	}
+
 	private String questionDetailsText(QuestionSearchResult result) {
 		Question question = result.question();
 
@@ -2026,6 +2176,13 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void startOutputApplicabilityLoad(QuestionSearchResult result) {
+
+		// Preserve a placement only when reloading the same Question.
+		// A newly selected Question must receive its own default row.
+		QuestionOutputApplicabilityRow previousSelection = outputApplicabilityList.getSelectionModel()
+				.getSelectedItem();
+		long preferredNodeId = result != null && result.question().getId() == outputApplicabilityDisplayedQuestionId
+				&& previousSelection != null ? previousSelection.currentNode().getId() : -1;
 		cancelActiveOutputApplicabilityLoad();
 		clearOutputApplicability();
 		if (disposed || result == null) {
@@ -2034,15 +2191,12 @@ public class QuestionSearchPane extends BorderPane {
 		long generation = outputApplicabilityGeneration;
 		long questionId = result.question().getId();
 		outputApplicabilityStatusLabel.setText("Loading revision output applicability...");
-
-		// The outer measurement ends when JavaFX publishes the result,
-		// or when this selection is failed or superseded.
 		PerformanceOperation operation = performanceRecorder.start("search.output-applicability.load");
 		activeOutputApplicabilityOperation = operation;
 		Task<List<QuestionOutputApplicabilityRow>> task = new BackgroundTask<>(
 				() -> loadOutputApplicability(result, operation.id()));
 		activeOutputApplicabilityTask = task;
-		task.setOnSucceeded(_ -> completeOutputApplicabilityLoad(task, generation, questionId));
+		task.setOnSucceeded(_ -> completeOutputApplicabilityLoad(task, generation, questionId, preferredNodeId));
 		task.setOnFailed(_ -> failOutputApplicabilityLoad(task, generation, questionId));
 		task.setOnCancelled(_ -> {
 			if (generation != outputApplicabilityGeneration || task != activeOutputApplicabilityTask) {
