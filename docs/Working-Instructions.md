@@ -1,10 +1,9 @@
 ## Working instructions for this chat
 
 Use this chat as the working chat for the current sprint of the Exam Question Bank project.
-
 Treat every instruction in this document as mandatory. Do not deviate.
-
-Re-read this document before every code change. Follow it explicitly.
+Re-read this document before every code change. 
+Follow the instructions explicitly.  THIS IS AN IMPERATIVE.
 
 ### Repository working rule
 

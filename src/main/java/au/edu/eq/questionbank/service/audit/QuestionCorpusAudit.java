@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.service.audit;
 
 import java.util.EnumSet;
 
+import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionResponseType;
 
@@ -25,12 +26,19 @@ public final class QuestionCorpusAudit {
 		}
 		EnumSet<QuestionCorpusProblem> problems = EnumSet.noneOf(QuestionCorpusProblem.class);
 
-		// contentParts is the authoritative Question body. PDF regions are only a
-		// compatibility projection and may legitimately be empty for image-only
-		// Questions.
+		// Descriptor classification is required for a Question to leave
+		// the outstanding Question Work queue. Subtopic classification
+		// remains valid persisted data, but is not fully classified.
+		if (question.getClassification().getLevel() != CurriculumLevel.DESCRIPTOR) {
+			problems.add(QuestionCorpusProblem.MISSING_DESCRIPTOR);
+		}
+
+		// contentParts is the authoritative Question body. PDF regions
+		// are only a compatibility projection and may legitimately be
+		// empty for image-only Questions.
 		//
-		// Explicit sourceCaptureRequired remains authoritative after PDF replacement:
-		// retained clipboard images do not satisfy a required replacement PDF capture.
+		// Explicit sourceCaptureRequired remains authoritative after PDF
+		// replacement.
 		boolean questionContentCaptured = !question.getContentParts().isEmpty() && !question.isSourceCaptureRequired();
 		if (!questionContentCaptured) {
 			problems.add(QuestionCorpusProblem.MISSING_QUESTION_CONTENT);
@@ -44,8 +52,8 @@ public final class QuestionCorpusAudit {
 		if (!responseTypeResolved) {
 			problems.add(QuestionCorpusProblem.UNKNOWN_RESPONSE_TYPE);
 
-			// UNKNOWN response type is itself the actionable problem. Do not also report
-			// MISSING_ANSWER because the required Answer representation is not yet known.
+			// UNKNOWN is the actionable problem. The required Answer
+			// representation cannot yet be determined.
 		} else {
 			answerComplete = switch (question.getResponseType()) {
 			case MULTIPLE_CHOICE -> hasCompleteMultipleChoiceAnswer(question);

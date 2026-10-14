@@ -477,8 +477,17 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
 			return null;
 		}).get();
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#corpus-dashboard-mapping-review").tryQuery().isPresent());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
+			Node root = primaryStage.getScene().getRoot();
+			Node mappingNode = root.lookup("#corpus-dashboard-mapping-review");
+			Node attentionNode = root.lookup("#corpus-dashboard-summary-attention");
+
+			// The Dashboard snapshot is loaded asynchronously. Wait for
+			// both controls and the expected initial mapping-review state.
+			return mappingNode instanceof Label mapping && attentionNode instanceof Button
+					&& mapping.getText().contains("2019 → 2025") && mapping.getText().contains("0/1 resolved")
+					&& mapping.getText().contains("1 remaining");
+		}));
 		Label mappingReview = lookup(robot, "#corpus-dashboard-mapping-review", Label.class);
 		Button needsAttention = lookup(robot, "#corpus-dashboard-summary-attention", Button.class);
 		assertTrue(mappingReview.getText().contains("2019 → 2025"));
@@ -493,8 +502,17 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 			invoke(application, "refreshCorpusDashboardHome", new Class<?>[] { long.class }, -1L);
 			return null;
 		}).get();
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> mappingReview.getText().contains("complete (1/1 resolved)"));
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
+			Node root = primaryStage.getScene().getRoot();
+			Node mappingNode = root.lookup("#corpus-dashboard-mapping-review");
+			Node attentionNode = root.lookup("#corpus-dashboard-summary-attention");
+
+			// Verify the refreshed mapping state and unchanged Question
+			// completeness together, using the current scene graph.
+			return mappingNode instanceof Label refreshedMapping && attentionNode instanceof Button refreshedAttention
+					&& refreshedMapping.getText().contains("complete (1/1 resolved)")
+					&& corpusAttentionBeforeReview.equals(refreshedAttention.getText());
+		}));
 
 		// Mapping review remains independent of ordinary corpus completeness.
 		assertEquals(corpusAttentionBeforeReview, needsAttention.getText());

@@ -3,6 +3,7 @@ package au.edu.eq.questionbank.ui.search;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -44,6 +45,7 @@ import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
+import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Exam;
@@ -752,6 +754,113 @@ public class QuestionSearchPaneTest {
 		robot.clickOn("#question-search-classification");
 		assertEquals(currentSubtopic, classificationBox.getValue());
 		assertEquals(null, descriptorBox.getValue());
+	}
+
+	@Test
+	public void descriptorAssignmentQueueAdvancesWithinBookletAndCompletes(FxRobot robot) throws TimeoutException {
+		ExamBooklet targetBooklet = historicalQuestion.getBooklet();
+		ExamBooklet siblingBooklet = new ExamBooklet(9901, historicalQuestion.getExam(), "Paper 2",
+				new SourceDocument(9902, "Chemistry/2020/paper2.pdf"));
+		Exam otherExam = new Exam(9903, chemistry, historicalQuestion.getExam().getProvider(), 2021, "Other Exam");
+		ExamBooklet otherExamBooklet = new ExamBooklet(9904, otherExam, "Paper 1",
+				new SourceDocument(9905, "Chemistry/2021/paper1.pdf"));
+		Question first = new Question(9911, targetBooklet, "Q1", "", 2, List.of(), currentSubtopic, false);
+		Question second = new Question(9912, targetBooklet, "Q2", "", 2, List.of(), currentSubtopic, false);
+		Question third = new Question(9913, targetBooklet, "Q3", "", 2, List.of(), currentSubtopic, false);
+		Question alreadyClassified = new Question(9914, targetBooklet, "Q4", "", 2, List.of(), currentDescriptor,
+				false);
+		Question siblingQuestion = new Question(9915, siblingBooklet, "Q1", "", 2, List.of(), currentSubtopic, false);
+		Question otherExamQuestion = new Question(9916, otherExamBooklet, "Q1", "", 2, List.of(), currentSubtopic,
+				false);
+		AtomicReference<List<Question>> source = new AtomicReference<>(
+				List.of(first, second, third, alreadyClassified, siblingQuestion, otherExamQuestion));
+		QuestionSearchPane pane = replaceSearchPane(robot, curriculumRepository, retrievalService, source::get,
+				QuestionSearchNarrowing.forMissingDescriptors(targetBooklet));
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
+		ComboBox<CurriculumNode> descriptor = robot.lookup("#question-search-selected-descriptor").queryComboBox();
+		Label status = robot.lookup("#question-search-status").queryAs(Label.class);
+
+		// The initial outstanding queue must include only Subtopic-classified
+		// Questions in the selected booklet.
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> results.getItems().size() == 3 && results.getSelectionModel().getSelectedItem() != null);
+		assertEquals(List.of(9911L, 9912L, 9913L),
+				results.getItems().stream().map(item -> item.question().getId()).toList());
+		assertEquals(QuestionSearchScope.ALL_QUESTIONS, scope.getValue());
+		assertTrue(scope.isDisable());
+		assertEquals(first.getId(), pane.getSelectedQuestion().getId());
+		assertTrue(status.getText().contains("3 Questions still need"));
+
+		// The scope is immutable even if a programmatic change is attempted.
+		robot.interact(() -> scope.setValue(QuestionSearchScope.CURRENT_SYLLABUS));
+		assertEquals(QuestionSearchScope.ALL_QUESTIONS, scope.getValue());
+
+		// Select the middle Question, then cancel the pending refinement.
+		robot.interact(() -> results.getSelectionModel().select(1));
+		robot.interact(() -> descriptor.setValue(currentDescriptor));
+		assertTrue(pane.isClassificationDirty());
+		robot.interact(pane::classificationDiscarded);
+		assertFalse(pane.isClassificationDirty());
+		assertEquals(3, results.getItems().size());
+		assertEquals(second.getId(), pane.getSelectedQuestion().getId());
+
+		// Simulate successful classification persistence for Q2.
+		Question classifiedSecond = new Question(second.getId(), targetBooklet, second.getQuestionCode(),
+				second.getQuestionText(), second.getMarks(), second.getRegions(), currentDescriptor, false);
+		robot.interact(() -> {
+			descriptor.setValue(currentDescriptor);
+			assertTrue(pane.isClassificationDirty());
+			source.set(List.of(first, classifiedSecond, third, alreadyClassified, siblingQuestion, otherExamQuestion));
+			pane.classificationSaved(second.getId());
+			pane.refreshAfterEdit(second.getId());
+		});
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2
+				&& pane.getSelectedQuestion() != null && pane.getSelectedQuestion().getId() == third.getId());
+
+		// The removed middle row is replaced by the next outstanding row.
+		assertEquals(List.of(first.getId(), third.getId()),
+				results.getItems().stream().map(item -> item.question().getId()).toList());
+		assertEquals(1, results.getSelectionModel().getSelectedIndex());
+		assertTrue(status.getText().contains("2 Questions still need"));
+
+		// Classify the last row. The queue must wrap to the first
+		// remaining Question rather than leaving nothing selected.
+		Question classifiedThird = new Question(third.getId(), targetBooklet, third.getQuestionCode(),
+				third.getQuestionText(), third.getMarks(), third.getRegions(), currentDescriptor, false);
+		robot.interact(() -> {
+			descriptor.setValue(currentDescriptor);
+			assertTrue(pane.isClassificationDirty());
+			source.set(List.of(first, classifiedSecond, classifiedThird, alreadyClassified, siblingQuestion,
+					otherExamQuestion));
+			pane.classificationSaved(third.getId());
+			pane.refreshAfterEdit(third.getId());
+		});
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& pane.getSelectedQuestion() != null && pane.getSelectedQuestion().getId() == first.getId());
+		assertTrue(status.getText().contains("1 Question still needs"));
+
+		// Resolve the final outstanding Question.
+		Question classifiedFirst = new Question(first.getId(), targetBooklet, first.getQuestionCode(),
+				first.getQuestionText(), first.getMarks(), first.getRegions(), currentDescriptor, false);
+		robot.interact(() -> {
+			descriptor.setValue(currentDescriptor);
+			assertTrue(pane.isClassificationDirty());
+			source.set(List.of(classifiedFirst, classifiedSecond, classifiedThird, alreadyClassified, siblingQuestion,
+					otherExamQuestion));
+			pane.classificationSaved(first.getId());
+			pane.refreshAfterEdit(first.getId());
+		});
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> results.getItems().isEmpty() && status.getText().contains("Descriptor assignment complete"));
+		assertTrue(results.getItems().isEmpty());
+		assertNull(pane.getSelectedQuestion());
+		assertEquals(QuestionSearchScope.ALL_QUESTIONS, scope.getValue());
+
+		// Completion applies only to the selected booklet. The two
+		// unclassified Questions outside it still exist in persistence.
+		assertEquals(2, source.get().stream()
+				.filter(question -> question.getClassification().getLevel() != CurriculumLevel.DESCRIPTOR).count());
 	}
 
 	@Test

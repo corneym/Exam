@@ -27,16 +27,23 @@ import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
+import au.edu.eq.questionbank.model.CurriculumLevel;
+import au.edu.eq.questionbank.model.CurriculumNode;
+import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
+import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.audit.BookletCorpusStatus;
 import au.edu.eq.questionbank.service.audit.ExamCorpusStatus;
@@ -60,6 +67,8 @@ import javafx.stage.Stage;
 @Tag("workflow-ui")
 class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 
+	private static final int TIMEOUT = 10;
+
 	@Test
 	void corpusDashboardHomeShowsLiveDashboardForWorkingSubject(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1",
@@ -72,7 +81,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 			return null;
 		}).get();
 		Node applicationRoot = primaryStage.getScene().getRoot();
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> nodePresentOnFx(robot, applicationRoot, "#corpus-dashboard-exams"));
 		@SuppressWarnings("unchecked")
 		ComboBox<Subject> subjects = lookupOnFx(robot, applicationRoot, "#curriculum-subject", ComboBox.class);
@@ -120,13 +129,13 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
 			return null;
 		}).get();
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-summary-missing-answer").tryQuery().isPresent());
 		Button missingAnswers = lookup(robot, "#corpus-dashboard-summary-missing-answer", Button.class);
 		fireControl(robot, missingAnswers);
 		@SuppressWarnings("unchecked")
 		TableView<Object> questionWork = lookup(robot, "#corpus-dashboard-question-work", TableView.class);
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> questionWork.getItems().size() == 1);
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> questionWork.getItems().size() == 1);
 		robot.interact(() -> questionWork.getSelectionModel().selectFirst());
 
 		// The first worker read waits until the test has observed the
@@ -141,7 +150,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 				(_, method, arguments) -> {
 					if ("findAll".equals(method.getName()) && failFirstRead.compareAndSet(true, false)) {
 						workerStarted.countDown();
-						if (!releaseWorker.await(10, TimeUnit.SECONDS)) {
+						if (!releaseWorker.await(TIMEOUT, TimeUnit.SECONDS)) {
 							throw new IllegalStateException("Test worker was not released");
 						}
 						throw new IllegalStateException("Injected Answer Capture queue failure");
@@ -178,10 +187,150 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Node okNode = dialog.lookupButton(ButtonType.OK);
 		assertTrue(okNode instanceof ButtonBase);
 		robot.interact(((ButtonBase) okNode)::fire);
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
 		assertFalse(evaluateOnFx(robot, overlay::isBusy));
 		assertFalse(evaluateOnFx(robot, shield::isVisible));
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void dashboardDescriptorAssignmentPersistsAndRefreshesCounts(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1",
+				ExamBookletQuestionFormat.MIXED);
+
+		// Use an MCQ with captured Question content and a valid Answer.
+		// Classification will therefore be its only outstanding problem.
+		fireControl(robot, "#question-response-type-multiple-choice");
+		Question saved = captureQuestion(robot, "DASH-D1");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteCurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		SyllabusVersion current = curriculumRepository.findVersionsForSubject(saved.getExam().getSubject()).stream()
+				.filter(version -> "2025".equals(version.getName())).findFirst().orElseThrow();
+		Topic topic = (Topic) curriculumRepository.findByCode(current, "1.1").orElseThrow();
+
+		// The existing fixture uses a Descriptor directly beneath Topic.
+		// Create a Subtopic and child Descriptor for the refinement workflow.
+		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.2", "Classification work", 2);
+		Descriptor targetDescriptor = curriculumWriter.insertDescriptor(subtopic, "1.1.2.1", "Assigned Descriptor", 1);
+		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, new SqliteExamWriter(database));
+		answerWriter.insertAnswer(saved, "A", List.of());
+
+		// Establish the persisted incomplete-classification state.
+		questionRepository.updateClassification(saved.getId(), subtopic);
+		Question unclassified = questionRepository.findById(saved.getId()).orElseThrow();
+		assertEquals(CurriculumLevel.SUBTOPIC, unclassified.getClassification().getLevel());
+		assertEquals("A", unclassified.getAnswer().getAnswerText());
+
+		// Rebuild the application Dashboard from authoritative persistence.
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
+			Node node = primaryStage.getScene().getRoot().lookup("#corpus-dashboard-booklets");
+
+			// The Dashboard may not yet be mounted while the
+			// asynchronous persistence snapshot is loading.
+			if (!(node instanceof TableView<?> table)) {
+				return false;
+			}
+			return table.getItems().size() == 1 && table.getItems().getFirst() instanceof BookletCorpusStatus status
+					&& status.questionsWithoutDescriptorCount() == 1;
+		}));
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		Label selectedCounts = robot.lookup("#corpus-dashboard-selected-exam-counts").queryAs(Label.class);
+		assertEquals(1, booklets.getItems().getFirst().questionsWithoutDescriptorCount());
+		assertEquals(1, exams.getItems().getFirst().questionSummary().incompleteQuestions());
+		assertTrue(selectedCounts.getText().contains("Need work: 1"));
+		robot.interact(() -> booklets.getSelectionModel().selectFirst());
+		Button assign = lookup(robot, "#corpus-dashboard-assign-descriptors", Button.class);
+		assertFalse(assign.isDisable());
+
+		// The production action opens a modal Search dialog.
+		fireControlLater(assign);
+		waitForDialogShowing(robot, "Search Questions");
+		ListView<Object> results = lookupInShowingDialog(robot, "Search Questions", "#question-search-results",
+				ListView.class);
+		ComboBox<CurriculumNode> descriptorBox = lookupInShowingDialog(robot, "Search Questions",
+				"#question-search-selected-descriptor", ComboBox.class);
+		ComboBox<Object> scope = lookupInShowingDialog(robot, "Search Questions", "#question-search-scope",
+				ComboBox.class);
+		Label status = lookupInShowingDialog(robot, "Search Questions", "#question-search-status", Label.class);
+		Label narrowing = lookupInShowingDialog(robot, "Search Questions", "#question-search-narrowing", Label.class);
+		Button save = lookupInShowingDialog(robot, "Search Questions", "#question-search-save-classification",
+				Button.class);
+
+		// The booklet-scoped queue must contain the one outstanding
+		// Question and offer its persisted child Descriptor.
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot, () -> results.getItems().size() == 1 && descriptorBox.getItems().stream()
+						.anyMatch(node -> node.getId() == targetDescriptor.getId())));
+		assertEquals(1, results.getItems().size());
+		assertTrue(narrowing.getText().contains("Assign Descriptors"));
+		assertTrue(narrowing.getText().contains(saved.getBooklet().getName()));
+		assertTrue(scope.isDisable());
+		CurriculumNode choice = descriptorBox.getItems().stream()
+				.filter(node -> node.getId() == targetDescriptor.getId()).findFirst().orElseThrow();
+		robot.interact(() -> descriptorBox.setValue(choice));
+		assertFalse(save.isDisable());
+
+		// Fire the actual inline Save. This uses the application's
+		// SqliteQuestionRepository classification updater.
+		fireControl(robot, save);
+
+		// Successful persistence must remove this Question from the queue
+		// without closing Search or changing its booklet restriction.
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> evaluateOnFx(robot,
+				() -> results.getItems().isEmpty() && status.getText().contains("Descriptor assignment complete")));
+		assertEquals(0, results.getItems().size());
+		assertTrue(scope.isDisable());
+
+		// Confirm that the database contains the Descriptor, not merely
+		// a locally modified JavaFX selection.
+		Question persisted = questionRepository.findById(saved.getId()).orElseThrow();
+		assertEquals(targetDescriptor.getId(), persisted.getClassification().getId());
+		assertEquals(CurriculumLevel.DESCRIPTOR, persisted.getClassification().getLevel());
+		assertEquals("A", persisted.getAnswer().getAnswerText());
+		closeDialog(robot, "Search Questions");
+
+		// Closing Search must trigger the application's existing
+		// authoritative Dashboard refresh after persisted changes.
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
+			Node root = primaryStage.getScene().getRoot();
+			Node bookletNode = root.lookup("#corpus-dashboard-booklets");
+			Node examNode = root.lookup("#corpus-dashboard-exams");
+
+			// Both tables must be published before testing
+			// the refreshed persistence-derived counts.
+			if (!(bookletNode instanceof TableView<?> polledBooklets)
+					|| !(examNode instanceof TableView<?> polledExams)) {
+				return false;
+			}
+			if (polledBooklets.getItems().size() != 1 || polledExams.getItems().size() != 1) {
+				return false;
+			}
+			return polledBooklets.getItems().getFirst() instanceof BookletCorpusStatus bookletStatus
+					&& bookletStatus.questionsWithoutDescriptorCount() == 0
+					&& polledExams.getItems().getFirst() instanceof ExamCorpusStatus examStatus
+					&& examStatus.questionSummary().incompleteQuestions() == 0;
+		}));
+		TableView<BookletCorpusStatus> refreshedBooklets = robot.lookup("#corpus-dashboard-booklets")
+				.queryAs(TableView.class);
+		TableView<ExamCorpusStatus> refreshedExams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		Label refreshedCounts = robot.lookup("#corpus-dashboard-selected-exam-counts").queryAs(Label.class);
+		assertEquals(0, refreshedBooklets.getItems().getFirst().questionsWithoutDescriptorCount());
+		assertEquals(0, refreshedExams.getItems().getFirst().questionSummary().incompleteQuestions());
+		assertTrue(refreshedCounts.getText().contains("Need work: 0"));
+
+		// The selected booklet has no outstanding Descriptor work,
+		// so the action must now be disabled.
+		robot.interact(() -> refreshedBooklets.getSelectionModel().selectFirst());
+		Button refreshedAssign = lookup(robot, "#corpus-dashboard-assign-descriptors", Button.class);
+		assertTrue(refreshedAssign.isDisable());
 	}
 
 	@Test
@@ -197,7 +346,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
 			return null;
 		}).get();
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-inspect-exam-questions").tryQuery().isPresent());
 		Button inspectExam = lookup(robot, "#corpus-dashboard-inspect-exam-questions", Button.class);
 		assertFalse(inspectExam.isDisabled());
@@ -212,13 +361,13 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		ListView<Object> examResults = lookupInShowingDialog(robot, "Search Questions", "#question-search-results",
 				ListView.class);
 		assertEquals("Exam: QCAA 2025 — External Assessment", examNarrowing.getText());
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> evaluateOnFx(robot, () -> examResults.getItems().size() == 1));
 		closeDialog(robot, "Search Questions");
 
 		// Closing inspection leaves the existing Dashboard Home in place rather than
 		// navigating into a different workspace.
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
 		@SuppressWarnings("unchecked")
 		TableView<Object> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
@@ -233,7 +382,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		ListView<Object> bookletResults = lookupInShowingDialog(robot, "Search Questions", "#question-search-results",
 				ListView.class);
 		assertEquals("Booklet: QCAA 2025 — External Assessment — " + booklet.getName(), bookletNarrowing.getText());
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> evaluateOnFx(robot, () -> bookletResults.getItems().size() == 1));
 		closeDialog(robot, "Search Questions");
 
@@ -253,7 +402,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
 			return null;
 		}).get();
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-import-legacy-questions").tryQuery().isPresent());
 		Button importLegacy = lookup(robot, "#corpus-dashboard-import-legacy-questions", Button.class);
 		assertFalse(importLegacy.isDisabled());
@@ -267,7 +416,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// Cancelling a Dashboard-owned intake restores the Dashboard rather than
 		// stranding the user in Exam/Assets.
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
 		assertTrue(robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
 	}
@@ -282,7 +431,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
 			return null;
 		}).get();
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-import-legacy-questions").tryQuery().isPresent());
 		Button importLegacy = robot.lookup("#corpus-dashboard-import-legacy-questions").queryButton();
 		assertFalse(importLegacy.isDisable());
@@ -290,7 +439,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Import opens the existing modal intake dialog after mounting Exam/Assets for
 		// any structural preflight work that may be required.
 		Platform.runLater(importLegacy::fire);
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("#legacy-question-import-syllabus").tryQuery().isPresent());
 
 		// Exam/Assets remains available underneath Dashboard-started intake for
@@ -309,7 +458,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// returns directly home; there is no remaining Exam/Assets Return action to
 		// invoke afterwards.
 		robot.interact(((Button) cancelNode)::fire);
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
 		assertTrue(robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
 		assertTrue(robot.lookup("#exam-assets-workspace").tryQuery().isEmpty());
@@ -341,7 +490,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
 			return null;
 		}).get();
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
 
 			// Dashboard content is replaced asynchronously.
 			// Traverse the scene graph only on the FX thread.
@@ -358,7 +507,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		fireControl(robot, missingAnswers);
 		@SuppressWarnings("unchecked")
 		TableView<Object> questionWork = robot.lookup("#corpus-dashboard-question-work").queryAs(TableView.class);
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> evaluateOnFx(robot, () -> questionWork.getItems().size() == 1));
 
 		// Route the exact Missing Answer row through the task-specific Dashboard
@@ -370,7 +519,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		ComboBox<Question> unanswered = unansweredQuestions(robot);
 
 		// The selected persisted Question must own Answer capture.
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> evaluateOnFx(robot,
 				() -> unanswered.getValue() != null && unanswered.getValue().getId() == question.getId()));
 		Button returnDashboard = lookup(robot, "#return-corpus-dashboard", Button.class);
 		Label selectedAnswerPdf = lookup(robot, "#selected-answer-pdf", Label.class);
@@ -380,7 +529,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Dashboard Answer capture must reopen the authoritative assigned AnswerFile
 		// rather than depending on whichever document happened to be open previously.
 		ApplicationBusyOverlay busyOverlay = (ApplicationBusyOverlay) primaryStage.getScene().getRoot();
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> evaluateOnFx(robot,
 				() -> "exam.pdf".equals(selectedAnswerPdf.getText()) && !busyOverlay.isBusy()));
 		assertFalse(busyOverlay.isBusy());
 
@@ -397,7 +546,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
 
 		// Persistence is the durable completion condition for the Answer task.
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> repository.findById(question.getId())
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> repository.findById(question.getId())
 				.filter(Question::hasAnswer).map(stored -> stored.getAnswer().getRegions().size() == 1).orElse(false));
 
 		// Saving must leave Dashboard navigation under explicit user control.
@@ -407,7 +556,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// Returning home must reload corpus status from persistence and remove exactly
 		// the completed Missing Answer without creating a replacement Question.
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
 
 			// The return-to-Dashboard refresh also replaces UI nodes.
 			Node node = primaryStage.getScene().getRoot().lookup("#corpus-dashboard-summary-missing-answer");
@@ -429,12 +578,12 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
 			return null;
 		}).get();
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-exams").tryQuery().isPresent());
 		TableView<?> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
 		robot.interact(() -> exams.getSelectionModel().selectFirst());
 		fireControl(robot, "#corpus-dashboard-manage-exam-assets");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("#exam-assets-workspace").tryQuery().isPresent());
 		ExamAssetsPane pane = field(application, "examAssetsPane", ExamAssetsPane.class);
 
@@ -459,7 +608,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// itself.
 		assertTrue(returnDashboard.isDisabled());
 		fireControl(robot, "#exam-assets-legacy-import-cancel");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
 		assertTrue(robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
 	}
@@ -481,7 +630,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// Wait for the asynchronous persistence-backed snapshot,
 		// not merely the Dashboard container.
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-exams").tryQuery().filter(TableView.class::isInstance)
 						.map(TableView.class::cast).map(table -> table.getItems().size() == 1).orElse(false));
 		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
@@ -494,7 +643,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertFalse(initial.isReadyForCompletion());
 
 		// The first Exam is automatically selected.
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> booklets.getItems().size() == 1);
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> booklets.getItems().size() == 1);
 		assertEquals(initial.exam().getId(), exams.getSelectionModel().getSelectedItem().exam().getId());
 		assertEquals(0, booklets.getItems().getFirst().encounteredTopLevelQuestionCount());
 
@@ -502,14 +651,14 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// ScrollPane. Resolve it on the JavaFX thread instead of relying on
 		// TestFX's general scene-graph search.
 		Node dashboardRoot = primaryStage.getScene().getRoot();
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> nodePresentOnFx(robot, dashboardRoot, "#corpus-dashboard-manage-exam-assets"));
 		Button manageAssets = lookupOnFx(robot, dashboardRoot, "#corpus-dashboard-manage-exam-assets", Button.class);
 		assertFalse(manageAssets.isDisabled());
 
 		// Enter the real Exam/Assets workflow.
 		fireControl(robot, manageAssets);
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("#exam-assets-workspace").tryQuery().isPresent());
 		Button returnDashboard = lookup(robot, "#exam-assets-return-dashboard", Button.class);
 		assertTrue(returnDashboard.isVisible());
@@ -518,7 +667,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// This is the production navigation boundary
 		// associated with the reported defect.
 		fireControl(robot, returnDashboard);
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-exams").tryQuery().filter(TableView.class::isInstance)
 						.map(TableView.class::cast).map(table -> table.getItems().size() == 1).orElse(false));
 		TableView<ExamCorpusStatus> refreshedExams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
@@ -547,7 +696,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
 			return null;
 		}).get();
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> {
 
 			// Dashboard reconstruction is asynchronous. Absence during an early polling
 			// iteration means "not ready yet", not a failed TestFX query.
@@ -559,7 +708,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Button manageExamAssets = lookup(robot, "#corpus-dashboard-manage-exam-assets", Button.class);
 		assertFalse(manageExamAssets.isDisabled());
 		fireControl(robot, manageExamAssets);
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("#exam-assets-workspace").tryQuery().isPresent());
 		Button assetsReturn = lookup(robot, "#exam-assets-return-dashboard", Button.class);
 		assertTrue(assetsReturn.isVisible());
@@ -578,7 +727,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// Use Selected Booklet is asynchronous. Wait for the resulting capture surface,
 		// not for a transient worker flag.
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("#capture-workspace").tryQuery().isPresent());
 		Button captureReturn = lookup(robot, "#return-corpus-dashboard", Button.class);
 		assertTrue(captureReturn.isVisible());
@@ -587,7 +736,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Moving back into structural management must transfer the same Dashboard
 		// session instead of discarding it.
 		fireControl(robot, "#change-exam-assets");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("#exam-assets-workspace").tryQuery().isPresent());
 		assetsReturn = lookup(robot, "#exam-assets-return-dashboard", Button.class);
 		assertTrue(assetsReturn.isVisible());
@@ -603,7 +752,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// Finally exercise the retained route rather than merely asserting its button.
 		fireControl(robot, assetsReturn);
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
 	}
 
@@ -616,7 +765,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// Select the authoritative Working Subject.
 		robot.interact(() -> subjectBox.getSelectionModel().select(chemistry));
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> {
 			Subject selected = field(application, "workingSubject", Subject.class);
 			return selected != null && selected.getId() == chemistry.getId();
 		});
@@ -631,7 +780,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
 			return null;
 		}).get();
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> robot.lookup("#corpus-dashboard-exams").tryQuery()
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> robot.lookup("#corpus-dashboard-exams").tryQuery()
 				.filter(TableView.class::isInstance).map(TableView.class::cast)
 				.map(table -> table.getItems().stream().filter(ExamCorpusStatus.class::isInstance)
 						.map(ExamCorpusStatus.class::cast)
@@ -663,7 +812,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 			invoke(application, "refreshCorpusDashboardHome", new Class<?>[] { long.class }, -1L);
 			return null;
 		}).get();
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> robot.lookup("#corpus-dashboard-exams").tryQuery()
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> robot.lookup("#corpus-dashboard-exams").tryQuery()
 				.filter(TableView.class::isInstance).map(TableView.class::cast).map(table -> table.getItems().stream()
 						.filter(ExamCorpusStatus.class::isInstance).map(ExamCorpusStatus.class::cast).anyMatch(item -> {
 							ExamCorpusStatus status = (ExamCorpusStatus) item;
@@ -737,12 +886,12 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
 			return null;
 		}).get();
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-exams").tryQuery().isPresent());
 		TableView<?> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
 		robot.interact(() -> exams.getSelectionModel().selectFirst());
 		fireControl(robot, "#corpus-dashboard-manage-exam-assets");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("#exam-assets-workspace").tryQuery().isPresent());
 		Class<?> pendingType = Class
 				.forName("au.edu.eq.questionbank.ui.QuestionBankApplication$PendingLegacyQuestionImport");
@@ -763,7 +912,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// QCAA 2020 Paper 1 is not present in this fixture, so the managed workbook
 		// must survive into the pending Exam/Assets preflight transaction.
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("#exam-assets-legacy-import-requirement-0").tryQuery().isPresent());
 		Object retainedPending = field(application, "pendingLegacyQuestionImport", Object.class);
 		assertNotNull(retainedPending);
@@ -774,7 +923,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// Clean up through the real pending-import cancellation path.
 		fireControl(robot, "#exam-assets-legacy-import-cancel");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
 	}
 

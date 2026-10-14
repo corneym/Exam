@@ -1,10 +1,12 @@
 package au.edu.eq.questionbank.service.audit;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -23,6 +25,7 @@ import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
@@ -162,6 +165,24 @@ class QuestionCorpusAuditTest {
 		// content must not accidentally clear that structural correction requirement.
 		assertFalse(status.questionContentCaptured());
 		assertTrue(status.hasProblem(QuestionCorpusProblem.MISSING_QUESTION_CONTENT));
+		assertFalse(status.isComplete());
+	}
+
+	@Test
+	void subtopicOnlyClassificationIsQuestionWorkWithoutChangingAnswerCompleteness() {
+		Subtopic subtopic = new Subtopic(6, fixture.syllabus, fixture.topic, "1.1.0", "Subtopic", 1);
+		Question question = new Question(108, fixture.booklet, "Q8", "", 1,
+				List.of(new QuestionRegion(fixture.booklet, 1, 0.10, 0.10, 0.70, 0.20)), subtopic, false, null, null,
+				QuestionResponseType.MULTIPLE_CHOICE);
+		question.setAnswer(new Answer(109, "A", List.of()));
+		QuestionCorpusStatus status = QuestionCorpusAudit.assess(question);
+		assertTrue(status.questionContentCaptured());
+		assertTrue(status.responseTypeResolved());
+		assertTrue(status.answerComplete());
+		assertTrue(status.sharedContextResolved());
+
+		// Classification is the only outstanding problem.
+		assertEquals(Set.of(QuestionCorpusProblem.MISSING_DESCRIPTOR), status.problems());
 		assertFalse(status.isComplete());
 	}
 

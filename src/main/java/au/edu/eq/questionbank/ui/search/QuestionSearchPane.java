@@ -107,6 +107,7 @@ public class QuestionSearchPane extends BorderPane {
 	private final GridPane selectedClassificationPane = new GridPane();
 	private final PauseTransition previewDelay = new PauseTransition(Duration.millis(PREVIEW_DELAY_MILLIS));
 	private long outputApplicabilityDisplayedQuestionId = -1;
+	private int descriptorQueueIndexToReselect = -1;
 	private QuestionSearchMetadataFilter metadataFilter;
 	private final ComboBox<QuestionSearchInclusionFilter> inclusionFilterBox = new ComboBox<>();
 
@@ -267,7 +268,16 @@ public class QuestionSearchPane extends BorderPane {
 		configureControls();
 		configureHandlers();
 		setCenter(createWorkspacePane());
-		startWorkingSubjectNavigation();
+		if (searchNarrowing.isDescriptorAssignmentQueue()) {
+
+			// Descriptor assignment must include historical Questions that
+			// are not applicable to the current syllabus.
+			activateAllQuestionsScope();
+		} else {
+			startWorkingSubjectNavigation();
+		}
+
+		// Retain the newer metadata filter catalogue from main.
 		startFilterCatalogueLoad();
 	}
 
@@ -276,8 +286,8 @@ public class QuestionSearchPane extends BorderPane {
 			return first == second;
 		}
 
-		// The repository may reconstruct objects with the
-		// same persistent identity between catalogue loads.
+		// Repository refreshes can reconstruct domain objects while
+		// retaining their persistent identity.
 		return idExtractor.applyAsLong(first) == idExtractor.applyAsLong(second);
 	}
 
@@ -378,11 +388,22 @@ public class QuestionSearchPane extends BorderPane {
 			return;
 		}
 		questionIdToReselect = questionId;
+		descriptorQueueIndexToReselect = -1;
+		if (searchNarrowing.isDescriptorAssignmentQueue()) {
 
-		// Re-query the active Search because an edit may change whether the Question
-		// still belongs in the current retrieval scope. Keep the accepted results
-		// visible until the replacement generation is ready rather than blanking the
-		// Search pane.
+			// Remember the edited Question's old position before the
+			// refreshed queue removes it. The replacement row at this
+			// position becomes the next outstanding Question.
+			for (int index = 0; index < resultsList.getItems().size(); index++) {
+				if (resultsList.getItems().get(index).question().getId() == questionId) {
+					descriptorQueueIndexToReselect = index;
+					break;
+				}
+			}
+		}
+
+		// Retain the accepted generation until authoritative retrieval
+		// finishes. A failed refresh must not silently discard the queue.
 		refreshAutomaticSearch();
 		startFilterCatalogueLoad();
 	}
@@ -841,11 +862,16 @@ public class QuestionSearchPane extends BorderPane {
 		try {
 			activeSearchTask = null;
 			List<QuestionSearchResult> results = task.getValue();
+			if (searchNarrowing.isDescriptorAssignmentQueue()) {
 
-			// A post-edit refresh normally changes one Question.
-			// Avoid replacing the entire ListView when membership
-			// and ordering are unchanged.
-			if (!publishEditedResultInPlace(results)) {
+				// Queue membership is authoritative. A successful
+				// classification removes the Question from these results.
+				resultsList.getItems().setAll(results);
+				reselectEditedQuestion(results);
+			} else if (!publishEditedResultInPlace(results)) {
+
+				// Ordinary inspection continues to preserve matching
+				// edited rows and use its existing selection contract.
 				resultsList.getItems().setAll(results);
 				reselectEditedQuestion(results);
 			}
@@ -1054,12 +1080,15 @@ public class QuestionSearchPane extends BorderPane {
 	private void configureSearchScopeControl() {
 		searchScopeBox.setId("question-search-scope");
 		searchScopeBox.getItems().setAll(QuestionSearchScope.values());
-		searchScopeBox.setValue(QuestionSearchScope.CURRENT_SYLLABUS);
+		boolean assignmentQueue = searchNarrowing.isDescriptorAssignmentQueue();
+		searchScopeBox
+				.setValue(assignmentQueue ? QuestionSearchScope.ALL_QUESTIONS : QuestionSearchScope.CURRENT_SYLLABUS);
 		searchScopeBox.setMaxWidth(Double.MAX_VALUE);
-		searchScopeBox.setTooltip(new Tooltip(
-				"Current Syllabus searches by current curriculum; All Questions searches all stored Questions for the Working Subject."));
-
-		// Search scope owns its user-facing wording rather than exposing enum names.
+		searchScopeBox.setDisable(assignmentQueue);
+		searchScopeBox.setTooltip(new Tooltip(assignmentQueue
+				? "Descriptor assignment always examines all unclassified " + "Questions in the selected booklet."
+				: "Current Syllabus searches by current curriculum; " + "All Questions searches all stored Questions "
+						+ "for the Working Subject."));
 		searchScopeBox.setButtonCell(new DisplayListCell<>(QuestionSearchScope::displayText));
 		searchScopeBox.setCellFactory(_ -> new DisplayListCell<>(QuestionSearchScope::displayText));
 	}
@@ -1681,6 +1710,18 @@ public class QuestionSearchPane extends BorderPane {
 		if (updatingControls || disposed) {
 			return;
 		}
+		if (searchNarrowing.isDescriptorAssignmentQueue()) {
+
+			// Prevent even programmatic scope changes from replacing the
+			// complete outstanding booklet queue with an applicability subset.
+			updatingControls = true;
+			try {
+				searchScopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS);
+			} finally {
+				updatingControls = false;
+			}
+			return;
+		}
 		prepareSearchScopeTransition();
 		synchroniseInclusionFilterForScope();
 		if (searchScopeBox.getValue() == QuestionSearchScope.ALL_QUESTIONS) {
@@ -2150,6 +2191,42 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void reselectEditedQuestion(List<QuestionSearchResult> results) {
+		if (searchNarrowing.isDescriptorAssignmentQueue()) {
+			long editedId = questionIdToReselect;
+			int previousIndex = descriptorQueueIndexToReselect;
+			questionIdToReselect = -1;
+			descriptorQueueIndexToReselect = -1;
+			if (results.isEmpty()) {
+
+				// No outstanding Questions remain. The status label
+				// provides the explicit completion state.
+				resultsList.getSelectionModel().clearSelection();
+				return;
+			}
+			if (editedId > 0) {
+				for (int index = 0; index < results.size(); index++) {
+					QuestionSearchResult result = results.get(index);
+					if (result.question().getId() == editedId) {
+
+						// An edit that did not remove the Question retains
+						// that Question rather than advancing incorrectly.
+						resultsList.getSelectionModel().select(index);
+						resultsList.scrollTo(index);
+						return;
+					}
+				}
+			}
+
+			// The edited Question has left the queue. Advance to the
+			// next row at its former position, wrapping to the final
+			// surviving row when the removed Question was last.
+			int nextIndex = previousIndex < 0 ? 0 : Math.min(previousIndex, results.size() - 1);
+			resultsList.getSelectionModel().select(nextIndex);
+			resultsList.scrollTo(nextIndex);
+			return;
+		}
+
+		// Ordinary Inspect Questions retains its established behaviour.
 		if (questionIdToReselect < 1) {
 			return;
 		}
@@ -2157,8 +2234,7 @@ public class QuestionSearchPane extends BorderPane {
 		questionIdToReselect = -1;
 		for (QuestionSearchResult result : results) {
 
-			// Persistent Question identity survives metadata and capture edits even when
-			// the Search result wrapper itself has been reconstructed.
+			// Reconstructed repository objects retain persistent identity.
 			if (result.question().getId() != questionId) {
 				continue;
 			}
@@ -2460,7 +2536,8 @@ public class QuestionSearchPane extends BorderPane {
 		QuestionSearchMetadataFilter metadataSnapshot = metadataFilter;
 
 		// Capture both the Search scope and inclusion choice.
-		// The worker must never read mutable JavaFX controls.
+		// All Questions, including Descriptor assignment, ignores
+		// current-syllabus inclusion restrictions.
 		QuestionSearchInclusionFilter inclusionSnapshot = searchScopeBox
 				.getValue() == QuestionSearchScope.CURRENT_SYLLABUS
 						? Objects.requireNonNullElse(inclusionFilterBox.getValue(), QuestionSearchInclusionFilter.ALL)
@@ -2487,6 +2564,9 @@ public class QuestionSearchPane extends BorderPane {
 					try (PerformanceOperation filterOperation = performanceRecorder.start("search.filter",
 							retrievalOperation.id())) {
 						try {
+
+							// This method combines immutable Dashboard
+							// narrowing, metadata filtering and inclusion.
 							filteredResults = filterSearchResults(sourceResults, metadataSnapshot, inclusionSnapshot,
 									filterOperation.id());
 							filterOperation.resultCount(filteredResults.size());
@@ -2803,12 +2883,10 @@ public class QuestionSearchPane extends BorderPane {
 		boolean dirty = classificationDirty.get();
 		metadataFilterPane.setDisable(dirty);
 
-		// Result selection remains available so an attempt to leave the Question can
-		// invoke the Save/Cancel navigation guard.
+		// Keep result navigation available so the containing Dialog can
+		// resolve a pending classification edit before changing selection.
 		resultsList.setDisable(false);
 		if (dirty) {
-
-			// Hold Search-local navigation while the pending Descriptor edit is resolved.
 			searchScopeBox.setDisable(true);
 			unitBox.setDisable(true);
 			topicBox.setDisable(true);
@@ -2816,11 +2894,10 @@ public class QuestionSearchPane extends BorderPane {
 			descriptorBox.setDisable(true);
 			return;
 		}
-		searchScopeBox.setDisable(false);
-		if (searchScopeBox.getValue() == QuestionSearchScope.ALL_QUESTIONS) {
 
-			// All Questions has no current-syllabus navigation beneath the fixed
-			// workspace Working Subject.
+		// Descriptor assignment permanently uses All Questions scope.
+		searchScopeBox.setDisable(searchNarrowing.isDescriptorAssignmentQueue());
+		if (searchScopeBox.getValue() == QuestionSearchScope.ALL_QUESTIONS) {
 			unitBox.setDisable(true);
 			topicBox.setDisable(true);
 			classificationBox.setDisable(true);
@@ -2859,6 +2936,17 @@ public class QuestionSearchPane extends BorderPane {
 
 	private void updateSearchStatus() {
 		int resultCount = resultsList.getItems().size();
+		if (searchNarrowing.isDescriptorAssignmentQueue()) {
+			if (resultCount == 0) {
+				statusLabel
+						.setText("Descriptor assignment complete: all Questions " + "in this booklet are classified.");
+			} else if (resultCount == 1) {
+				statusLabel.setText("1 Question still needs a Descriptor in this booklet.");
+			} else {
+				statusLabel.setText(resultCount + " Questions still need a Descriptor in this booklet.");
+			}
+			return;
+		}
 		if (resultCount == 0) {
 			statusLabel.setText("No questions found.");
 		} else if (resultCount == 1) {

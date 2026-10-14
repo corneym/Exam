@@ -21,5 +21,9 @@ public enum QuestionCorpusProblem {
 	/**
 	 * The Question's response type has not yet been resolved.
 	 */
-	UNKNOWN_RESPONSE_TYPE
+	UNKNOWN_RESPONSE_TYPE,
+	/**
+	 * The Question is classified only to Subtopic rather than Descriptor.
+	 */
+	MISSING_DESCRIPTOR
 }

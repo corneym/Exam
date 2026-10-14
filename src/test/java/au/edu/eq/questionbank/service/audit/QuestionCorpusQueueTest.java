@@ -19,6 +19,7 @@ import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
@@ -50,6 +51,45 @@ class QuestionCorpusQueueTest {
 		List<QuestionCorpusWorkItem> items = QuestionCorpusQueue.build(fixture.questions(), filter);
 		assertEquals(2, items.size());
 		assertTrue(items.stream().allMatch(item -> item.question().getBooklet().getId() == fixture.paper1.getId()));
+	}
+
+	@Test
+	void missingDescriptorsAreDistinctQuestionWorkAndRespectBookletScope() {
+		Subtopic subtopic = new Subtopic(50, fixture.chemistrySyllabus, fixture.chemistryTopic, "1.1.0", "Subtopic", 1);
+		Question complete = fixture.questions().getFirst();
+
+		// This Question has three problems but must count as one
+		// Question requiring attention.
+		Question multipleProblems = new Question(34, fixture.paper1, "Q5", "", 2, List.of(), subtopic, false, null,
+				null, QuestionResponseType.WRITTEN_RESPONSE);
+
+		// This Question has complete content and Answer, but still
+		// requires a Descriptor.
+		Question descriptorOnly = new Question(35, fixture.paper1, "Q6", "", 1,
+				List.of(new QuestionRegion(fixture.paper1, 1, 0.1, 0.1, 0.7, 0.2)), subtopic, false, null, null,
+				QuestionResponseType.MULTIPLE_CHOICE);
+		descriptorOnly.setAnswer(new Answer(45, "A", List.of()));
+
+		// An unclassified Question in another booklet must not appear.
+		Question otherBooklet = new Question(36, fixture.paper2, "Q7", "", 1,
+				List.of(new QuestionRegion(fixture.paper2, 1, 0.1, 0.1, 0.7, 0.2)), subtopic, false, null, null,
+				QuestionResponseType.MULTIPLE_CHOICE);
+		otherBooklet.setAnswer(new Answer(46, "B", List.of()));
+		List<Question> bookletQuestions = List.of(complete, multipleProblems, descriptorOnly);
+		QuestionCorpusSummary summary = QuestionCorpusQueue.summarise(bookletQuestions);
+		assertEquals(3, summary.totalQuestions());
+		assertEquals(1, summary.completeQuestions());
+		assertEquals(2, summary.incompleteQuestions());
+		assertEquals(1, summary.missingQuestionContent());
+		assertEquals(1, summary.missingAnswer());
+		BookletCorpusStatus bookletStatus = BookletCorpusAudit.assess(fixture.paper1, bookletQuestions, null, true);
+		assertEquals(2, bookletStatus.questionsWithoutDescriptorCount());
+		QuestionCorpusFilter filter = new QuestionCorpusFilter(fixture.chemistry.getId(), null, null,
+				fixture.paper1.getId(), QuestionCorpusCompletionFilter.INCOMPLETE,
+				QuestionCorpusProblem.MISSING_DESCRIPTOR);
+		List<QuestionCorpusWorkItem> work = QuestionCorpusQueue
+				.build(List.of(complete, multipleProblems, descriptorOnly, otherBooklet), filter);
+		assertEquals(List.of(34L, 35L), work.stream().map(item -> item.question().getId()).toList());
 	}
 
 	@Test
