@@ -1111,6 +1111,134 @@ public class QuestionSearchPaneTest {
 	}
 
 	@Test
+	public void metadataFiltersApplyInBothSearchScopes(FxRobot robot) throws TimeoutException {
+
+		ExamProvider neap = new ExamProvider(70, "NEAP");
+		Exam secondExam = new Exam(71, chemistry, neap, 2022, "Practice Exam");
+
+		ExamBooklet secondBooklet = new ExamBooklet(72, secondExam, "Question Booklet",
+				new SourceDocument(73, "neap-2022.pdf"));
+
+		Question secondQuestion = new Question(74, secondBooklet, "Q5", "Second Question", 2, List.of(),
+				historicalDescriptor, false, null, null, QuestionResponseType.WRITTEN_RESPONSE);
+
+		QuestionRetrievalRepository repository = nodes -> {
+			if (!nodes.contains(currentDescriptor)) {
+				return List.of();
+			}
+
+			return List.of(new QuestionApplicabilityMatch(historicalQuestion, currentDescriptor),
+					new QuestionApplicabilityMatch(secondQuestion, currentDescriptor));
+		};
+
+		QuestionRetrievalService service = new QuestionRetrievalService(repository,
+				new CurriculumSearchNodeExpansionService(curriculumRepository));
+
+		QuestionSearchPane pane = replaceSearchPane(robot, curriculumRepository, service,
+				() -> List.of(historicalQuestion, secondQuestion));
+
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+
+		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
+
+		// Both Questions are applicable to the current syllabus.
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+
+		QuestionSearchMetadataFilter qcaaOnly = new QuestionSearchMetadataFilter(chemistry,
+				historicalQuestion.getExam().getProvider(), 2020, 2020, historicalQuestion.getExam(),
+				historicalQuestion.getBooklet(), null, historicalDescriptor.getSyllabusVersion());
+
+		robot.interact(() -> pane.setMetadataFilter(qcaaOnly));
+
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& results.getItems().getFirst().question().getId() == historicalQuestion.getId());
+
+		// The same metadata constraints apply to All Questions.
+		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
+
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& results.getItems().getFirst().scope() == QuestionSearchScope.ALL_QUESTIONS);
+
+		// A new immutable filter selects the other provider,
+		// year, response type and source Exam.
+		QuestionSearchMetadataFilter neapWritten = new QuestionSearchMetadataFilter(chemistry, neap, 2022, 2022,
+				secondExam, secondBooklet, QuestionResponseType.WRITTEN_RESPONSE,
+				historicalDescriptor.getSyllabusVersion());
+
+		robot.interact(() -> pane.setMetadataFilter(neapWritten));
+
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& results.getItems().getFirst().question().getId() == secondQuestion.getId());
+
+		// Clearing every metadata constraint restores all
+		// Questions within the original Working Subject.
+		robot.interact(() -> pane.setMetadataFilter(QuestionSearchMetadataFilter.unrestricted(chemistry)));
+
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+	}
+
+	@Test
+	public void metadataFiltersNeverBroadenDashboardNarrowing(FxRobot robot) throws TimeoutException {
+
+		ExamProvider neap = new ExamProvider(80, "NEAP");
+		Exam otherExam = new Exam(81, chemistry, neap, 2023, "Practice");
+
+		ExamBooklet otherBooklet = new ExamBooklet(82, otherExam, "Paper 1",
+				new SourceDocument(83, "practice-2023.pdf"));
+
+		Question otherQuestion = new Question(84, otherBooklet, "Q1", "", 2, List.of(), historicalDescriptor, false);
+
+		QuestionRetrievalRepository repository = nodes -> {
+			if (!nodes.contains(currentDescriptor)) {
+				return List.of();
+			}
+
+			return List.of(new QuestionApplicabilityMatch(historicalQuestion, currentDescriptor),
+					new QuestionApplicabilityMatch(otherQuestion, currentDescriptor));
+		};
+
+		QuestionRetrievalService service = new QuestionRetrievalService(repository,
+				new CurriculumSearchNodeExpansionService(curriculumRepository));
+
+		QuestionSearchPane pane = replaceSearchPane(robot, curriculumRepository, service,
+				() -> List.of(historicalQuestion, otherQuestion),
+				QuestionSearchNarrowing.forBooklet(historicalQuestion.getBooklet()));
+
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+
+		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
+
+		Label status = robot.lookup("#question-search-status").queryAs(Label.class);
+
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& results.getItems().getFirst().question().getId() == historicalQuestion.getId());
+
+		// The Search-local filter asks for another Exam,
+		// but Dashboard narrowing must still take precedence.
+		QuestionSearchMetadataFilter otherExamFilter = new QuestionSearchMetadataFilter(chemistry, neap, null, null,
+				otherExam, otherBooklet, null, null);
+
+		robot.interact(() -> pane.setMetadataFilter(otherExamFilter));
+
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> results.getItems().isEmpty() && "No questions found.".equals(status.getText()));
+
+		// Switching to All Questions must not escape the
+		// Dashboard Booklet constraint.
+		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
+
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> results.getItems().isEmpty() && "No questions found.".equals(status.getText()));
+
+		// Removing the Search-local filter restores only the
+		// originally permitted Dashboard Booklet.
+		robot.interact(() -> pane.setMetadataFilter(QuestionSearchMetadataFilter.unrestricted(chemistry)));
+
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& results.getItems().getFirst().question().getId() == historicalQuestion.getId());
+	}
+
+	@Test
 	public void missingAndCorruptSourcePdfsReportPreviewUnavailable(FxRobot robot) throws Exception {
 		Path pdfRoot = Files.createTempDirectory("question-search-broken-pdf-");
 		Files.writeString(pdfRoot.resolve("corrupt.pdf"), "This is not a PDF.");

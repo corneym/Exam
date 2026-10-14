@@ -99,6 +99,7 @@ public class QuestionSearchPane extends BorderPane {
 	private final GridPane selectedClassificationPane = new GridPane();
 	private final PauseTransition previewDelay = new PauseTransition(Duration.millis(PREVIEW_DELAY_MILLIS));
 	private long outputApplicabilityDisplayedQuestionId = -1;
+	private QuestionSearchMetadataFilter metadataFilter;
 
 	// Search presentation uses its own result type so current-curriculum matches
 	// and future all-bank results can coexist without weakening retrieval
@@ -237,6 +238,7 @@ public class QuestionSearchPane extends BorderPane {
 		this.outputApplicabilityRepository = Objects.requireNonNull(outputApplicabilityRepository,
 				"outputApplicabilityRepository");
 		this.searchNarrowing = Objects.requireNonNull(searchNarrowing, "searchNarrowing");
+		this.metadataFilter = QuestionSearchMetadataFilter.unrestricted(workingSubject);
 		this.performanceRecorder = Objects.requireNonNull(performanceRecorder, "performanceRecorder");
 		setPadding(new Insets(PANE_PADDING));
 		configureControls();
@@ -409,6 +411,40 @@ public class QuestionSearchPane extends BorderPane {
 		// Retain only the persistence action; classification state remains owned by
 		// this Pane.
 		this.classificationSaveHandler = classificationSaveHandler;
+	}
+
+	/**
+	 * Changes the Search-local metadata constraints.
+	 *
+	 * The filter must belong to the authoritative Working Subject. Changing it
+	 * starts a new asynchronous Search generation.
+	 *
+	 * @param filter immutable metadata filter snapshot
+	 * @throws NullPointerException     if filter is null
+	 * @throws IllegalArgumentException if its Subject differs
+	 * @throws IllegalStateException    if classification editing is pending
+	 */
+	void setMetadataFilter(QuestionSearchMetadataFilter filter) {
+		Objects.requireNonNull(filter, "filter");
+
+		if (!workingSubject.equals(filter.workingSubject())) {
+			throw new IllegalArgumentException("Metadata filter belongs to another Working Subject");
+		}
+
+		if (disposed) {
+			return;
+		}
+
+		if (classificationDirty.get()) {
+			throw new IllegalStateException("Resolve the pending classification edit first");
+		}
+
+		metadataFilter = filter;
+
+		// The existing Search dispatcher cancels and supersedes
+		// the previous generation. Do not filter the displayed
+		// ListView directly.
+		refreshAutomaticSearch();
 	}
 
 	private void activateAllQuestionsScope() {
@@ -2088,6 +2124,11 @@ public class QuestionSearchPane extends BorderPane {
 			clearResults();
 		}
 		long generation = searchGeneration;
+
+		// Capture Search-local filters on the JavaFX thread.
+		// Background work must never read mutable ComboBox state.
+		QuestionSearchMetadataFilter metadataSnapshot = metadataFilter;
+
 		statusLabel.setText("Searching...");
 		PerformanceOperation refreshOperation = performanceRecorder.start("search.refresh");
 		activeSearchOperation = refreshOperation;
@@ -2110,8 +2151,12 @@ public class QuestionSearchPane extends BorderPane {
 					try (PerformanceOperation filterOperation = performanceRecorder.start("search.filter",
 							retrievalOperation.id())) {
 						try {
+
 							filteredResults = sourceResults.stream()
-									.filter(result -> searchNarrowing.includes(result.question())).toList();
+									.filter(result -> searchNarrowing.includes(result.question())
+											&& metadataSnapshot.matches(result.question()))
+									.toList();
+
 							filterOperation.resultCount(filteredResults.size());
 						} catch (RuntimeException | Error failure) {
 							filterOperation.failed();
