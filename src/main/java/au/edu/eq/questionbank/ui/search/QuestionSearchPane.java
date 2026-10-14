@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.ui.search;
 
 import java.awt.image.BufferedImage;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -16,7 +17,11 @@ import au.edu.eq.questionbank.diagnostics.PerformanceOperation;
 import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
+import au.edu.eq.questionbank.model.Exam;
+import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
@@ -44,6 +49,7 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.TextArea;
+import javafx.scene.control.TitledPane;
 import javafx.scene.control.Tooltip;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
@@ -156,6 +162,20 @@ public class QuestionSearchPane extends BorderPane {
 	private long outputApplicabilityGeneration;
 	private final Button includeOutputApplicabilityButton = new Button("Include");
 	private final Button excludeOutputApplicabilityButton = new Button("Exclude");
+	private final ComboBox<FilterOption<ExamBooklet>> bookletFilterBox = new ComboBox<>();
+	private final Button clearMetadataFiltersButton = new Button("Clear filters");
+	private final ComboBox<FilterOption<Exam>> examFilterBox = new ComboBox<>();
+	private QuestionSearchFilterCatalogue filterCatalogue;
+	private long filterCatalogueGeneration;
+	private Task<QuestionSearchFilterCatalogue> filterCatalogueTask;
+	private final TitledPane metadataFilterPane = new TitledPane();
+	private final Label metadataFilterStatus = new Label();
+	private final ComboBox<FilterOption<SyllabusVersion>> originalSyllabusFilterBox = new ComboBox<>();
+	private final ComboBox<FilterOption<ExamProvider>> providerFilterBox = new ComboBox<>();
+	private final ComboBox<FilterOption<QuestionResponseType>> responseTypeFilterBox = new ComboBox<>();
+	private boolean updatingMetadataChoices;
+	private final ComboBox<FilterOption<Integer>> yearFromFilterBox = new ComboBox<>();
+	private final ComboBox<FilterOption<Integer>> yearToFilterBox = new ComboBox<>();
 
 	// Output applicability changes save immediately. Keep the active write separate
 	// from the background task that reads applicability for a selected Question.
@@ -245,6 +265,7 @@ public class QuestionSearchPane extends BorderPane {
 		configureHandlers();
 		setCenter(createWorkspacePane());
 		startWorkingSubjectNavigation();
+		startFilterCatalogueLoad();
 	}
 
 	ReadOnlyBooleanProperty classificationDirtyProperty() {
@@ -285,6 +306,7 @@ public class QuestionSearchPane extends BorderPane {
 			return;
 		}
 		disposed = true;
+		cancelFilterCatalogueLoad();
 		cancelActiveHierarchyLoad();
 		cancelActiveSearch();
 		cancelActivePreview();
@@ -349,6 +371,7 @@ public class QuestionSearchPane extends BorderPane {
 		// visible until the replacement generation is ready rather than blanking the
 		// Search pane.
 		refreshAutomaticSearch();
+		startFilterCatalogueLoad();
 	}
 
 	/**
@@ -380,6 +403,7 @@ public class QuestionSearchPane extends BorderPane {
 		// Always requery the authoritative Working Subject. Existing
 		// Exam/booklet narrowing remains applied by the Search pipeline.
 		activateAllQuestionsScope();
+		startFilterCatalogueLoad();
 	}
 
 	/**
@@ -426,19 +450,15 @@ public class QuestionSearchPane extends BorderPane {
 	 */
 	void setMetadataFilter(QuestionSearchMetadataFilter filter) {
 		Objects.requireNonNull(filter, "filter");
-
 		if (!workingSubject.equals(filter.workingSubject())) {
 			throw new IllegalArgumentException("Metadata filter belongs to another Working Subject");
 		}
-
 		if (disposed) {
 			return;
 		}
-
 		if (classificationDirty.get()) {
 			throw new IllegalStateException("Resolve the pending classification edit first");
 		}
-
 		metadataFilter = filter;
 
 		// The existing Search dispatcher cancels and supersedes
@@ -461,6 +481,17 @@ public class QuestionSearchPane extends BorderPane {
 		// then repeat the most specific valid current-syllabus Search.
 		restoreCurriculumControlState();
 		startMostSpecificCurrentSyllabusSearch();
+	}
+
+	private void applyMetadataFilters() {
+		if (disposed || classificationDirty.get()) {
+			return;
+		}
+		QuestionSearchMetadataFilter filter = new QuestionSearchMetadataFilter(workingSubject,
+				optionValue(providerFilterBox), optionValue(yearFromFilterBox), optionValue(yearToFilterBox),
+				optionValue(examFilterBox), optionValue(bookletFilterBox), optionValue(responseTypeFilterBox),
+				optionValue(originalSyllabusFilterBox));
+		setMetadataFilter(filter);
 	}
 
 	private void cancelActiveHierarchyLoad() {
@@ -525,6 +556,14 @@ public class QuestionSearchPane extends BorderPane {
 		}
 	}
 
+	private void cancelFilterCatalogueLoad() {
+		filterCatalogueGeneration++;
+		if (filterCatalogueTask != null) {
+			filterCatalogueTask.cancel();
+			filterCatalogueTask = null;
+		}
+	}
+
 	private void clearBelowClassification() {
 		updatingControls = true;
 		try {
@@ -558,6 +597,26 @@ public class QuestionSearchPane extends BorderPane {
 		} finally {
 			updatingControls = false;
 		}
+	}
+
+	private void clearMetadataFilters() {
+		if (classificationDirty.get() || disposed) {
+			return;
+		}
+		updatingMetadataChoices = true;
+		try {
+			providerFilterBox.getSelectionModel().selectFirst();
+			yearFromFilterBox.getSelectionModel().selectFirst();
+			yearToFilterBox.getSelectionModel().selectFirst();
+			examFilterBox.getSelectionModel().selectFirst();
+			bookletFilterBox.getSelectionModel().selectFirst();
+			responseTypeFilterBox.getSelectionModel().selectFirst();
+			originalSyllabusFilterBox.getSelectionModel().selectFirst();
+			refreshExamAndBookletFilters();
+		} finally {
+			updatingMetadataChoices = false;
+		}
+		applyMetadataFilters();
 	}
 
 	private void clearOutputApplicability() {
@@ -780,14 +839,33 @@ public class QuestionSearchPane extends BorderPane {
 	private void configureControls() {
 		configureSearchScopeControl();
 		configureSearchHierarchyControls();
+		configureMetadataFilters();
 		configureSelectedClassificationControls();
 		configureResultsControls();
 		configureOutputApplicabilityControls();
 		configurePreviewControls();
 	}
 
+	private <T> void configureFilterCombo(ComboBox<FilterOption<T>> box, String id, String allLabel) {
+		box.setId(id);
+		box.getItems().setAll(new FilterOption<T>(null, allLabel));
+		box.getSelectionModel().selectFirst();
+		box.setButtonCell(new DisplayListCell<>(FilterOption::label));
+		box.setCellFactory(_ -> new DisplayListCell<>(FilterOption::label));
+		box.setMaxWidth(Double.MAX_VALUE);
+		box.setDisable(true);
+	}
+
 	private void configureHandlers() {
 		searchScopeBox.setOnAction(_ -> handleSearchScopeSelection());
+		providerFilterBox.setOnAction(_ -> handleMetadataFilterChange(MetadataField.PROVIDER));
+		yearFromFilterBox.setOnAction(_ -> handleMetadataFilterChange(MetadataField.FROM_YEAR));
+		yearToFilterBox.setOnAction(_ -> handleMetadataFilterChange(MetadataField.TO_YEAR));
+		examFilterBox.setOnAction(_ -> handleMetadataFilterChange(MetadataField.EXAM));
+		bookletFilterBox.setOnAction(_ -> handleMetadataFilterChange(MetadataField.BOOKLET));
+		responseTypeFilterBox.setOnAction(_ -> handleMetadataFilterChange(MetadataField.RESPONSE));
+		originalSyllabusFilterBox.setOnAction(_ -> handleMetadataFilterChange(MetadataField.ORIGINAL_SYLLABUS));
+		clearMetadataFiltersButton.setOnAction(_ -> clearMetadataFilters());
 		unitBox.setOnAction(_ -> handleUnitSelection());
 		topicBox.setOnAction(_ -> handleTopicSelection());
 		classificationBox.setOnAction(_ -> handleClassificationSelection());
@@ -813,6 +891,31 @@ public class QuestionSearchPane extends BorderPane {
 				.addListener((_, _, _) -> updateOutputApplicabilityActionState());
 		includeOutputApplicabilityButton.setOnAction(_ -> handleOutputApplicabilityChange(false));
 		excludeOutputApplicabilityButton.setOnAction(_ -> handleOutputApplicabilityChange(true));
+	}
+
+	private void configureMetadataFilters() {
+		configureFilterCombo(providerFilterBox, "question-search-provider-filter", "All providers");
+		configureFilterCombo(yearFromFilterBox, "question-search-year-from-filter", "Any year");
+		configureFilterCombo(yearToFilterBox, "question-search-year-to-filter", "Any year");
+		configureFilterCombo(examFilterBox, "question-search-exam-filter", "All exams");
+		configureFilterCombo(bookletFilterBox, "question-search-booklet-filter", "All booklets");
+		configureFilterCombo(originalSyllabusFilterBox, "question-search-original-syllabus-filter",
+				"All original syllabuses");
+		configureFilterCombo(responseTypeFilterBox, "question-search-response-type-filter", "All response types");
+		responseTypeFilterBox.getItems().setAll(new FilterOption<QuestionResponseType>(null, "All response types"),
+				new FilterOption<>(QuestionResponseType.MULTIPLE_CHOICE, "Multiple Choice"),
+				new FilterOption<>(QuestionResponseType.WRITTEN_RESPONSE, "Written Response"));
+		responseTypeFilterBox.getSelectionModel().selectFirst();
+		responseTypeFilterBox.setDisable(false);
+		clearMetadataFiltersButton.setId("question-search-clear-metadata-filters");
+		metadataFilterStatus.setId("question-search-metadata-filter-status");
+		metadataFilterStatus.setWrapText(true);
+		metadataFilterPane.setId("question-search-more-filters");
+		metadataFilterPane.setText("More filters");
+		metadataFilterPane.setCollapsible(true);
+		metadataFilterPane.setAnimated(false);
+		metadataFilterPane.setExpanded(false);
+		metadataFilterPane.setContent(createMetadataFilterContent());
 	}
 
 	private void configureOutputApplicabilityControls() {
@@ -993,6 +1096,35 @@ public class QuestionSearchPane extends BorderPane {
 		return pane;
 	}
 
+	private ScrollPane createMetadataFilterContent() {
+		GridPane grid = new GridPane();
+		grid.setHgap(SELECTOR_COLUMN_GAP);
+		grid.setVgap(SELECTOR_ROW_GAP);
+		grid.addRow(0, createSelectorLabel("Provider"), providerFilterBox);
+		grid.addRow(1, createSelectorLabel("Year from"), yearFromFilterBox);
+		grid.addRow(2, createSelectorLabel("Year to"), yearToFilterBox);
+		grid.addRow(3, createSelectorLabel("Exam"), examFilterBox);
+		grid.addRow(4, createSelectorLabel("Booklet"), bookletFilterBox);
+		grid.addRow(5, createSelectorLabel("Response type"), responseTypeFilterBox);
+		grid.addRow(6, createSelectorLabel("Original syllabus"), originalSyllabusFilterBox);
+		GridPane.setHgrow(providerFilterBox, Priority.ALWAYS);
+		GridPane.setHgrow(yearFromFilterBox, Priority.ALWAYS);
+		GridPane.setHgrow(yearToFilterBox, Priority.ALWAYS);
+		GridPane.setHgrow(examFilterBox, Priority.ALWAYS);
+		GridPane.setHgrow(bookletFilterBox, Priority.ALWAYS);
+		GridPane.setHgrow(responseTypeFilterBox, Priority.ALWAYS);
+		GridPane.setHgrow(originalSyllabusFilterBox, Priority.ALWAYS);
+		VBox content = new VBox(SECTION_SPACING, grid, clearMetadataFiltersButton, metadataFilterStatus);
+		content.setPadding(new Insets(SECTION_TOP_PADDING));
+		ScrollPane scroll = new ScrollPane(content);
+		scroll.setFitToWidth(true);
+		scroll.setPrefViewportHeight(220);
+		scroll.setPrefHeight(235);
+		scroll.setMaxHeight(260);
+		scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+		return scroll;
+	}
+
 	private VBox createOutputApplicabilityPane() {
 		Label outputApplicabilityLabel = new Label("Revision output applicability");
 		outputApplicabilityLabel.setStyle("-fx-font-weight: bold;");
@@ -1079,7 +1211,7 @@ public class QuestionSearchPane extends BorderPane {
 	private VBox createSearchFilterPane() {
 		Label heading = new Label("Question Search");
 		heading.setStyle("-fx-font-weight: bold;");
-		VBox pane = new VBox(SECTION_SPACING, heading, createSelectionPane());
+		VBox pane = new VBox(SECTION_SPACING, heading, createSelectionPane(), metadataFilterPane);
 		pane.setId("question-search-filter-section");
 		return pane;
 	}
@@ -1388,6 +1520,38 @@ public class QuestionSearchPane extends BorderPane {
 		startAutomaticSearch(descriptorBox.getValue());
 	}
 
+	private void handleMetadataFilterChange(MetadataField field) {
+		if (updatingMetadataChoices || disposed || classificationDirty.get()) {
+			return;
+		}
+		updatingMetadataChoices = true;
+		try {
+			Integer from = optionValue(yearFromFilterBox);
+			Integer to = optionValue(yearToFilterBox);
+
+			// When the teacher crosses an existing year boundary,
+			// remove the opposite boundary rather than constructing
+			// an invalid year range.
+			if (from != null && to != null && from > to) {
+				if (field == MetadataField.FROM_YEAR) {
+					yearToFilterBox.getSelectionModel().selectFirst();
+				} else if (field == MetadataField.TO_YEAR) {
+					yearFromFilterBox.getSelectionModel().selectFirst();
+				}
+			}
+			if (field == MetadataField.PROVIDER || field == MetadataField.FROM_YEAR || field == MetadataField.TO_YEAR
+					|| field == MetadataField.EXAM) {
+
+				// Changing upstream source criteria may invalidate
+				// the selected Exam or Booklet.
+				refreshExamAndBookletFilters();
+			}
+		} finally {
+			updatingMetadataChoices = false;
+		}
+		applyMetadataFilters();
+	}
+
 	private void handleOutputApplicabilityChange(boolean excluded) {
 		if (disposed || classificationDirty.get() || activeOutputApplicabilityUpdateTask != null) {
 			return;
@@ -1578,6 +1742,22 @@ public class QuestionSearchPane extends BorderPane {
 		return new SubjectNavigation(currentVersion, units);
 	}
 
+	private boolean matchesExamFilters(Exam exam) {
+		ExamProvider provider = optionValue(providerFilterBox);
+		Integer from = optionValue(yearFromFilterBox);
+		Integer to = optionValue(yearToFilterBox);
+		if (provider != null && exam.getProvider().getId() != provider.getId()) {
+			return false;
+		}
+		if (from != null && exam.getYear() < from) {
+			return false;
+		}
+		if (to != null && exam.getYear() > to) {
+			return false;
+		}
+		return true;
+	}
+
 	private CurriculumNode mostSpecificSelectedCurriculumNode() {
 		CurriculumNode descriptor = descriptorBox.getValue();
 		if (descriptor != null) {
@@ -1596,6 +1776,11 @@ public class QuestionSearchPane extends BorderPane {
 
 	private String nodeDescription(CurriculumNode node) {
 		return node.getSyllabusVersion().getName() + " " + node.getCode() + " " + node.getName();
+	}
+
+	private <T> T optionValue(ComboBox<FilterOption<T>> box) {
+		FilterOption<T> option = box.getValue();
+		return option == null ? null : option.value();
 	}
 
 	private String outputApplicabilityText(QuestionOutputApplicabilityRow row) {
@@ -1797,6 +1982,22 @@ public class QuestionSearchPane extends BorderPane {
 				false);
 	}
 
+	private void refreshExamAndBookletFilters() {
+		if (filterCatalogue == null) {
+			return;
+		}
+		List<Exam> exams = filterCatalogue.exams().stream().filter(this::matchesExamFilters).toList();
+		replaceFilterOptions(examFilterBox, "All exams", exams, Exam::getId,
+				exam -> "%s %d — %s".formatted(exam.getProvider().getName(), exam.getYear(), exam.getName()));
+		Exam selectedExam = optionValue(examFilterBox);
+		List<ExamBooklet> booklets = filterCatalogue.booklets().stream()
+				.filter(booklet -> matchesExamFilters(booklet.getExam()))
+				.filter(booklet -> selectedExam == null || booklet.getExam().getId() == selectedExam.getId()).toList();
+		replaceFilterOptions(bookletFilterBox, "All booklets", booklets, ExamBooklet::getId,
+				booklet -> "%s %d — %s — %s".formatted(booklet.getExam().getProvider().getName(),
+						booklet.getExam().getYear(), booklet.getExam().getName(), booklet.getName()));
+	}
+
 	private void reloadSelectedOutputApplicability() {
 		QuestionSearchResult selectedResult = resultsList.getSelectionModel().getSelectedItem();
 		if (selectedResult != null) {
@@ -1807,6 +2008,29 @@ public class QuestionSearchPane extends BorderPane {
 			return;
 		}
 		clearOutputApplicability();
+	}
+
+	private <T> void replaceFilterOptions(ComboBox<FilterOption<T>> box, String allLabel, List<T> values,
+			Function<T, ?> key, Function<T, String> label) {
+		T previous = optionValue(box);
+		Object previousKey = previous == null ? null : key.apply(previous);
+		List<FilterOption<T>> options = new ArrayList<>();
+		options.add(new FilterOption<>(null, allLabel));
+		for (T value : values) {
+			options.add(new FilterOption<>(value, label.apply(value)));
+		}
+		FilterOption<T> selection = options.getFirst();
+		if (previousKey != null) {
+			for (FilterOption<T> candidate : options) {
+				if (candidate.value() != null && Objects.equals(previousKey, key.apply(candidate.value()))) {
+					selection = candidate;
+					break;
+				}
+			}
+		}
+		box.getItems().setAll(options);
+		box.getSelectionModel().select(selection);
+		box.setDisable(values.isEmpty());
 	}
 
 	private boolean replaceOutputApplicabilityRow(CurriculumNode currentNode, boolean excluded) {
@@ -2128,7 +2352,6 @@ public class QuestionSearchPane extends BorderPane {
 		// Capture Search-local filters on the JavaFX thread.
 		// Background work must never read mutable ComboBox state.
 		QuestionSearchMetadataFilter metadataSnapshot = metadataFilter;
-
 		statusLabel.setText("Searching...");
 		PerformanceOperation refreshOperation = performanceRecorder.start("search.refresh");
 		activeSearchOperation = refreshOperation;
@@ -2151,12 +2374,10 @@ public class QuestionSearchPane extends BorderPane {
 					try (PerformanceOperation filterOperation = performanceRecorder.start("search.filter",
 							retrievalOperation.id())) {
 						try {
-
 							filteredResults = sourceResults.stream()
 									.filter(result -> searchNarrowing.includes(result.question())
 											&& metadataSnapshot.matches(result.question()))
 									.toList();
-
 							filterOperation.resultCount(filteredResults.size());
 						} catch (RuntimeException | Error failure) {
 							filterOperation.failed();
@@ -2232,6 +2453,55 @@ public class QuestionSearchPane extends BorderPane {
 		// Subject-level Search means applicability anywhere in the Working Subject's
 		// current syllabus.
 		startAutomaticSearch(workingSubject);
+	}
+
+	private void startFilterCatalogueLoad() {
+		if (disposed) {
+			return;
+		}
+		cancelFilterCatalogueLoad();
+		long generation = filterCatalogueGeneration;
+		metadataFilterStatus.setText("Loading filter choices...");
+
+		// Loading all source metadata must never block a JavaFX
+		// layout pulse or a current-syllabus Search.
+		Task<QuestionSearchFilterCatalogue> task = new BackgroundTask<>(() -> QuestionSearchFilterCatalogue
+				.fromQuestions(allQuestionsSupplier.get(), workingSubject, searchNarrowing));
+		filterCatalogueTask = task;
+		task.setOnSucceeded(_ -> {
+			if (disposed || generation != filterCatalogueGeneration || task != filterCatalogueTask) {
+				return;
+			}
+			filterCatalogueTask = null;
+			filterCatalogue = task.getValue();
+			updatingMetadataChoices = true;
+			try {
+				replaceFilterOptions(providerFilterBox, "All providers", filterCatalogue.providers(),
+						ExamProvider::getId, ExamProvider::getName);
+				replaceFilterOptions(yearFromFilterBox, "Any year", filterCatalogue.years(), year -> year,
+						Object::toString);
+				replaceFilterOptions(yearToFilterBox, "Any year", filterCatalogue.years(), year -> year,
+						Object::toString);
+				replaceFilterOptions(originalSyllabusFilterBox, "All original syllabuses",
+						filterCatalogue.originalSyllabuses(), SyllabusVersion::getId, SyllabusVersion::getName);
+				refreshExamAndBookletFilters();
+			} finally {
+				updatingMetadataChoices = false;
+			}
+			metadataFilterStatus.setText(filterCatalogue.exams().isEmpty() ? "No stored Questions available." : "");
+
+			// If a previous choice is no longer available,
+			// publish the corrected immutable filter snapshot.
+			applyMetadataFilters();
+		});
+		task.setOnFailed(_ -> {
+			if (disposed || generation != filterCatalogueGeneration || task != filterCatalogueTask) {
+				return;
+			}
+			filterCatalogueTask = null;
+			metadataFilterStatus.setText("Could not load filter choices.");
+		});
+		startBackgroundTask("question-search-filter-catalogue", task);
 	}
 
 	private <T> void startHierarchyLoad(Supplier<T> loader, Consumer<T> onSucceeded) {
@@ -2403,6 +2673,7 @@ public class QuestionSearchPane extends BorderPane {
 
 	private void updateClassificationEditLock() {
 		boolean dirty = classificationDirty.get();
+		metadataFilterPane.setDisable(dirty);
 
 		// Result selection remains available so an attempt to leave the Question can
 		// invoke the Save/Cancel navigation guard.
@@ -2466,6 +2737,18 @@ public class QuestionSearchPane extends BorderPane {
 			statusLabel.setText("1 question found.");
 		} else {
 			statusLabel.setText(resultCount + " questions found.");
+		}
+	}
+
+	private enum MetadataField {
+		PROVIDER, FROM_YEAR, TO_YEAR, EXAM, BOOKLET, RESPONSE, ORIGINAL_SYLLABUS
+	}
+
+	private record FilterOption<T>(T value, String label) {
+
+		@Override
+		public String toString() {
+			return label;
 		}
 	}
 }
