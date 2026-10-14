@@ -9,6 +9,7 @@ import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
+import au.edu.eq.questionbank.service.curriculum.DescriptorLookupService;
 
 /**
  * Selection state for navigating a subject's syllabus hierarchy.
@@ -90,6 +91,16 @@ public class CurriculumSelectionModel {
 		// Nothing beneath Subject may survive while replacement persistence data is
 		// loading.
 		clearCurriculumNodeSelections();
+	}
+
+	/**
+	 * Creates a read-only Descriptor lookup service using the same authoritative
+	 * repository as this selection model.
+	 *
+	 * @return Descriptor lookup service
+	 */
+	public DescriptorLookupService createDescriptorLookupService() {
+		return new DescriptorLookupService(repository);
 	}
 
 	/**

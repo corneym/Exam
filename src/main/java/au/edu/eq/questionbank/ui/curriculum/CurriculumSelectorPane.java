@@ -3,6 +3,7 @@ package au.edu.eq.questionbank.ui.curriculum;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
 
 import au.edu.eq.questionbank.diagnostics.PerformanceOperation;
@@ -11,7 +12,10 @@ import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.service.curriculum.DescriptorLookupService;
+import au.edu.eq.questionbank.service.curriculum.DescriptorLookupService.DescriptorMatch;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
+import javafx.application.Platform;
 import javafx.beans.property.ReadOnlyBooleanProperty;
 import javafx.beans.property.ReadOnlyBooleanWrapper;
 import javafx.beans.property.ReadOnlyObjectProperty;
@@ -21,9 +25,13 @@ import javafx.geometry.Pos;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.ListCell;
+import javafx.scene.control.ListView;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TextFormatter;
 import javafx.scene.control.Tooltip;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.MouseButton;
 import javafx.scene.layout.ColumnConstraints;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
@@ -50,6 +58,7 @@ public class CurriculumSelectorPane extends VBox {
 	private static final Insets PANEL_PADDING = new Insets(8);
 	private static final String BORDER_STYLE = "-fx-border-color: #b0b0b0;-fx-border-width: 1;-fx-border-radius: 3;";
 	private static final String HEADING_STYLE = "-fx-font-weight: bold;";
+	private static final int DESCRIPTOR_LOOKUP_LIMIT = 5;
 	private final CurriculumSelectionModel model;
 	private final ReadOnlyBooleanWrapper classificationSelected = new ReadOnlyBooleanWrapper();
 	private final ReadOnlyObjectWrapper<CurriculumNode> selectedClassification = new ReadOnlyObjectWrapper<>();
@@ -68,6 +77,15 @@ public class CurriculumSelectorPane extends VBox {
 	private VBox subjectContext;
 	private final Label readOnlySubjectLabel = new Label();
 	private PerformanceRecorder performanceRecorder = new PerformanceRecorder(false, Path.of("performance.csv"));
+	private long descriptorContextGeneration;
+	private SyllabusVersion descriptorLoadedSyllabus;
+	private SyllabusVersion descriptorLoadingSyllabus;
+	private final ListView<DescriptorMatch> descriptorLookupResults = new ListView<>();
+	private final Label descriptorLookupStatus = new Label();
+	private final TextField descriptorLookupText = new TextField();
+	private long descriptorQueryGeneration;
+	private List<CurriculumNode> descriptorSnapshot = List.of();
+	private final DescriptorLookupService descriptorLookupService;
 
 	// The desktop application owns asynchronous Working Subject transitions. A
 	// standalone selector keeps its existing synchronous Subject behaviour.
@@ -93,8 +111,10 @@ public class CurriculumSelectorPane extends VBox {
 			throw new NullPointerException("model");
 		}
 		this.model = model;
+		this.descriptorLookupService = model.createDescriptorLookupService();
 		configurePane();
 		configureControls();
+		configureDescriptorLookup();
 		classificationSelected.bind(selectedClassification.isNotNull());
 		configureSelectionHandlers();
 		configureCodeEntry();
@@ -117,6 +137,7 @@ public class CurriculumSelectorPane extends VBox {
 			// Stale application work must never replace choices for a later Subject.
 			return;
 		}
+		invalidateDescriptorLookup();
 		boolean previouslyRefreshing = refreshingSubjects;
 		refreshingSubjects = true;
 		try {
@@ -153,6 +174,7 @@ public class CurriculumSelectorPane extends VBox {
 	 * @param subject newly accepted Subject, or {@code null} to clear it
 	 */
 	public void beginSubjectRefresh(Subject subject) {
+		invalidateDescriptorLookup();
 		boolean previouslyRefreshing = refreshingSubjects;
 		refreshingSubjects = true;
 		try {
@@ -238,6 +260,7 @@ public class CurriculumSelectorPane extends VBox {
 	 * change. Existing selections are retained when still available.
 	 */
 	public void refreshSubjects() {
+		invalidateDescriptorLookup();
 		SelectionSnapshot selection = captureSelection();
 		refreshingSubjects = true;
 		try {
@@ -424,6 +447,19 @@ public class CurriculumSelectorPane extends VBox {
 		syllabusBox.setDisable(subjectBox.getValue() == null || syllabusBox.getItems().isEmpty());
 	}
 
+	private void acceptDescriptorLookupSelection() {
+		DescriptorMatch selected = descriptorLookupResults.getSelectionModel().getSelectedItem();
+		if (selected == null || model.getSyllabusVersion() == null
+				|| !model.getSyllabusVersion().equals(selected.descriptor().getSyllabusVersion())) {
+			return;
+		}
+
+		// Use the existing authoritative hierarchy selection.
+		// Normal capture and correction Save behaviour is unchanged.
+		selectClassificationPath(selected.descriptor());
+		invalidateDescriptorLookup();
+	}
+
 	private void applyClassificationPath(CurriculumNode classification) {
 		boolean previouslyRefreshing = refreshingSubjects;
 		refreshingSubjects = true;
@@ -494,8 +530,7 @@ public class CurriculumSelectorPane extends VBox {
 
 	private void buildContent() {
 
-		// Working Subject remains exactly one compact row. The bold Subject label,
-		// selector and small creation action all share that row.
+		// Working Subject remains exactly one compact row.
 		Label subjectLabel = new Label("Subject");
 		subjectLabel.setId("working-subject-label");
 		subjectLabel.setStyle(HEADING_STYLE);
@@ -512,13 +547,11 @@ public class CurriculumSelectorPane extends VBox {
 		subjectContext.setId("working-subject-context");
 		subjectContext.setPadding(PANEL_PADDING);
 		subjectContext.setStyle(BORDER_STYLE);
-		classificationContext = new VBox(ROW_GAP, createSectionHeading("Classification"), createClassificationGrid());
+		classificationContext = new VBox(ROW_GAP, createSectionHeading("Classification"), createClassificationGrid(),
+				descriptorLookupStatus, descriptorLookupResults);
 		classificationContext.setId("classification-context");
 		classificationContext.setPadding(PANEL_PADDING);
 		classificationContext.setStyle(BORDER_STYLE);
-
-		// Standalone CurriculumSelectorPane users retain both sections. The application
-		// composition root may detach Classification without moving Working Subject.
 		getChildren().addAll(subjectContext, classificationContext);
 	}
 
@@ -609,7 +642,10 @@ public class CurriculumSelectorPane extends VBox {
 			}
 			return change;
 		}));
-		codeField.textProperty().addListener((_, _, newValue) -> handleCodeInput(newValue));
+		codeField.textProperty().addListener((_, _, newValue) -> {
+			handleCodeInput(newValue);
+			refreshDescriptorSearchForScopeChange();
+		});
 		codeField.focusedProperty().addListener((_, _, focused) -> handleCodeFocusChanged(focused));
 	}
 
@@ -653,6 +689,66 @@ public class CurriculumSelectorPane extends VBox {
 		hideDescriptorRow();
 	}
 
+	private void configureDescriptorLookup() {
+		descriptorLookupText.setId("curriculum-descriptor-search");
+		descriptorLookupText.setPromptText("Search by Descriptor code or keywords");
+		descriptorLookupText.setMaxWidth(Double.MAX_VALUE);
+		descriptorLookupStatus.setId("curriculum-descriptor-search-status");
+		descriptorLookupStatus.setWrapText(true);
+		descriptorLookupStatus.setVisible(false);
+		descriptorLookupStatus.managedProperty().bind(descriptorLookupStatus.visibleProperty());
+		descriptorLookupResults.setId("curriculum-descriptor-search-results");
+		descriptorLookupResults.setPrefHeight(160);
+		descriptorLookupResults.setMaxHeight(180);
+		descriptorLookupResults.setVisible(false);
+		descriptorLookupResults.managedProperty().bind(descriptorLookupResults.visibleProperty());
+
+		// Full hierarchy paths distinguish similarly worded Descriptors.
+		descriptorLookupResults.setCellFactory(_ -> {
+			ListCell<DescriptorMatch> cell = new ListCell<>();
+			Label path = new Label();
+			path.setWrapText(true);
+			path.prefWidthProperty().bind(descriptorLookupResults.widthProperty().subtract(30));
+			cell.itemProperty().addListener((_, _, match) -> {
+				if (match == null) {
+					cell.setGraphic(null);
+				} else {
+					path.setText(match.hierarchyPath());
+					cell.setGraphic(path);
+				}
+			});
+			return cell;
+		});
+		descriptorLookupText.textProperty().addListener((_, _, _) -> searchDescriptors());
+
+		// Down moves keyboard focus into the result list.
+		descriptorLookupText.setOnKeyPressed(event -> {
+			if (descriptorLookupResults.getItems().isEmpty()) {
+				return;
+			}
+			if (event.getCode() == KeyCode.DOWN) {
+				descriptorLookupResults.requestFocus();
+				descriptorLookupResults.getSelectionModel().selectFirst();
+				event.consume();
+			} else if (event.getCode() == KeyCode.ENTER) {
+				descriptorLookupResults.getSelectionModel().selectFirst();
+				acceptDescriptorLookupSelection();
+				event.consume();
+			}
+		});
+		descriptorLookupResults.setOnKeyPressed(event -> {
+			if (event.getCode() == KeyCode.ENTER) {
+				acceptDescriptorLookupSelection();
+				event.consume();
+			}
+		});
+		descriptorLookupResults.setOnMouseClicked(event -> {
+			if (event.getButton() == MouseButton.PRIMARY && event.getClickCount() == 1) {
+				acceptDescriptorLookupSelection();
+			}
+		});
+	}
+
 	private void configureHierarchyBox(ComboBox<?> box, String id, String promptText) {
 		box.setId(id);
 		box.setPromptText(promptText);
@@ -671,6 +767,7 @@ public class CurriculumSelectorPane extends VBox {
 		subjectBox.setOnAction(_ -> handleSubjectSelection());
 		subjectBox.valueProperty().addListener((_, _, subject) -> updateReadOnlySubject(subject));
 		syllabusBox.setOnAction(_ -> handleSyllabusSelection());
+		syllabusBox.valueProperty().addListener((_, _, _) -> invalidateDescriptorLookup());
 		unitBox.getSelectionModel().selectedItemProperty().addListener((_, _, _) -> handleUnitSelection());
 		topicBox.getSelectionModel().selectedItemProperty().addListener((_, _, _) -> handleTopicSelection());
 		subtopicBox.getSelectionModel().selectedItemProperty().addListener((_, _, _) -> handleSubtopicSelection());
@@ -679,21 +776,20 @@ public class CurriculumSelectorPane extends VBox {
 
 	private GridPane createClassificationGrid() {
 		GridPane grid = createTwoColumnGrid();
-
-		// Syllabus and hierarchy identify where the current Question belongs within
-		// the already-selected application-level Subject.
 		grid.addRow(0, new Label("Code"), codeField);
 		grid.addRow(1, new Label("Syllabus"), syllabusBox);
 		grid.addRow(2, new Label("Unit"), unitBox);
 		grid.addRow(3, new Label("Topic"), topicBox);
 		grid.addRow(4, subtopicLabel, subtopicBox);
 		grid.addRow(5, descriptorLabel, descriptorBox);
+		grid.addRow(6, new Label("Search descriptors"), descriptorLookupText);
 		GridPane.setHgrow(codeField, Priority.ALWAYS);
 		GridPane.setHgrow(syllabusBox, Priority.ALWAYS);
 		GridPane.setHgrow(unitBox, Priority.ALWAYS);
 		GridPane.setHgrow(topicBox, Priority.ALWAYS);
 		GridPane.setHgrow(subtopicBox, Priority.ALWAYS);
 		GridPane.setHgrow(descriptorBox, Priority.ALWAYS);
+		GridPane.setHgrow(descriptorLookupText, Priority.ALWAYS);
 		return grid;
 	}
 
@@ -995,6 +1091,19 @@ public class CurriculumSelectorPane extends VBox {
 		subtopicBox.setDisable(true);
 	}
 
+	private void invalidateDescriptorLookup() {
+		descriptorContextGeneration++;
+		descriptorQueryGeneration++;
+		descriptorLoadedSyllabus = null;
+		descriptorLoadingSyllabus = null;
+		descriptorSnapshot = List.of();
+		descriptorLookupText.clear();
+		descriptorLookupResults.getItems().clear();
+		descriptorLookupResults.setVisible(false);
+		descriptorLookupStatus.setText("");
+		descriptorLookupStatus.setVisible(false);
+	}
+
 	private boolean isCodeSyntaxValid(String code) {
 		if (code == null || code.isEmpty()) {
 			return true;
@@ -1032,6 +1141,36 @@ public class CurriculumSelectorPane extends VBox {
 		return false;
 	}
 
+	private void loadDescriptorLookup(SyllabusVersion syllabus) {
+
+		// Repeated keystrokes must not start repeated SQLite reads.
+		if (syllabus.equals(descriptorLoadingSyllabus)) {
+			return;
+		}
+		descriptorLoadingSyllabus = syllabus;
+		long generation = descriptorContextGeneration;
+		CompletableFuture.supplyAsync(() -> descriptorLookupService.loadDescriptors(syllabus))
+				.whenComplete((descriptors, failure) -> Platform.runLater(() -> {
+
+					// Ignore work from an obsolete Subject or syllabus.
+					if (generation != descriptorContextGeneration || !syllabus.equals(model.getSyllabusVersion())
+							|| !syllabus.equals(syllabusBox.getValue())) {
+						return;
+					}
+					descriptorLoadingSyllabus = null;
+					if (failure != null) {
+						descriptorLookupStatus.setText("Could not load Descriptors.");
+						return;
+					}
+					descriptorLoadedSyllabus = syllabus;
+					descriptorSnapshot = descriptors;
+
+					// Search with the latest text, not the text that initiated
+					// the asynchronous database request.
+					searchDescriptors();
+				}));
+	}
+
 	private List<CurriculumNode> measureHierarchyLookup(String name, long parentOperationId,
 			Supplier<List<CurriculumNode>> lookup) {
 		try (PerformanceOperation operation = performanceRecorder.start(name, parentOperationId)) {
@@ -1049,6 +1188,28 @@ public class CurriculumSelectorPane extends VBox {
 		}
 	}
 
+	private void publishDescriptorLookupResults(SyllabusVersion syllabus, long generation,
+			List<DescriptorMatch> matches, Throwable failure) {
+		if (generation != descriptorQueryGeneration || !syllabus.equals(model.getSyllabusVersion())
+				|| !syllabus.equals(syllabusBox.getValue())) {
+			return;
+		}
+		if (failure != null) {
+			descriptorLookupStatus.setText("Descriptor search could not be completed.");
+			return;
+		}
+		descriptorLookupResults.getItems().setAll(matches);
+		descriptorLookupResults.setVisible(!matches.isEmpty());
+		if (matches.isEmpty()) {
+			descriptorLookupStatus.setText("No matching Descriptors.");
+		} else if (matches.size() == DESCRIPTOR_LOOKUP_LIMIT) {
+			descriptorLookupStatus.setText("Showing up to " + DESCRIPTOR_LOOKUP_LIMIT + " matching Descriptors.");
+		} else {
+			descriptorLookupStatus
+					.setText(matches.size() + " matching Descriptor" + (matches.size() == 1 ? "." : "s."));
+		}
+	}
+
 	private void refreshDescriptorRow() {
 		refreshDescriptorRow(0);
 	}
@@ -1059,6 +1220,19 @@ public class CurriculumSelectorPane extends VBox {
 				parentOperationId, model::getDescriptors);
 		descriptorBox.getItems().setAll(descriptors);
 		setDescriptorRowVisible(!descriptorBox.getItems().isEmpty());
+	}
+
+	private void refreshDescriptorSearchForScopeChange() {
+		if (refreshingCode || refreshingSubjects) {
+			return;
+		}
+		String keywords = descriptorLookupText.getText();
+		if (keywords != null && !keywords.isBlank()) {
+
+			// A new hierarchy scope invalidates results from
+			// every earlier asynchronous search.
+			searchDescriptors();
+		}
 	}
 
 	private void refreshFinalClassificationRows() {
@@ -1117,6 +1291,20 @@ public class CurriculumSelectorPane extends VBox {
 		hideDescriptorRow();
 	}
 
+	private void restoreHierarchyControlsAfterLookupClear() {
+
+		// The lookup is an aid to classification, not a mode that
+		// changes which hierarchy controls may be used.
+		unitBox.setDisable(model.getSyllabusVersion() == null);
+		topicBox.setDisable(model.getUnit() == null);
+		subtopicBox.setDisable(model.getTopic() == null || !subtopicBox.isVisible());
+		descriptorBox.setDisable(model.getTopic() == null || !descriptorBox.isVisible());
+
+		// Do not change subjectBox, syllabusBox or the enclosing
+		// classificationContext. Their locks belong to the
+		// authoritative Question Capture workflow.
+	}
+
 	private void restoreNodeSelection(CurriculumNode selectedNode) {
 		if (selectedNode == null || model.getSyllabusVersion() == null) {
 			return;
@@ -1125,6 +1313,67 @@ public class CurriculumSelectorPane extends VBox {
 		if (available != null && available.equals(selectedNode)) {
 			applyNodePath(available);
 		}
+	}
+
+	private void searchDescriptors() {
+		long generation = ++descriptorQueryGeneration;
+		String query = descriptorLookupText.getText();
+		descriptorLookupResults.getItems().clear();
+		descriptorLookupResults.setVisible(false);
+		if (query == null || query.isBlank()) {
+
+			// Clearing keywords must not remove the authoritative
+			// classification or leave hierarchy controls inactive.
+			descriptorLookupStatus.setText("");
+			descriptorLookupStatus.setVisible(false);
+			restoreHierarchyControlsAfterLookupClear();
+			return;
+		}
+		descriptorLookupStatus.setVisible(true);
+		SyllabusVersion syllabus = model.getSyllabusVersion();
+		if (syllabus == null || !syllabus.equals(syllabusBox.getValue()) || model.getSubject() == null
+				|| !model.getSubject().equals(syllabus.getSubject())) {
+			descriptorLookupStatus.setText("Select a syllabus before searching.");
+			return;
+		}
+		if (!syllabus.equals(descriptorLoadedSyllabus)) {
+			descriptorLookupStatus.setText("Loading Descriptors...");
+			loadDescriptorLookup(syllabus);
+			return;
+		}
+
+		// Capture both filters before dispatching background work.
+		// The completed result is accepted only if this query
+		// generation is still authoritative.
+		String codePrefix = searchScopeCode();
+		List<CurriculumNode> snapshot = descriptorSnapshot;
+		descriptorLookupStatus.setText("Searching...");
+		CompletableFuture
+				.supplyAsync(() -> descriptorLookupService.findMatches(syllabus, snapshot, query, codePrefix,
+						DESCRIPTOR_LOOKUP_LIMIT))
+				.whenComplete((matches, failure) -> Platform
+						.runLater(() -> publishDescriptorLookupResults(syllabus, generation, matches, failure)));
+	}
+
+	private String searchScopeCode() {
+
+		// The Code field is the most precise expression of the
+		// user's intended curriculum scope.
+		String code = codeField.getText();
+		if (code != null && !code.isBlank()) {
+			return code.strip();
+		}
+
+		// Fall back to the selected hierarchy when Code is empty.
+		// Do not use the final Descriptor as an implicit constraint:
+		// the user may be looking for an alternative classification.
+		if (model.getTopic() != null) {
+			return model.getTopic().getCode();
+		}
+		if (model.getUnit() != null) {
+			return model.getUnit().getCode();
+		}
+		return "";
 	}
 
 	private <T> void selectAvailableValue(ComboBox<T> box, T selectedValue) {
@@ -1177,6 +1426,10 @@ public class CurriculumSelectorPane extends VBox {
 		}
 		CurriculumNode selected = deepestSelectedNode();
 		setCodeText(selected == null ? "" : selected.getCode());
+
+		// Unit and Topic ComboBox selections also establish
+		// the scope of an active Descriptor keyword search.
+		refreshDescriptorSearchForScopeChange();
 	}
 
 	private void updateReadOnlySubject(Subject subject) {

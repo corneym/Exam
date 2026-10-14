@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Tag;
@@ -16,6 +17,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.testfx.api.FxRobot;
 import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
+import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.Descriptor;
@@ -25,12 +27,16 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository;
+import au.edu.eq.questionbank.service.curriculum.DescriptorLookupService.DescriptorMatch;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.ListView;
 import javafx.scene.control.TextField;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 
@@ -63,6 +69,35 @@ public class CurriculumSelectorPaneTest {
 		assertNull(model.getUnit());
 		assertNull(model.getClassification());
 		assertFalse(pane.classificationSelectedProperty().get());
+	}
+
+	@Test
+	public void clearingDescriptorKeywordsRestoresHierarchyControls(FxRobot robot) throws Exception {
+		robot.interact(() -> pane.selectClassificationPath(descriptor3111));
+		TextField search = robot.lookup("#curriculum-descriptor-search").queryAs(TextField.class);
+		Label status = robot.lookup("#curriculum-descriptor-search-status").queryAs(Label.class);
+		ComboBox<?> syllabuses = robot.lookup("#curriculum-syllabus").queryComboBox();
+		ComboBox<?> units = robot.lookup("#curriculum-unit").queryComboBox();
+		ComboBox<?> topics = robot.lookup("#curriculum-topic").queryComboBox();
+		ComboBox<?> subtopics = robot.lookup("#curriculum-subtopic").queryComboBox();
+		ComboBox<?> descriptors = robot.lookup("#curriculum-descriptor").queryComboBox();
+
+		// Exercise the locked-syllabus workflow used by
+		// existing Question editing.
+		robot.interact(() -> pane.setSyllabusContextLocked(true));
+		robot.interact(() -> search.setText("nonexistent keyword"));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> "No matching Descriptors.".equals(status.getText()));
+		robot.interact(search::clear);
+		assertEquals(descriptor3111, model.getClassification());
+		assertFalse(units.isDisabled());
+		assertFalse(topics.isDisabled());
+		assertFalse(subtopics.isDisabled());
+		assertFalse(descriptors.isDisabled());
+
+		// Clearing lookup text must not override a deliberate
+		// lock on the authoritative syllabus.
+		assertTrue(syllabuses.isDisabled());
+		assertFalse(status.isVisible());
 	}
 
 	@Test
@@ -161,6 +196,108 @@ public class CurriculumSelectorPaneTest {
 		assertEquals(descriptor3111, model.getDescriptor());
 		assertEquals(descriptor3111, pane.selectedClassificationProperty().get());
 		assertTrue(pane.classificationSelectedProperty().get());
+	}
+
+	@Test
+	public void descriptorLookupFollowsClassificationDisable(FxRobot robot) {
+		TextField search = robot.lookup("#curriculum-descriptor-search").queryAs(TextField.class);
+		robot.interact(() -> pane.setClassificationControlsDisabled(true));
+		assertTrue(search.isDisabled());
+		robot.interact(() -> pane.setClassificationControlsDisabled(false));
+		assertFalse(search.isDisabled());
+	}
+
+	@Test
+	public void descriptorLookupNarrowsWithCodeAndTopic(FxRobot robot) throws Exception {
+		TextField search = robot.lookup("#curriculum-descriptor-search").queryAs(TextField.class);
+		TextField code = robot.lookup("#curriculum-code").queryAs(TextField.class);
+		ListView<DescriptorMatch> results = robot.lookup("#curriculum-descriptor-search-results").queryListView();
+		ComboBox<Unit> units = robot.lookup("#curriculum-unit").queryComboBox();
+		ComboBox<Topic> topics = robot.lookup("#curriculum-topic").queryComboBox();
+		robot.interact(() -> search.setText("descriptor"));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+
+		// A partial code restricts search to that Topic.
+		robot.interact(() -> code.setText("3.1"));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& results.getItems().getFirst().descriptor().equals(descriptor3111));
+
+		// Changing only the Code must refresh active keywords.
+		robot.interact(() -> code.setText("3.2"));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& results.getItems().getFirst().descriptor().equals(descriptor321));
+
+		// With no Code or Unit/Topic selection, the entire
+		// selected syllabus is available again.
+		robot.interact(code::clear);
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+
+		// Selecting Unit and Topic through the existing
+		// hierarchy has the same narrowing effect.
+		robot.interact(() -> units.getSelectionModel().select(unit3));
+		robot.interact(() -> topics.getSelectionModel().select(topic31));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& results.getItems().getFirst().descriptor().equals(descriptor3111));
+
+		// Searching must not commit a classification.
+		assertNull(model.getClassification());
+	}
+
+	@Test
+	public void descriptorLookupRespectsSyllabusSwitch(FxRobot robot) throws Exception {
+		TextField search = robot.lookup("#curriculum-descriptor-search").queryAs(TextField.class);
+		ComboBox<SyllabusVersion> syllabuses = robot.lookup("#curriculum-syllabus").queryComboBox();
+		ListView<DescriptorMatch> results = robot.lookup("#curriculum-descriptor-search-results").queryListView();
+		Label status = robot.lookup("#curriculum-descriptor-search-status").queryAs(Label.class);
+		robot.interact(() -> search.setText("3.1.1.1"));
+
+		// Change syllabus before the earlier asynchronous result
+		// is necessarily delivered.
+		robot.interact(() -> syllabuses.setValue(syllabus2019));
+		assertEquals("", search.getText());
+		assertTrue(results.getItems().isEmpty());
+		assertEquals(syllabus2019, model.getSyllabusVersion());
+		robot.interact(() -> search.setText("3.1.1.1"));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> "No matching Descriptors.".equals(status.getText()));
+		assertTrue(results.getItems().isEmpty());
+		assertNull(model.getClassification());
+	}
+
+	@Test
+	public void descriptorLookupSelectsExistingHierarchy(FxRobot robot) throws Exception {
+		TextField search = robot.lookup("#curriculum-descriptor-search").queryAs(TextField.class);
+		ListView<DescriptorMatch> results = robot.lookup("#curriculum-descriptor-search-results").queryListView();
+		TextField code = robot.lookup("#curriculum-code").queryAs(TextField.class);
+		robot.interact(() -> search.setText("3.1.1.1"));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1);
+		assertNull(model.getClassification());
+		assertEquals(descriptor3111, results.getItems().getFirst().descriptor());
+
+		// Keyboard selection explicitly accepts the highlighted match.
+		robot.interact(() -> {
+			results.getSelectionModel().selectFirst();
+			results.fireEvent(new KeyEvent(KeyEvent.KEY_PRESSED, "", "", KeyCode.ENTER, false, false, false, false));
+		});
+		assertEquals(descriptor3111, model.getClassification());
+		assertEquals(unit3, model.getUnit());
+		assertEquals(topic31, model.getTopic());
+		assertEquals(subtopic311, model.getSubtopic());
+		assertEquals("3.1.1.1", code.getText());
+		assertEquals("", search.getText());
+	}
+
+	@Test
+	public void descriptorLookupTermsDoNotChangeClassification(FxRobot robot) throws Exception {
+		robot.interact(() -> pane.selectClassificationPath(descriptor3111));
+		TextField search = robot.lookup("#curriculum-descriptor-search").queryAs(TextField.class);
+		Label status = robot.lookup("#curriculum-descriptor-search-status").queryAs(Label.class);
+		robot.interact(() -> search.setText("nonexistent keyword"));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> "No matching Descriptors.".equals(status.getText()));
+		assertEquals(descriptor3111, model.getClassification());
+		robot.interact(search::clear);
+		assertEquals(descriptor3111, model.getClassification());
+		assertEquals("3.1.1.1", robot.lookup("#curriculum-code").queryAs(TextField.class).getText());
+		assertFalse(status.isVisible());
 	}
 
 	@Test
