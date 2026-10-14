@@ -3,6 +3,7 @@ package au.edu.eq.questionbank.ui.search;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -106,6 +107,7 @@ public class QuestionSearchPane extends BorderPane {
 	private final PauseTransition previewDelay = new PauseTransition(Duration.millis(PREVIEW_DELAY_MILLIS));
 	private long outputApplicabilityDisplayedQuestionId = -1;
 	private QuestionSearchMetadataFilter metadataFilter;
+	private final ComboBox<QuestionSearchInclusionFilter> inclusionFilterBox = new ComboBox<>();
 
 	// Search presentation uses its own result type so current-curriculum matches
 	// and future all-bank results can coexist without weakening retrieval
@@ -402,6 +404,7 @@ public class QuestionSearchPane extends BorderPane {
 
 		// Always requery the authoritative Working Subject. Existing
 		// Exam/booklet narrowing remains applied by the Search pipeline.
+		synchroniseInclusionFilterForScope();
 		activateAllQuestionsScope();
 		startFilterCatalogueLoad();
 	}
@@ -612,6 +615,7 @@ public class QuestionSearchPane extends BorderPane {
 			bookletFilterBox.getSelectionModel().selectFirst();
 			responseTypeFilterBox.getSelectionModel().selectFirst();
 			originalSyllabusFilterBox.getSelectionModel().selectFirst();
+			inclusionFilterBox.getSelectionModel().select(QuestionSearchInclusionFilter.ALL);
 			refreshExamAndBookletFilters();
 		} finally {
 			updatingMetadataChoices = false;
@@ -749,19 +753,26 @@ public class QuestionSearchPane extends BorderPane {
 			return;
 		}
 
-		// A successful write may belong to a Question that is no longer selected.
-		// Its completion must not alter the newer Question's applicability display.
-		if (!isSelectedQuestion(questionId)) {
+		// Only update the detail pane when it still belongs
+		// to the Question whose placement was saved.
+		if (isSelectedQuestion(questionId)) {
+			if (!replaceOutputApplicabilityRow(currentNode, excluded)) {
+
+				// An intervening load may have replaced the row.
+				// Re-read rather than inventing detail state.
+				reloadSelectedOutputApplicability();
+			}
+		} else {
 			updateOutputApplicabilityActionState();
-			return;
-		}
-		if (replaceOutputApplicabilityRow(currentNode, excluded)) {
-			return;
 		}
 
-		// If an intervening reload removed the edited row, rebuild applicability
-		// from persistence rather than manufacturing replacement UI state.
-		reloadSelectedOutputApplicability();
+		// The persisted change may alter Search membership.
+		// Re-evaluate the active filter even if the teacher
+		// selected another Question while saving.
+		if (searchScopeBox.getValue() == QuestionSearchScope.CURRENT_SYLLABUS
+				&& inclusionFilterBox.getValue() != QuestionSearchInclusionFilter.ALL) {
+			refreshAutomaticSearch();
+		}
 	}
 
 	private void completePreview(Task<Optional<BufferedImage>> task, long generation) {
@@ -858,6 +869,7 @@ public class QuestionSearchPane extends BorderPane {
 
 	private void configureHandlers() {
 		searchScopeBox.setOnAction(_ -> handleSearchScopeSelection());
+		inclusionFilterBox.setOnAction(_ -> handleInclusionFilterSelection());
 		providerFilterBox.setOnAction(_ -> handleMetadataFilterChange(MetadataField.PROVIDER));
 		yearFromFilterBox.setOnAction(_ -> handleMetadataFilterChange(MetadataField.FROM_YEAR));
 		yearToFilterBox.setOnAction(_ -> handleMetadataFilterChange(MetadataField.TO_YEAR));
@@ -908,6 +920,15 @@ public class QuestionSearchPane extends BorderPane {
 						new FilterOption<>(QuestionResponseType.WRITTEN_RESPONSE, "Written Response")));
 		responseTypeFilterBox.getSelectionModel().selectFirst();
 		responseTypeFilterBox.setDisable(false);
+		inclusionFilterBox.setId("question-search-inclusion-filter");
+		inclusionFilterBox.getItems().setAll(List.of(QuestionSearchInclusionFilter.values()));
+		inclusionFilterBox.getSelectionModel().select(QuestionSearchInclusionFilter.ALL);
+		inclusionFilterBox.setButtonCell(new DisplayListCell<>(QuestionSearchInclusionFilter::displayText));
+		inclusionFilterBox.setCellFactory(_ -> new DisplayListCell<>(QuestionSearchInclusionFilter::displayText));
+		inclusionFilterBox.setTooltip(new Tooltip(
+				"Filter Questions by revision-output inclusion " + "within the selected current-curriculum scope."));
+		inclusionFilterBox.setMaxWidth(Double.MAX_VALUE);
+		inclusionFilterBox.setDisable(searchScopeBox.getValue() != QuestionSearchScope.CURRENT_SYLLABUS);
 		clearMetadataFiltersButton.setId("question-search-clear-metadata-filters");
 		metadataFilterStatus.setId("question-search-metadata-filter-status");
 		metadataFilterStatus.setWrapText(true);
@@ -1108,6 +1129,7 @@ public class QuestionSearchPane extends BorderPane {
 		grid.addRow(4, createSelectorLabel("Booklet"), bookletFilterBox);
 		grid.addRow(5, createSelectorLabel("Response type"), responseTypeFilterBox);
 		grid.addRow(6, createSelectorLabel("Original syllabus"), originalSyllabusFilterBox);
+		grid.addRow(7, createSelectorLabel("Revision output"), inclusionFilterBox);
 		GridPane.setHgrow(providerFilterBox, Priority.ALWAYS);
 		GridPane.setHgrow(yearFromFilterBox, Priority.ALWAYS);
 		GridPane.setHgrow(yearToFilterBox, Priority.ALWAYS);
@@ -1115,6 +1137,7 @@ public class QuestionSearchPane extends BorderPane {
 		GridPane.setHgrow(bookletFilterBox, Priority.ALWAYS);
 		GridPane.setHgrow(responseTypeFilterBox, Priority.ALWAYS);
 		GridPane.setHgrow(originalSyllabusFilterBox, Priority.ALWAYS);
+		GridPane.setHgrow(inclusionFilterBox, Priority.ALWAYS);
 		VBox content = new VBox(SECTION_SPACING, grid, clearMetadataFiltersButton, metadataFilterStatus);
 		content.setPadding(new Insets(SECTION_TOP_PADDING));
 		ScrollPane scroll = new ScrollPane(content);
@@ -1450,6 +1473,41 @@ public class QuestionSearchPane extends BorderPane {
 		return summary + ": " + failure.getMessage();
 	}
 
+	private List<QuestionSearchResult> filterSearchResults(List<QuestionSearchResult> sourceResults,
+			QuestionSearchMetadataFilter metadataSnapshot, QuestionSearchInclusionFilter inclusionSnapshot,
+			long parentOperationId) {
+
+		// Preserve the authoritative Working Subject,
+		// Dashboard narrowing and Search-local metadata filters.
+		List<QuestionSearchResult> metadataMatches = sourceResults.stream().filter(
+				result -> searchNarrowing.includes(result.question()) && metadataSnapshot.matches(result.question()))
+				.toList();
+
+		// The All state never performs exclusion retrieval.
+		// Neither does an empty metadata result set.
+		if (inclusionSnapshot == QuestionSearchInclusionFilter.ALL || metadataMatches.isEmpty()) {
+			return metadataMatches;
+		}
+		try (PerformanceOperation operation = performanceRecorder.start("search.inclusion.filter", parentOperationId)) {
+			try {
+
+				// Read all applicable exclusions in bulk,
+				// once for this Search generation.
+				Map<Long, Set<Long>> exclusions = outputApplicabilityRepository.findExcludedCurrentNodeIdsForQuestions(
+						metadataMatches.stream().map(QuestionSearchResult::question).toList());
+
+				// Each result already carries the placements
+				// matched within this curriculum search scope.
+				List<QuestionSearchResult> filtered = inclusionSnapshot.filter(metadataMatches, exclusions);
+				operation.resultCount(filtered.size());
+				return filtered;
+			} catch (RuntimeException | Error failure) {
+				operation.failed();
+				throw failure;
+			}
+		}
+	}
+
 	private List<CurriculumNode> findCompleteCurrentApplicability(Question question, long parentOperationId) {
 
 		// Revision Output must include every current Subject placement,
@@ -1521,6 +1579,23 @@ public class QuestionSearchPane extends BorderPane {
 		startAutomaticSearch(descriptorBox.getValue());
 	}
 
+	private void handleInclusionFilterSelection() {
+		if (disposed || updatingMetadataChoices || classificationDirty.get()) {
+			return;
+		}
+		if (searchScopeBox.getValue() != QuestionSearchScope.CURRENT_SYLLABUS) {
+
+			// All Questions must never calculate or apply
+			// current-curriculum inclusion state.
+			synchroniseInclusionFilterForScope();
+			return;
+		}
+
+		// The standard Search dispatcher invalidates the
+		// previous task and retains stale-result protection.
+		refreshAutomaticSearch();
+	}
+
 	private void handleMetadataFilterChange(MetadataField field) {
 		if (updatingMetadataChoices || disposed || classificationDirty.get()) {
 			return;
@@ -1588,6 +1663,7 @@ public class QuestionSearchPane extends BorderPane {
 			return;
 		}
 		prepareSearchScopeTransition();
+		synchroniseInclusionFilterForScope();
 		if (searchScopeBox.getValue() == QuestionSearchScope.ALL_QUESTIONS) {
 			activateAllQuestionsScope();
 			return;
@@ -2353,6 +2429,13 @@ public class QuestionSearchPane extends BorderPane {
 		// Capture Search-local filters on the JavaFX thread.
 		// Background work must never read mutable ComboBox state.
 		QuestionSearchMetadataFilter metadataSnapshot = metadataFilter;
+
+		// Capture both the Search scope and inclusion choice.
+		// The worker must never read mutable JavaFX controls.
+		QuestionSearchInclusionFilter inclusionSnapshot = searchScopeBox
+				.getValue() == QuestionSearchScope.CURRENT_SYLLABUS
+						? Objects.requireNonNullElse(inclusionFilterBox.getValue(), QuestionSearchInclusionFilter.ALL)
+						: QuestionSearchInclusionFilter.ALL;
 		statusLabel.setText("Searching...");
 		PerformanceOperation refreshOperation = performanceRecorder.start("search.refresh");
 		activeSearchOperation = refreshOperation;
@@ -2375,10 +2458,8 @@ public class QuestionSearchPane extends BorderPane {
 					try (PerformanceOperation filterOperation = performanceRecorder.start("search.filter",
 							retrievalOperation.id())) {
 						try {
-							filteredResults = sourceResults.stream()
-									.filter(result -> searchNarrowing.includes(result.question())
-											&& metadataSnapshot.matches(result.question()))
-									.toList();
+							filteredResults = filterSearchResults(sourceResults, metadataSnapshot, inclusionSnapshot,
+									filterOperation.id());
 							filterOperation.resultCount(filteredResults.size());
 						} catch (RuntimeException | Error failure) {
 							filterOperation.failed();
@@ -2670,6 +2751,23 @@ public class QuestionSearchPane extends BorderPane {
 		clearWorkingSubjectNavigation();
 		startHierarchyLoad(() -> loadSubjectNavigation(workingSubject),
 				navigation -> showSubjectNavigation(workingSubject, navigation));
+	}
+
+	private void synchroniseInclusionFilterForScope() {
+		boolean currentScope = searchScopeBox.getValue() == QuestionSearchScope.CURRENT_SYLLABUS;
+		if (!currentScope) {
+			boolean previouslyUpdating = updatingMetadataChoices;
+			updatingMetadataChoices = true;
+			try {
+
+				// An inclusion restriction must never remain
+				// active while viewing All Questions.
+				inclusionFilterBox.getSelectionModel().select(QuestionSearchInclusionFilter.ALL);
+			} finally {
+				updatingMetadataChoices = previouslyUpdating;
+			}
+		}
+		inclusionFilterBox.setDisable(!currentScope || classificationDirty.get());
 	}
 
 	private void updateClassificationEditLock() {

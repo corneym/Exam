@@ -2542,6 +2542,149 @@ public class QuestionSearchPaneTest {
 	}
 
 	@Test
+	public void revisionOutputChangeRefreshesActiveFilteredSearch(FxRobot robot) throws TimeoutException {
+		Question first = historicalQuestion;
+		Question second = new Question(160, first.getBooklet(), "Q4", "", 2, List.of(), historicalDescriptor, false);
+		List<Question> questions = List.of(first, second);
+		QuestionRetrievalRepository repository = nodes -> {
+			if (!nodes.contains(currentDescriptor)) {
+				return List.of();
+			}
+			return questions.stream().map(question -> new QuestionApplicabilityMatch(question, currentDescriptor))
+					.toList();
+		};
+		QuestionRetrievalService service = new QuestionRetrievalService(repository,
+				new CurriculumSearchNodeExpansionService(curriculumRepository));
+
+		// First is initially excluded; second is included.
+		outputApplicabilityRepository.setExcluded(first, currentDescriptor, true);
+		replaceSearchPane(robot, curriculumRepository, service, () -> questions);
+		TitledPane moreFilters = robot.lookup("#question-search-more-filters").queryAs(TitledPane.class);
+		robot.interact(() -> moreFilters.setExpanded(true));
+		ComboBox<QuestionSearchInclusionFilter> inclusion = robot.lookup("#question-search-inclusion-filter")
+				.queryComboBox();
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		ListView<QuestionOutputApplicabilityRow> output = robot.lookup("#question-search-output-applicability")
+				.queryListView();
+		Button includeButton = robot.lookup("#question-search-output-include").queryButton();
+		Button excludeButton = robot.lookup("#question-search-output-exclude").queryButton();
+		Label status = robot.lookup("#question-search-status").queryAs(Label.class);
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+		robot.interact(() -> inclusion.setValue(QuestionSearchInclusionFilter.EXCLUDED));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& results.getItems().getFirst().question().getId() == first.getId());
+		robot.interact(() -> results.getSelectionModel().selectFirst());
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> output.getItems().size() == 1
+				&& output.getItems().getFirst().excluded() && !includeButton.isDisable());
+
+		// Persisting Include removes the selected Question
+		// from the active Excluded search.
+		robot.interact(includeButton::fire);
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> results.getItems().isEmpty() && "No questions found.".equals(status.getText()));
+		assertTrue(outputApplicabilityRepository.findExcludedCurrentNodeIds(first).isEmpty());
+
+		// Both Questions now match Included.
+		robot.interact(() -> inclusion.setValue(QuestionSearchInclusionFilter.INCLUDED));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+		QuestionSearchResult secondResult = results.getItems().stream()
+				.filter(result -> result.question().getId() == second.getId()).findFirst().orElseThrow();
+		robot.interact(() -> results.getSelectionModel().select(secondResult));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> output.getItems().size() == 1
+				&& !output.getItems().getFirst().excluded() && !excludeButton.isDisable());
+
+		// Persisting Exclude removes second from Included.
+		robot.interact(excludeButton::fire);
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& results.getItems().getFirst().question().getId() == first.getId());
+		assertEquals(Set.of(currentDescriptor.getId()),
+				outputApplicabilityRepository.findExcludedCurrentNodeIds(second));
+	}
+
+	@Test
+	public void revisionOutputFilterTracksSelectedCurriculumScope(FxRobot robot) throws TimeoutException {
+		Question mixed = historicalQuestion;
+		Question excluded = new Question(150, mixed.getBooklet(), "Q2", "", 2, List.of(), historicalDescriptor, false);
+		Question included = new Question(151, mixed.getBooklet(), "Q3", "", 2, List.of(), historicalDescriptor, false);
+		List<Question> questions = List.of(mixed, excluded, included);
+		QuestionRetrievalRepository repository = nodes -> {
+			List<QuestionApplicabilityMatch> matches = new ArrayList<>();
+			if (nodes.contains(currentDescriptor)) {
+				for (Question question : questions) {
+					matches.add(new QuestionApplicabilityMatch(question, currentDescriptor));
+				}
+			}
+			if (nodes.contains(noMatchDescriptor)) {
+				matches.add(new QuestionApplicabilityMatch(mixed, noMatchDescriptor));
+			}
+			return matches;
+		};
+		QuestionRetrievalService service = new QuestionRetrievalService(repository,
+				new CurriculumSearchNodeExpansionService(curriculumRepository));
+
+		// Mixed is excluded only from the second Topic.
+		// Excluded is excluded from the first Topic.
+		// Included has no explicit exclusions.
+		outputApplicabilityRepository.setExcluded(mixed, noMatchDescriptor, true);
+		outputApplicabilityRepository.setExcluded(excluded, currentDescriptor, true);
+		replaceSearchPane(robot, curriculumRepository, service, () -> questions);
+		TitledPane moreFilters = robot.lookup("#question-search-more-filters").queryAs(TitledPane.class);
+		robot.interact(() -> moreFilters.setExpanded(true));
+		ComboBox<QuestionSearchInclusionFilter> inclusion = robot.lookup("#question-search-inclusion-filter")
+				.queryComboBox();
+		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
+		ComboBox<CurriculumNode> unit = robot.lookup("#question-search-unit").queryComboBox();
+		ComboBox<CurriculumNode> topic = robot.lookup("#question-search-topic").queryComboBox();
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> results.getItems().size() == 3 && unit.getItems().contains(currentUnit));
+		assertFalse(inclusion.isDisable());
+		assertEquals(QuestionSearchInclusionFilter.ALL, inclusion.getValue());
+
+		// Both mixed and excluded have at least one
+		// excluded placement in the complete current syllabus.
+		robot.interact(() -> inclusion.setValue(QuestionSearchInclusionFilter.EXCLUDED));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> results.getItems().size() == 2
+						&& results.getItems().stream().map(result -> result.question().getId())
+								.collect(Collectors.toSet()).equals(Set.of(mixed.getId(), excluded.getId())));
+
+		// Mixed also has an included placement.
+		// Included has no exclusions at all.
+		robot.interact(() -> inclusion.setValue(QuestionSearchInclusionFilter.INCLUDED));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> results.getItems().size() == 2
+						&& results.getItems().stream().map(result -> result.question().getId())
+								.collect(Collectors.toSet()).equals(Set.of(mixed.getId(), included.getId())));
+		robot.interact(() -> inclusion.setValue(QuestionSearchInclusionFilter.EXCLUDED));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+
+		// Narrow to the first Topic.
+		// Mixed's excluded placement is in a different Topic,
+		// so it must no longer match Excluded.
+		robot.interact(() -> unit.setValue(currentUnit));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> topic.getItems().contains(currentTopic));
+		robot.interact(() -> topic.setValue(currentTopic));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& results.getItems().getFirst().question().getId() == excluded.getId());
+
+		// All Questions must not retain the exclusion filter.
+		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 3
+				&& results.getItems().stream().allMatch(result -> result.scope() == QuestionSearchScope.ALL_QUESTIONS));
+		assertTrue(inclusion.isDisable());
+		assertEquals(QuestionSearchInclusionFilter.ALL, inclusion.getValue());
+
+		// Returning to Current syllabus begins unrestricted
+		// inclusion filtering, not the old Excluded setting.
+		robot.interact(() -> scope.setValue(QuestionSearchScope.CURRENT_SYLLABUS));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 3 && results.getItems()
+				.stream().allMatch(result -> result.scope() == QuestionSearchScope.CURRENT_SYLLABUS));
+		assertFalse(inclusion.isDisable());
+		assertEquals(QuestionSearchInclusionFilter.ALL, inclusion.getValue());
+	}
+
+	@Test
 	public void rightColumnGivesRemainingHeightToPreview(FxRobot robot) {
 		VBox rightColumn = robot.lookup("#question-search-right-column").queryAs(VBox.class);
 		Node selectedClassification = robot.lookup("#question-search-selected-classification").query();
