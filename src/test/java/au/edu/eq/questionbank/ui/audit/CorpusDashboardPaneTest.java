@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
@@ -684,25 +685,20 @@ class CorpusDashboardPaneTest {
 	void dashboardPlacesCurriculumAboveAdjustableWorkSplit(FxRobot robot) {
 		Node curriculumSection = robot.lookup("#corpus-dashboard-curriculum-section").query();
 		Node summaryRow = robot.lookup("#corpus-dashboard-summary-row").query();
+		ScrollPane summaryScroll = robot.lookup("#corpus-dashboard-summary-scroll").queryAs(ScrollPane.class);
 		SplitPane hierarchyRow = robot.lookup("#corpus-dashboard-hierarchy-row").queryAs(SplitPane.class);
 		Node examsSection = robot.lookup("#corpus-dashboard-exams-section").query();
 		Node bookletsSection = robot.lookup("#corpus-dashboard-booklets-section").query();
 		Node questionSection = robot.lookup("#corpus-dashboard-question-work-section").query();
 		SplitPane workSplit = robot.lookup("#corpus-dashboard-work-split").queryAs(SplitPane.class);
-
-		// Subject-level sections remain above the operational workspace.
-		assertTrue(pane.getChildren().indexOf(curriculumSection) < pane.getChildren().indexOf(summaryRow));
-		assertTrue(pane.getChildren().indexOf(summaryRow) < pane.getChildren().indexOf(workSplit));
-
-		// Exam and booklet sections share a separately adjustable horizontal
-		// hierarchy without changing their structural identities.
+		assertEquals(summaryRow, summaryScroll.getContent());
+		assertTrue(pane.getChildren().indexOf(curriculumSection) < pane.getChildren().indexOf(summaryScroll));
+		assertTrue(pane.getChildren().indexOf(summaryScroll) < pane.getChildren().indexOf(workSplit));
 		assertEquals(Orientation.HORIZONTAL, hierarchyRow.getOrientation());
 		assertEquals(2, hierarchyRow.getItems().size());
 		assertEquals(examsSection, hierarchyRow.getItems().get(0));
 		assertEquals(bookletsSection, hierarchyRow.getItems().get(1));
 		assertEquals(1, hierarchyRow.getDividers().size());
-
-		// The established vertical split remains independently adjustable.
 		assertEquals(Orientation.VERTICAL, workSplit.getOrientation());
 		assertEquals(2, workSplit.getItems().size());
 		assertEquals(hierarchyRow, workSplit.getItems().get(0));
@@ -1359,6 +1355,108 @@ class CorpusDashboardPaneTest {
 
 	@Test
 	@SuppressWarnings("unchecked")
+	void missingDescriptorSummaryDrillsDownAndRefreshes(FxRobot robot) {
+		Question missingComplete = questionWithoutDescriptor(950, fixture.paper2, "Q90");
+		Question missingActive = questionWithoutDescriptor(951, fixture.activePaper, "Q91");
+		List<Question> initial = new ArrayList<>(fixture.questions());
+		initial.add(missingComplete);
+		initial.add(missingActive);
+		List<ExamCorpusStatus> statuses = List.of(fixture.completeExamStatus, fixture.activeExamStatus);
+		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		TableView<QuestionCorpusWorkItem> questions = robot.lookup("#corpus-dashboard-question-work")
+				.queryAs(TableView.class);
+		Button missingDescriptors = robot.lookup("#corpus-dashboard-summary-missing-descriptors").queryButton();
+		robot.interact(() -> pane.replaceData(statuses, initial));
+		assertEquals("2 Missing descriptors", missingDescriptors.getText());
+
+		// A Subject-level drill-down keeps only matching Exams and booklets.
+		robot.interact(missingDescriptors::fire);
+		assertEquals(2, exams.getItems().size());
+		assertEquals(1, booklets.getItems().size());
+		assertEquals(fixture.paper2.getId(), booklets.getItems().getFirst().booklet().getId());
+		assertEquals(1, questions.getItems().size());
+		assertEquals(missingComplete.getId(), questions.getItems().getFirst().question().getId());
+
+		// Selecting the other Exam must not lose the active Descriptor filter.
+		robot.interact(() -> exams.getSelectionModel().select(fixture.activeExamStatus));
+		assertEquals(1, booklets.getItems().size());
+		assertEquals(fixture.activePaper.getId(), booklets.getItems().getFirst().booklet().getId());
+		assertEquals(1, questions.getItems().size());
+		assertEquals(missingActive.getId(), questions.getItems().getFirst().question().getId());
+
+		// A fresh authoritative snapshot simulates the result of the first
+		// successfully persisted classification.
+		Descriptor resolvedDescriptor = new Descriptor(1950, missingComplete.getClassification().getSyllabusVersion(),
+				(Subtopic) missingComplete.getClassification(), "1.1.950.1", "Resolved Descriptor", 1);
+		Question resolvedComplete = new Question(missingComplete.getId(), fixture.paper2, "Q90", "", 2,
+				missingComplete.getRegions(), resolvedDescriptor, false, null, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		List<Question> afterFirstSave = new ArrayList<>(fixture.questions());
+		afterFirstSave.add(resolvedComplete);
+		afterFirstSave.add(missingActive);
+		robot.interact(() -> pane.replaceData(statuses, afterFirstSave));
+		assertEquals("1 Missing descriptors", missingDescriptors.getText());
+		assertEquals(1, exams.getItems().size());
+		assertEquals(fixture.activeExam.getId(), exams.getItems().getFirst().exam().getId());
+		assertEquals(1, questions.getItems().size());
+		assertEquals(missingActive.getId(), questions.getItems().getFirst().question().getId());
+
+		// Resolving the final outstanding classification reaches zero work.
+		Descriptor resolvedActiveDescriptor = new Descriptor(1951,
+				missingActive.getClassification().getSyllabusVersion(), (Subtopic) missingActive.getClassification(),
+				"1.1.951.1", "Resolved Descriptor", 1);
+		Question resolvedActive = new Question(missingActive.getId(), fixture.activePaper, "Q91", "", 2,
+				missingActive.getRegions(), resolvedActiveDescriptor, false, null, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		List<Question> afterFinalSave = new ArrayList<>(fixture.questions());
+		afterFinalSave.add(resolvedComplete);
+		afterFinalSave.add(resolvedActive);
+		robot.interact(() -> pane.replaceData(statuses, afterFinalSave));
+		assertEquals("0 Missing descriptors", missingDescriptors.getText());
+		assertTrue(exams.getItems().isEmpty());
+		assertTrue(questions.getItems().isEmpty());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void missingDescriptorSummaryRespectsStructuralFilters(FxRobot robot) {
+		Question missingComplete = questionWithoutDescriptor(960, fixture.paper2, "Q92");
+		Question missingActive = questionWithoutDescriptor(961, fixture.activePaper, "Q93");
+		List<Question> questions = new ArrayList<>(fixture.questions());
+		questions.add(missingComplete);
+		questions.add(missingActive);
+
+		// Include another provider with no matching Questions to exercise the
+		// same structural Provider boundary used by other summary controls.
+		ExamProvider neap = new ExamProvider(970, "NEAP");
+		Exam otherExam = new Exam(971, fixture.chemistry, neap, 2025, "Practice Examination", ExamCaptureState.ACTIVE);
+		ExamCorpusStatus otherStatus = new ExamCorpusStatus(otherExam, new ExamAssetExpectations(null, 0, null, 0),
+				List.of(), new QuestionCorpusSummary(0, 0, 0, 0, 0, 0, 0), new McqExplanationSummary(0, 0, 0),
+				EnumSet.noneOf(ExamCorpusFinding.class));
+		robot.interact(() -> pane
+				.replaceData(List.of(fixture.completeExamStatus, fixture.activeExamStatus, otherStatus), questions));
+		Button missingDescriptors = robot.lookup("#corpus-dashboard-summary-missing-descriptors").queryButton();
+		ComboBox<ExamProvider> providers = robot.lookup("#corpus-dashboard-filter-provider").queryAs(ComboBox.class);
+		ComboBox<Integer> years = robot.lookup("#corpus-dashboard-filter-year").queryAs(ComboBox.class);
+		ComboBox<ExamCaptureState> states = robot.lookup("#corpus-dashboard-filter-exam-state").queryAs(ComboBox.class);
+		assertEquals("2 Missing descriptors", missingDescriptors.getText());
+		robot.interact(() -> providers.setValue(neap));
+		assertEquals("0 Missing descriptors", missingDescriptors.getText());
+		robot.interact(() -> providers.setValue(fixture.qcaa));
+		assertEquals("2 Missing descriptors", missingDescriptors.getText());
+		robot.interact(() -> years.setValue(2024));
+		assertEquals("1 Missing descriptors", missingDescriptors.getText());
+		robot.interact(() -> states.setValue(ExamCaptureState.COMPLETE));
+		assertEquals("0 Missing descriptors", missingDescriptors.getText());
+		robot.interact(() -> years.setValue(null));
+		assertEquals("1 Missing descriptors", missingDescriptors.getText());
+		robot.interact(() -> states.setValue(null));
+		assertEquals("2 Missing descriptors", missingDescriptors.getText());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
 	void missingExpectedBookletCountShowsActionableWarning(FxRobot robot) {
 		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
 		Label warning = robot.lookup("#corpus-dashboard-booklet-warning").queryAs(Label.class);
@@ -1762,6 +1860,24 @@ class CorpusDashboardPaneTest {
 	}
 
 	@Test
+	void summaryRowScrollsAtNarrowWidths(FxRobot robot) {
+		ScrollPane summaryScroll = robot.lookup("#corpus-dashboard-summary-scroll").queryAs(ScrollPane.class);
+		Node summaryRow = robot.lookup("#corpus-dashboard-summary-row").query();
+		Button missingDescriptors = robot.lookup("#corpus-dashboard-summary-missing-descriptors").queryButton();
+		assertEquals(summaryRow, summaryScroll.getContent());
+		assertEquals(summaryRow, missingDescriptors.getParent());
+		robot.interact(() -> pane.getScene().getWindow().setWidth(820));
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(ScrollPane.ScrollBarPolicy.AS_NEEDED, summaryScroll.getHbarPolicy());
+		assertEquals(ScrollPane.ScrollBarPolicy.NEVER, summaryScroll.getVbarPolicy());
+		assertTrue(summaryScroll.getViewportBounds().getWidth() > 0);
+		assertTrue(summaryRow.getLayoutBounds().getWidth() > summaryScroll.getViewportBounds().getWidth() + 5);
+		robot.interact(() -> summaryScroll.setHvalue(summaryScroll.getHmax()));
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(summaryScroll.getHmax(), summaryScroll.getHvalue(), 0.001);
+	}
+
+	@Test
 	@SuppressWarnings("unchecked")
 	void totalQuestionsRestoresEmptyExamAfterSummaryDrillDown(FxRobot robot) {
 		ExamCorpusStatus emptyExam = new ExamCorpusStatus(fixture.activeExam,
@@ -1791,6 +1907,30 @@ class CorpusDashboardPaneTest {
 		robot.interact(totalQuestions::fire);
 		assertEquals(2, exams.getItems().size());
 		assertTrue(exams.getItems().stream().anyMatch(status -> status.exam().getId() == fixture.activeExam.getId()));
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void unknownTypeRemainsActionableWithoutHeadlineButton(FxRobot robot) {
+		assertTrue(robot.lookup("#corpus-dashboard-summary-unknown-type").tryQuery().isEmpty());
+		Button needsAttention = robot.lookup("#corpus-dashboard-summary-attention").queryButton();
+		TableView<QuestionCorpusWorkItem> questions = robot.lookup("#corpus-dashboard-question-work")
+				.queryAs(TableView.class);
+		Button selectUnknown = robot.lookup("#corpus-dashboard-select-all-unknown").queryButton();
+		Button setWritten = robot.lookup("#corpus-dashboard-set-written-response").queryButton();
+		robot.interact(needsAttention::fire);
+		QuestionCorpusWorkItem unknown = questions.getItems().stream()
+				.filter(item -> item.question().getResponseType() == QuestionResponseType.UNKNOWN).findFirst()
+				.orElseThrow();
+		TableColumn<QuestionCorpusWorkItem, ?> problemColumn = questions.getColumns().stream()
+				.filter(column -> "Problem".equals(column.getText())).findFirst().orElseThrow();
+		assertTrue(String.valueOf(problemColumn.getCellObservableValue(unknown).getValue()).contains("Unknown type"));
+
+		// The exceptional historical-data correction path remains intact.
+		assertFalse(selectUnknown.isDisable());
+		robot.interact(selectUnknown::fire);
+		assertTrue(questions.getSelectionModel().getSelectedItems().contains(unknown));
+		assertFalse(setWritten.isDisable());
 	}
 
 	@Test
@@ -1824,6 +1964,13 @@ class CorpusDashboardPaneTest {
 		return table.lookupAll(".table-row-cell").stream()
 				.filter(node -> node instanceof TableRow<?> row && row.getIndex() == index && !row.isEmpty())
 				.map(node -> (TableRow<?>) node).findFirst().orElseThrow();
+	}
+
+	private Question questionWithoutDescriptor(long id, ExamBooklet booklet, String code) {
+		Subtopic subtopic = new Subtopic(id + 1000, fixture.classification.getSyllabusVersion(),
+				(Topic) fixture.classification.getParent(), "1.1." + id, "Unclassified Subtopic", 2);
+		return new Question(id, booklet, code, "", 2, List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.70, 0.20)),
+				subtopic, false, null, null, QuestionResponseType.WRITTEN_RESPONSE);
 	}
 
 	private static final class Fixture {

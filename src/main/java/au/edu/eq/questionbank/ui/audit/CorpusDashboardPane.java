@@ -98,7 +98,7 @@ public final class CorpusDashboardPane extends VBox {
 	private final Button needsAttentionButton = new Button();
 	private final Button missingContentButton = new Button();
 	private final Button missingAnswerButton = new Button();
-	private final Button unknownTypeButton = new Button();
+	private final Button missingDescriptorButton = new Button();
 	private final Button sharedContextButton = new Button();
 	private final TableView<ExamCorpusStatus> examTable = new TableView<>();
 	private final Label selectedExamLabel = new Label();
@@ -757,13 +757,14 @@ public final class CorpusDashboardPane extends VBox {
 	private void buildContent() {
 		StackPane curriculumSection = buildCurriculumSection();
 		HBox summaryRow = buildSummaryRow();
+		ScrollPane summaryScroll = createHorizontalScrollRow("corpus-dashboard-summary-scroll", summaryRow);
 		SplitPane hierarchyRow = buildHierarchyRow();
 		StackPane questionSection = buildQuestionWorkSection();
 		SplitPane workSplit = buildWorkSplit(hierarchyRow, questionSection);
 
-		// Curriculum and summary remain outside the adjustable work area.
-		// The hierarchy now has its own horizontal divider.
-		getChildren().addAll(curriculumSection, summaryRow, workSplit);
+		// Keep the summary outside the adjustable work area, but allow its
+		// natural-width buttons to scroll rather than become clipped.
+		getChildren().addAll(curriculumSection, summaryScroll, workSplit);
 		setSpacing(SPACING);
 		setPadding(PADDING);
 	}
@@ -868,10 +869,10 @@ public final class CorpusDashboardPane extends VBox {
 
 	private HBox buildSummaryRow() {
 
-		// Subject-level corpus indicators remain immediately below the Subject-level
+		// Subject-level corpus indicators remain immediately below the
 		// Curriculum section rather than between structural work areas.
 		HBox summaryRow = new HBox(SPACING, totalQuestionsButton, needsAttentionButton, missingContentButton,
-				missingAnswerButton, unknownTypeButton, sharedContextButton, missingMcqExplanationButton);
+				missingAnswerButton, missingDescriptorButton, sharedContextButton, missingMcqExplanationButton);
 		summaryRow.setId("corpus-dashboard-summary-row");
 		summaryRow.setAlignment(Pos.CENTER_LEFT);
 		return summaryRow;
@@ -1341,8 +1342,8 @@ public final class CorpusDashboardPane extends VBox {
 				QuestionCorpusProblem.MISSING_QUESTION_CONTENT));
 		missingAnswerButton.setOnAction(_ -> applyQuestionFilter(QuestionCorpusCompletionFilter.INCOMPLETE,
 				QuestionCorpusProblem.MISSING_ANSWER));
-		unknownTypeButton.setOnAction(_ -> applyQuestionFilter(QuestionCorpusCompletionFilter.INCOMPLETE,
-				QuestionCorpusProblem.UNKNOWN_RESPONSE_TYPE));
+		missingDescriptorButton.setOnAction(_ -> applyQuestionFilter(QuestionCorpusCompletionFilter.INCOMPLETE,
+				QuestionCorpusProblem.MISSING_DESCRIPTOR));
 		sharedContextButton.setOnAction(_ -> applyQuestionFilter(QuestionCorpusCompletionFilter.INCOMPLETE,
 				QuestionCorpusProblem.UNRESOLVED_SHARED_CONTEXT));
 		missingMcqExplanationButton.setOnAction(_ -> applyMcqExplanationFilter());
@@ -1351,8 +1352,7 @@ public final class CorpusDashboardPane extends VBox {
 				return;
 			}
 
-			// A direct Show selection returns to ordinary Question completeness filtering,
-			// ending any separate explanation-work drill-down.
+			// Direct Show selection ends any headline drill-down.
 			mcqExplanationFilterActive = false;
 			selectedQuestionProblem = null;
 			summaryQuestionFilterActive = false;
@@ -1498,7 +1498,9 @@ public final class CorpusDashboardPane extends VBox {
 		needsAttentionButton.setId("corpus-dashboard-summary-attention");
 		missingContentButton.setId("corpus-dashboard-summary-missing-content");
 		missingAnswerButton.setId("corpus-dashboard-summary-missing-answer");
-		unknownTypeButton.setId("corpus-dashboard-summary-unknown-type");
+		missingDescriptorButton.setId("corpus-dashboard-summary-missing-descriptors");
+		missingDescriptorButton
+				.setTooltip(new Tooltip("Show Questions that have not been classified to a Descriptor."));
 		sharedContextButton.setId("corpus-dashboard-summary-shared-context");
 		missingMcqExplanationButton.setId("corpus-dashboard-summary-missing-mcq-explanations");
 		missingMcqExplanationButton
@@ -2148,19 +2150,24 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private void refreshSummaryControls() {
-		QuestionCorpusSummary summary = QuestionCorpusQueue.summarise(filteredSummaryQuestions());
+		List<Question> summaryQuestions = filteredSummaryQuestions();
+		QuestionCorpusSummary summary = QuestionCorpusQueue.summarise(summaryQuestions);
 		totalQuestionsButton.setText(summary.totalQuestions() + " Questions");
 		needsAttentionButton.setText(summary.incompleteQuestions() + " Need attention");
 		missingContentButton.setText(summary.missingQuestionContent() + " Missing question content");
 		missingAnswerButton.setText(summary.missingAnswer() + " Missing answers");
-		unknownTypeButton.setText(summary.unknownResponseType() + " Unknown type");
+
+		// Use the same authoritative Question audit problem as the drill-down,
+		// rather than summing overlapping booklet or Exam problem totals.
+		long missingDescriptors = summaryQuestions.stream().filter(
+				question -> QuestionCorpusAudit.assess(question).hasProblem(QuestionCorpusProblem.MISSING_DESCRIPTOR))
+				.count();
+		missingDescriptorButton.setText(missingDescriptors + " Missing descriptors");
 		sharedContextButton.setText(summary.unresolvedSharedContext() + " Shared Context");
 		int missingExplanations = scopeFilteredExamStatuses().stream()
 				.mapToInt(status -> status.mcqExplanationSummary().missingExplanationCount()).sum();
 
-		// The actionable count is sufficient at Subject level. Detailed
-		// captured/eligible
-		// coverage remains visible on each Question booklet.
+		// MCQ explanation work remains an independent audit dimension.
 		missingMcqExplanationButton.setText(missingExplanations + " Missing MCQ explanations");
 	}
 
