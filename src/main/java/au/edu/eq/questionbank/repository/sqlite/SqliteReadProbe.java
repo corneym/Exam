@@ -27,6 +27,7 @@ import java.sql.Statement;
 public final class SqliteReadProbe implements AutoCloseable {
 
 	private static final ThreadLocal<SqliteReadProbe> ACTIVE = new ThreadLocal<>();
+
 	// Connection and execution measurements.
 	private long connectionOpenNanos;
 	private long connectionsOpened;

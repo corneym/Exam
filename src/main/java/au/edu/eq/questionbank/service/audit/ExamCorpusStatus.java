@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.service.audit;
 
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 import au.edu.eq.questionbank.model.Exam;
@@ -89,6 +90,29 @@ public record ExamCorpusStatus(Exam exam, ExamAssetExpectations assetExpectation
 		// Prevent callers from mutating an already-calculated Dashboard snapshot.
 		bookletStatuses = List.copyOf(bookletStatuses);
 		findings = Set.copyOf(findings);
+	}
+
+	/**
+	 * Returns the combined known uncaptured top-level Question count.
+	 *
+	 * <p>
+	 * Booklets without recorded expectations are excluded from the numeric total
+	 * and must be reported separately by the caller.
+	 *
+	 * @return sum of known booklet Question shortfalls
+	 */
+	public int knownUncapturedTopLevelQuestionCount() {
+		return bookletStatuses.stream().map(BookletCorpusStatus::uncapturedTopLevelQuestionCount)
+				.filter(Objects::nonNull).mapToInt(Integer::intValue).sum();
+	}
+
+	/**
+	 * Counts booklets without an authoritative expected Question count.
+	 *
+	 * @return number of booklets whose expected count is unknown
+	 */
+	public int unknownQuestionExpectationBookletCount() {
+		return (int) bookletStatuses.stream().filter(status -> status.expectedTopLevelQuestionCount() == null).count();
 	}
 
 	/**

@@ -35,6 +35,7 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 
 	private static final int DIALOG_WIDTH = 1100;
 	private static final int DIALOG_HEIGHT = 700;
+
 	// Dialog data and collaborators.
 	private final BiFunction<Long, CurriculumNode, Question> classificationUpdater;
 	private boolean persistedClassificationChange;

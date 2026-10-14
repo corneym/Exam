@@ -192,6 +192,41 @@ class ExamCorpusAuditTest {
 		assertTrue(complete.isReadyForCompletion());
 	}
 
+	@Test
+	void uncapturedQuestionCountUsesTopLevelExpectations() {
+		ExamBooklet booklet = new ExamBooklet(1000, fixture.exam, "19-question booklet",
+				new SourceDocument(1001, "Chemistry/2025/paper19.pdf"), ExamBookletQuestionFormat.WRITTEN_RESPONSE, 19);
+		BookletCorpusStatus empty = BookletCorpusAudit.assess(booklet, List.of(), null, true);
+		assertEquals(19, empty.uncapturedTopLevelQuestionCount());
+		assertEquals(0, empty.questionSummary().missingQuestionContent());
+		List<Question> captured = new java.util.ArrayList<>();
+		for (int number = 1; number <= 7; number++) {
+			captured.add(fixture.writtenQuestion(1100 + number, booklet, Integer.toString(number)));
+		}
+		BookletCorpusStatus partiallyCaptured = BookletCorpusAudit.assess(booklet, captured, null, true);
+		assertEquals(7, partiallyCaptured.encounteredTopLevelQuestionCount());
+		assertEquals(12, partiallyCaptured.uncapturedTopLevelQuestionCount());
+
+		// These Questions have captured source regions.
+		assertEquals(0, partiallyCaptured.questionSummary().missingQuestionContent());
+		ExamCorpusStatus examStatus = ExamCorpusAudit.assess(fixture.exam, new ExamAssetExpectations(1, 1, 0, 0),
+				List.of(partiallyCaptured));
+		assertEquals(12, examStatus.knownUncapturedTopLevelQuestionCount());
+		assertEquals(0, examStatus.unknownQuestionExpectationBookletCount());
+	}
+
+	@Test
+	void unknownExpectationsRemainDistinctFromNoUncapturedQuestions() {
+		ExamBooklet unknownBooklet = new ExamBooklet(1200, fixture.exam, "Unplanned booklet",
+				new SourceDocument(1201, "Chemistry/2025/unplanned.pdf"));
+		BookletCorpusStatus unknown = BookletCorpusAudit.assess(unknownBooklet, List.of(), null, true);
+		assertEquals(null, unknown.uncapturedTopLevelQuestionCount());
+		ExamCorpusStatus examStatus = ExamCorpusAudit.assess(fixture.exam, new ExamAssetExpectations(1, 1, 0, 0),
+				List.of(unknown));
+		assertEquals(0, examStatus.knownUncapturedTopLevelQuestionCount());
+		assertEquals(1, examStatus.unknownQuestionExpectationBookletCount());
+	}
+
 	private static final class Fixture {
 
 		private final Subject subject = new Subject(1, "Chemistry");

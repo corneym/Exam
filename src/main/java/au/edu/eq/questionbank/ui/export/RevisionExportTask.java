@@ -17,6 +17,7 @@ public final class RevisionExportTask extends Task<RevisionExportResult> {
 
 	private static final PerformanceRecorder DISABLED_RECORDER = new PerformanceRecorder(false,
 			Path.of("performance.csv"));
+
 	// Export request and execution collaborators.
 	private final RevisionExportService exportService;
 	private final long parentOperationId;

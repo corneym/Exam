@@ -3625,7 +3625,8 @@ public class QuestionSearchPaneTest {
 		private volatile boolean delaySubjectLoading;
 		private volatile CurriculumNode failingParent;
 
-		// Initialised test fixtures and coordination state (initialisation order retained).
+		// Initialised test fixtures and coordination state (initialisation order
+		// retained).
 		private volatile CountDownLatch delayStarted = new CountDownLatch(0);
 		private volatile CountDownLatch delayRelease = new CountDownLatch(0);
 		private volatile CountDownLatch delayFinished = new CountDownLatch(0);
@@ -3780,7 +3781,8 @@ public class QuestionSearchPaneTest {
 		private final CurriculumNode matchingNode;
 		private final Question matchingQuestion;
 
-		// Initialised test fixtures and coordination state (initialisation order retained).
+		// Initialised test fixtures and coordination state (initialisation order
+		// retained).
 		private volatile CountDownLatch delayStarted = new CountDownLatch(0);
 		private volatile CountDownLatch delayRelease = new CountDownLatch(0);
 		private volatile CountDownLatch delayFinished = new CountDownLatch(0);
@@ -3842,7 +3844,8 @@ public class QuestionSearchPaneTest {
 		private final int delayMilliseconds;
 		private ScheduledFuture<?> pending;
 
-		// Initialised test fixtures and coordination state (initialisation order retained).
+		// Initialised test fixtures and coordination state (initialisation order
+		// retained).
 		private final AtomicInteger active = new AtomicInteger();
 		private final AtomicInteger completed = new AtomicInteger();
 		private final AtomicLong currentQuestionId = new AtomicLong(-1);

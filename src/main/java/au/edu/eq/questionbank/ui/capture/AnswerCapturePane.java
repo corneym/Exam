@@ -74,6 +74,7 @@ public final class AnswerCapturePane extends VBox {
 	private static final String BORDER_STYLE = "-fx-border-color: #b0b0b0;-fx-border-width: 1;-fx-border-radius: 3;";
 	private static final String SECTION_HEADING_STYLE = "-fx-font-weight: bold;";
 	private static final AnswerQuestionConverter QUESTION_CODE_CONVERTER = new AnswerQuestionConverter();
+
 	// Persistence and PDF collaborators.
 	private final SqliteAnswerWriter answerWriter;
 	private final ManagedDataLayout managedDataLayout;

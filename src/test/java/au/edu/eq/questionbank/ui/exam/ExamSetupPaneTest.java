@@ -44,7 +44,8 @@ class ExamSetupPaneTest {
 	@TempDir
 	Path tempDirectory;
 
-	// Initialised test fixtures and coordination state (initialisation order retained).
+	// Initialised test fixtures and coordination state (initialisation order
+	// retained).
 	private final AtomicReference<ExamBooklet> openedBooklet = new AtomicReference<>();
 	private final AtomicReference<ExamBooklet> inspectedBooklet = new AtomicReference<>();
 

@@ -67,6 +67,7 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 	private static final double DESCRIPTOR_TEXT_HEIGHT = 78;
 	private static final double SELECTOR_WIDTH = 180;
 	private static final double DESCRIPTOR_TEXT_WIDTH = CONTENT_WIDTH - SELECTOR_WIDTH - CONTROL_GAP;
+
 	// Curriculum mapping and review collaborators.
 	private final CurriculumMappingCoverageService coverageService;
 	private final CurriculumMappingSuggester descriptorSuggester;

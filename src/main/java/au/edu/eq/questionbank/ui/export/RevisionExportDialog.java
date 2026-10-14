@@ -41,6 +41,7 @@ public final class RevisionExportDialog extends Dialog<ButtonType> {
 	private static final int FORM_PADDING = 10;
 	private static final int UNIT_SPACING = 4;
 	private static final double UNIT_LIST_HEIGHT = 120;
+
 	// Dialog data and collaborators.
 	private final BiPredicate<Subject, Set<Long>> descriptorGroupingAvailable;
 	private Path destinationParent;

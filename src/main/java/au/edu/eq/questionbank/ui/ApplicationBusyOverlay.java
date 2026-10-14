@@ -26,6 +26,7 @@ import javafx.util.Duration;
 public final class ApplicationBusyOverlay extends StackPane {
 
 	private static final Duration DEFAULT_DISPLAY_DELAY = Duration.millis(180);
+
 	// Busy-overlay content and request lifecycle.
 	private long activeRequest;
 	private final PauseTransition appearanceDelay;

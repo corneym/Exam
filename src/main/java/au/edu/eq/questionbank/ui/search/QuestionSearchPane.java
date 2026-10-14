@@ -91,6 +91,7 @@ public class QuestionSearchPane extends BorderPane {
 	private static final double OUTPUT_LIST_MIN_HEIGHT = 90.0;
 	private static final double PREVIEW_VIEWPORT_MIN_HEIGHT = 96.0;
 	private static final double PREVIEW_VIEWPORT_PREF_HEIGHT = 210.0;
+
 	// Search services and scope.
 	// Complete-bank retrieval is deliberately separate from current-curriculum
 	// applicability retrieval. All Questions does not evaluate syllabus mappings.

@@ -59,6 +59,7 @@ public class CurriculumSelectorPane extends VBox {
 	private static final String BORDER_STYLE = "-fx-border-color: #b0b0b0;-fx-border-width: 1;-fx-border-radius: 3;";
 	private static final String HEADING_STYLE = "-fx-font-weight: bold;";
 	private static final int DESCRIPTOR_LOOKUP_LIMIT = 5;
+
 	// Curriculum selection and lookup collaborators.
 	private VBox classificationContext;
 	private final DescriptorLookupService descriptorLookupService;

@@ -55,6 +55,7 @@ public final class ExamMetadataPane extends VBox {
 	private static final Insets PANEL_PADDING = new Insets(12);
 	private static final String BORDER_STYLE = "-fx-border-color: #b0b0b0;-fx-border-width: 1;-fx-border-radius: 3;-fx-padding: 12;";
 	private static final double QUESTION_FORMAT_FIELD_WIDTH = 180.0;
+
 	// Exam persistence and PDF services.
 	private final CurriculumSelectionModel curriculumSelectionModel;
 	private final SqliteExamImporter examImporter;
