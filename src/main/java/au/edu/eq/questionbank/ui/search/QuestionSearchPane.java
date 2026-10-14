@@ -848,7 +848,7 @@ public class QuestionSearchPane extends BorderPane {
 
 	private <T> void configureFilterCombo(ComboBox<FilterOption<T>> box, String id, String allLabel) {
 		box.setId(id);
-		box.getItems().setAll(new FilterOption<T>(null, allLabel));
+		box.getItems().setAll(List.of(new FilterOption<T>(null, allLabel)));
 		box.getSelectionModel().selectFirst();
 		box.setButtonCell(new DisplayListCell<>(FilterOption::label));
 		box.setCellFactory(_ -> new DisplayListCell<>(FilterOption::label));
@@ -902,9 +902,10 @@ public class QuestionSearchPane extends BorderPane {
 		configureFilterCombo(originalSyllabusFilterBox, "question-search-original-syllabus-filter",
 				"All original syllabuses");
 		configureFilterCombo(responseTypeFilterBox, "question-search-response-type-filter", "All response types");
-		responseTypeFilterBox.getItems().setAll(new FilterOption<QuestionResponseType>(null, "All response types"),
-				new FilterOption<>(QuestionResponseType.MULTIPLE_CHOICE, "Multiple Choice"),
-				new FilterOption<>(QuestionResponseType.WRITTEN_RESPONSE, "Written Response"));
+		responseTypeFilterBox.getItems()
+				.setAll(List.of(new FilterOption<QuestionResponseType>(null, "All response types"),
+						new FilterOption<>(QuestionResponseType.MULTIPLE_CHOICE, "Multiple Choice"),
+						new FilterOption<>(QuestionResponseType.WRITTEN_RESPONSE, "Written Response")));
 		responseTypeFilterBox.getSelectionModel().selectFirst();
 		responseTypeFilterBox.setDisable(false);
 		clearMetadataFiltersButton.setId("question-search-clear-metadata-filters");
