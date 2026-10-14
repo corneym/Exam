@@ -56,7 +56,6 @@ class QuestionCorpusQueueTest {
 	@Test
 	void missingDescriptorsAreDistinctQuestionWorkAndRespectBookletScope() {
 		Subtopic subtopic = new Subtopic(50, fixture.chemistrySyllabus, fixture.chemistryTopic, "1.1.0", "Subtopic", 1);
-
 		Question complete = fixture.questions().getFirst();
 
 		// This Question has three problems but must count as one
@@ -76,28 +75,20 @@ class QuestionCorpusQueueTest {
 				List.of(new QuestionRegion(fixture.paper2, 1, 0.1, 0.1, 0.7, 0.2)), subtopic, false, null, null,
 				QuestionResponseType.MULTIPLE_CHOICE);
 		otherBooklet.setAnswer(new Answer(46, "B", List.of()));
-
 		List<Question> bookletQuestions = List.of(complete, multipleProblems, descriptorOnly);
-
 		QuestionCorpusSummary summary = QuestionCorpusQueue.summarise(bookletQuestions);
-
 		assertEquals(3, summary.totalQuestions());
 		assertEquals(1, summary.completeQuestions());
 		assertEquals(2, summary.incompleteQuestions());
 		assertEquals(1, summary.missingQuestionContent());
 		assertEquals(1, summary.missingAnswer());
-
 		BookletCorpusStatus bookletStatus = BookletCorpusAudit.assess(fixture.paper1, bookletQuestions, null, true);
-
 		assertEquals(2, bookletStatus.questionsWithoutDescriptorCount());
-
 		QuestionCorpusFilter filter = new QuestionCorpusFilter(fixture.chemistry.getId(), null, null,
 				fixture.paper1.getId(), QuestionCorpusCompletionFilter.INCOMPLETE,
 				QuestionCorpusProblem.MISSING_DESCRIPTOR);
-
 		List<QuestionCorpusWorkItem> work = QuestionCorpusQueue
 				.build(List.of(complete, multipleProblems, descriptorOnly, otherBooklet), filter);
-
 		assertEquals(List.of(34L, 35L), work.stream().map(item -> item.question().getId()).toList());
 	}
 

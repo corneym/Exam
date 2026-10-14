@@ -1643,12 +1643,10 @@ public final class CorpusDashboardPane extends VBox {
 	private int examWorkCount(ExamCorpusStatus status) {
 		int workCount = status.questionSummary().incompleteQuestions();
 		long examId = status.exam().getId();
-
 		for (Question question : questions) {
 			if (question.getExam().getId() != examId) {
 				continue;
 			}
-
 			if (!isMissingMcqExplanation(question)) {
 				continue;
 			}
@@ -1660,7 +1658,6 @@ public final class CorpusDashboardPane extends VBox {
 				workCount++;
 			}
 		}
-
 		return workCount;
 	}
 

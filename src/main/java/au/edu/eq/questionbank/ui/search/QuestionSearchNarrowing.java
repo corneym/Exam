@@ -3,6 +3,7 @@ package au.edu.eq.questionbank.ui.search;
 import java.util.Objects;
 import java.util.function.Predicate;
 
+import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
@@ -16,13 +17,16 @@ import au.edu.eq.questionbank.model.Question;
  */
 public final class QuestionSearchNarrowing {
 
-	private static final QuestionSearchNarrowing UNRESTRICTED = new QuestionSearchNarrowing("", _ -> true);
+	private static final QuestionSearchNarrowing UNRESTRICTED = new QuestionSearchNarrowing("", _ -> true, false);
+	private final boolean descriptorAssignmentQueue;
 	private final String description;
 	private final Predicate<Question> predicate;
 
-	private QuestionSearchNarrowing(String description, Predicate<Question> predicate) {
+	private QuestionSearchNarrowing(String description, Predicate<Question> predicate,
+			boolean descriptorAssignmentQueue) {
 		this.description = Objects.requireNonNull(description, "description");
 		this.predicate = Objects.requireNonNull(predicate, "predicate");
+		this.descriptorAssignmentQueue = descriptorAssignmentQueue;
 	}
 
 	/**
@@ -38,10 +42,7 @@ public final class QuestionSearchNarrowing {
 		Exam exam = booklet.getExam();
 		String description = "Booklet: %s %d — %s — %s".formatted(exam.getProvider().getName(), exam.getYear(),
 				exam.getName(), booklet.getName());
-
-		// Persistent identity is used because repository reads may reconstruct the
-		// domain objects represented by the Dashboard selection.
-		return new QuestionSearchNarrowing(description, question -> question.getBooklet().getId() == bookletId);
+		return new QuestionSearchNarrowing(description, question -> question.getBooklet().getId() == bookletId, false);
 	}
 
 	/**
@@ -55,10 +56,24 @@ public final class QuestionSearchNarrowing {
 		Objects.requireNonNull(exam, "exam");
 		long examId = exam.getId();
 		String description = "Exam: %s %d — %s".formatted(exam.getProvider().getName(), exam.getYear(), exam.getName());
+		return new QuestionSearchNarrowing(description, question -> question.getExam().getId() == examId, false);
+	}
 
-		// Match persistent identity rather than Java object identity so the narrowing
-		// remains valid across independent repository reads.
-		return new QuestionSearchNarrowing(description, question -> question.getExam().getId() == examId);
+	/**
+	 * Creates the outstanding Descriptor-assignment queue for one booklet.
+	 *
+	 * The constraint combines persistent booklet identity with the current stored
+	 * classification. A successfully classified Question therefore leaves the queue
+	 * on the next authoritative retrieval.
+	 *
+	 * @param booklet booklet whose unclassified Questions require attention
+	 * @return immutable Descriptor-assignment queue constraint
+	 */
+	public static QuestionSearchNarrowing forMissingDescriptors(ExamBooklet booklet) {
+		QuestionSearchNarrowing bookletScope = forBooklet(booklet);
+		String description = "Assign Descriptors — " + bookletScope.description();
+		return new QuestionSearchNarrowing(description, question -> bookletScope.includes(question)
+				&& question.getClassification().getLevel() != CurriculumLevel.DESCRIPTOR, true);
 	}
 
 	/**
@@ -88,6 +103,16 @@ public final class QuestionSearchNarrowing {
 	 */
 	public boolean includes(Question question) {
 		return predicate.test(Objects.requireNonNull(question, "question"));
+	}
+
+	/**
+	 * Indicates whether Search is operating as a shrinking Descriptor queue rather
+	 * than an ordinary inspection workflow.
+	 *
+	 * @return true for the booklet-scoped Descriptor-assignment queue
+	 */
+	public boolean isDescriptorAssignmentQueue() {
+		return descriptorAssignmentQueue;
 	}
 
 	/**

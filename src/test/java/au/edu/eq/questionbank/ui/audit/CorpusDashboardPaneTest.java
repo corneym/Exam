@@ -1015,23 +1015,16 @@ class CorpusDashboardPaneTest {
 		Unit unit = new Unit(601, syllabus, "1", "Unit 1", 1);
 		Topic topic = new Topic(602, syllabus, unit, "1.1", "Topic 1", 1);
 		Subtopic subtopic = new Subtopic(603, syllabus, topic, "1.1.0", "Subtopic", 1);
-
 		List<QuestionRegion> regions = List.of(new QuestionRegion(fixture.paper1, 1, 0.1, 0.1, 0.7, 0.2));
-
 		Question unclassified = new Question(604, fixture.paper1, "Q99", "", 1, regions, subtopic, false, null, null,
 				QuestionResponseType.MULTIPLE_CHOICE);
 		unclassified.setAnswer(new Answer(605, "A", List.of()));
-
 		ExamAssetExpectations expectations = new ExamAssetExpectations(1, 1, 1, 1);
-
 		BookletCorpusStatus initialBooklet = BookletCorpusAudit.assess(fixture.paper1, List.of(unclassified),
 				fixture.markingGuide, true);
-
 		ExamCorpusStatus initialExam = ExamCorpusAudit.assess(fixture.completeExam, expectations,
 				List.of(initialBooklet));
-
 		Label selectedCounts = robot.lookup("#corpus-dashboard-selected-exam-counts").queryAs(Label.class);
-
 		robot.interact(() -> pane.replaceData(List.of(initialExam), List.of(unclassified)));
 
 		// The same Question needs classification and an MCQ explanation.
@@ -1039,35 +1032,28 @@ class CorpusDashboardPaneTest {
 		assertEquals(1, initialExam.questionSummary().incompleteQuestions());
 		assertEquals(1, initialBooklet.questionsWithoutDescriptorCount());
 		assertTrue(selectedCounts.getText().contains("Need work: 1"));
-
 		Question classified = new Question(604, fixture.paper1, "Q99", "", 1, regions, fixture.classification, false,
 				null, null, QuestionResponseType.MULTIPLE_CHOICE);
 		classified.setAnswer(new Answer(606, "A", List.of()));
-
 		BookletCorpusStatus classifiedBooklet = BookletCorpusAudit.assess(fixture.paper1, List.of(classified),
 				fixture.markingGuide, true);
 		ExamCorpusStatus classifiedExam = ExamCorpusAudit.assess(fixture.completeExam, expectations,
 				List.of(classifiedBooklet));
-
 		robot.interact(() -> pane.replaceData(List.of(classifiedExam), List.of(classified)));
 
 		// Classification work has finished, but explanation work remains.
 		assertEquals(0, classifiedBooklet.questionsWithoutDescriptorCount());
 		assertEquals(0, classifiedExam.questionSummary().incompleteQuestions());
 		assertTrue(selectedCounts.getText().contains("Need work: 1"));
-
 		Question explained = new Question(604, fixture.paper1, "Q99", "", 1, regions, fixture.classification, false,
 				null, null, QuestionResponseType.MULTIPLE_CHOICE);
 		explained.setAnswer(
 				new Answer(607, "A", List.of(new AnswerRegion(fixture.markingGuide, 1, 0.1, 0.1, 0.7, 0.2))));
-
 		BookletCorpusStatus completedBooklet = BookletCorpusAudit.assess(fixture.paper1, List.of(explained),
 				fixture.markingGuide, true);
 		ExamCorpusStatus completedExam = ExamCorpusAudit.assess(fixture.completeExam, expectations,
 				List.of(completedBooklet));
-
 		robot.interact(() -> pane.replaceData(List.of(completedExam), List.of(explained)));
-
 		assertTrue(selectedCounts.getText().contains("Need work: 0"));
 	}
 

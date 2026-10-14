@@ -9,23 +9,19 @@ public enum QuestionCorpusProblem {
 	 * remains outstanding.
 	 */
 	MISSING_QUESTION_CONTENT,
-
 	/**
 	 * The Question's required Answer representation is incomplete.
 	 */
 	MISSING_ANSWER,
-
 	/**
 	 * Historical metadata indicates shared introductory material is required, but
 	 * no shared context is linked.
 	 */
 	UNRESOLVED_SHARED_CONTEXT,
-
 	/**
 	 * The Question's response type has not yet been resolved.
 	 */
 	UNKNOWN_RESPONSE_TYPE,
-
 	/**
 	 * The Question is classified only to Subtopic rather than Descriptor.
 	 */

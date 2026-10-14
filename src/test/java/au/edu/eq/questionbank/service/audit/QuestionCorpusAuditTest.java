@@ -171,15 +171,11 @@ class QuestionCorpusAuditTest {
 	@Test
 	void subtopicOnlyClassificationIsQuestionWorkWithoutChangingAnswerCompleteness() {
 		Subtopic subtopic = new Subtopic(6, fixture.syllabus, fixture.topic, "1.1.0", "Subtopic", 1);
-
 		Question question = new Question(108, fixture.booklet, "Q8", "", 1,
 				List.of(new QuestionRegion(fixture.booklet, 1, 0.10, 0.10, 0.70, 0.20)), subtopic, false, null, null,
 				QuestionResponseType.MULTIPLE_CHOICE);
-
 		question.setAnswer(new Answer(109, "A", List.of()));
-
 		QuestionCorpusStatus status = QuestionCorpusAudit.assess(question);
-
 		assertTrue(status.questionContentCaptured());
 		assertTrue(status.responseTypeResolved());
 		assertTrue(status.answerComplete());
