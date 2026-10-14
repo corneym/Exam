@@ -74,22 +74,50 @@ public final class AnswerCapturePane extends VBox {
 	private static final String BORDER_STYLE = "-fx-border-color: #b0b0b0;-fx-border-width: 1;-fx-border-radius: 3;";
 	private static final String SECTION_HEADING_STYLE = "-fx-font-weight: bold;";
 	private static final AnswerQuestionConverter QUESTION_CODE_CONVERTER = new AnswerQuestionConverter();
-	private final SourceDocumentHashService sourceDocumentHashService = new SourceDocumentHashService();
-
-	// Workflow dependencies and application callbacks.
-	private final QuestionRepository questionRepository;
-	private final QuestionExtractor questionExtractor;
-	private final Supplier<PdfSession> answerPdfSessionSupplier;
-	private final Consumer<SelectedPdf> answerPdfHandler;
+	// Persistence and PDF collaborators.
+	private final SqliteAnswerWriter answerWriter;
 	private final ManagedDataLayout managedDataLayout;
 	private final Path pdfDataRoot;
 	private final PdfStore pdfStore;
-	private final BiConsumer<SelectedPdf, Consumer<Throwable>> answerPdfLoader;
-	private final Runnable selectionClearHandler;
+	private final QuestionExtractor questionExtractor;
+	private final QuestionRepository questionRepository;
+
+	// Capture callbacks and navigation.
+	private final Supplier<ExamBooklet> activeBookletSupplier;
 	private final Runnable answerDocumentHandler;
-	private final SqliteAnswerWriter answerWriter;
-	private final BooleanSupplier answerTransitionAllowed;
 	private final IntConsumer answerPageNavigationHandler;
+	private final Consumer<SelectedPdf> answerPdfHandler;
+	private final BiConsumer<SelectedPdf, Consumer<Throwable>> answerPdfLoader;
+	private final Supplier<PdfSession> answerPdfSessionSupplier;
+	private final BooleanSupplier answerTransitionAllowed;
+	private final Runnable selectionClearHandler;
+
+	// Answer selection and editing state.
+	private AnswerFile answerFile;
+	private boolean answerSaveInProgress;
+	private AnswerRegion currentAnswerSelection;
+	private Question editingAnswerQuestion;
+
+	// Dashboard-owned Answer capture may further restrict the Subject queue to one
+	// selected Exam without changing any persisted Question state.
+	private Exam examScope;
+	private String preservedAnswerText;
+	private boolean restoringUnansweredQuestionSelection;
+
+	// Working Subject is transient workspace state. A null value retains the
+	// existing all-subject behaviour until the workspace selector is introduced.
+	private Subject workingSubject;
+
+	// MCQ explanation workflow state.
+	private Question mcqExplanationEditingQuestion;
+	private boolean mcqExplanationEditSaved;
+	private boolean mcqExplanationLoadInProgress;
+	private boolean mcqExplanationMode;
+	private Question mcqExplanationReturnQuestion;
+	private boolean restoringMcqExplanationSelection;
+
+	// Controls and initial workflow state (initialisation order retained).
+	private final SourceDocumentHashService sourceDocumentHashService = new SourceDocumentHashService();
 
 	// Question and answer source selection.
 	private final ComboBox<Question> unansweredQuestionField = new ComboBox<>();
@@ -121,44 +149,21 @@ public final class AnswerCapturePane extends VBox {
 	// Save and edit controls.
 	private final Button saveAnswerButton = new Button("Save");
 	private final Button cancelAnswerEditButton = new Button("Cancel");
-
-	// Transient capture and edit state.
 	private final List<AnswerRegion> pendingAnswerRegions = new ArrayList<>();
-	private AnswerFile answerFile;
-	private AnswerRegion currentAnswerSelection;
-	private boolean restoringUnansweredQuestionSelection;
-
-	// Working Subject is transient workspace state. A null value retains the
-	// existing all-subject behaviour until the workspace selector is introduced.
-	private Subject workingSubject;
 
 	// A question-save snapshot may predate an answer committed while it was
 	// loading.
 	private final Set<Long> locallyAnsweredQuestionIds = new HashSet<>();
-	private Question editingAnswerQuestion;
-	private boolean answerSaveInProgress;
-	private String preservedAnswerText;
 	private Runnable answerEditCompletedHandler = () -> {
 	};
 	private final Button captureMcqExplanationsButton = new Button("Capture MCQ Explanations");
 	private final ComboBox<Question> mcqExplanationQuestionField = new ComboBox<>();
 	private final Button finishMcqExplanationCaptureButton = new Button("Done");
 	private final HBox mcqExplanationSelectionControls = new HBox(CONTROL_SPACING);
-	private boolean mcqExplanationMode;
-	private boolean mcqExplanationLoadInProgress;
-	private boolean restoringMcqExplanationSelection;
-	private Question mcqExplanationReturnQuestion;
-	private final Supplier<ExamBooklet> activeBookletSupplier;
-	private Question mcqExplanationEditingQuestion;
-	private boolean mcqExplanationEditSaved;
 	private long answerCaptureCompletionQuestionId = -1L;
 	private Runnable answerCaptureCompletedHandler = () -> {
 	};
 	private PerformanceRecorder performanceRecorder = new PerformanceRecorder(false, Path.of("performance.csv"));
-
-	// Dashboard-owned Answer capture may further restrict the Subject queue to one
-	// selected Exam without changing any persisted Question state.
-	private Exam examScope;
 
 	// Retain the complete most recently published Question snapshot so changing
 	// transient Exam scope never requires a synchronous repository reload.

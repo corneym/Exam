@@ -9,12 +9,13 @@ package au.edu.eq.questionbank.model;
  */
 public class Exam {
 
-	private final long id;
-	private final Subject subject;
-	private final ExamProvider provider;
-	private final int year;
-	private final String name;
+	// Exam identity and lifecycle.
 	private final ExamCaptureState captureState;
+	private final long id;
+	private final String name;
+	private final ExamProvider provider;
+	private final Subject subject;
+	private final int year;
 
 	/**
 	 * Creates an active exam.

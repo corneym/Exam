@@ -150,9 +150,10 @@ class RevisionExportValidatorTest {
 
 	private static final class Fixture {
 
-		private final Question question;
+		// Test fixtures and collaborators.
 		private final RevisionCorpus corpus;
 		private final RevisionCorpus emptyCorpus;
+		private final Question question;
 
 		private Fixture() {
 			Subject chemistry = new Subject(1, "Chemistry");

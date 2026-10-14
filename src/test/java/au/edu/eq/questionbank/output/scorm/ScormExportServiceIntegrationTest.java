@@ -122,8 +122,9 @@ class ScormExportServiceIntegrationTest {
 
 	private static final class Fixture {
 
-		private final Subject chemistry;
+		// Test fixtures and collaborators.
 		private final Path answerPdf;
+		private final Subject chemistry;
 		private final ScormExportService service;
 
 		private Fixture(Path tempDir) throws IOException {

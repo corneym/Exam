@@ -11,10 +11,11 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
  */
 public final class RevisionCorpus {
 
-	private final Subject subject;
-	private final SyllabusVersion syllabusVersion;
+	// Subject curriculum and revision corpus.
 	private final List<RevisionCorpusNode> rootNodes;
 	private final RevisionCorpusStatistics statistics;
+	private final Subject subject;
+	private final SyllabusVersion syllabusVersion;
 
 	RevisionCorpus(Subject subject, SyllabusVersion syllabusVersion, List<RevisionCorpusNode> rootNodes,
 			RevisionCorpusStatistics statistics) {

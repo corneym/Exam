@@ -28,9 +28,10 @@ import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
  */
 public final class QuestionBookletPdfReplacementService {
 
+	// Persistence and service collaborators.
 	private final SqliteDatabase database;
-	private final PdfStore pdfStore;
 	private final SourceDocumentHashService hashService;
+	private final PdfStore pdfStore;
 
 	/**
 	 * Creates a Question-booklet PDF replacement service supporting both

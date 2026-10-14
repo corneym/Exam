@@ -10,8 +10,9 @@ import java.util.List;
  */
 public class Answer {
 
-	private final long id;
+	// Answer identity and content.
 	private final String answerText;
+	private final long id;
 	private final List<AnswerRegion> regions;
 
 	/**

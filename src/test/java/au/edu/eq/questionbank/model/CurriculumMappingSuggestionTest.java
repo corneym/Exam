@@ -8,12 +8,13 @@ import org.junit.jupiter.api.Test;
 
 class CurriculumMappingSuggestionTest {
 
+	// Test fixtures and collaborators.
 	private Subject chemistry;
 	private SyllabusVersion syllabus2019;
 	private SyllabusVersion syllabus2025;
+	private Topic topic2025;
 	private Unit unit2019;
 	private Unit unit2025;
-	private Topic topic2025;
 
 	@BeforeEach
 	void setUp() {

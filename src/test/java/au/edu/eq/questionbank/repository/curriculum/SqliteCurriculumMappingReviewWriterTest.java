@@ -27,19 +27,22 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 class SqliteCurriculumMappingReviewWriterTest {
 
+	// Test environment and collaborators.
+	private SqliteDatabase database;
 	@TempDir
 	Path tempDir;
-	private SqliteDatabase database;
-	private SyllabusVersion sourceVersion;
-	private SyllabusVersion targetVersion;
+
+	// Curriculum and assessment fixtures.
 	private SyllabusVersion otherTargetVersion;
-	private Descriptor source;
-	private Descriptor targetOne;
-	private Descriptor targetTwo;
 	private Descriptor otherVersionTarget;
+	private Descriptor source;
 	private Subtopic sourceSubtopic;
+	private SyllabusVersion sourceVersion;
+	private Descriptor targetOne;
 	private Subtopic targetSubtopicOne;
 	private Subtopic targetSubtopicTwo;
+	private Descriptor targetTwo;
+	private SyllabusVersion targetVersion;
 
 	@Test
 	void confirmsMultipleMappingsAndMarksReviewMatched() throws Exception {

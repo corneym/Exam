@@ -37,17 +37,20 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 class ExamLifecycleServiceTest {
 
-	@TempDir
-	Path tempDirectory;
+	// Test environment and collaborators.
 	private SqliteAnswerWriter answerWriter;
-	private ExamBooklet booklet;
-	private Descriptor descriptor;
-	private Exam exam;
 	private SqliteExamWriter examWriter;
 	private ExamLifecycleService lifecycleService;
 	private Path paperPdf;
 	private SqliteQuestionRepository questionRepository;
 	private BookletApplicabilityReviewRepository reviewRepository;
+	@TempDir
+	Path tempDirectory;
+
+	// Curriculum and assessment fixtures.
+	private ExamBooklet booklet;
+	private Descriptor descriptor;
+	private Exam exam;
 
 	@Test
 	void completeExamRequiresExplicitBookletReview() throws Exception {

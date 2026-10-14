@@ -8,13 +8,14 @@ package au.edu.eq.questionbank.service.revision;
  */
 public final class RevisionCorpusStatistics {
 
+	// Corpus completeness and placement counts.
 	private final int applicablePlacements;
-	private final int uniqueApplicableQuestions;
-	private final int renderableQuestions;
 	private final int missingQuestionRegionQuestions;
 	private final int questionsWithAnswers;
 	private final int questionsWithoutAnswers;
+	private final int renderableQuestions;
 	private final int sharedContextReviewQuestions;
+	private final int uniqueApplicableQuestions;
 
 	RevisionCorpusStatistics(int applicablePlacements, int uniqueApplicableQuestions, int renderableQuestions,
 			int missingQuestionRegionQuestions, int questionsWithAnswers, int questionsWithoutAnswers,

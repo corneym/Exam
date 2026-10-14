@@ -266,17 +266,18 @@ class QuestionRetrievalServiceTest {
 
 	private static final class Fixture {
 
-		private final Subject chemistry;
-		private final SyllabusVersion currentVersion;
+		// Curriculum and assessment fixtures.
 		private final ExamBooklet booklet;
-		private final Unit currentUnit;
-		private final Topic currentTopic;
-		private final Topic emptyTopic;
-		private final Subtopic currentSubtopic;
+		private final Subject chemistry;
 		private final Descriptor currentDescriptor;
-		private final Descriptor otherCurrentDescriptor;
-		private final Descriptor historicalDescriptor;
+		private final Subtopic currentSubtopic;
+		private final Topic currentTopic;
+		private final Unit currentUnit;
+		private final SyllabusVersion currentVersion;
+		private final Topic emptyTopic;
 		private final Question firstQuestion;
+		private final Descriptor historicalDescriptor;
+		private final Descriptor otherCurrentDescriptor;
 		private final Question secondQuestion;
 
 		private Fixture() {

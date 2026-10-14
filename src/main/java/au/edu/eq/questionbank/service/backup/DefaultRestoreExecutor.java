@@ -20,8 +20,9 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
  */
 public final class DefaultRestoreExecutor implements RestoreExecutor {
 
-	private final ApplicationConfig config;
+	// Workflow configuration and collaborators.
 	private final BackupService backupService;
+	private final ApplicationConfig config;
 	private final RestoreService restoreService;
 
 	/**

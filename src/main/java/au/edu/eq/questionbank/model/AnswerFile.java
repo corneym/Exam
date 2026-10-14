@@ -6,11 +6,12 @@ package au.edu.eq.questionbank.model;
  */
 public class AnswerFile {
 
-	private final long id;
+	// Answer source and explanation metadata.
+	private final boolean containsAnswerExplanations;
 	private final Exam exam;
+	private final long id;
 	private final String name;
 	private final SourceDocument sourceDocument;
-	private final boolean containsAnswerExplanations;
 
 	/**
 	 * Creates an answer file without recorded answer-explanation metadata.

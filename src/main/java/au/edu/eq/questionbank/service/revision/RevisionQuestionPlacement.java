@@ -10,8 +10,9 @@ import au.edu.eq.questionbank.model.Question;
  */
 public final class RevisionQuestionPlacement {
 
-	private final Question question;
+	// Question placement and revision numbering.
 	private final CurriculumNode currentNode;
+	private final Question question;
 	private final int revisionNumber;
 
 	RevisionQuestionPlacement(Question question, CurriculumNode currentNode, int revisionNumber) {

@@ -11,13 +11,14 @@ import java.util.Objects;
  */
 public abstract class CurriculumNode {
 
-	private final long id;
-	private final SyllabusVersion syllabusVersion;
-	private final CurriculumNode parent;
+	// Curriculum identity and hierarchy.
 	private final String code;
-	private final String name;
-	private final CurriculumLevel level;
 	private final int displayOrder;
+	private final long id;
+	private final CurriculumLevel level;
+	private final String name;
+	private final CurriculumNode parent;
+	private final SyllabusVersion syllabusVersion;
 
 	/**
 	 * Creates a curriculum node and validates its place in the hierarchy.

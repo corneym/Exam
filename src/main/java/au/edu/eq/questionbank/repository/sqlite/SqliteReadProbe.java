@@ -27,16 +27,23 @@ import java.sql.Statement;
 public final class SqliteReadProbe implements AutoCloseable {
 
 	private static final ThreadLocal<SqliteReadProbe> ACTIVE = new ThreadLocal<>();
-	private final long startedNanos = System.nanoTime();
-	private long connectionsOpened;
+	// Connection and execution measurements.
 	private long connectionOpenNanos;
-	private long executions;
+	private long connectionsOpened;
 	private long executionNanos;
-	private long rowsRead;
-	private long rowNextNanos;
+	private long executions;
+
+	// Reconstruction and row measurements.
 	private long questionsReconstructed;
+	private long rowNextNanos;
+	private long rowsRead;
+
+	// Measurement lifecycle.
 	private boolean closed;
 	private long finishedNanos;
+
+	// Measurement start time (initialisation order retained).
+	private final long startedNanos = System.nanoTime();
 
 	private SqliteReadProbe() {
 	}

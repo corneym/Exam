@@ -37,13 +37,16 @@ public final class RevisionHtmlRenderer {
 	private static final DateTimeFormatter GENERATED_AT_FORMAT = DateTimeFormatter.ofPattern("d MMM uuuu, HH:mm z",
 			Locale.ENGLISH);
 	private static final String STYLESHEET_RESOURCE = "/au/edu/eq/questionbank/output/revision/revision.css";
-	private final RevisionPresentationPlan presentationPlan;
-	private final Map<Long, RevisionQuestionAsset> questionAssetsByQuestionId;
-	private final Map<Long, List<RevisionAnswerAsset>> answerAssetsByQuestionId;
-	private final Map<Long, RevisionSharedContextAsset> sharedContextAssetsByContextId;
-	private final Map<Long, RevisionPresentationNode> presentationNodesByCurriculumNodeId;
-	private final Map<Long, List<CurriculumNode>> currentDescriptorsByQuestionId;
+	// Presentation plan and generated timestamp.
 	private final ZonedDateTime generatedAt;
+	private final Map<Long, RevisionPresentationNode> presentationNodesByCurriculumNodeId;
+	private final RevisionPresentationPlan presentationPlan;
+
+	// Question applicability and rendered assets.
+	private final Map<Long, List<RevisionAnswerAsset>> answerAssetsByQuestionId;
+	private final Map<Long, List<CurriculumNode>> currentDescriptorsByQuestionId;
+	private final Map<Long, RevisionQuestionAsset> questionAssetsByQuestionId;
+	private final Map<Long, RevisionSharedContextAsset> sharedContextAssetsByContextId;
 
 	/**
 	 * Indexes the presentation plan and rendered assets for subsequent HTML

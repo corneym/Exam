@@ -18,13 +18,16 @@ import au.edu.eq.questionbank.model.Unit;
 
 class InMemoryCurriculumRepositoryTest {
 
+	// Test environment and collaborators.
+	private CurriculumRepository repository;
+
+	// Curriculum and assessment fixtures.
 	private Subject chemistry;
+	private Subtopic subtopic311;
 	private SyllabusVersion syllabus2019;
 	private SyllabusVersion syllabus2025;
-	private Unit unit3;
 	private Topic topic31;
-	private Subtopic subtopic311;
-	private CurriculumRepository repository;
+	private Unit unit3;
 
 	@Test
 	void doesNotFindCodeInWrongVersion() {

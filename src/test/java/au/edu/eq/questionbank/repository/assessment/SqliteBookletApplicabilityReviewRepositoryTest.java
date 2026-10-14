@@ -20,10 +20,11 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 class SqliteBookletApplicabilityReviewRepositoryTest {
 
-	@TempDir
-	Path tempDir;
+	// Test fixtures and collaborators.
 	private SqliteDatabase database;
 	private BookletApplicabilityReviewRepository repository;
+	@TempDir
+	Path tempDir;
 
 	@Test
 	void cannotReviewNonexistentBooklet() {

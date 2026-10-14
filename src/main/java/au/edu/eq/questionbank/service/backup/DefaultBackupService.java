@@ -21,13 +21,14 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
  */
 public final class DefaultBackupService implements BackupService {
 
-	private final ApplicationConfig config;
+	// Persistence and service collaborators.
 	private final String applicationVersion;
 	private final BackupArchiveValidator archiveValidator;
 	private final BackupArchiveWriter archiveWriter;
 	private final Clock clock;
-	private final BackupPathResolver pathResolver;
+	private final ApplicationConfig config;
 	private final BackupFilesystemSafety filesystemSafety;
+	private final BackupPathResolver pathResolver;
 
 	/**
 	 * Creates a backup service using the system UTC clock.

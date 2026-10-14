@@ -33,14 +33,18 @@ public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 	private static final int FILE_CONTROL_SPACING = 6;
 	private static final int SELECTOR_WIDTH = 220;
 
+	// Dialog data and collaborators.
+	private final CurriculumRepository curriculumRepository;
+	private Path selectedFile;
+
 	// Subject identity comes from the application Working Subject. This dialog may
 	// choose only the historical syllabus used by the workbook.
 	private final Subject subject;
-	private final CurriculumRepository curriculumRepository;
+
+	// Controls and initial workflow state (initialisation order retained).
 	private final Label subjectLabel = new Label();
 	private final ComboBox<SyllabusVersion> syllabusBox = new ComboBox<>();
 	private final TextField fileField = new TextField();
-	private Path selectedFile;
 
 	/**
 	 * Creates legacy Question-metadata intake for one authoritative Working

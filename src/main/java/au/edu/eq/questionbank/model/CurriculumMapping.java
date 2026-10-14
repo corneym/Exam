@@ -11,10 +11,11 @@ import java.util.Objects;
  */
 public class CurriculumMapping {
 
+	// Mapping identity and endpoints.
 	private final long id;
 	private final CurriculumNode source;
-	private final CurriculumNode target;
 	private final MappingStatus status;
+	private final CurriculumNode target;
 
 	/**
 	 * Creates a cross-version curriculum mapping.

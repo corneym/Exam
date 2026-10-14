@@ -31,18 +31,21 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 class CurrentCurriculumApplicabilitySqliteTest {
 
+	// Test environment and collaborators.
+	private SqliteDatabase database;
 	@TempDir
 	Path tempDir;
-	private SqliteDatabase database;
+
+	// Curriculum and assessment fixtures.
 	private Descriptor source;
+	private Subtopic sourceSubtopic;
 	private Descriptor sourceSubtopicDescriptorOne;
 	private Descriptor sourceSubtopicDescriptorTwo;
-	private Subtopic sourceSubtopic;
 	private Descriptor targetOne;
-	private Descriptor targetTwo;
 	private Descriptor targetSubtopicDescriptorOne;
 	private Subtopic targetSubtopicOne;
 	private Subtopic targetSubtopicTwo;
+	private Descriptor targetTwo;
 	private SyllabusVersion targetVersion;
 
 	@Test

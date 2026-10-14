@@ -21,17 +21,20 @@ import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository
 
 class CurriculumSelectionModelTest {
 
+	// Test environment and collaborators.
+	private CurriculumSelectionModel model;
+
+	// Curriculum and assessment fixtures.
 	private Subject chemistry;
+	private Descriptor descriptor3111;
+	private Descriptor historicalDescriptor;
+	private Topic historicalTopic;
+	private Unit historicalUnit;
+	private Subtopic subtopic311;
 	private SyllabusVersion syllabus2019;
 	private SyllabusVersion syllabus2025;
-	private Unit unit3;
 	private Topic topic31;
-	private Subtopic subtopic311;
-	private Descriptor descriptor3111;
-	private Unit historicalUnit;
-	private Topic historicalTopic;
-	private Descriptor historicalDescriptor;
-	private CurriculumSelectionModel model;
+	private Unit unit3;
 
 	@Test
 	void allowsSubjectWithOnlyHistoricalSyllabus() {

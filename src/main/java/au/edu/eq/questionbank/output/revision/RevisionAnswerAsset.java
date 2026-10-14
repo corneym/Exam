@@ -10,8 +10,9 @@ import au.edu.eq.questionbank.model.Question;
  */
 public final class RevisionAnswerAsset {
 
-	private final Question question;
+	// Answer source and output location.
 	private final AnswerRegion answerRegion;
+	private final Question question;
 	private final int regionNumber;
 	private final Path relativePath;
 

@@ -6,9 +6,10 @@ package au.edu.eq.questionbank.model;
  */
 public final class CurriculumMappingSuggestion {
 
+	// Suggested mapping endpoints and score.
+	private final double score;
 	private final CurriculumNode source;
 	private final CurriculumNode target;
-	private final double score;
 
 	/**
 	 * Creates a candidate between nodes at the same curriculum level in different

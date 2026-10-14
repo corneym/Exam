@@ -48,15 +48,18 @@ import au.edu.eq.questionbank.service.revision.RevisionQuestionPresentation;
 
 class LegacyQuestionMetadataServiceTest {
 
-	@TempDir
-	Path tempDirectory;
+	// Test environment and collaborators.
 	private SqliteDatabase database;
 	private SqliteQuestionRepository questionRepository;
 	private LegacyQuestionMetadataService service;
+	@TempDir
+	Path tempDirectory;
+
+	// Curriculum and assessment fixtures.
 	private ExamBooklet booklet;
+	private Subtopic currentSubtopic;
 	private Subtopic historicalSubtopicOne;
 	private Subtopic historicalSubtopicTwo;
-	private Subtopic currentSubtopic;
 
 	@Test
 	void bulkResponseTypeResolutionRejectsKnownQuestionWithoutPartialUpdate() throws Exception {

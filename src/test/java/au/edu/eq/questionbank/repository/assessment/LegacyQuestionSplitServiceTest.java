@@ -38,11 +38,14 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 class LegacyQuestionSplitServiceTest {
 
-	@TempDir
-	Path tempDirectory;
+	// Test environment and collaborators.
 	private SqliteDatabase database;
 	private SqliteQuestionRepository questionRepository;
 	private LegacyQuestionSplitService splitService;
+	@TempDir
+	Path tempDirectory;
+
+	// Curriculum and assessment fixtures.
 	private ExamBooklet booklet;
 	private Subtopic subtopicOne;
 	private Subtopic subtopicTwo;

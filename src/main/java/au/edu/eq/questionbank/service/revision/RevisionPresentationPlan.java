@@ -11,9 +11,10 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
  */
 public final class RevisionPresentationPlan {
 
-	private final RevisionCorpus sourceCorpus;
-	private final List<RevisionPresentationNode> rootNodes;
+	// Corpus and presentation grouping.
 	private final RevisionGroupingMode groupingMode;
+	private final List<RevisionPresentationNode> rootNodes;
+	private final RevisionCorpus sourceCorpus;
 
 	// Retain the existing package-level constructor for tests or collaborators that
 	// construct a presentation plan directly. Existing plans represented Descriptor

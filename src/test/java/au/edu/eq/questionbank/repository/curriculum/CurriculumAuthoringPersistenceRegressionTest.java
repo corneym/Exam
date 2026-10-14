@@ -27,13 +27,16 @@ import au.edu.eq.questionbank.service.curriculum.CurriculumLifecycleService;
 
 class CurriculumAuthoringPersistenceRegressionTest {
 
+	// Test fixtures and collaborators.
+	private SqliteDatabase database;
+	private CurriculumDraftLoader loader;
+	private SqliteCurriculumAuthoringRepository repository;
+	private SyllabusVersion syllabus;
 	@TempDir
 	Path tempDir;
-	private SqliteDatabase database;
-	private SyllabusVersion syllabus;
-	private CurriculumDraftLoader loader;
 	private SqliteCurriculumAuthoringWriter writer;
-	private SqliteCurriculumAuthoringRepository repository;
+
+	// Initialised test fixtures and coordination state (initialisation order retained).
 	private final CurriculumDraftNumberingService numbering = new CurriculumDraftNumberingService();
 
 	@BeforeEach

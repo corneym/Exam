@@ -14,9 +14,10 @@ import au.edu.eq.questionbank.repository.curriculum.CurriculumLifecycleRepositor
  */
 public final class CurriculumLifecycleService {
 
+	// Persistence and service collaborators.
 	private final CurriculumAuthoringWriter authoringWriter;
-	private final CurriculumLifecycleRepository lifecycleRepository;
 	private final Clock clock;
+	private final CurriculumLifecycleRepository lifecycleRepository;
 
 	/**
 	 * Creates a coordinator for saving drafts and changing curriculum lifecycle

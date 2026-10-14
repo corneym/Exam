@@ -24,9 +24,10 @@ import au.edu.eq.questionbank.repository.assessment.QuestionRetrievalRepository;
  */
 public final class QuestionRetrievalService {
 
+	// Persistence and service collaborators.
+	private final PerformanceRecorder performanceRecorder;
 	private final QuestionRetrievalRepository retrievalRepository;
 	private final CurriculumSearchNodeExpansionService searchNodeExpansionService;
-	private final PerformanceRecorder performanceRecorder;
 
 	/**
 	 * Creates a retrieval service with diagnostics disabled.

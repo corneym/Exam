@@ -9,8 +9,9 @@ package au.edu.eq.questionbank.model;
  */
 public final class SourceQuestion {
 
-	private final long id;
+	// Multipart source identity and Shared Context status.
 	private final ExamBooklet booklet;
+	private final long id;
 	private final SharedContextStatus sharedContextStatus;
 	private final String sourceQuestionCode;
 

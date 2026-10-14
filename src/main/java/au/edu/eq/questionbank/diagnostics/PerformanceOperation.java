@@ -11,12 +11,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class PerformanceOperation implements AutoCloseable {
 
 	private static final PerformanceOperation DISABLED = new PerformanceOperation();
-	private final PerformanceRecorder recorder;
+	// Operation identity and recording.
 	private final long id;
-	private final long parentId;
 	private final String name;
-	private final long startNanos;
+	private final long parentId;
+	private final PerformanceRecorder recorder;
+
+	// Timing and completion state.
 	private final AtomicBoolean completed;
+	private final long startNanos;
+
+	// Initial measurement outcome (initialisation order retained).
 	private volatile long resultCount = -1;
 	private volatile boolean success = true;
 

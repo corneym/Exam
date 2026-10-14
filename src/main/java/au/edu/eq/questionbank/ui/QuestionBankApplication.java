@@ -218,96 +218,109 @@ public class QuestionBankApplication extends Application {
 	private static final double INITIAL_WORKSPACE_DIVIDER_POSITION = PREVIEW_PANE_INITIAL_WIDTH / SCENE_WIDTH;
 	private static final Insets PREVIEW_PANE_PADDING = new Insets(10);
 	private static final Path LEGACY_PROPERTIES_FILE = Path.of("questionbank.properties").toAbsolutePath().normalize();
-	private QuestionRepository questionRepository;
-	private final QuestionExtractor questionExtractor = new QuestionExtractor();
-	private final PdfWorkspacePane pdfWorkspace = new PdfWorkspacePane();
-	private double captureDividerPosition = INITIAL_WORKSPACE_DIVIDER_POSITION;
-	private final CaptureSelectionState captureSelectionState = new CaptureSelectionState();
-	private CurriculumSelectionModel curriculumSelectionModel;
-	private CurriculumSelectorPane curriculumSelectorPane;
-	private ExamMetadataPane examMetadataPane;
-	private QuestionCapturePane questionCapturePane;
-	private AnswerCapturePane answerCapturePane;
-	private Runnable applicationExitAction = Platform::exit;
-	private ShutdownCoordinator shutdownCoordinator;
-	private boolean resourcesClosedForRestore;
-	private MenuItem revisionExportMenuItem;
-	private boolean revisionExportRunning;
-	private MenuItem scormExportMenuItem;
-	private boolean scormExportRunning;
-	private SplitPane workspaceSplitPane;
-	private SqliteExamWriter examWriter;
-	private final Label activeExamBookletLabel = new Label("No Exam booklet selected");
-	private final Button changeExamAssetsButton = new Button("Change Exam");
+	// Application configuration and lifecycle.
 	private ApplicationConfig applicationConfig;
-	private ExamCorpusAuditService corpusDashboardAuditService;
-	private final StackPane corpusDashboardHost = new StackPane();
-	private VBox corpusDashboardHomePane;
-	private CorpusDashboardPane corpusDashboardPane;
-	private BorderPane rootLayout;
-	private BorderPane applicationBody;
-	private VBox classificationContext;
-	private boolean legacyQuestionImportDashboardOwned;
-	private SqliteExamAssetDeletionService examAssetDeletionService;
-	private long corpusDashboardRefreshGeneration;
-	private boolean corpusDashboardLifecycleChangeRunning;
+	private FocusRefreshRegistration primaryStageFocusRegistration;
+	private boolean resourcesClosedForRestore;
+	private ShutdownCoordinator shutdownCoordinator;
+
+	// Repositories and application services.
 	private BookletApplicabilityReviewRepository bookletApplicabilityReviewRepository;
 	private BookletApplicabilityReviewService bookletApplicabilityReviewService;
-	private boolean corpusDashboardReviewChangeRunning;
+	private ExamCorpusAuditService corpusDashboardAuditService;
+	private SqliteExamAssetDeletionService examAssetDeletionService;
 	private ExamLifecycleService examLifecycleService;
+	private SqliteExamWriter examWriter;
+	private QuestionRepository questionRepository;
+
+	// Workspace layout and capture panes.
+	private AnswerCapturePane answerCapturePane;
+	private BorderPane applicationBody;
+	private ApplicationBusyOverlay applicationBusyOverlay;
+
+	// Keep both left-side modes as stable nodes. Switching modes re-parents the
+	// existing pane rather than reconstructing capture controls and their state.
+	private VBox captureWorkspaceModePane;
+
+	// Capture scrolls only its task-specific Classification/Question/Answer body so
+	// the Subject and Active Exam context remain continuously visible.
+	private ScrollPane captureWorkspaceScrollPane;
+	private VBox classificationContext;
+	private CurriculumSelectionModel curriculumSelectionModel;
+	private CurriculumSelectorPane curriculumSelectorPane;
+	private ExamAssetsPane examAssetsPane;
+	private ExamMetadataPane examMetadataPane;
+	private QuestionCapturePane questionCapturePane;
+	private BorderPane rootLayout;
+
+	// The application-level Subject remains outside this host so the left workspace
+	// can switch between Capture and Exam/Assets without replacing Working Subject.
+	private StackPane workspaceModeHost;
+
+	// The complete left workspace owns fixed context above the mode-specific
+	// scrollable content and is the node mounted into the main SplitPane.
+	private BorderPane workspacePreviewPane;
+	private SplitPane workspaceSplitPane;
+
+	// Dashboard state and navigation.
+	private Runnable corpusDashboardCaptureReturnHandler;
+	private VBox corpusDashboardHomePane;
+	private boolean corpusDashboardLifecycleChangeRunning;
+	private CorpusDashboardPane corpusDashboardPane;
+	private long corpusDashboardRefreshGeneration;
+	private boolean corpusDashboardReviewChangeRunning;
+
+	// Working Subject refresh and context.
 	private long questionSaveBusyRequest;
+	private boolean restoringWorkingSubject;
+
+	// Track the accepted workspace Subject separately so a rejected ComboBox change
+	// can restore the previous value without changing either capture queue.
+	private Subject workingSubject;
+	private VBox workingSubjectContext;
 
 	// Curriculum persistence joins the application-owned Working Subject refresh
 	// rather than being read by CurriculumSelectorPane on the JavaFX thread.
 	private Function<Subject, CurriculumSelectionModel.SubjectSnapshot> workingSubjectCurriculumSnapshotLoader;
 
-	// One loader supplies the complete Question snapshot used by both capture
-	// panes.
-	// Keeping it application-owned prevents duplicate repository reads per Subject
-	// transition and provides a deterministic dependency for workflow tests.
-	private Supplier<List<Question>> workingSubjectQuestionSnapshotLoader = List::of;
+	// Exam/Assets persistence participates in the same application-level Subject
+	// generation as the shared Question snapshot.
+	private Function<Subject, ExamAssetsPane.SubjectSnapshot> workingSubjectExamAssetsSnapshotLoader;
 
 	// Every accepted Working Subject change advances this generation. Background
 	// work from an earlier generation may finish, but it may never update current
 	// UI.
 	private long workingSubjectRefreshGeneration;
 
-	// The application-level Subject remains outside this host so the left workspace
-	// can switch between Capture and Exam/Assets without replacing Working Subject.
-	private StackPane workspaceModeHost;
-
-	// Track the accepted workspace Subject separately so a rejected ComboBox change
-	// can restore the previous value without changing either capture queue.
-	private Subject workingSubject;
-	private boolean restoringWorkingSubject;
-
-	// Keep both left-side modes as stable nodes. Switching modes re-parents the
-	// existing pane rather than reconstructing capture controls and their state.
-	private VBox captureWorkspaceModePane;
-	private ExamAssetsPane examAssetsPane;
-
-	// Exam/Assets persistence participates in the same application-level Subject
-	// generation as the shared Question snapshot.
-	private Function<Subject, ExamAssetsPane.SubjectSnapshot> workingSubjectExamAssetsSnapshotLoader;
-	private FocusRefreshRegistration primaryStageFocusRegistration;
+	// Legacy import and export workflows.
+	private boolean legacyQuestionImportDashboardOwned;
 
 	// Legacy workbook intake may pause while the user creates missing authoritative
 	// Exam/booklet structure in Exam/Assets.
 	private PendingLegacyQuestionImport pendingLegacyQuestionImport;
-	private Runnable corpusDashboardCaptureReturnHandler;
+	private MenuItem revisionExportMenuItem;
+	private boolean revisionExportRunning;
+	private MenuItem scormExportMenuItem;
+	private boolean scormExportRunning;
+
+	// Controls and initial workflow state (initialisation order retained).
+	private final QuestionExtractor questionExtractor = new QuestionExtractor();
+	private final PdfWorkspacePane pdfWorkspace = new PdfWorkspacePane();
+	private double captureDividerPosition = INITIAL_WORKSPACE_DIVIDER_POSITION;
+	private final CaptureSelectionState captureSelectionState = new CaptureSelectionState();
+	private Runnable applicationExitAction = Platform::exit;
+	private final Label activeExamBookletLabel = new Label("No Exam booklet selected");
+	private final Button changeExamAssetsButton = new Button("Change Exam");
+	private final StackPane corpusDashboardHost = new StackPane();
+
+	// One loader supplies the complete Question snapshot used by both capture
+	// panes.
+	// Keeping it application-owned prevents duplicate repository reads per Subject
+	// transition and provides a deterministic dependency for workflow tests.
+	private Supplier<List<Question>> workingSubjectQuestionSnapshotLoader = List::of;
 	private final Button returnToCorpusDashboardButton = new Button("Return to Corpus Dashboard");
 	private final HBox corpusDashboardSubjectHost = new HBox();
-	private VBox workingSubjectContext;
 	private final VBox workspaceSubjectHost = new VBox();
-	private ApplicationBusyOverlay applicationBusyOverlay;
-
-	// Capture scrolls only its task-specific Classification/Question/Answer body so
-	// the Subject and Active Exam context remain continuously visible.
-	private ScrollPane captureWorkspaceScrollPane;
-
-	// The complete left workspace owns fixed context above the mode-specific
-	// scrollable content and is the node mounted into the main SplitPane.
-	private BorderPane workspacePreviewPane;
 	private Path applicationPropertiesFile = ApplicationPaths.propertiesFile();
 	private Runnable applicationRestartAction = this::restartApplicationAfterShutdown;
 	private final ApplicationRestartService applicationRestartService = new ApplicationRestartService();

@@ -25,10 +25,11 @@ import au.edu.eq.questionbank.model.Unit;
 
 class InMemoryQuestionOutputApplicabilityRepositoryTest {
 
+	// Test fixtures and collaborators.
 	private Descriptor firstDescriptor;
-	private Descriptor secondDescriptor;
 	private Question question;
 	private InMemoryQuestionOutputApplicabilityRepository repository;
+	private Descriptor secondDescriptor;
 
 	@Test
 	void bulkLookupPreservesIndependentQuestionExclusions() {

@@ -47,14 +47,21 @@ public final class SharedContextCapturePane extends VBox {
 	private static final double REGIONS_VIEWPORT_HEIGHT = 300.0;
 	private static final Insets CAPTURE_PADDING = new Insets(8);
 
-	// Workflow dependencies and application callbacks.
-	private final SharedQuestionContextRepository contextRepository;
+	// Shared Context dependencies and callbacks.
 	private final Supplier<ExamBooklet> bookletSupplier;
-	private final QuestionExtractor questionExtractor;
-	private final Supplier<PdfSession> examPdfSessionSupplier;
-	private final Runnable selectionClearHandler;
 	private final BooleanSupplier captureStartAllowed;
+	private final SharedQuestionContextRepository contextRepository;
+	private BiFunction<String, List<SharedQuestionContextRegion>, SharedQuestionContext> correctionSaveHandler;
+	private final Supplier<PdfSession> examPdfSessionSupplier;
+	private final QuestionExtractor questionExtractor;
+	private final Runnable selectionClearHandler;
 
+	// Shared Context capture and editing state.
+	private boolean captureMode;
+	private SharedQuestionContextRegion currentSelection;
+	private SharedQuestionContext editingContext;
+
+	// Controls and initial workflow state (initialisation order retained).
 	// Existing context and new capture controls.
 	private final ComboBox<SharedQuestionContext> existingContextField = new ComboBox<>();
 	private final Button newContextButton = new Button("New Context");
@@ -75,15 +82,9 @@ public final class SharedContextCapturePane extends VBox {
 	private final Button saveContextButton = new Button("Save Context");
 	private final Button cancelContextButton = new Button("Cancel");
 	private final VBox newContextBox = new VBox(COMPACT_SPACING);
-
-	// Transient capture and edit state.
 	private final List<SharedQuestionContextRegion> pendingRegions = new ArrayList<>();
-	private SharedQuestionContextRegion currentSelection;
-	private boolean captureMode;
-	private SharedQuestionContext editingContext;
 	private Runnable contextEditCompletedHandler = () -> {
 	};
-	private BiFunction<String, List<SharedQuestionContextRegion>, SharedQuestionContext> correctionSaveHandler;
 
 	/**
 	 * Creates shared-context controls for the active booklet and exam PDF. The

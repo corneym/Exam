@@ -13,9 +13,10 @@ package au.edu.eq.questionbank.model;
  */
 public class SourceDocument {
 
+	// Source identity and managed path.
+	private final String contentSha256;
 	private final long id;
 	private final String relativePath;
-	private final String contentSha256;
 
 	/**
 	 * Creates a source-document reference.

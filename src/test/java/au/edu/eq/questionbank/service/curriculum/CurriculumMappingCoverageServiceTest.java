@@ -167,10 +167,11 @@ class CurriculumMappingCoverageServiceTest {
 
 	private static final class TestCurriculumRepository implements CurriculumRepository {
 
-		private final List<SyllabusVersion> versions;
-		private final List<CurriculumNode> nodes;
+		// Test fixtures and collaborators.
 		private int childLookupCalls;
+		private final List<CurriculumNode> nodes;
 		private int rootLookupCalls;
+		private final List<SyllabusVersion> versions;
 
 		TestCurriculumRepository(List<SyllabusVersion> versions, List<CurriculumNode> nodes) {
 			this.versions = List.copyOf(versions);

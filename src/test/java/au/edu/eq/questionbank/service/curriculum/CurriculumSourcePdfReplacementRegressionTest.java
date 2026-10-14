@@ -28,12 +28,13 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 class CurriculumSourcePdfReplacementRegressionTest {
 
+	// Test fixtures and collaborators.
+	private SqliteDatabase database;
+	private CurriculumSourcePdfService service;
+	private Subject subject;
 	@TempDir
 	Path tempDir;
-	private SqliteDatabase database;
 	private SqliteCurriculumWriter writer;
-	private Subject subject;
-	private CurriculumSourcePdfService service;
 
 	@BeforeEach
 	void createStore() throws Exception {

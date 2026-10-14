@@ -14,12 +14,15 @@ import java.util.Objects;
  */
 public class SyllabusVersion {
 
+	// Syllabus identity.
 	private final long id;
-	private final Subject subject;
 	private final String name;
+	private final Subject subject;
+
+	// Curriculum lifecycle and source document.
 	private final boolean current;
-	private final CurriculumStatus curriculumStatus;
 	private final Instant curriculumFinalisedAt;
+	private final CurriculumStatus curriculumStatus;
 	private final String sourcePdfPath;
 
 	/**

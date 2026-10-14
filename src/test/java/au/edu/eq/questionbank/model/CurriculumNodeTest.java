@@ -12,13 +12,14 @@ import org.junit.jupiter.api.Test;
 
 class CurriculumNodeTest {
 
-	private SyllabusVersion syllabusVersion;
+	// Curriculum and assessment fixtures.
 	private Subject chemistry;
-	private Unit unit;
-	private Topic topic;
 	private Subtopic subtopic;
-	private Descriptor topicDescriptor;
 	private Descriptor subtopicDescriptor;
+	private SyllabusVersion syllabusVersion;
+	private Topic topic;
+	private Descriptor topicDescriptor;
+	private Unit unit;
 
 	@Test
 	void acceptsValidUnitTopicSubtopicHierarchy() {

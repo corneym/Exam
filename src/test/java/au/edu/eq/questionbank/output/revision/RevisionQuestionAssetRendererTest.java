@@ -231,14 +231,17 @@ class RevisionQuestionAssetRendererTest {
 
 	private static final class Fixture {
 
+		// Test environment and collaborators.
+		private final InMemoryCurriculumRepository curriculumRepository;
+		private final PdfStore pdfStore;
+
+		// Curriculum and assessment fixtures.
 		private final Subject chemistry;
 		private final SyllabusVersion currentVersion;
 		private final Descriptor firstDescriptor;
-		private final Descriptor secondDescriptor;
 		private final Question metadataOnlyQuestion;
 		private final Question renderableQuestion;
-		private final InMemoryCurriculumRepository curriculumRepository;
-		private final PdfStore pdfStore;
+		private final Descriptor secondDescriptor;
 
 		private Fixture(Path tempDir) throws IOException {
 			Path pdfRoot = tempDir.resolve("pdf");

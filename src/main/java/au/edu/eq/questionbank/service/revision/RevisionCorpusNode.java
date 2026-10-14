@@ -10,8 +10,9 @@ import au.edu.eq.questionbank.model.CurriculumNode;
  */
 public final class RevisionCorpusNode {
 
-	private final CurriculumNode curriculumNode;
+	// Curriculum hierarchy and Question placements.
 	private final List<RevisionCorpusNode> children;
+	private final CurriculumNode curriculumNode;
 	private final List<RevisionQuestionPlacement> questionPlacements;
 
 	RevisionCorpusNode(CurriculumNode curriculumNode, List<RevisionCorpusNode> children,

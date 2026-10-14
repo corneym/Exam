@@ -14,8 +14,9 @@ import javafx.stage.Stage;
  */
 public final class PdfFilePicker {
 
-	private final Path dataRoot;
+	// PDF selection configuration and location.
 	private final BiFunction<FileChooser, Stage, File> chooserOpener;
+	private final Path dataRoot;
 	private Path lastSelectedDirectory;
 
 	/**

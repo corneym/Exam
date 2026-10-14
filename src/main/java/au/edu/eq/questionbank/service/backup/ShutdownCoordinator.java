@@ -11,13 +11,16 @@ import java.io.IOException;
  */
 public final class ShutdownCoordinator {
 
+	// Shutdown resources and backup collaborators.
 	private final BackupRequest automaticBackupRequest;
 	private final BackupService backupService;
-	private final AutomaticBackupRetention retention;
 	private final AutoCloseable resources;
+	private final AutomaticBackupRetention retention;
+
+	// Shutdown progress and warnings.
 	private boolean backupCompleted;
-	private boolean readyToExit;
 	private Throwable pendingRetentionWarning;
+	private boolean readyToExit;
 
 	/**
 	 * Creates a backup-aware shutdown coordinator.

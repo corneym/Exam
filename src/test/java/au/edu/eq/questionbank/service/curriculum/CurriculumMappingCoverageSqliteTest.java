@@ -26,22 +26,25 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 class CurriculumMappingCoverageSqliteTest {
 
+	// Test environment and collaborators.
+	private SqliteCurriculumRepository curriculumRepository;
+	private SqliteDatabase database;
+	private SqliteCurriculumMappingReviewWriter reviewWriter;
 	@TempDir
 	Path tempDir;
-	private SqliteDatabase database;
-	private SqliteCurriculumRepository curriculumRepository;
-	private SqliteCurriculumMappingReviewWriter reviewWriter;
-	private SyllabusVersion sourceVersion;
-	private SyllabusVersion targetVersion;
+
+	// Curriculum and assessment fixtures.
+	private Descriptor sourceDescriptorOne;
+	private Descriptor sourceDescriptorThree;
+	private Descriptor sourceDescriptorTwo;
 	private Subtopic sourceSubtopicOne;
 	private Subtopic sourceSubtopicTwo;
-	private Descriptor sourceDescriptorOne;
-	private Descriptor sourceDescriptorTwo;
-	private Descriptor sourceDescriptorThree;
-	private Subtopic targetSubtopicOne;
-	private Subtopic targetSubtopicTwo;
+	private SyllabusVersion sourceVersion;
 	private Descriptor targetDescriptorOne;
 	private Descriptor targetDescriptorTwo;
+	private Subtopic targetSubtopicOne;
+	private Subtopic targetSubtopicTwo;
+	private SyllabusVersion targetVersion;
 
 	@Test
 	void becomesCompleteAfterEveryApplicableSourceIsReviewed() throws Exception {

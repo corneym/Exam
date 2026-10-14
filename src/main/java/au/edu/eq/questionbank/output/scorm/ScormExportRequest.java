@@ -14,10 +14,11 @@ import au.edu.eq.questionbank.service.revision.RevisionGroupingMode;
  */
 public final class ScormExportRequest {
 
-	private final Subject subject;
+	// Revision scope and package destination.
 	private final Path destination;
 	private final RevisionGroupingMode groupingMode;
 	private final Set<Long> selectedUnitIds;
+	private final Subject subject;
 
 	/**
 	 * Creates a request using automatic grouping and all exportable Units.

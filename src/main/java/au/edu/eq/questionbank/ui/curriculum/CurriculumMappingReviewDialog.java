@@ -67,19 +67,28 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 	private static final double DESCRIPTOR_TEXT_HEIGHT = 78;
 	private static final double SELECTOR_WIDTH = 180;
 	private static final double DESCRIPTOR_TEXT_WIDTH = CONTENT_WIDTH - SELECTOR_WIDTH - CONTROL_GAP;
-	private Button confirmButton;
+	// Curriculum mapping and review collaborators.
+	private final CurriculumMappingCoverageService coverageService;
 	private final CurriculumMappingSuggester descriptorSuggester;
-	private boolean editingReview;
-	private final Button editReviewButton = new Button("Edit review");
 	private final CurriculumMappingRepository mappingRepository;
+	private final CurriculumRepository repository;
+	private final CurriculumMappingReviewRepository reviewRepository;
+	private final SqliteCurriculumMappingReviewWriter reviewWriter;
+	private final SubtopicMappingEvidenceService subtopicEvidenceService;
+	private final CurriculumMappingSuggester subtopicSuggester;
+
+	// Review selection and confirmation.
+	private Button confirmButton;
+	private boolean editingReview;
+	private final Subject fixedSubject;
+
+	// Controls and initial workflow state (initialisation order retained).
+	private final Button editReviewButton = new Button("Edit review");
 	private final CheckBox noMatchCheckBox = new CheckBox("No equivalent descriptor in target syllabus");
 	private final Set<Long> originalReviewedTargetIds = new HashSet<>();
-	private final CurriculumRepository repository;
 	private final ListView<CurriculumMapping> reviewedMappingsList = new ListView<>();
 	private final Set<Long> reviewedSourceIds = new HashSet<>();
 	private final ComboBox<CurriculumLevel> reviewLevelBox = new ComboBox<>();
-	private final CurriculumMappingReviewRepository reviewRepository;
-	private final SqliteCurriculumMappingReviewWriter reviewWriter;
 	private final Set<Long> selectedTargetIds = new HashSet<>();
 	private final CheckBox showReviewedCheckBox = new CheckBox("Show reviewed descriptors only");
 	private final ComboBox<CurriculumNode> sourceDescriptorBox = new ComboBox<>();
@@ -89,15 +98,11 @@ public final class CurriculumMappingReviewDialog extends Dialog<ButtonType> {
 	private final ComboBox<SyllabusVersion> sourceVersionBox = new ComboBox<>();
 	private final Label statusLabel = new Label();
 	private final ComboBox<Subject> subjectBox = new ComboBox<>();
-	private final CurriculumMappingSuggester subtopicSuggester;
-	private final SubtopicMappingEvidenceService subtopicEvidenceService;
 	private final Label subtopicEvidenceLabel = new Label();
 	private final ListView<CurriculumMappingSuggestion> suggestionsList = new ListView<>();
 	private final Set<Long> supplementalTargetIds = new HashSet<>();
 	private final ComboBox<SyllabusVersion> targetVersionBox = new ComboBox<>();
-	private final CurriculumMappingCoverageService coverageService;
 	private final Label coverageLabel = new Label();
-	private final Subject fixedSubject;
 	private final Label fixedSubjectLabel = new Label();
 
 	/**
