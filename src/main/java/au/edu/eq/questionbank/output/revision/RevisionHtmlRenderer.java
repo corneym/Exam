@@ -37,6 +37,7 @@ public final class RevisionHtmlRenderer {
 	private static final DateTimeFormatter GENERATED_AT_FORMAT = DateTimeFormatter.ofPattern("d MMM uuuu, HH:mm z",
 			Locale.ENGLISH);
 	private static final String STYLESHEET_RESOURCE = "/au/edu/eq/questionbank/output/revision/revision.css";
+
 	// Presentation plan and generated timestamp.
 	private final ZonedDateTime generatedAt;
 	private final Map<Long, RevisionPresentationNode> presentationNodesByCurriculumNodeId;

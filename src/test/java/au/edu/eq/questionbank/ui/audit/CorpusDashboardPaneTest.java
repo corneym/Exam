@@ -1566,6 +1566,79 @@ class CorpusDashboardPaneTest {
 	}
 
 	@Test
+	@SuppressWarnings("unchecked")
+	void missingQuestionsSummaryFiltersExamsBeforeCapture(FxRobot robot) {
+		AtomicReference<ExamBooklet> captureRequest = new AtomicReference<>();
+		Button missingQuestions = robot.lookup("#corpus-dashboard-summary-missing-questions").queryButton();
+		Button captureQuestions = robot.lookup("#corpus-dashboard-capture-questions").queryButton();
+		Button clearFilters = robot.lookup("#corpus-dashboard-clear-filters").queryButton();
+		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+
+		// Add an Exam without missing Questions. The summary filter
+		// must exclude it rather than blindly showing every Exam.
+		Exam finishedExam = new Exam(900, fixture.chemistry, fixture.qcaa, 2023, "Finished Exam",
+				ExamCaptureState.ACTIVE);
+		ExamBooklet finishedBooklet = new ExamBooklet(901, finishedExam, "Paper 1",
+				new SourceDocument(902, "Chemistry/2023/paper1.pdf"), ExamBookletQuestionFormat.WRITTEN_RESPONSE, 1);
+		BookletCorpusStatus finishedBookletStatus = new BookletCorpusStatus(finishedBooklet, true, null, 1, 1, 0,
+				new QuestionCorpusSummary(1, 1, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0), Set.of());
+		ExamCorpusStatus finishedStatus = ExamCorpusAudit.assess(finishedExam, new ExamAssetExpectations(1, 1, 0, 0),
+				List.of(finishedBookletStatus));
+		robot.interact(() -> {
+			pane.setNewQuestionCaptureHandler(captureRequest::set);
+			pane.replaceData(List.of(fixture.completeExamStatus, fixture.activeExamStatus, finishedStatus),
+					fixture.questions());
+		});
+		assertEquals(3, exams.getItems().size());
+		assertEquals("3 Missing Questions", missingQuestions.getText());
+
+		// The summary button filters the hierarchy only.
+		robot.interact(missingQuestions::fire);
+		assertEquals(2, exams.getItems().size());
+		assertTrue(exams.getItems().contains(fixture.completeExamStatus));
+		assertTrue(exams.getItems().contains(fixture.activeExamStatus));
+		assertFalse(exams.getItems().contains(finishedStatus));
+		assertNull(captureRequest.get());
+
+		// The user chooses an Exam. Only relevant booklets appear.
+		robot.interact(() -> exams.getSelectionModel().select(fixture.completeExamStatus));
+		assertEquals(List.of(fixture.paper2Status), List.copyOf(booklets.getItems()));
+		assertEquals("3 Missing Questions", missingQuestions.getText());
+		assertNull(captureRequest.get());
+
+		// Selecting a different Exam remains the user's decision.
+		robot.interact(() -> exams.getSelectionModel().select(fixture.activeExamStatus));
+		assertEquals(List.of(fixture.activePaperStatus), List.copyOf(booklets.getItems()));
+		assertNull(captureRequest.get());
+
+		// Selecting a booklet still must not launch capture.
+		robot.interact(() -> booklets.getSelectionModel().select(fixture.activePaperStatus));
+		assertNull(captureRequest.get());
+		assertFalse(captureQuestions.isDisable());
+
+		// Only the explicit Capture Questions action starts capture.
+		robot.interact(captureQuestions::fire);
+		assertEquals(fixture.activePaper, captureRequest.get());
+
+		// Replace the authoritative audit generation after capture.
+		BookletCorpusStatus refreshedBooklet = new BookletCorpusStatus(fixture.activePaper, true, null, 10, 10, 0,
+				new QuestionCorpusSummary(10, 10, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0), Set.of());
+		ExamCorpusStatus refreshedActiveExam = ExamCorpusAudit.assess(fixture.activeExam,
+				new ExamAssetExpectations(2, 1, 0, 0), List.of(refreshedBooklet));
+		robot.interact(() -> pane.replaceData(List.of(fixture.completeExamStatus, refreshedActiveExam, finishedStatus),
+				fixture.questions()));
+
+		// The active drill-down recalculates from the fresh snapshot.
+		assertEquals("1 Missing Questions", missingQuestions.getText());
+		assertEquals(List.of(fixture.completeExamStatus), List.copyOf(exams.getItems()));
+
+		// Clear restores the original structural Exam scope.
+		robot.interact(clearFilters::fire);
+		assertEquals(3, exams.getItems().size());
+	}
+
+	@Test
 	void narrowDashboardRetainsScrollableControls(FxRobot robot) {
 		ScrollPane filters = robot.lookup("#corpus-dashboard-exam-filters-scroll").queryAs(ScrollPane.class);
 		ScrollPane examActions = robot.lookup("#corpus-dashboard-exam-actions-scroll").queryAs(ScrollPane.class);
@@ -1907,6 +1980,68 @@ class CorpusDashboardPaneTest {
 		robot.interact(totalQuestions::fire);
 		assertEquals(2, exams.getItems().size());
 		assertTrue(exams.getItems().stream().anyMatch(status -> status.exam().getId() == fixture.activeExam.getId()));
+	}
+
+	@Test
+	void uncapturedQuestionSummaryRemainsDistinctFromMissingContent(FxRobot robot) {
+		Button missingQuestions = robot.lookup("#corpus-dashboard-summary-missing-questions").queryButton();
+		Button missingContent = robot.lookup("#corpus-dashboard-summary-missing-content").queryButton();
+
+		// The existing fixture has one uncaptured Question in Paper 2
+		// and two in the ACTIVE Exam's booklet.
+		assertEquals("3 Missing Questions", missingQuestions.getText());
+
+		// Existing Question-content defects remain a separate dimension.
+		assertEquals("1 Missing question content", missingContent.getText());
+		assertFalse(missingQuestions.isDisable());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void uncapturedSummaryRespectsExamScopeAndUnknownExpectations(FxRobot robot) {
+		Button missingQuestions = robot.lookup("#corpus-dashboard-summary-missing-questions").queryButton();
+		ComboBox<ExamCaptureState> state = robot.lookup("#corpus-dashboard-filter-exam-state").queryAs(ComboBox.class);
+		robot.interact(() -> state.setValue(ExamCaptureState.ACTIVE));
+		assertEquals("2 Missing Questions", missingQuestions.getText());
+		ExamBooklet unknownBooklet = new ExamBooklet(900, fixture.activeExam, "Unplanned booklet",
+				new SourceDocument(901, "Chemistry/2024/unplanned.pdf"));
+		BookletCorpusStatus unknownStatus = BookletCorpusAudit.assess(unknownBooklet, List.of(), null, true);
+		ExamCorpusStatus updatedActiveExam = ExamCorpusAudit.assess(fixture.activeExam,
+				new ExamAssetExpectations(2, 2, 0, 0), List.of(fixture.activePaperStatus, unknownStatus));
+		robot.interact(
+				() -> pane.replaceData(List.of(fixture.completeExamStatus, updatedActiveExam), fixture.questions()));
+		assertEquals("2 Missing Questions (+1 booklet unknown)", missingQuestions.getText());
+
+		// Changing the structural filter changes the total.
+		robot.interact(() -> state.setValue(ExamCaptureState.COMPLETE));
+		assertEquals("1 Missing Questions", missingQuestions.getText());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void unknownExpectationsRemainInMissingQuestionsDrillDown(FxRobot robot) {
+		Exam unknownExam = new Exam(930, fixture.chemistry, fixture.qcaa, 2022, "Unplanned Exam",
+				ExamCaptureState.ACTIVE);
+		ExamBooklet unknownBooklet = new ExamBooklet(931, unknownExam, "Paper 1",
+				new SourceDocument(932, "Chemistry/2022/paper1.pdf"));
+		BookletCorpusStatus unknownBookletStatus = BookletCorpusAudit.assess(unknownBooklet, List.of(), null, true);
+		ExamCorpusStatus unknownExamStatus = ExamCorpusAudit.assess(unknownExam, new ExamAssetExpectations(1, 1, 0, 0),
+				List.of(unknownBookletStatus));
+		Button missingQuestions = robot.lookup("#corpus-dashboard-summary-missing-questions").queryButton();
+		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		ComboBox<Integer> years = robot.lookup("#corpus-dashboard-filter-year").queryAs(ComboBox.class);
+		robot.interact(
+				() -> pane.replaceData(List.of(fixture.completeExamStatus, unknownExamStatus), fixture.questions()));
+		assertEquals("1 Missing Questions (+1 booklet unknown)", missingQuestions.getText());
+		robot.interact(missingQuestions::fire);
+
+		// Restrict the structural scope to the unknown-only Exam.
+		robot.interact(() -> years.setValue(2022));
+		assertEquals("0 Missing Questions (+1 booklet unknown)", missingQuestions.getText());
+		assertFalse(missingQuestions.isDisable());
+		assertEquals(List.of(unknownExamStatus), List.copyOf(exams.getItems()));
+		assertEquals(List.of(unknownBookletStatus), List.copyOf(booklets.getItems()));
 	}
 
 	@Test

@@ -65,6 +65,7 @@ public final class ExamAssetsPane extends VBox {
 	private static final String NO_ANSWER_BOOKLET = "No Answer Booklet";
 	private static final String WORKSPACE_SECTION_STYLE = "-fx-border-color: #b0b0b0;" + "-fx-border-width: 1;"
 			+ "-fx-border-radius: 3;";
+
 	// Persistence and Exam correction.
 	private final SqliteAnswerWriter answerWriter;
 	private final ExamCorrectionHandler correctionHandler;

@@ -87,6 +87,7 @@ public final class CorpusDashboardPane extends VBox {
 	// the dialog is vertically constrained.
 	private static final double BOOKLET_TABLE_MAX_HEIGHT = 280.0;
 	private static final double BOOKLET_TABLE_MIN_HEIGHT = 125.0;
+
 	// Corpus and curriculum snapshots.
 	private boolean curriculumAvailable;
 	private List<ExamCorpusStatus> examStatuses;
@@ -105,6 +106,7 @@ public final class CorpusDashboardPane extends VBox {
 	private boolean mcqExplanationFilterActive;
 	private QuestionCorpusProblem selectedQuestionProblem;
 	private boolean summaryQuestionFilterActive;
+	private boolean uncapturedQuestionFilterActive;
 
 	// Dashboard layout sections.
 	private StackPane bookletsSection;
@@ -124,6 +126,7 @@ public final class CorpusDashboardPane extends VBox {
 	private final Button missingContentButton = new Button();
 	private final Button missingAnswerButton = new Button();
 	private final Button missingDescriptorButton = new Button();
+	private final Button missingQuestionsButton = new Button();
 	private final Button sharedContextButton = new Button();
 	private final TableView<ExamCorpusStatus> examTable = new TableView<>();
 	private final Label selectedExamLabel = new Label();
@@ -656,9 +659,6 @@ public final class CorpusDashboardPane extends VBox {
 	private void applyMcqExplanationFilter() {
 		changingQuestionFilter = true;
 		try {
-
-			// Missing explanations belong to ordinarily complete MCQ Answers, so the
-			// standard completeness ComboBox cannot represent this separate dimension.
 			questionViewBox.setValue(QuestionCorpusCompletionFilter.ALL);
 		} finally {
 			changingQuestionFilter = false;
@@ -666,9 +666,7 @@ public final class CorpusDashboardPane extends VBox {
 		selectedQuestionProblem = null;
 		mcqExplanationFilterActive = true;
 		summaryQuestionFilterActive = true;
-
-		// Rebuild Exam -> booklet -> Question scope from the separate explanation
-		// requirement while retaining the Subject-level headline coverage.
+		uncapturedQuestionFilterActive = false;
 		refreshDashboard();
 	}
 
@@ -680,12 +678,26 @@ public final class CorpusDashboardPane extends VBox {
 			changingQuestionFilter = false;
 		}
 		mcqExplanationFilterActive = false;
+		uncapturedQuestionFilterActive = false;
 		selectedQuestionProblem = problem;
-
-		// Selecting all Questions must restore the complete Exam
-		// hierarchy, including Exams without captured Questions.
-		// Specific summary drill-downs still narrow that hierarchy.
 		summaryQuestionFilterActive = completion != QuestionCorpusCompletionFilter.ALL || problem != null;
+		refreshDashboard();
+	}
+
+	private void applyUncapturedQuestionFilter() {
+		changingQuestionFilter = true;
+		try {
+			questionViewBox.setValue(QuestionCorpusCompletionFilter.ALL);
+		} finally {
+			changingQuestionFilter = false;
+		}
+
+		// Missing Questions have no persisted Question record.
+		// Filter the structural hierarchy rather than Question Work.
+		selectedQuestionProblem = null;
+		mcqExplanationFilterActive = false;
+		summaryQuestionFilterActive = false;
+		uncapturedQuestionFilterActive = true;
 		refreshDashboard();
 	}
 
@@ -876,10 +888,11 @@ public final class CorpusDashboardPane extends VBox {
 
 	private HBox buildSummaryRow() {
 
-		// Subject-level corpus indicators remain immediately below the
-		// Curriculum section rather than between structural work areas.
-		HBox summaryRow = new HBox(SPACING, totalQuestionsButton, needsAttentionButton, missingContentButton,
-				missingAnswerButton, missingDescriptorButton, sharedContextButton, missingMcqExplanationButton);
+		// Uncaptured Questions are structural booklet work, whereas missing
+		// Question content concerns already-persisted Question records.
+		HBox summaryRow = new HBox(SPACING, totalQuestionsButton, needsAttentionButton, missingQuestionsButton,
+				missingContentButton, missingAnswerButton, missingDescriptorButton, sharedContextButton,
+				missingMcqExplanationButton);
 		summaryRow.setId("corpus-dashboard-summary-row");
 		summaryRow.setAlignment(Pos.CENTER_LEFT);
 		return summaryRow;
@@ -999,9 +1012,6 @@ public final class CorpusDashboardPane extends VBox {
 		changingScopeFilters = true;
 		changingQuestionFilter = true;
 		try {
-
-			// Clear every Dashboard-local restriction while retaining the authoritative
-			// Working Subject.
 			providerBox.setValue(null);
 			yearBox.setValue(null);
 			examStateBox.setValue(null);
@@ -1009,13 +1019,11 @@ public final class CorpusDashboardPane extends VBox {
 			selectedQuestionProblem = null;
 			mcqExplanationFilterActive = false;
 			summaryQuestionFilterActive = false;
+			uncapturedQuestionFilterActive = false;
 		} finally {
 			changingQuestionFilter = false;
 			changingScopeFilters = false;
 		}
-
-		// Rebuild the complete Exam -> booklet -> Question hierarchy after all local
-		// filters have been reset together.
 		refreshDashboard();
 	}
 
@@ -1345,6 +1353,7 @@ public final class CorpusDashboardPane extends VBox {
 		});
 		totalQuestionsButton.setOnAction(_ -> applyQuestionFilter(QuestionCorpusCompletionFilter.ALL, null));
 		needsAttentionButton.setOnAction(_ -> applyQuestionFilter(QuestionCorpusCompletionFilter.INCOMPLETE, null));
+		missingQuestionsButton.setOnAction(_ -> applyUncapturedQuestionFilter());
 		missingContentButton.setOnAction(_ -> applyQuestionFilter(QuestionCorpusCompletionFilter.INCOMPLETE,
 				QuestionCorpusProblem.MISSING_QUESTION_CONTENT));
 		missingAnswerButton.setOnAction(_ -> applyQuestionFilter(QuestionCorpusCompletionFilter.INCOMPLETE,
@@ -1358,11 +1367,10 @@ public final class CorpusDashboardPane extends VBox {
 			if (changingQuestionFilter) {
 				return;
 			}
-
-			// Direct Show selection ends any headline drill-down.
 			mcqExplanationFilterActive = false;
 			selectedQuestionProblem = null;
 			summaryQuestionFilterActive = false;
+			uncapturedQuestionFilterActive = false;
 			refreshDashboard();
 		});
 	}
@@ -1503,6 +1511,9 @@ public final class CorpusDashboardPane extends VBox {
 	private void configureSummaryControls() {
 		totalQuestionsButton.setId("corpus-dashboard-summary-total");
 		needsAttentionButton.setId("corpus-dashboard-summary-attention");
+		missingQuestionsButton.setId("corpus-dashboard-summary-missing-questions");
+		missingQuestionsButton.setTooltip(new Tooltip("Show Exams with uncaptured expected Questions or booklets "
+				+ "whose expected Question counts are unknown."));
 		missingContentButton.setId("corpus-dashboard-summary-missing-content");
 		missingAnswerButton.setId("corpus-dashboard-summary-missing-answer");
 		missingDescriptorButton.setId("corpus-dashboard-summary-missing-descriptors");
@@ -1703,6 +1714,12 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private List<BookletCorpusStatus> filteredBookletStatuses(ExamCorpusStatus status) {
+		if (uncapturedQuestionFilterActive) {
+
+			// Show only booklets contributing known missing Questions
+			// or requiring an expectation to be recorded.
+			return status.bookletStatuses().stream().filter(this::hasUncapturedOrUnknownQuestions).toList();
+		}
 		if (!summaryQuestionFilterActive) {
 			return status.bookletStatuses();
 		}
@@ -1712,15 +1729,21 @@ public final class CorpusDashboardPane extends VBox {
 				matchingBookletIds.add(item.question().getBooklet().getId());
 			}
 		}
-
-		// Once an Exam has survived a summary drill-down, show only its booklets that
-		// actually contribute Questions to that selected summary category.
 		return status.bookletStatuses().stream()
 				.filter(bookletStatus -> matchingBookletIds.contains(bookletStatus.booklet().getId())).toList();
 	}
 
 	private List<ExamCorpusStatus> filteredExamStatuses() {
 		List<ExamCorpusStatus> scoped = scopeFilteredExamStatuses();
+		if (uncapturedQuestionFilterActive) {
+
+			// Keep Exams with at least one relevant booklet.
+			// The headline totals remain based on structural scope,
+			// not this drill-down.
+			return scoped.stream()
+					.filter(status -> status.bookletStatuses().stream().anyMatch(this::hasUncapturedOrUnknownQuestions))
+					.toList();
+		}
 		if (!summaryQuestionFilterActive) {
 			return scoped;
 		}
@@ -1728,9 +1751,6 @@ public final class CorpusDashboardPane extends VBox {
 		for (QuestionCorpusWorkItem item : summaryFilteredQuestionWork()) {
 			matchingExamIds.add(item.question().getExam().getId());
 		}
-
-		// A Subject-level summary drill-down keeps only Exams that actually contain
-		// Questions represented by that summary count.
 		return scoped.stream().filter(status -> matchingExamIds.contains(status.exam().getId())).toList();
 	}
 
@@ -1813,6 +1833,14 @@ public final class CorpusDashboardPane extends VBox {
 		}
 		return pair + ": " + reviewed + "/" + total + " resolved; " + remaining + " remaining (" + unreviewed
 				+ " unreviewed, " + inconsistent + " inconsistent)";
+	}
+
+	private boolean hasUncapturedOrUnknownQuestions(BookletCorpusStatus status) {
+		Integer missing = status.uncapturedTopLevelQuestionCount();
+
+		// Unknown is retained for planning review, but never added
+		// to the known numeric Question shortfall.
+		return missing == null || missing.intValue() > 0;
 	}
 
 	private void inspectSelectedBookletQuestions() {
@@ -2161,20 +2189,31 @@ public final class CorpusDashboardPane extends VBox {
 		QuestionCorpusSummary summary = QuestionCorpusQueue.summarise(summaryQuestions);
 		totalQuestionsButton.setText(summary.totalQuestions() + " Questions");
 		needsAttentionButton.setText(summary.incompleteQuestions() + " Need attention");
+		List<ExamCorpusStatus> scopedExams = scopeFilteredExamStatuses();
+		int uncaptured = scopedExams.stream().mapToInt(ExamCorpusStatus::knownUncapturedTopLevelQuestionCount).sum();
+		int unknownBooklets = scopedExams.stream().mapToInt(ExamCorpusStatus::unknownQuestionExpectationBookletCount)
+				.sum();
+
+		// The numeric total includes only known shortfalls. An unknown
+		// expectation cannot be interpreted as zero outstanding Questions.
+		String missingQuestionsText = uncaptured + " Missing Questions";
+		if (unknownBooklets > 0) {
+			missingQuestionsText += " (+" + unknownBooklets + " booklet" + (unknownBooklets == 1 ? "" : "s")
+					+ " unknown)";
+		}
+		missingQuestionsButton.setText(missingQuestionsText);
+		missingQuestionsButton.setDisable(uncaptured == 0 && unknownBooklets == 0);
 		missingContentButton.setText(summary.missingQuestionContent() + " Missing question content");
 		missingAnswerButton.setText(summary.missingAnswer() + " Missing answers");
 
-		// Use the same authoritative Question audit problem as the drill-down,
-		// rather than summing overlapping booklet or Exam problem totals.
+		// Preserve the existing independent classification audit.
 		long missingDescriptors = summaryQuestions.stream().filter(
 				question -> QuestionCorpusAudit.assess(question).hasProblem(QuestionCorpusProblem.MISSING_DESCRIPTOR))
 				.count();
 		missingDescriptorButton.setText(missingDescriptors + " Missing descriptors");
 		sharedContextButton.setText(summary.unresolvedSharedContext() + " Shared Context");
-		int missingExplanations = scopeFilteredExamStatuses().stream()
+		int missingExplanations = scopedExams.stream()
 				.mapToInt(status -> status.mcqExplanationSummary().missingExplanationCount()).sum();
-
-		// MCQ explanation work remains an independent audit dimension.
 		missingMcqExplanationButton.setText(missingExplanations + " Missing MCQ explanations");
 	}
 

@@ -36,7 +36,8 @@ class CurriculumAuthoringPersistenceRegressionTest {
 	Path tempDir;
 	private SqliteCurriculumAuthoringWriter writer;
 
-	// Initialised test fixtures and coordination state (initialisation order retained).
+	// Initialised test fixtures and coordination state (initialisation order
+	// retained).
 	private final CurriculumDraftNumberingService numbering = new CurriculumDraftNumberingService();
 
 	@BeforeEach

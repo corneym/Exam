@@ -11,6 +11,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class PerformanceOperation implements AutoCloseable {
 
 	private static final PerformanceOperation DISABLED = new PerformanceOperation();
+
 	// Operation identity and recording.
 	private final long id;
 	private final String name;

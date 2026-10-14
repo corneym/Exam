@@ -40,6 +40,7 @@ public final class ExamSetupPane extends VBox {
 	private static final double EXAM_FIELD_WIDTH = 420.0;
 	private static final double ASSET_LIST_HEIGHT = 120.0;
 	private static final Insets PADDING = new Insets(12);
+
 	// Workflow configuration and collaborators.
 	private final SqliteAnswerWriter answerWriter;
 	private final SqliteExamWriter examWriter;

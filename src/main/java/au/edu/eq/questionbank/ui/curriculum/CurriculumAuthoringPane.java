@@ -60,6 +60,7 @@ public final class CurriculumAuthoringPane extends BorderPane implements AutoClo
 	private static final double WORKSPACE_DIVIDER_POSITION = 0.50;
 	private static final int PAGE_TEXT_ROWS = 18;
 	private static final int PAGE_TEXT_MIN_HEIGHT = 300;
+
 	// Authoring services and source document.
 	private final CurriculumAuthoringSession authoringSession;
 	private final CurriculumAuthoringWriter authoringWriter;

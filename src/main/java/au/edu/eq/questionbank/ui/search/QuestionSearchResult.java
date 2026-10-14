@@ -20,6 +20,7 @@ final class QuestionSearchResult {
 
 	private static final Comparator<QuestionSearchResult> SOURCE_ORDER = Comparator
 			.comparing(QuestionSearchResult::question, QuestionSourceOrder.comparator());
+
 	// Question and Search applicability.
 	private final List<CurriculumNode> currentApplicability;
 	private final Question question;

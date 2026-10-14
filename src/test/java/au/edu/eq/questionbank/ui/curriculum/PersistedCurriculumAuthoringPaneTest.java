@@ -48,6 +48,7 @@ import javafx.stage.Stage;
 class PersistedCurriculumAuthoringPaneTest {
 
 	private static final String AUTHORED_TEXT = "    **Resolve forces** using \\(F = m\\,a\\) and {components}.\n\n";
+
 	// Test fixtures and collaborators.
 	private Path curriculumRoot;
 	private SqliteDatabase database;

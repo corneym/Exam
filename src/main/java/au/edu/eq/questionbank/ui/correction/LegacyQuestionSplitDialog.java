@@ -36,6 +36,7 @@ public final class LegacyQuestionSplitDialog extends javafx.scene.control.Dialog
 	private static final int DIALOG_WIDTH = 850;
 	private static final int FORM_SPACING = 8;
 	private static final Insets FORM_PADDING = new Insets(10);
+
 	// Dialog data and collaborators.
 	private final CurriculumRepository curriculumRepository;
 	private final SharedQuestionContext existingSharedContext;

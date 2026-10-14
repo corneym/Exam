@@ -17,6 +17,7 @@ public final class ScormExportTask extends Task<ScormExportResult> {
 
 	private static final PerformanceRecorder DISABLED_RECORDER = new PerformanceRecorder(false,
 			Path.of("performance.csv"));
+
 	// Export request and execution collaborators.
 	private final ScormExportService exportService;
 	private final long parentOperationId;

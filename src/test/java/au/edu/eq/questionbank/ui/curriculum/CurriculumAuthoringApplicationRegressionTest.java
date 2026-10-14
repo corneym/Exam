@@ -67,7 +67,8 @@ class CurriculumAuthoringApplicationRegressionTest {
 	@TempDir
 	Path tempDir;
 
-	// Initialised test fixtures and coordination state (initialisation order retained).
+	// Initialised test fixtures and coordination state (initialisation order
+	// retained).
 	private final AtomicInteger exitRequests = new AtomicInteger();
 
 	@Test

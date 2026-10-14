@@ -108,6 +108,28 @@ public record BookletCorpusStatus(ExamBooklet booklet, boolean questionPdfAvaila
 	}
 
 	/**
+	 * Returns the number of expected top-level Questions that have not yet been
+	 * encountered in this booklet.
+	 *
+	 * <p>
+	 * Question parts are not counted separately. An unknown expected count remains
+	 * unknown rather than being treated as zero.
+	 *
+	 * @return uncaptured top-level Question count, or {@code null} when the
+	 *         expected count has not been recorded
+	 */
+	public Integer uncapturedTopLevelQuestionCount() {
+		Integer expected = expectedTopLevelQuestionCount();
+		if (expected == null) {
+			return null;
+		}
+
+		// A corrected expectation may be smaller than the number
+		// already captured. Never report a negative backlog.
+		return Math.max(expected.intValue() - encounteredTopLevelQuestionCount(), 0);
+	}
+
+	/**
 	 * Returns whether either booklet findings or incomplete Questions require
 	 * attention.
 	 *

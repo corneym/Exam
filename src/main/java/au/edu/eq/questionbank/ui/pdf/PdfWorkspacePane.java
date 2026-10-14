@@ -57,6 +57,7 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	private static final Color STORED_REGION_STROKE = Color.rgb(110, 110, 110, 0.75);
 	private static final double STORED_REGION_STROKE_WIDTH = 1.5;
 	private static final double STORED_REGION_TOP_MARGIN = 12.0;
+
 	// PDF sessions and document lifecycle.
 	private Path answerPdfPath;
 	private PdfSession answerPdfSession;
