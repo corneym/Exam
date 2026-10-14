@@ -2,13 +2,17 @@ package au.edu.eq.questionbank.ui.search;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -19,6 +23,8 @@ import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
+import au.edu.eq.questionbank.model.CurriculumLevel;
+import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
@@ -26,6 +32,7 @@ import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
@@ -37,19 +44,23 @@ import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
 import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
+import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Rectangle2D;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
+import javafx.scene.control.ButtonBase;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.Screen;
 import javafx.stage.Stage;
+import javafx.stage.Window;
 
 @Tag("ui")
 @ExtendWith(ApplicationExtension.class)
@@ -173,6 +184,109 @@ class QuestionSearchDialogTest {
 			dialog.close();
 			dialog.dispose();
 		});
+	}
+
+	@Test
+	void descriptorQueueRetainsQuestionsAfterFailedSaveAndCancelledClose(FxRobot robot) throws TimeoutException {
+		Subject chemistry = new Subject(1, "Chemistry");
+		SyllabusVersion syllabus = new SyllabusVersion(2, chemistry, "2025", true);
+		Unit unit = new Unit(3, syllabus, "1", "Unit one", 1);
+		Topic topic = new Topic(4, syllabus, unit, "1.1", "Topic one", 1);
+		Subtopic subtopic = new Subtopic(5, syllabus, topic, "1.1.1", "Subtopic", 1);
+		Descriptor descriptor = new Descriptor(6, syllabus, subtopic, "1.1.1.1", "Descriptor", 1);
+		InMemoryCurriculumRepository curriculum = new InMemoryCurriculumRepository(List.of(chemistry),
+				List.of(syllabus), List.of(unit, topic, subtopic, descriptor));
+		ExamProvider provider = new ExamProvider(7, "QCAA");
+		Exam exam = new Exam(8, chemistry, provider, 2025, "External Assessment");
+		ExamBooklet booklet = new ExamBooklet(10, exam, "Paper 1", new SourceDocument(11, "paper1.pdf"));
+		ExamBooklet sibling = new ExamBooklet(12, exam, "Paper 2", new SourceDocument(13, "paper2.pdf"));
+		Exam otherExam = new Exam(14, chemistry, provider, 2024, "Other Assessment");
+		ExamBooklet otherBooklet = new ExamBooklet(15, otherExam, "Paper 1", new SourceDocument(16, "other-paper.pdf"));
+		Question first = new Question(21, booklet, "1", "", 1, List.of(), subtopic, false);
+		Question second = new Question(22, booklet, "2", "", 1, List.of(), subtopic, false);
+		Question classified = new Question(23, booklet, "3", "", 1, List.of(), descriptor, false);
+		Question siblingQuestion = new Question(24, sibling, "4", "", 1, List.of(), subtopic, false);
+		Question otherExamQuestion = new Question(25, otherBooklet, "5", "", 1, List.of(), subtopic, false);
+		List<Question> questions = List.of(first, second, classified, siblingQuestion, otherExamQuestion);
+		QuestionRetrievalRepository retrievalRepository = _ -> List.of();
+		QuestionRetrievalService retrieval = new QuestionRetrievalService(retrievalRepository,
+				new CurriculumSearchNodeExpansionService(curriculum));
+		QuestionPreviewService preview = new QuestionPreviewService(new PdfStore(tempDirectory),
+				new QuestionExtractor());
+		AtomicInteger attemptedWrites = new AtomicInteger();
+		QuestionSearchDialog[] holder = new QuestionSearchDialog[1];
+		robot.interact(() -> {
+			holder[0] = new QuestionSearchDialog(stage, chemistry, curriculum, retrieval, () -> questions, preview,
+					new InMemoryQuestionOutputApplicabilityRepository(), (_, _) -> {
+						attemptedWrites.incrementAndGet();
+						throw new IllegalStateException("Simulated classification write failure");
+					}, QuestionSearchNarrowing.forMissingDescriptors(booklet));
+		});
+		QuestionSearchDialog dialog = holder[0];
+		robot.interact(dialog::show);
+		@SuppressWarnings("unchecked")
+		ListView<QuestionSearchResult> results = (ListView<QuestionSearchResult>) dialog.getDialogPane()
+				.lookup("#question-search-results");
+		@SuppressWarnings("unchecked")
+		ComboBox<CurriculumNode> descriptorBox = (ComboBox<CurriculumNode>) dialog.getDialogPane()
+				.lookup("#question-search-selected-descriptor");
+		Button save = (Button) dialog.getDialogPane().lookup("#question-search-save-classification");
+		ComboBox<?> scope = (ComboBox<?>) dialog.getDialogPane().lookup("#question-search-scope");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> onFx(robot,
+						() -> results.getItems().size() == 2 && results.getSelectionModel().getSelectedItem() != null
+								&& descriptorBox.getItems().contains(descriptor)));
+
+		// Only the two outstanding Questions in Paper 1 may appear.
+		assertTrue(onFx(robot,
+				() -> results.getItems().stream()
+						.allMatch(result -> result.question().getBooklet().getId() == booklet.getId()
+								&& result.question().getClassification().getLevel() == CurriculumLevel.SUBTOPIC)));
+		assertTrue(onFx(robot, scope::isDisable));
+		long selectedQuestionId = results.getSelectionModel().getSelectedItem().question().getId();
+		robot.interact(() -> descriptorBox.setValue(descriptor));
+		assertFalse(onFx(robot, save::isDisable));
+
+		// The real Save action invokes a failing persistence operation.
+		// A modal error is expected, so schedule the action.
+		Platform.runLater(save::fire);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> showingAlertPane(robot, "Save Question") != null);
+		DialogPane error = showingAlertPane(robot, "Save Question");
+		assertEquals("The Question classification could not be saved.", error.getHeaderText());
+		assertEquals("Simulated classification write failure", error.getContentText());
+		fireShowingAlertButton(robot, "Save Question", ButtonBar.ButtonData.OK_DONE);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> showingAlertPane(robot, "Save Question") == null);
+
+		// Failure must not shrink the queue or report successful persistence.
+		assertEquals(1, attemptedWrites.get());
+		assertFalse(dialog.consumePersistedClassificationChange());
+		assertTrue(onFx(robot,
+				() -> results.getItems().size() == 2
+						&& results.getSelectionModel().getSelectedItem().question().getId() == selectedQuestionId
+						&& descriptor.equals(descriptorBox.getValue())));
+		Button close = (Button) dialog.getDialogPane().lookupButton(ButtonType.CLOSE);
+
+		// Cancelling the unsaved-change prompt preserves the edit and queue.
+		Platform.runLater(close::fire);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> showingAlertPane(robot, "Unsaved Question") != null);
+		fireShowingAlertButton(robot, "Unsaved Question", ButtonBar.ButtonData.CANCEL_CLOSE);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> showingAlertPane(robot, "Unsaved Question") == null);
+		assertTrue(onFx(robot, dialog::isShowing));
+		assertTrue(onFx(robot, () -> results.getItems().size() == 2
+				&& results.getSelectionModel().getSelectedItem().question().getId() == selectedQuestionId));
+		assertFalse(onFx(robot, save::isDisable));
+
+		// Explicitly discarding the pending edit closes Search without
+		// persisting a Descriptor or removing any Question.
+		Platform.runLater(close::fire);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> showingAlertPane(robot, "Unsaved Question") != null);
+		fireShowingAlertButton(robot, "Unsaved Question", ButtonBar.ButtonData.OTHER);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !onFx(robot, dialog::isShowing));
+		assertFalse(dialog.consumePersistedClassificationChange());
+		assertEquals(1, attemptedWrites.get());
+		assertEquals(CurriculumLevel.SUBTOPIC, first.getClassification().getLevel());
+		assertEquals(CurriculumLevel.SUBTOPIC, second.getClassification().getLevel());
+		robot.interact(dialog::dispose);
 	}
 
 	@Test
@@ -379,6 +493,23 @@ class QuestionSearchDialogTest {
 				});
 	}
 
+	private void fireShowingAlertButton(FxRobot robot, String title, ButtonBar.ButtonData buttonData) {
+		DialogPane pane = showingAlertPane(robot, title);
+		assertNotNull(pane, "Expected showing alert: " + title);
+		ButtonType type = pane.getButtonTypes().stream().filter(candidate -> candidate.getButtonData() == buttonData)
+				.findFirst().orElseThrow();
+		ButtonBase button = (ButtonBase) pane.lookupButton(type);
+
+		// Fire the actual dialog-owned control without pointer hit-testing.
+		robot.interact(button::fire);
+	}
+
+	private boolean onFx(FxRobot robot, BooleanSupplier condition) {
+		AtomicBoolean result = new AtomicBoolean();
+		robot.interact(() -> result.set(condition.getAsBoolean()));
+		return result.get();
+	}
+
 	private Question scopeTestQuestion(Subject subject, long baseId) {
 		SyllabusVersion historicalVersion = new SyllabusVersion(baseId, subject, "2019", false);
 		Unit unit = new Unit(baseId + 1, historicalVersion, "1", "Historical Unit", 1);
@@ -393,5 +524,22 @@ class QuestionSearchDialogTest {
 		// Metadata-only Question: preview rendering is irrelevant
 		// to testing the Search scope and contextual constraints.
 		return new Question(baseId + 8, booklet, "Q1", "Test Question", 1, List.of(), descriptor, false);
+	}
+
+	private DialogPane showingAlertPane(FxRobot robot, String title) {
+		AtomicReference<DialogPane> result = new AtomicReference<>();
+		robot.interact(() -> {
+			for (Window window : Window.getWindows()) {
+				if (!(window instanceof Stage candidate) || !candidate.isShowing()
+						|| !title.equals(candidate.getTitle()) || candidate.getScene() == null) {
+					continue;
+				}
+				if (candidate.getScene().getRoot() instanceof DialogPane pane) {
+					result.set(pane);
+					return;
+				}
+			}
+		});
+		return result.get();
 	}
 }
