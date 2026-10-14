@@ -135,10 +135,8 @@ public final class SharedContextCorrectionDialog extends Dialog<SharedContextCor
 	 * Correction operation selected by the user.
 	 */
 	public enum Mode {
-
 		/** Capture a new Shared Context from the source PDF. */
 		CAPTURE_NEW,
-
 		/** Reuse an existing Shared Context from the booklet. */
 		REUSE_EXISTING
 	}
