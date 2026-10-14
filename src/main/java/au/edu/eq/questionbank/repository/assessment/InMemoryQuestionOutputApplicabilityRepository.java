@@ -2,7 +2,9 @@ package au.edu.eq.questionbank.repository.assessment;
 
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 import au.edu.eq.questionbank.model.CurriculumLevel;
@@ -35,6 +37,20 @@ public final class InMemoryQuestionOutputApplicabilityRepository implements Ques
 
 		// Do not expose the mutable set that owns repository state.
 		return Set.copyOf(excludedNodeIds);
+	}
+
+	@Override
+	public Map<Long, Set<Long>> findExcludedCurrentNodeIdsForQuestions(List<Question> questions) {
+		Objects.requireNonNull(questions, "questions");
+		Map<Long, Set<Long>> matches = new HashMap<>();
+		for (Question question : questions) {
+			validateQuestion(question);
+			Set<Long> excluded = excludedNodeIdsByQuestionId.get(question.getId());
+			if (excluded != null && !excluded.isEmpty()) {
+				matches.put(question.getId(), Set.copyOf(excluded));
+			}
+		}
+		return Map.copyOf(matches);
 	}
 
 	@Override

@@ -5,7 +5,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import org.junit.jupiter.api.Test;
@@ -26,6 +28,34 @@ class SqliteQuestionOutputApplicabilityRepositoryTest {
 
 	@TempDir
 	Path tempDirectory;
+
+	@Test
+	void bulkReadsExclusionsAcrossMultipleSqlBatches() throws Exception {
+		Fixture fixture = createFixture("bulk-output-exclusions.db");
+		SqliteQuestionOutputApplicabilityRepository repository = new SqliteQuestionOutputApplicabilityRepository(
+				fixture.database());
+		Question second = new SqliteQuestionRepository(fixture.database()).save(fixture.question().getBooklet(), "Q8",
+				"", 3, List.of(new QuestionRegion(fixture.question().getBooklet(), 2, 0.10, 0.40, 0.60, 0.15)),
+				fixture.historicalDescriptor(), false);
+		repository.setExcluded(fixture.question(), fixture.firstCurrentDescriptor(), true);
+		repository.setExcluded(second, fixture.secondCurrentDescriptor(), true);
+		List<Question> requested = new ArrayList<>();
+
+		// These metadata-only Questions are not persisted.
+		// They exercise SQL parameter batching without needing
+		// hundreds of additional database insertions.
+		for (int index = 0; index < 401; index++) {
+			requested.add(new Question(100000L + index, fixture.question().getBooklet(), "Synthetic" + index, "", 1,
+					List.of(), fixture.historicalDescriptor(), false));
+		}
+		requested.add(fixture.question());
+		requested.add(second);
+		requested.add(fixture.question());
+		Map<Long, Set<Long>> actual = repository.findExcludedCurrentNodeIdsForQuestions(requested);
+		assertEquals(Map.of(fixture.question().getId(), Set.of(fixture.firstCurrentDescriptor().getId()),
+				second.getId(), Set.of(fixture.secondCurrentDescriptor().getId())), actual);
+		assertEquals(Map.of(), repository.findExcludedCurrentNodeIdsForQuestions(List.of()));
+	}
 
 	@Test
 	void persistsAndRemovesIndividualOutputExclusions() throws Exception {
