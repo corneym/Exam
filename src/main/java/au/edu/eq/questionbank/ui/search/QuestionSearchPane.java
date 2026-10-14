@@ -268,7 +268,6 @@ public class QuestionSearchPane extends BorderPane {
 		configureControls();
 		configureHandlers();
 		setCenter(createWorkspacePane());
-
 		if (searchNarrowing.isDescriptorAssignmentQueue()) {
 
 			// Descriptor assignment must include historical Questions that
@@ -2526,13 +2525,10 @@ public class QuestionSearchPane extends BorderPane {
 
 	private void startAutomaticSearch(Function<PerformanceOperation, List<QuestionSearchResult>> retrieval,
 			boolean clearVisibleResults) {
-
 		cancelActiveSearch();
-
 		if (clearVisibleResults) {
 			clearResults();
 		}
-
 		long generation = searchGeneration;
 
 		// Capture Search-local filters on the JavaFX thread.
@@ -2546,18 +2542,14 @@ public class QuestionSearchPane extends BorderPane {
 				.getValue() == QuestionSearchScope.CURRENT_SYLLABUS
 						? Objects.requireNonNullElse(inclusionFilterBox.getValue(), QuestionSearchInclusionFilter.ALL)
 						: QuestionSearchInclusionFilter.ALL;
-
 		statusLabel.setText("Searching...");
-
 		PerformanceOperation refreshOperation = performanceRecorder.start("search.refresh");
 		activeSearchOperation = refreshOperation;
-
 		Task<List<QuestionSearchResult>> task = new BackgroundTask<>(() -> {
 			try (PerformanceOperation retrievalOperation = performanceRecorder.start("search.retrieval",
 					refreshOperation.id())) {
 				try {
 					List<QuestionSearchResult> sourceResults;
-
 					try (PerformanceOperation sourceOperation = performanceRecorder.start("search.source",
 							retrievalOperation.id())) {
 						try {
@@ -2568,27 +2560,23 @@ public class QuestionSearchPane extends BorderPane {
 							throw failure;
 						}
 					}
-
 					List<QuestionSearchResult> filteredResults;
-
 					try (PerformanceOperation filterOperation = performanceRecorder.start("search.filter",
 							retrievalOperation.id())) {
 						try {
+
 							// This method combines immutable Dashboard
 							// narrowing, metadata filtering and inclusion.
 							filteredResults = filterSearchResults(sourceResults, metadataSnapshot, inclusionSnapshot,
 									filterOperation.id());
-
 							filterOperation.resultCount(filteredResults.size());
 						} catch (RuntimeException | Error failure) {
 							filterOperation.failed();
 							throw failure;
 						}
 					}
-
 					retrievalOperation.resultCount(filteredResults.size());
 					return filteredResults;
-
 				} catch (RuntimeException | Error failure) {
 					retrievalOperation.failed();
 					refreshOperation.failed();
@@ -2596,19 +2584,15 @@ public class QuestionSearchPane extends BorderPane {
 				}
 			}
 		});
-
 		activeSearchTask = task;
-
 		task.setOnSucceeded(_ -> completeSearch(task, generation));
 		task.setOnFailed(_ -> failSearch(task, generation));
-
 		task.setOnCancelled(_ -> {
 			if (generation != searchGeneration || task != activeSearchTask) {
 				return;
 			}
 			cancelActiveSearch();
 		});
-
 		try {
 			startBackgroundTask("question-search", task);
 		} catch (RuntimeException | Error failure) {
@@ -2902,7 +2886,6 @@ public class QuestionSearchPane extends BorderPane {
 		// Keep result navigation available so the containing Dialog can
 		// resolve a pending classification edit before changing selection.
 		resultsList.setDisable(false);
-
 		if (dirty) {
 			searchScopeBox.setDisable(true);
 			unitBox.setDisable(true);
@@ -2914,7 +2897,6 @@ public class QuestionSearchPane extends BorderPane {
 
 		// Descriptor assignment permanently uses All Questions scope.
 		searchScopeBox.setDisable(searchNarrowing.isDescriptorAssignmentQueue());
-
 		if (searchScopeBox.getValue() == QuestionSearchScope.ALL_QUESTIONS) {
 			unitBox.setDisable(true);
 			topicBox.setDisable(true);
@@ -2922,7 +2904,6 @@ public class QuestionSearchPane extends BorderPane {
 			descriptorBox.setDisable(true);
 			return;
 		}
-
 		restoreCurriculumControlState();
 	}
 
