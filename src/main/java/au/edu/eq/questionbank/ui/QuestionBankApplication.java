@@ -3083,21 +3083,17 @@ public class QuestionBankApplication extends Application {
 				throw failure;
 			}
 		}
-		List<ExamCorpusStatus> examStatuses;
-		try (PerformanceOperation operation = performanceRecorder.start("dashboard.audit", parentOperationId)) {
-			try {
-				examStatuses = auditService.assessSubject(dashboardSubject);
-				operation.resultCount(examStatuses.size());
-			} catch (SQLException | RuntimeException | Error failure) {
-				operation.failed();
-				throw failure;
-			}
-		}
+
+		// Acquire one new, authoritative Question generation
+		// for this Dashboard refresh.
+		//
+		// This operation remains inside the existing Dashboard
+		// background Task; it never runs on the JavaFX thread.
 		List<Question> questions;
 		try (PerformanceOperation operation = performanceRecorder.start("dashboard.question.findAll",
 				parentOperationId)) {
 			try {
-				questions = questionRepository.findAll();
+				questions = List.copyOf(questionRepository.findAll());
 				operation.resultCount(questions.size());
 			} catch (RuntimeException | Error failure) {
 				operation.failed();
@@ -3105,9 +3101,22 @@ public class QuestionBankApplication extends Application {
 			}
 		}
 
-		// Preserve the authoritative Dashboard snapshot contents.
-		// Read all persisted review confirmations for this Subject in one
-		// repository operation on the existing background worker.
+		// Audit and display now consume the same Question
+		// objects from this one refresh generation.
+		List<ExamCorpusStatus> examStatuses;
+		try (PerformanceOperation operation = performanceRecorder.start("dashboard.audit", parentOperationId)) {
+			try {
+				examStatuses = auditService.assessSubject(dashboardSubject, questions);
+				operation.resultCount(examStatuses.size());
+			} catch (SQLException | RuntimeException | Error failure) {
+				operation.failed();
+				throw failure;
+			}
+		}
+
+		// Review confirmations are persisted independently
+		// of the Question snapshot. Preserve the existing
+		// Subject-scoped repository lookup.
 		Set<Long> reviewedBookletIds = bookletApplicabilityReviewRepository
 				.findReviewedBookletIdsForSubject(dashboardSubject.getId());
 		return new CorpusDashboardSnapshot(examStatuses, questions, curriculumState.mappingCoverages(),

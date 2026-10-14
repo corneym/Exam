@@ -63,6 +63,9 @@ public final class ExamCorpusAuditService {
 	 * Loads calculated audit state for every persisted Exam belonging to the
 	 * supplied Subject.
 	 *
+	 * This compatibility entry point continues to acquire its own fresh Question
+	 * snapshot.
+	 *
 	 * @param subject authoritative Working Subject
 	 * @return immutable Exam audit snapshots
 	 * @throws SQLException if persistence cannot be read
@@ -71,12 +74,45 @@ public final class ExamCorpusAuditService {
 		if (subject == null) {
 			throw new NullPointerException("subject");
 		}
+		return assessSubject(subject, questionRepository.findAll());
+	}
 
-		// Load the Subject's Question corpus once and reuse it for
-		// all of its Exams.
-		List<Question> subjectQuestions = questionRepository.findAll().stream()
+	/**
+	 * Calculates the complete persisted Exam audit using a caller-owned Question
+	 * snapshot.
+	 *
+	 * The Question list must have been freshly loaded for the operation requesting
+	 * this audit. This method does not fetch Questions or retain the supplied
+	 * snapshot.
+	 *
+	 * Exams, booklets, AnswerFile assignments and expected asset counts remain
+	 * loaded from authoritative persistence. Exams with no Questions remain
+	 * visible.
+	 *
+	 * @param subject   authoritative Working Subject
+	 * @param questions complete Question snapshot, possibly containing other
+	 *                  Subjects
+	 * @return immutable Exam audit snapshots
+	 * @throws SQLException         if persistence cannot be read
+	 * @throws NullPointerException if an argument is null
+	 */
+	public List<ExamCorpusStatus> assessSubject(Subject subject, List<Question> questions) throws SQLException {
+		if (subject == null) {
+			throw new NullPointerException("subject");
+		}
+		if (questions == null) {
+			throw new NullPointerException("questions");
+		}
+
+		// Subject filtering belongs to the audit boundary.
+		// A caller may share its complete repository snapshot
+		// without first constructing a second Subject list.
+		List<Question> subjectQuestions = questions.stream()
 				.filter(question -> question.getExam().getSubject().getId() == subject.getId()).toList();
 		List<ExamCorpusStatus> statuses = new ArrayList<>();
+
+		// Iterate persisted Exams, not Exams inferred from
+		// Questions. Zero-Question Exams must remain visible.
 		for (Exam exam : examWriter.findExamsForSubject(subject)) {
 			statuses.add(assessExam(exam, subjectQuestions));
 		}

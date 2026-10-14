@@ -226,6 +226,11 @@ public final class SqliteSharedContextCorrectionService {
 	 */
 	public record CorrectionResult(SharedQuestionContext context, List<Long> affectedQuestionIds) {
 
+		/**
+		 * Validates the result and defensively copies affected Question IDs.
+		 *
+		 * @throws NullPointerException if a component is null
+		 */
 		public CorrectionResult {
 			Objects.requireNonNull(context, "context");
 			affectedQuestionIds = List.copyOf(affectedQuestionIds);
@@ -242,6 +247,11 @@ public final class SqliteSharedContextCorrectionService {
 	public record Review(SourceQuestion sourceQuestion, List<Question> parts,
 			List<SharedQuestionContext> availableContexts) {
 
+		/**
+		 * Validates the source and defensively copies the supplied lists.
+		 *
+		 * @throws NullPointerException if a component is null
+		 */
 		public Review {
 			Objects.requireNonNull(sourceQuestion, "sourceQuestion");
 			parts = List.copyOf(parts);
