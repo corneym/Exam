@@ -429,6 +429,58 @@ public class QuestionSearchPaneTest {
 	}
 
 	@Test
+	public void catalogueRefreshDoesNotSupersedePostEditSelection(FxRobot robot) throws TimeoutException {
+		AtomicReference<List<Question>> source = new AtomicReference<>(List.of(historicalQuestion));
+		AtomicInteger searchReads = new AtomicInteger();
+		Supplier<List<Question>> supplier = () -> {
+			if ("question-search".equals(Thread.currentThread().getName())) {
+				searchReads.incrementAndGet();
+			}
+			return source.get();
+		};
+		QuestionSearchPane pane = replaceSearchPane(robot, curriculumRepository, retrievalService, supplier);
+		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
+		ComboBox<?> provider = robot.lookup("#question-search-provider-filter").queryComboBox();
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		Label searchStatus = robot.lookup("#question-search-status").queryAs(Label.class);
+		Label catalogueStatus = robot.lookup("#question-search-metadata-filter-status").queryAs(Label.class);
+		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
+
+		// Establish a completed Search and initial catalogue
+		// before exercising the post-edit refresh.
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> results.getItems().size() == 1 && provider.getItems().size() == 2
+						&& catalogueStatus.getText().isEmpty() && "1 question found.".equals(searchStatus.getText()));
+		WaitForAsyncUtils.waitForFxEvents();
+		robot.interact(() -> results.getSelectionModel().selectFirst());
+		Question updated = new Question(historicalQuestion.getId(), historicalQuestion.getBooklet(),
+				historicalQuestion.getQuestionCode(), historicalQuestion.getQuestionText(),
+				historicalQuestion.getMarks(), historicalQuestion.getRegions(), currentDescriptor, false);
+		int searchesBeforeEdit = searchReads.get();
+		robot.interact(() -> {
+			source.set(List.of(updated));
+
+			// A persisted classification change requires one
+			// Search refresh and one catalogue reload.
+			pane.refreshAfterEdit(historicalQuestion.getId());
+		});
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> {
+			Question selected = pane.getSelectedQuestion();
+			return selected != null && selected.getId() == historicalQuestion.getId()
+					&& selected.getClassification().equals(currentDescriptor) && catalogueStatus.getText().isEmpty()
+					&& "1 question found.".equals(searchStatus.getText());
+		});
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// The catalogue reload must not silently launch
+		// a second Search after the edited row is published.
+		assertEquals(searchesBeforeEdit + 1, searchReads.get(),
+				"An unchanged filter catalogue must not " + "trigger another Search");
+		assertEquals(historicalQuestion.getId(), pane.getSelectedQuestion().getId());
+		assertEquals(currentDescriptor, pane.getSelectedQuestion().getClassification());
+	}
+
+	@Test
 	public void classificationControlsUseAlignedRowsAndSaveBelowDescriptor(FxRobot robot) throws TimeoutException {
 		Question subtopicQuestion = new Question(8100, historicalQuestion.getBooklet(), "23a",
 				"Question requiring Descriptor refinement.", 2, List.of(), currentSubtopic, false);

@@ -12,6 +12,7 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.function.ToLongFunction;
 
 import au.edu.eq.questionbank.ApplicationPaths;
 import au.edu.eq.questionbank.diagnostics.PerformanceOperation;
@@ -270,6 +271,16 @@ public class QuestionSearchPane extends BorderPane {
 		startFilterCatalogueLoad();
 	}
 
+	private static <T> boolean samePersistedSelection(T first, T second, ToLongFunction<? super T> idExtractor) {
+		if (first == null || second == null) {
+			return first == second;
+		}
+
+		// The repository may reconstruct objects with the
+		// same persistent identity between catalogue loads.
+		return idExtractor.applyAsLong(first) == idExtractor.applyAsLong(second);
+	}
+
 	ReadOnlyBooleanProperty classificationDirtyProperty() {
 
 		// The containing Dialog uses this read-only state to alter action-button
@@ -494,6 +505,14 @@ public class QuestionSearchPane extends BorderPane {
 				optionValue(providerFilterBox), optionValue(yearFromFilterBox), optionValue(yearToFilterBox),
 				optionValue(examFilterBox), optionValue(bookletFilterBox), optionValue(responseTypeFilterBox),
 				optionValue(originalSyllabusFilterBox));
+
+		// Catalogue reloads can reconstruct metadata objects,
+		// even when the selected persistent identities are
+		// unchanged. Do not start a redundant Search generation.
+		if (sameMetadataConstraints(metadataFilter, filter)) {
+			metadataFilter = filter;
+			return;
+		}
 		setMetadataFilter(filter);
 	}
 
@@ -2288,6 +2307,16 @@ public class QuestionSearchPane extends BorderPane {
 				throw failure;
 			}
 		}
+	}
+
+	private boolean sameMetadataConstraints(QuestionSearchMetadataFilter first, QuestionSearchMetadataFilter second) {
+		return first.workingSubject().equals(second.workingSubject())
+				&& Objects.equals(first.fromYear(), second.fromYear())
+				&& Objects.equals(first.toYear(), second.toYear()) && first.responseType() == second.responseType()
+				&& samePersistedSelection(first.provider(), second.provider(), ExamProvider::getId)
+				&& samePersistedSelection(first.exam(), second.exam(), Exam::getId)
+				&& samePersistedSelection(first.booklet(), second.booklet(), ExamBooklet::getId)
+				&& samePersistedSelection(first.originalSyllabus(), second.originalSyllabus(), SyllabusVersion::getId);
 	}
 
 	private void setCurriculumControlsDisabled(boolean disabled) {
