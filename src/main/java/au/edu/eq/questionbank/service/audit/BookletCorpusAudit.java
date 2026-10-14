@@ -76,9 +76,9 @@ public final class BookletCorpusAudit {
 			findings.add(BookletCorpusFinding.EXPECTED_TOP_LEVEL_QUESTION_COUNT_MISMATCH);
 		}
 
-		// Descriptor coverage is descriptive classification state. A Subtopic-only
-		// classification remains a valid Question but is reported for later curriculum
-		// mapping work.
+		// Preserve the booklet's explicit missing-Descriptor count alongside
+		// the Question audit, where each unclassified Question contributes once
+		// to the distinct-Question incomplete count.
 		return new BookletCorpusStatus(booklet, questionPdfAvailable, assignedAnswerFile, encounteredTopLevelQuestions,
 				bookletQuestions.size(), questionsWithoutDescriptor, questionSummary, explanationCoverage, findings);
 	}

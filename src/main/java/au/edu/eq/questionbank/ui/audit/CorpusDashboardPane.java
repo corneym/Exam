@@ -1641,11 +1641,27 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private int examWorkCount(ExamCorpusStatus status) {
+		int workCount = status.questionSummary().incompleteQuestions();
+		long examId = status.exam().getId();
 
-		// Exam Work now includes both ordinary incomplete Questions and the separate
-		// explanation requirement declared by explanation-capable AnswerFiles.
-		return status.questionSummary().incompleteQuestions()
-				+ status.mcqExplanationSummary().missingExplanationCount();
+		for (Question question : questions) {
+			if (question.getExam().getId() != examId) {
+				continue;
+			}
+
+			if (!isMissingMcqExplanation(question)) {
+				continue;
+			}
+
+			// A Question with both an ordinary corpus problem and a
+			// missing explanation is already included in incompleteQuestions.
+			// Add only explanation work that is not counted elsewhere.
+			if (QuestionCorpusAudit.assess(question).isComplete()) {
+				workCount++;
+			}
+		}
+
+		return workCount;
 	}
 
 	private List<BookletCorpusStatus> filteredBookletStatuses(ExamCorpusStatus status) {
@@ -1913,6 +1929,7 @@ public final class CorpusDashboardPane extends VBox {
 		case MISSING_ANSWER -> "Missing answer";
 		case UNRESOLVED_SHARED_CONTEXT -> "Shared Context";
 		case UNKNOWN_RESPONSE_TYPE -> "Unknown type";
+		case MISSING_DESCRIPTOR -> "Missing descriptor";
 		};
 	}
 
