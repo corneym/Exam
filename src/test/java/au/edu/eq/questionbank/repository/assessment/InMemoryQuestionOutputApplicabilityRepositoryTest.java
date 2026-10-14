@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -28,6 +29,21 @@ class InMemoryQuestionOutputApplicabilityRepositoryTest {
 	private Descriptor secondDescriptor;
 	private Question question;
 	private InMemoryQuestionOutputApplicabilityRepository repository;
+
+	@Test
+	void bulkLookupPreservesIndependentQuestionExclusions() {
+		Question second = new Question(question.getId() + 1, question.getBooklet(), "Q2", "", 2, List.of(),
+				firstDescriptor, false);
+		repository.setExcluded(question, firstDescriptor, true);
+		repository.setExcluded(second, secondDescriptor, true);
+		assertEquals(
+				Map.of(question.getId(), Set.of(firstDescriptor.getId()), second.getId(),
+						Set.of(secondDescriptor.getId())),
+				repository.findExcludedCurrentNodeIdsForQuestions(List.of(question, second, question)));
+		repository.setExcluded(question, firstDescriptor, false);
+		assertEquals(Map.of(second.getId(), Set.of(secondDescriptor.getId())),
+				repository.findExcludedCurrentNodeIdsForQuestions(List.of(question, second)));
+	}
 
 	@Test
 	void defaultsToIncludedAndTogglesIndividualExclusions() {

@@ -1,5 +1,9 @@
 package au.edu.eq.questionbank.repository.assessment;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 import au.edu.eq.questionbank.model.CurriculumNode;
@@ -27,6 +31,38 @@ public interface QuestionOutputApplicabilityRepository {
 	 * @throws IllegalStateException    if persisted exclusions cannot be read
 	 */
 	Set<Long> findExcludedCurrentNodeIds(Question question);
+
+	/**
+	 * Reads explicit output exclusions for several Questions.
+	 *
+	 * Only Questions having exclusions are present in the result map. An absent
+	 * entry means no explicit exclusions are recorded.
+	 *
+	 * Implementations should override this method for efficient bulk retrieval. The
+	 * default preserves compatibility with existing lightweight repositories and
+	 * test fixtures.
+	 *
+	 * @param questions Questions whose exclusions are required
+	 * @return immutable Question ID to excluded current-node IDs map
+	 * @throws NullPointerException     if the collection contains null
+	 * @throws IllegalArgumentException if a Question ID is invalid
+	 */
+	default Map<Long, Set<Long>> findExcludedCurrentNodeIdsForQuestions(List<Question> questions) {
+		Objects.requireNonNull(questions, "questions");
+		Map<Long, Set<Long>> exclusions = new HashMap<>();
+		for (Question question : questions) {
+			Objects.requireNonNull(question, "questions contains null");
+			if (question.getId() < 1) {
+				throw new IllegalArgumentException("Question ID must be positive");
+			}
+			Set<Long> excluded = Objects.requireNonNull(findExcludedCurrentNodeIds(question),
+					"Repository returned null exclusions");
+			if (!excluded.isEmpty()) {
+				exclusions.put(question.getId(), Set.copyOf(excluded));
+			}
+		}
+		return Map.copyOf(exclusions);
+	}
 
 	/**
 	 * Adds or removes one explicit output exclusion.

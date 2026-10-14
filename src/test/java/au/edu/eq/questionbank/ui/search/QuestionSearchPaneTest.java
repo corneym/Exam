@@ -95,6 +95,7 @@ import javafx.scene.control.ScrollBar;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.TextArea;
+import javafx.scene.control.TitledPane;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.GridPane;
@@ -425,6 +426,58 @@ public class QuestionSearchPaneTest {
 		System.out.printf("Burst sampled heap high-water: %.2f MiB%n",
 				Math.max(previewProbe.sampledHeapBytes(), applicabilityProbe.sampledHeapBytes()) / 1048576.0);
 		System.out.println("Burst performance CSV: " + performanceCsv);
+	}
+
+	@Test
+	public void catalogueRefreshDoesNotSupersedePostEditSelection(FxRobot robot) throws TimeoutException {
+		AtomicReference<List<Question>> source = new AtomicReference<>(List.of(historicalQuestion));
+		AtomicInteger searchReads = new AtomicInteger();
+		Supplier<List<Question>> supplier = () -> {
+			if ("question-search".equals(Thread.currentThread().getName())) {
+				searchReads.incrementAndGet();
+			}
+			return source.get();
+		};
+		QuestionSearchPane pane = replaceSearchPane(robot, curriculumRepository, retrievalService, supplier);
+		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
+		ComboBox<?> provider = robot.lookup("#question-search-provider-filter").queryComboBox();
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		Label searchStatus = robot.lookup("#question-search-status").queryAs(Label.class);
+		Label catalogueStatus = robot.lookup("#question-search-metadata-filter-status").queryAs(Label.class);
+		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
+
+		// Establish a completed Search and initial catalogue
+		// before exercising the post-edit refresh.
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> results.getItems().size() == 1 && provider.getItems().size() == 2
+						&& catalogueStatus.getText().isEmpty() && "1 question found.".equals(searchStatus.getText()));
+		WaitForAsyncUtils.waitForFxEvents();
+		robot.interact(() -> results.getSelectionModel().selectFirst());
+		Question updated = new Question(historicalQuestion.getId(), historicalQuestion.getBooklet(),
+				historicalQuestion.getQuestionCode(), historicalQuestion.getQuestionText(),
+				historicalQuestion.getMarks(), historicalQuestion.getRegions(), currentDescriptor, false);
+		int searchesBeforeEdit = searchReads.get();
+		robot.interact(() -> {
+			source.set(List.of(updated));
+
+			// A persisted classification change requires one
+			// Search refresh and one catalogue reload.
+			pane.refreshAfterEdit(historicalQuestion.getId());
+		});
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> {
+			Question selected = pane.getSelectedQuestion();
+			return selected != null && selected.getId() == historicalQuestion.getId()
+					&& selected.getClassification().equals(currentDescriptor) && catalogueStatus.getText().isEmpty()
+					&& "1 question found.".equals(searchStatus.getText());
+		});
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// The catalogue reload must not silently launch
+		// a second Search after the edited row is published.
+		assertEquals(searchesBeforeEdit + 1, searchReads.get(),
+				"An unchanged filter catalogue must not " + "trigger another Search");
+		assertEquals(historicalQuestion.getId(), pane.getSelectedQuestion().getId());
+		assertEquals(currentDescriptor, pane.getSelectedQuestion().getClassification());
 	}
 
 	@Test
@@ -1108,6 +1161,205 @@ public class QuestionSearchPaneTest {
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
 				&& results.getItems().getFirst().scope() == QuestionSearchScope.ALL_QUESTIONS);
 		assertEquals(secondQuestion.getId(), results.getItems().getFirst().question().getId());
+	}
+
+	@Test
+	public void metadataControlsCascadeProviderExamAndBooklet(FxRobot robot) throws TimeoutException {
+		ExamProvider neap = new ExamProvider(101, "NEAP");
+		Exam neapExam = new Exam(102, chemistry, neap, 2022, "Practice Exam");
+		ExamBooklet neapBooklet = new ExamBooklet(103, neapExam, "Practice Questions",
+				new SourceDocument(104, "neap.pdf"));
+		Question neapQuestion = new Question(105, neapBooklet, "Q5", "", 2, List.of(), currentDescriptor, false, null,
+				null, QuestionResponseType.WRITTEN_RESPONSE);
+		Exam originalExam = historicalQuestion.getExam();
+		ExamBooklet secondBooklet = new ExamBooklet(106, originalExam, "Paper 2",
+				new SourceDocument(107, "paper2.pdf"));
+		Question secondQuestion = new Question(108, secondBooklet, "Q6", "", 1, List.of(), historicalDescriptor, false,
+				null, null, QuestionResponseType.MULTIPLE_CHOICE);
+		List<Question> sourceQuestions = List.of(historicalQuestion, neapQuestion, secondQuestion);
+		QuestionRetrievalRepository repository = nodes -> {
+			if (!nodes.contains(currentDescriptor)) {
+				return List.of();
+			}
+			return sourceQuestions.stream().map(question -> new QuestionApplicabilityMatch(question, currentDescriptor))
+					.toList();
+		};
+		QuestionRetrievalService service = new QuestionRetrievalService(repository,
+				new CurriculumSearchNodeExpansionService(curriculumRepository));
+		replaceSearchPane(robot, curriculumRepository, service, () -> sourceQuestions);
+		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
+		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
+		TitledPane moreFilters = robot.lookup("#question-search-more-filters").queryAs(TitledPane.class);
+		robot.interact(() -> moreFilters.setExpanded(true));
+		ComboBox<?> provider = robot.lookup("#question-search-provider-filter").queryComboBox();
+		ComboBox<?> exam = robot.lookup("#question-search-exam-filter").queryComboBox();
+		ComboBox<?> booklet = robot.lookup("#question-search-booklet-filter").queryComboBox();
+		ComboBox<?> fromYear = robot.lookup("#question-search-year-from-filter").queryComboBox();
+		ComboBox<?> toYear = robot.lookup("#question-search-year-to-filter").queryComboBox();
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		Label status = robot.lookup("#question-search-status").queryAs(Label.class);
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> provider.getItems().size() == 3 && results.getItems().size() == 3);
+		selectMetadataFilter(robot, provider, "QCAA");
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+		assertFalse(exam.getItems().stream().anyMatch(item -> item.toString().contains("NEAP")));
+		selectMetadataFilter(robot, exam, "QCAA 2020 — External Assessment");
+		selectMetadataFilter(robot, booklet, "QCAA 2020 — External Assessment — Paper 2");
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& results.getItems().getFirst().question().getId() == secondQuestion.getId());
+
+		// Switching provider invalidates the selected Exam
+		// and Booklet rather than leaving contradictory filters.
+		selectMetadataFilter(robot, provider, "NEAP");
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& results.getItems().getFirst().question().getId() == neapQuestion.getId());
+		assertEquals("All exams", exam.getValue().toString());
+		assertEquals("All booklets", booklet.getValue().toString());
+		selectMetadataFilter(robot, fromYear, "2020");
+		selectMetadataFilter(robot, toYear, "2020");
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> results.getItems().isEmpty() && "No questions found.".equals(status.getText()));
+
+		// Moving From beyond To resets the incompatible To
+		// boundary and restores the 2022 Question.
+		selectMetadataFilter(robot, fromYear, "2022");
+		assertEquals("Any year", toYear.getValue().toString());
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& results.getItems().getFirst().question().getId() == neapQuestion.getId());
+	}
+
+	@Test
+	public void metadataControlsFilterOriginalSyllabusAndResponseType(FxRobot robot) throws TimeoutException {
+		Exam exam = historicalQuestion.getExam();
+		ExamBooklet currentBooklet = new ExamBooklet(120, exam, "Current Booklet",
+				new SourceDocument(121, "current.pdf"));
+		Question written = new Question(122, currentBooklet, "Q7", "", 2, List.of(), currentDescriptor, false, null,
+				null, QuestionResponseType.WRITTEN_RESPONSE);
+		replaceSearchPane(robot, curriculumRepository, retrievalService, () -> List.of(historicalQuestion, written));
+		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
+		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
+		TitledPane moreFilters = robot.lookup("#question-search-more-filters").queryAs(TitledPane.class);
+		robot.interact(() -> moreFilters.setExpanded(true));
+		ComboBox<?> response = robot.lookup("#question-search-response-type-filter").queryComboBox();
+		ComboBox<?> syllabus = robot.lookup("#question-search-original-syllabus-filter").queryComboBox();
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> syllabus.getItems().size() == 3 && results.getItems().size() == 2);
+		assertFalse(response.getItems().stream().anyMatch(item -> "Unknown".equals(item.toString())));
+		selectMetadataFilter(robot, response, "Written Response");
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& results.getItems().getFirst().question().getId() == written.getId());
+		selectMetadataFilter(robot, syllabus, "2019");
+		Label status = robot.lookup("#question-search-status").queryAs(Label.class);
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> results.getItems().isEmpty() && "No questions found.".equals(status.getText()));
+
+		// All response types must include UNKNOWN Questions.
+		selectMetadataFilter(robot, response, "All response types");
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& results.getItems().getFirst().question().getId() == historicalQuestion.getId());
+		Button clear = robot.lookup("#question-search-clear-metadata-filters").queryButton();
+		robot.interact(clear::fire);
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+		assertEquals("All original syllabuses", syllabus.getValue().toString());
+		assertEquals("All response types", response.getValue().toString());
+	}
+
+	@Test
+	public void metadataFiltersApplyInBothSearchScopes(FxRobot robot) throws TimeoutException {
+		ExamProvider neap = new ExamProvider(70, "NEAP");
+		Exam secondExam = new Exam(71, chemistry, neap, 2022, "Practice Exam");
+		ExamBooklet secondBooklet = new ExamBooklet(72, secondExam, "Question Booklet",
+				new SourceDocument(73, "neap-2022.pdf"));
+		Question secondQuestion = new Question(74, secondBooklet, "Q5", "Second Question", 2, List.of(),
+				historicalDescriptor, false, null, null, QuestionResponseType.WRITTEN_RESPONSE);
+		QuestionRetrievalRepository repository = nodes -> {
+			if (!nodes.contains(currentDescriptor)) {
+				return List.of();
+			}
+			return List.of(new QuestionApplicabilityMatch(historicalQuestion, currentDescriptor),
+					new QuestionApplicabilityMatch(secondQuestion, currentDescriptor));
+		};
+		QuestionRetrievalService service = new QuestionRetrievalService(repository,
+				new CurriculumSearchNodeExpansionService(curriculumRepository));
+		QuestionSearchPane pane = replaceSearchPane(robot, curriculumRepository, service,
+				() -> List.of(historicalQuestion, secondQuestion));
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
+
+		// Both Questions are applicable to the current syllabus.
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+		QuestionSearchMetadataFilter qcaaOnly = new QuestionSearchMetadataFilter(chemistry,
+				historicalQuestion.getExam().getProvider(), 2020, 2020, historicalQuestion.getExam(),
+				historicalQuestion.getBooklet(), null, historicalDescriptor.getSyllabusVersion());
+		robot.interact(() -> pane.setMetadataFilter(qcaaOnly));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& results.getItems().getFirst().question().getId() == historicalQuestion.getId());
+
+		// The same metadata constraints apply to All Questions.
+		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& results.getItems().getFirst().scope() == QuestionSearchScope.ALL_QUESTIONS);
+
+		// A new immutable filter selects the other provider,
+		// year, response type and source Exam.
+		QuestionSearchMetadataFilter neapWritten = new QuestionSearchMetadataFilter(chemistry, neap, 2022, 2022,
+				secondExam, secondBooklet, QuestionResponseType.WRITTEN_RESPONSE,
+				historicalDescriptor.getSyllabusVersion());
+		robot.interact(() -> pane.setMetadataFilter(neapWritten));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& results.getItems().getFirst().question().getId() == secondQuestion.getId());
+
+		// Clearing every metadata constraint restores all
+		// Questions within the original Working Subject.
+		robot.interact(() -> pane.setMetadataFilter(QuestionSearchMetadataFilter.unrestricted(chemistry)));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+	}
+
+	@Test
+	public void metadataFiltersNeverBroadenDashboardNarrowing(FxRobot robot) throws TimeoutException {
+		ExamProvider neap = new ExamProvider(80, "NEAP");
+		Exam otherExam = new Exam(81, chemistry, neap, 2023, "Practice");
+		ExamBooklet otherBooklet = new ExamBooklet(82, otherExam, "Paper 1",
+				new SourceDocument(83, "practice-2023.pdf"));
+		Question otherQuestion = new Question(84, otherBooklet, "Q1", "", 2, List.of(), historicalDescriptor, false);
+		QuestionRetrievalRepository repository = nodes -> {
+			if (!nodes.contains(currentDescriptor)) {
+				return List.of();
+			}
+			return List.of(new QuestionApplicabilityMatch(historicalQuestion, currentDescriptor),
+					new QuestionApplicabilityMatch(otherQuestion, currentDescriptor));
+		};
+		QuestionRetrievalService service = new QuestionRetrievalService(repository,
+				new CurriculumSearchNodeExpansionService(curriculumRepository));
+		QuestionSearchPane pane = replaceSearchPane(robot, curriculumRepository, service,
+				() -> List.of(historicalQuestion, otherQuestion),
+				QuestionSearchNarrowing.forBooklet(historicalQuestion.getBooklet()));
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
+		Label status = robot.lookup("#question-search-status").queryAs(Label.class);
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& results.getItems().getFirst().question().getId() == historicalQuestion.getId());
+
+		// The Search-local filter asks for another Exam,
+		// but Dashboard narrowing must still take precedence.
+		QuestionSearchMetadataFilter otherExamFilter = new QuestionSearchMetadataFilter(chemistry, neap, null, null,
+				otherExam, otherBooklet, null, null);
+		robot.interact(() -> pane.setMetadataFilter(otherExamFilter));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> results.getItems().isEmpty() && "No questions found.".equals(status.getText()));
+
+		// Switching to All Questions must not escape the
+		// Dashboard Booklet constraint.
+		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> results.getItems().isEmpty() && "No questions found.".equals(status.getText()));
+
+		// Removing the Search-local filter restores only the
+		// originally permitted Dashboard Booklet.
+		robot.interact(() -> pane.setMetadataFilter(QuestionSearchMetadataFilter.unrestricted(chemistry)));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& results.getItems().getFirst().question().getId() == historicalQuestion.getId());
 	}
 
 	@Test
@@ -2342,6 +2594,149 @@ public class QuestionSearchPaneTest {
 	}
 
 	@Test
+	public void revisionOutputChangeRefreshesActiveFilteredSearch(FxRobot robot) throws TimeoutException {
+		Question first = historicalQuestion;
+		Question second = new Question(160, first.getBooklet(), "Q4", "", 2, List.of(), historicalDescriptor, false);
+		List<Question> questions = List.of(first, second);
+		QuestionRetrievalRepository repository = nodes -> {
+			if (!nodes.contains(currentDescriptor)) {
+				return List.of();
+			}
+			return questions.stream().map(question -> new QuestionApplicabilityMatch(question, currentDescriptor))
+					.toList();
+		};
+		QuestionRetrievalService service = new QuestionRetrievalService(repository,
+				new CurriculumSearchNodeExpansionService(curriculumRepository));
+
+		// First is initially excluded; second is included.
+		outputApplicabilityRepository.setExcluded(first, currentDescriptor, true);
+		replaceSearchPane(robot, curriculumRepository, service, () -> questions);
+		TitledPane moreFilters = robot.lookup("#question-search-more-filters").queryAs(TitledPane.class);
+		robot.interact(() -> moreFilters.setExpanded(true));
+		ComboBox<QuestionSearchInclusionFilter> inclusion = robot.lookup("#question-search-inclusion-filter")
+				.queryComboBox();
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		ListView<QuestionOutputApplicabilityRow> output = robot.lookup("#question-search-output-applicability")
+				.queryListView();
+		Button includeButton = robot.lookup("#question-search-output-include").queryButton();
+		Button excludeButton = robot.lookup("#question-search-output-exclude").queryButton();
+		Label status = robot.lookup("#question-search-status").queryAs(Label.class);
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+		robot.interact(() -> inclusion.setValue(QuestionSearchInclusionFilter.EXCLUDED));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& results.getItems().getFirst().question().getId() == first.getId());
+		robot.interact(() -> results.getSelectionModel().selectFirst());
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> output.getItems().size() == 1
+				&& output.getItems().getFirst().excluded() && !includeButton.isDisable());
+
+		// Persisting Include removes the selected Question
+		// from the active Excluded search.
+		robot.interact(includeButton::fire);
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> results.getItems().isEmpty() && "No questions found.".equals(status.getText()));
+		assertTrue(outputApplicabilityRepository.findExcludedCurrentNodeIds(first).isEmpty());
+
+		// Both Questions now match Included.
+		robot.interact(() -> inclusion.setValue(QuestionSearchInclusionFilter.INCLUDED));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+		QuestionSearchResult secondResult = results.getItems().stream()
+				.filter(result -> result.question().getId() == second.getId()).findFirst().orElseThrow();
+		robot.interact(() -> results.getSelectionModel().select(secondResult));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> output.getItems().size() == 1
+				&& !output.getItems().getFirst().excluded() && !excludeButton.isDisable());
+
+		// Persisting Exclude removes second from Included.
+		robot.interact(excludeButton::fire);
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& results.getItems().getFirst().question().getId() == first.getId());
+		assertEquals(Set.of(currentDescriptor.getId()),
+				outputApplicabilityRepository.findExcludedCurrentNodeIds(second));
+	}
+
+	@Test
+	public void revisionOutputFilterTracksSelectedCurriculumScope(FxRobot robot) throws TimeoutException {
+		Question mixed = historicalQuestion;
+		Question excluded = new Question(150, mixed.getBooklet(), "Q2", "", 2, List.of(), historicalDescriptor, false);
+		Question included = new Question(151, mixed.getBooklet(), "Q3", "", 2, List.of(), historicalDescriptor, false);
+		List<Question> questions = List.of(mixed, excluded, included);
+		QuestionRetrievalRepository repository = nodes -> {
+			List<QuestionApplicabilityMatch> matches = new ArrayList<>();
+			if (nodes.contains(currentDescriptor)) {
+				for (Question question : questions) {
+					matches.add(new QuestionApplicabilityMatch(question, currentDescriptor));
+				}
+			}
+			if (nodes.contains(noMatchDescriptor)) {
+				matches.add(new QuestionApplicabilityMatch(mixed, noMatchDescriptor));
+			}
+			return matches;
+		};
+		QuestionRetrievalService service = new QuestionRetrievalService(repository,
+				new CurriculumSearchNodeExpansionService(curriculumRepository));
+
+		// Mixed is excluded only from the second Topic.
+		// Excluded is excluded from the first Topic.
+		// Included has no explicit exclusions.
+		outputApplicabilityRepository.setExcluded(mixed, noMatchDescriptor, true);
+		outputApplicabilityRepository.setExcluded(excluded, currentDescriptor, true);
+		replaceSearchPane(robot, curriculumRepository, service, () -> questions);
+		TitledPane moreFilters = robot.lookup("#question-search-more-filters").queryAs(TitledPane.class);
+		robot.interact(() -> moreFilters.setExpanded(true));
+		ComboBox<QuestionSearchInclusionFilter> inclusion = robot.lookup("#question-search-inclusion-filter")
+				.queryComboBox();
+		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
+		ComboBox<CurriculumNode> unit = robot.lookup("#question-search-unit").queryComboBox();
+		ComboBox<CurriculumNode> topic = robot.lookup("#question-search-topic").queryComboBox();
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> results.getItems().size() == 3 && unit.getItems().contains(currentUnit));
+		assertFalse(inclusion.isDisable());
+		assertEquals(QuestionSearchInclusionFilter.ALL, inclusion.getValue());
+
+		// Both mixed and excluded have at least one
+		// excluded placement in the complete current syllabus.
+		robot.interact(() -> inclusion.setValue(QuestionSearchInclusionFilter.EXCLUDED));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> results.getItems().size() == 2
+						&& results.getItems().stream().map(result -> result.question().getId())
+								.collect(Collectors.toSet()).equals(Set.of(mixed.getId(), excluded.getId())));
+
+		// Mixed also has an included placement.
+		// Included has no exclusions at all.
+		robot.interact(() -> inclusion.setValue(QuestionSearchInclusionFilter.INCLUDED));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> results.getItems().size() == 2
+						&& results.getItems().stream().map(result -> result.question().getId())
+								.collect(Collectors.toSet()).equals(Set.of(mixed.getId(), included.getId())));
+		robot.interact(() -> inclusion.setValue(QuestionSearchInclusionFilter.EXCLUDED));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+
+		// Narrow to the first Topic.
+		// Mixed's excluded placement is in a different Topic,
+		// so it must no longer match Excluded.
+		robot.interact(() -> unit.setValue(currentUnit));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> topic.getItems().contains(currentTopic));
+		robot.interact(() -> topic.setValue(currentTopic));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& results.getItems().getFirst().question().getId() == excluded.getId());
+
+		// All Questions must not retain the exclusion filter.
+		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 3
+				&& results.getItems().stream().allMatch(result -> result.scope() == QuestionSearchScope.ALL_QUESTIONS));
+		assertTrue(inclusion.isDisable());
+		assertEquals(QuestionSearchInclusionFilter.ALL, inclusion.getValue());
+
+		// Returning to Current syllabus begins unrestricted
+		// inclusion filtering, not the old Excluded setting.
+		robot.interact(() -> scope.setValue(QuestionSearchScope.CURRENT_SYLLABUS));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 3 && results.getItems()
+				.stream().allMatch(result -> result.scope() == QuestionSearchScope.CURRENT_SYLLABUS));
+		assertFalse(inclusion.isDisable());
+		assertEquals(QuestionSearchInclusionFilter.ALL, inclusion.getValue());
+	}
+
+	@Test
 	public void rightColumnGivesRemainingHeightToPreview(FxRobot robot) {
 		VBox rightColumn = robot.lookup("#question-search-right-column").queryAs(VBox.class);
 		Node selectedClassification = robot.lookup("#question-search-selected-classification").query();
@@ -3052,6 +3447,21 @@ public class QuestionSearchPaneTest {
 			stage.setScene(new Scene(pane[0], 700, 600));
 		});
 		return pane[0];
+	}
+
+	private void selectMetadataFilter(FxRobot robot, ComboBox<?> box, String label) {
+		int index = -1;
+		for (int i = 0; i < box.getItems().size(); i++) {
+			if (label.equals(box.getItems().get(i).toString())) {
+				index = i;
+				break;
+			}
+		}
+		if (index < 0) {
+			throw new AssertionError("Filter choice unavailable: " + label);
+		}
+		int selectedIndex = index;
+		robot.interact(() -> box.getSelectionModel().select(selectedIndex));
 	}
 
 	private static final class DelayedAllQuestionsSupplier implements Supplier<List<Question>> {

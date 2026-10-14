@@ -4,6 +4,12 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 
@@ -17,6 +23,7 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
  */
 public final class SqliteQuestionOutputApplicabilityRepository implements QuestionOutputApplicabilityRepository {
 
+	private static final int BULK_EXCLUSION_BATCH_SIZE = 400;
 	private final SqliteDatabase database;
 
 	/**
@@ -56,6 +63,58 @@ public final class SqliteQuestionOutputApplicabilityRepository implements Questi
 		} catch (SQLException exception) {
 			throw new IllegalStateException("Could not read Question output exclusions", exception);
 		}
+	}
+
+	@Override
+	public Map<Long, Set<Long>> findExcludedCurrentNodeIdsForQuestions(List<Question> questions) {
+		Objects.requireNonNull(questions, "questions");
+
+		// Remove duplicate Question identities before constructing
+		// bounded SQL IN clauses.
+		List<Long> questionIds = questions.stream().map(question -> {
+			validateQuestion(question);
+			return question.getId();
+		}).distinct().toList();
+		if (questionIds.isEmpty()) {
+			return Map.of();
+		}
+		Map<Long, Set<Long>> exclusions = new HashMap<>();
+		try (Connection connection = database.openConnection()) {
+			for (int start = 0; start < questionIds.size(); start += BULK_EXCLUSION_BATCH_SIZE) {
+				int end = Math.min(start + BULK_EXCLUSION_BATCH_SIZE, questionIds.size());
+				int count = end - start;
+
+				// Use parameter placeholders, never interpolated IDs.
+				// A conservative batch size accommodates SQLite
+				// installations with older parameter-count limits.
+				String placeholders = String.join(", ", Collections.nCopies(count, "?"));
+				String sql = """
+						SELECT question_id,
+						       current_curriculum_node_id
+						FROM question_output_exclusions
+						WHERE question_id IN (%s)
+						ORDER BY question_id,
+						         current_curriculum_node_id
+						""".formatted(placeholders);
+				try (PreparedStatement statement = connection.prepareStatement(sql)) {
+					for (int index = start; index < end; index++) {
+						statement.setLong(index - start + 1, questionIds.get(index));
+					}
+					try (ResultSet result = statement.executeQuery()) {
+						while (result.next()) {
+							long questionId = result.getLong("question_id");
+							long nodeId = result.getLong("current_curriculum_node_id");
+							exclusions.computeIfAbsent(questionId, _ -> new HashSet<>()).add(nodeId);
+						}
+					}
+				}
+			}
+		} catch (SQLException exception) {
+			throw new IllegalStateException("Could not bulk-read Question output exclusions", exception);
+		}
+		Map<Long, Set<Long>> immutable = new HashMap<>();
+		exclusions.forEach((questionId, nodeIds) -> immutable.put(questionId, Set.copyOf(nodeIds)));
+		return Map.copyOf(immutable);
 	}
 
 	@Override
