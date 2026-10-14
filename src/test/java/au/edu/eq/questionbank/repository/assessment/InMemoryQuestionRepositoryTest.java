@@ -26,10 +26,11 @@ import au.edu.eq.questionbank.model.Unit;
 
 class InMemoryQuestionRepositoryTest {
 
-	private CurriculumNode classification;
-	private CurriculumNode refinedClassification;
-	private Exam exam;
+	// Test fixtures and collaborators.
 	private ExamBooklet booklet;
+	private CurriculumNode classification;
+	private Exam exam;
+	private CurriculumNode refinedClassification;
 	private InMemoryQuestionRepository repository;
 
 	@Test

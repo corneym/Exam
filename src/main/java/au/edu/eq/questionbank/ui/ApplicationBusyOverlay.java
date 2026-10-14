@@ -26,12 +26,15 @@ import javafx.util.Duration;
 public final class ApplicationBusyOverlay extends StackPane {
 
 	private static final Duration DEFAULT_DISPLAY_DELAY = Duration.millis(180);
-	private final PauseTransition appearanceDelay;
-	private final StackPane busyShield = new StackPane();
-	private final Node content;
-	private final Label statusLabel = new Label();
+	// Busy-overlay content and request lifecycle.
 	private long activeRequest;
+	private final PauseTransition appearanceDelay;
+	private final Node content;
 	private long nextRequest;
+
+	// Controls and initial workflow state (initialisation order retained).
+	private final StackPane busyShield = new StackPane();
+	private final Label statusLabel = new Label();
 
 	/**
 	 * Creates an overlay around the complete application content.

@@ -23,10 +23,11 @@ import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
  */
 public final class ExamCorpusAuditService {
 
-	private final SqliteExamWriter examWriter;
+	// Persistence and service collaborators.
 	private final SqliteAnswerWriter answerWriter;
-	private final QuestionRepository questionRepository;
+	private final SqliteExamWriter examWriter;
 	private final PdfStore pdfStore;
+	private final QuestionRepository questionRepository;
 
 	/**
 	 * Creates the persisted Exam corpus audit service.

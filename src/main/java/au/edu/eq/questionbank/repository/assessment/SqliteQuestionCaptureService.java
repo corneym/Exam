@@ -28,10 +28,11 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
  */
 public final class SqliteQuestionCaptureService {
 
+	// Persistence and service collaborators.
 	private final SqliteDatabase database;
 	private final SqliteQuestionWriter questionWriter;
-	private final SqliteSourceQuestionRepository sourceQuestionRepository;
 	private final SqliteSharedQuestionContextRepository sharedContextRepository;
+	private final SqliteSourceQuestionRepository sourceQuestionRepository;
 
 	/**
 	 * Creates a capture service sharing one database across question and context

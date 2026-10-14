@@ -16,13 +16,16 @@ import au.edu.eq.questionbank.model.SourceQuestion;
  */
 public final class RevisionQuestionPresentation {
 
-	private final int revisionNumber;
+	// Revision placement and Question members.
 	private final CurriculumNode currentNode;
 	private final List<Question> members;
+	private final int revisionNumber;
 	private final int totalMarks;
-	private final SourceQuestion sourceQuestion;
-	private final SharedQuestionContext sharedContext;
+
+	// Source identity and Shared Context presentation.
 	private final boolean renderSharedContext;
+	private final SharedQuestionContext sharedContext;
+	private final SourceQuestion sourceQuestion;
 
 	RevisionQuestionPresentation(int revisionNumber, CurriculumNode currentNode, List<Question> members,
 			SourceQuestion sourceQuestion, SharedQuestionContext sharedContext, boolean renderSharedContext) {

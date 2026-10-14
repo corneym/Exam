@@ -44,11 +44,12 @@ import au.edu.eq.questionbank.service.render.QuestionContentRenderer;
 
 class QuestionPreviewServiceTest {
 
-	@TempDir
-	Path tempDir;
+	// Test fixtures and collaborators.
 	private ExamBooklet booklet;
 	private CurriculumNode classification;
 	private QuestionPreviewService service;
+	@TempDir
+	Path tempDir;
 
 	@Test
 	void legacyQuestionWithoutRegionsHasNoPreview() throws Exception {

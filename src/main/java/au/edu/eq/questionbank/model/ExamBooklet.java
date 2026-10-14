@@ -9,18 +9,19 @@ package au.edu.eq.questionbank.model;
  */
 public class ExamBooklet {
 
-	private final long id;
+	// Booklet identity, source and planning metadata.
 	private final Exam exam;
-	private final String name;
-	private final SourceDocument sourceDocument;
-
-	// Question format belongs to the booklet because separate booklets from one
-	// Exam may contain different styles of Question.
-	private final ExamBookletQuestionFormat questionFormat;
 
 	// The expected count describes top-level numbered Questions, not individually
 	// captured multipart Question records such as 21a, 21b and 21c.
 	private final Integer expectedQuestionCount;
+	private final long id;
+	private final String name;
+
+	// Question format belongs to the booklet because separate booklets from one
+	// Exam may contain different styles of Question.
+	private final ExamBookletQuestionFormat questionFormat;
+	private final SourceDocument sourceDocument;
 
 	/**
 	 * Creates a booklet whose question format and expected Question count have not

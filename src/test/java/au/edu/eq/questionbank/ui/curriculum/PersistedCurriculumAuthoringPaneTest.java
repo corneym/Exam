@@ -48,13 +48,14 @@ import javafx.stage.Stage;
 class PersistedCurriculumAuthoringPaneTest {
 
 	private static final String AUTHORED_TEXT = "    **Resolve forces** using \\(F = m\\,a\\) and {components}.\n\n";
+	// Test fixtures and collaborators.
+	private Path curriculumRoot;
+	private SqliteDatabase database;
+	private long descriptorPersistentId;
+	private CurriculumAuthoringPane pane;
+	private CurriculumAuthoringSession session;
 	@TempDir
 	Path tempDir;
-	private CurriculumAuthoringPane pane;
-	private SqliteDatabase database;
-	private CurriculumAuthoringSession session;
-	private long descriptorPersistentId;
-	private Path curriculumRoot;
 
 	@Test
 	void attachingPdfRetainsPendingEditorText(FxRobot robot) throws Exception {

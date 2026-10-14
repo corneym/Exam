@@ -94,25 +94,26 @@ class CurriculumSearchNodeExpansionServiceTest {
 
 	private static final class Fixture {
 
+		// Curriculum and assessment fixtures.
 		private final Subject chemistry;
-		private final SyllabusVersion currentVersion;
 		private final Unit currentUnit;
+		private final SyllabusVersion currentVersion;
 		private final Topic descriptorTopic;
-		private final Descriptor firstTopicDescriptor;
-		private final Descriptor secondTopicDescriptor;
-		private final Topic subtopicTopic;
 		private final Subtopic firstSubtopic;
 		private final Descriptor firstSubtopicDescriptor;
-		private final Descriptor secondSubtopicDescriptor;
-		private final Subtopic secondSubtopic;
-		private final Descriptor thirdSubtopicDescriptor;
-		private final Unit secondCurrentUnit;
-		private final Topic secondUnitTopic;
-		private final Descriptor secondUnitDescriptor;
+		private final Descriptor firstTopicDescriptor;
+		private final Descriptor historicalDescriptor;
 		private final Topic mixedTopic;
 		private final Descriptor mixedTopicDescriptor;
 		private final Subtopic mixedTopicSubtopic;
-		private final Descriptor historicalDescriptor;
+		private final Unit secondCurrentUnit;
+		private final Subtopic secondSubtopic;
+		private final Descriptor secondSubtopicDescriptor;
+		private final Descriptor secondTopicDescriptor;
+		private final Descriptor secondUnitDescriptor;
+		private final Topic secondUnitTopic;
+		private final Topic subtopicTopic;
+		private final Descriptor thirdSubtopicDescriptor;
 
 		private Fixture() {
 			chemistry = new Subject(1, "Chemistry");

@@ -46,10 +46,11 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteReadProbe;
  */
 public final class SqliteQuestionRepository implements QuestionRepository, QuestionRetrievalRepository {
 
-	private final SqliteDatabase database;
-	private final SqliteQuestionWriter writer;
+	// Persistence and service collaborators.
 	private final SqliteCurriculumRepository curriculumRepository;
+	private final SqliteDatabase database;
 	private final PerformanceRecorder performanceRecorder;
+	private final SqliteQuestionWriter writer;
 
 	/**
 	 * Creates a SQLite Question repository with diagnostics disabled.

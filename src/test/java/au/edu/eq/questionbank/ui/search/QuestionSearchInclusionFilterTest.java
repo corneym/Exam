@@ -26,9 +26,10 @@ import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalResult;
 
 class QuestionSearchInclusionFilterTest {
 
+	// Test fixtures and collaborators.
 	private Descriptor first;
-	private Descriptor second;
 	private Question question;
+	private Descriptor second;
 
 	@Test
 	void allQuestionsScopeCannotUseInclusionRestriction() {

@@ -40,9 +40,13 @@ public final class ExamSetupPane extends VBox {
 	private static final double EXAM_FIELD_WIDTH = 420.0;
 	private static final double ASSET_LIST_HEIGHT = 120.0;
 	private static final Insets PADDING = new Insets(12);
-	private final SqliteExamWriter examWriter;
+	// Workflow configuration and collaborators.
 	private final SqliteAnswerWriter answerWriter;
+	private final SqliteExamWriter examWriter;
+	private final Consumer<ExamBooklet> inspectBookletHandler;
 	private final Consumer<ExamBooklet> openBookletHandler;
+
+	// Controls and initial workflow state (initialisation order retained).
 	private final Label subjectLabel = new Label("No Subject selected");
 	private final ComboBox<Exam> examField = new ComboBox<>();
 	private final Label lifecycleLabel = new Label("State: —");
@@ -50,7 +54,6 @@ public final class ExamSetupPane extends VBox {
 	private final ListView<ExamBooklet> bookletList = new ListView<>();
 	private final ListView<String> answerFileList = new ListView<>();
 	private final Button openBookletButton = new Button("Open Selected Booklet for Capture");
-	private final Consumer<ExamBooklet> inspectBookletHandler;
 	private final Button inspectBookletButton = new Button("Inspect / Set Expected Questions...");
 
 	/**

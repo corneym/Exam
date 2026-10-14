@@ -22,10 +22,11 @@ import au.edu.eq.questionbank.output.revision.RevisionExportService;
  */
 public final class ScormExportService {
 
-	private final RevisionExportService revisionExportService;
+	// Revision export and SCORM packaging collaborators.
 	private final ScormManifestWriter manifestWriter;
-	private final ScormSchemaSupport schemaSupport;
 	private final ScormPackageValidator packageValidator;
+	private final RevisionExportService revisionExportService;
+	private final ScormSchemaSupport schemaSupport;
 	private final ScormZipWriter zipWriter;
 
 	/**

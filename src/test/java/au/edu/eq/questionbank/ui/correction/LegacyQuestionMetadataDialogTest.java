@@ -42,9 +42,10 @@ import javafx.stage.Stage;
 @ExtendWith(ApplicationExtension.class)
 class LegacyQuestionMetadataDialogTest {
 
+	// Test fixtures and collaborators.
+	private Subtopic firstSubtopic;
 	private Stage owner;
 	private Question question;
-	private Subtopic firstSubtopic;
 
 	@Test
 	void disablesSaveForInvalidMetadata(FxRobot robot) {

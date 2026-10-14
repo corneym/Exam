@@ -18,8 +18,11 @@ import au.edu.eq.questionbank.repository.curriculum.PersistedCurriculumNode;
  */
 public final class CurriculumAuthoringSession {
 
-	private SyllabusVersion syllabusVersion;
+	// Workflow configuration and collaborators.
 	private final CurriculumDraft draft;
+	private SyllabusVersion syllabusVersion;
+
+	// Persisted authoring snapshot (initialisation order retained).
 	private Set<PersistedCurriculumNode> persistedSnapshot = Set.of();
 	private final Map<Long, Long> persistentIdByDraftId = new HashMap<>();
 

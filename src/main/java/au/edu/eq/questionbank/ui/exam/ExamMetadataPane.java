@@ -55,6 +55,30 @@ public final class ExamMetadataPane extends VBox {
 	private static final Insets PANEL_PADDING = new Insets(12);
 	private static final String BORDER_STYLE = "-fx-border-color: #b0b0b0;-fx-border-width: 1;-fx-border-radius: 3;-fx-padding: 12;";
 	private static final double QUESTION_FORMAT_FIELD_WIDTH = 180.0;
+	// Exam persistence and PDF services.
+	private final CurriculumSelectionModel curriculumSelectionModel;
+	private final SqliteExamImporter examImporter;
+	private final ExamMetadataCorrectionService examMetadataCorrectionService;
+	private final SqliteExamWriter examWriter;
+	private final ManagedDataLayout managedDataLayout;
+	private final ExamMetadataOptionsRepository optionsRepository;
+	private final Path pdfDataRoot;
+	private final PdfFilePicker pdfFilePicker;
+	private final PdfStore pdfStore;
+
+	// Exam workflow callbacks.
+	private final BooleanSupplier examChangeAllowed;
+	private final Consumer<SelectedPdf> examPdfHandler;
+	private final Consumer<Subject> examSubjectHandler;
+	private final Consumer<Boolean> selectionCursorHandler;
+
+	// Selected and pending Exam assets.
+	private ExamBooklet booklet;
+	private Path currentPdfPath;
+	private ExamBooklet pendingKnownBooklet;
+	private Path pendingPdfPath;
+
+	// Controls and initial workflow state (initialisation order retained).
 	private final ComboBox<String> assessmentField = new ComboBox<>();
 	private final ComboBox<String> bookletField = new ComboBox<>();
 	private final ComboBox<String> providerField = new ComboBox<>();
@@ -62,25 +86,8 @@ public final class ExamMetadataPane extends VBox {
 	private final ComboBox<Integer> yearField = new ComboBox<>();
 	private final Button choosePdfButton = new Button("Choose PDF...");
 	private final Label selectedPdfLabel = new Label("No PDF selected");
-	private final SqliteExamImporter examImporter;
-	private final SqliteExamWriter examWriter;
-	private final CurriculumSelectionModel curriculumSelectionModel;
-	private final ExamMetadataOptionsRepository optionsRepository;
-	private final PdfFilePicker pdfFilePicker;
-	private final Path pdfDataRoot;
-	private final BooleanSupplier examChangeAllowed;
-	private final PdfStore pdfStore;
-	private final Consumer<SelectedPdf> examPdfHandler;
-	private final Consumer<Boolean> selectionCursorHandler;
-	private final Consumer<Subject> examSubjectHandler;
-	private Path currentPdfPath;
-	private Path pendingPdfPath;
-	private ExamBooklet booklet;
-	private ExamBooklet pendingKnownBooklet;
-	private final ExamMetadataCorrectionService examMetadataCorrectionService;
 	private final ComboBox<ExamBookletQuestionFormat> questionFormatField = new ComboBox<>();
 	private final SourceDocumentHashService sourceDocumentHashService = new SourceDocumentHashService();
-	private final ManagedDataLayout managedDataLayout;
 
 	/**
 	 * Creates the exam metadata workflow controls and persistence integration.

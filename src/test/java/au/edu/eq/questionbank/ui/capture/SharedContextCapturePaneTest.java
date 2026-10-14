@@ -44,13 +44,14 @@ import javafx.stage.Stage;
 @ExtendWith(ApplicationExtension.class)
 class SharedContextCapturePaneTest {
 
+	// Test fixtures and collaborators.
+	private ExamBooklet booklet;
+	private SharedContextCapturePane pane;
+	private RecordingContextRepository repository;
+	private AtomicInteger selectionClearCount;
+	private PdfSession session;
 	@TempDir
 	Path tempDirectory;
-	private ExamBooklet booklet;
-	private RecordingContextRepository repository;
-	private PdfSession session;
-	private SharedContextCapturePane pane;
-	private AtomicInteger selectionClearCount;
 
 	@Test
 	void acceptedAutomaticSharedContextIsExposedWithoutBeingPersisted(FxRobot robot) {

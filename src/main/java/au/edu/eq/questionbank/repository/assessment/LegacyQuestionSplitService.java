@@ -30,11 +30,12 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
  */
 public final class LegacyQuestionSplitService {
 
+	// Persistence and service collaborators.
 	private final SqliteDatabase database;
-	private final SqliteQuestionWriter questionWriter;
 	private final SqliteQuestionRepository questionRepository;
-	private final SqliteSourceQuestionRepository sourceQuestionRepository;
+	private final SqliteQuestionWriter questionWriter;
 	private final SqliteSharedQuestionContextRepository sharedContextRepository;
+	private final SqliteSourceQuestionRepository sourceQuestionRepository;
 
 	/**
 	 * Creates the split service.

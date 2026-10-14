@@ -107,14 +107,17 @@ class RevisionAnswerAssetRendererTest {
 
 	private static final class Fixture {
 
+		// Test environment and collaborators.
+		private final InMemoryCurriculumRepository curriculumRepository;
+		private final Path firstAnswerPdf;
+		private final PdfStore pdfStore;
+
+		// Curriculum and assessment fixtures.
 		private final Subject chemistry;
 		private final Descriptor firstDescriptor;
+		private final Question regionAnswerQuestion;
 		private final Descriptor secondDescriptor;
 		private final Question textAnswerQuestion;
-		private final Question regionAnswerQuestion;
-		private final InMemoryCurriculumRepository curriculumRepository;
-		private final PdfStore pdfStore;
-		private final Path firstAnswerPdf;
 
 		private Fixture(Path tempDir) throws IOException {
 			Path pdfRoot = tempDir.resolve("pdf");

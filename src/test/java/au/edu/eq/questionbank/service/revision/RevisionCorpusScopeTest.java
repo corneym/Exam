@@ -55,12 +55,13 @@ class RevisionCorpusScopeTest {
 
 	private static final class Fixture {
 
+		// Test fixtures and collaborators.
 		private final Subject chemistry;
+		private final RevisionCorpus corpus;
 		private final SyllabusVersion currentVersion;
 		private final Unit firstUnit;
-		private final Unit secondUnit;
 		private final Unit metadataOnlyUnit;
-		private final RevisionCorpus corpus;
+		private final Unit secondUnit;
 
 		private Fixture() {
 			chemistry = new Subject(1, "Chemistry");

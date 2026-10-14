@@ -37,12 +37,15 @@ import javafx.stage.Stage;
 @ExtendWith(ApplicationExtension.class)
 class ExamSetupPaneTest {
 
-	@TempDir
-	Path tempDirectory;
-	private final AtomicReference<ExamBooklet> openedBooklet = new AtomicReference<>();
+	// Test fixtures and collaborators.
 	private Exam externalExam;
 	private ExamBooklet paper1;
 	private ExamBooklet paper2;
+	@TempDir
+	Path tempDirectory;
+
+	// Initialised test fixtures and coordination state (initialisation order retained).
+	private final AtomicReference<ExamBooklet> openedBooklet = new AtomicReference<>();
 	private final AtomicReference<ExamBooklet> inspectedBooklet = new AtomicReference<>();
 
 	@Test

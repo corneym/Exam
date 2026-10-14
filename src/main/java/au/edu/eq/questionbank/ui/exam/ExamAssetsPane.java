@@ -65,10 +65,54 @@ public final class ExamAssetsPane extends VBox {
 	private static final String NO_ANSWER_BOOKLET = "No Answer Booklet";
 	private static final String WORKSPACE_SECTION_STYLE = "-fx-border-color: #b0b0b0;" + "-fx-border-width: 1;"
 			+ "-fx-border-radius: 3;";
-	private final SqliteExamWriter examWriter;
+	// Persistence and Exam correction.
 	private final SqliteAnswerWriter answerWriter;
-	private final ExamMetadataOptionsRepository optionsRepository;
 	private final ExamCorrectionHandler correctionHandler;
+	private final SqliteExamWriter examWriter;
+	private final ExamMetadataOptionsRepository optionsRepository;
+
+	// Asset selection and capture callbacks.
+	private final Supplier<ExamBooklet> activeBookletSupplier;
+	private final Consumer<AnswerFile> answerFileViewHandler;
+	private final Consumer<ExamBooklet> bookletMetadataUpdatedHandler;
+	private final Consumer<ExamBooklet> captureBookletHandler;
+	private final Consumer<ExamBooklet> questionBookletViewHandler;
+
+	// Asset creation and deletion callbacks.
+	private final AnswerBookletCreationHandler answerBookletCreationHandler;
+	private final Supplier<Path> answerBookletSourceChooser;
+	private final Consumer<AnswerFile> answerFileDeleteHandler;
+	private final QuestionBookletCreationHandler questionBookletCreationHandler;
+	private final Consumer<ExamBooklet> questionBookletDeleteHandler;
+	private final Supplier<Path> questionBookletSourceChooser;
+	private final Runnable questionBookletSourcePreviewCloseHandler;
+	private final Predicate<Path> questionBookletSourcePreviewHandler;
+
+	// Exam and asset editing state.
+	// Selecting an Exam while applying a preloaded Subject snapshot must not
+	// trigger
+	// another synchronous SQLite read through the ordinary ComboBox listener.
+	private boolean applyingSubjectSnapshot;
+	private boolean creatingNewExam;
+	private QuestionBookletEditor editingBookletEditor;
+	private boolean editingExamDetails;
+	private boolean legacyImportPending;
+	private Long newExamReturnExamId;
+	private PendingAnswerBookletEditor pendingAnswerBookletEditor;
+	private PendingQuestionBookletEditor pendingQuestionBookletEditor;
+	private boolean pendingQuestionBookletPreviewOpen;
+
+	// Keep the persistence snapshot used to distinguish edited planning values from
+	// the currently available asset counts.
+	private ExamAssetExpectations selectedExamAssetExpectations;
+	private Subject workingSubject;
+
+	// Exam actions and Dashboard navigation.
+	private Runnable corpusDashboardReturnHandler;
+	private HBox examDetailsActionRow;
+	private HBox newExamActionRow;
+
+	// Controls and initial workflow state (initialisation order retained).
 	private final ComboBox<Exam> examBox = new ComboBox<>();
 	private final Label stateLabel = new Label("State: —");
 	private final ComboBox<String> providerField = new ComboBox<>();
@@ -79,11 +123,6 @@ public final class ExamAssetsPane extends VBox {
 	private final Button editExamButton = new Button("Edit");
 	private final Button cancelButton = new Button("Cancel");
 	private final Button saveButton = new Button("Save");
-	private boolean editingExamDetails;
-	private final Consumer<ExamBooklet> questionBookletViewHandler;
-	private final Consumer<AnswerFile> answerFileViewHandler;
-	private final Supplier<ExamBooklet> activeBookletSupplier;
-	private final Consumer<ExamBooklet> captureBookletHandler;
 	private final ToggleGroup questionBookletSelectionGroup = new ToggleGroup();
 	private final Button useSelectedBookletButton = new Button("Use Selected Booklet for Capture");
 
@@ -91,39 +130,21 @@ public final class ExamAssetsPane extends VBox {
 	// suggestions.
 	private List<String> bookletNameSuggestions = DEFAULT_BOOKLET_NAME_SUGGESTIONS;
 	private final List<QuestionBookletEditor> questionBookletEditors = new ArrayList<>();
-	private QuestionBookletEditor editingBookletEditor;
-	private final Consumer<ExamBooklet> bookletMetadataUpdatedHandler;
 	private List<AnswerFile> availableAnswerFiles = List.of();
-	private final Supplier<Path> answerBookletSourceChooser;
-	private final AnswerBookletCreationHandler answerBookletCreationHandler;
 	private final Button addAnswerBookletButton = new Button("Add Answer Booklet");
-	private PendingAnswerBookletEditor pendingAnswerBookletEditor;
-	private final Supplier<Path> questionBookletSourceChooser;
-	private final QuestionBookletCreationHandler questionBookletCreationHandler;
 	private final Button addQuestionBookletButton = new Button("Add Question Booklet");
-	private PendingQuestionBookletEditor pendingQuestionBookletEditor;
-	private final Predicate<Path> questionBookletSourcePreviewHandler;
-	private final Runnable questionBookletSourcePreviewCloseHandler;
-	private boolean pendingQuestionBookletPreviewOpen;
 
 	// A pending legacy preflight remains visible while the user creates the missing
 	// authoritative Exam/booklet structure through the ordinary workspace controls.
 	private final VBox legacyImportRequirementsBox = new VBox(ROW_SPACING);
 	private final Button legacyImportRecheckButton = new Button("Recheck and Import");
 	private final Button legacyImportCancelButton = new Button("Cancel Import");
-	private boolean legacyImportPending;
 
 	// Exam-level planning counts are distinct from each booklet's Expected
 	// Questions value and are edited with the persisted Exam itself.
 	private final TextField expectedAnswerBookletsField = new TextField();
 	private final TextField expectedQuestionBookletsField = new TextField();
-
-	// Keep the persistence snapshot used to distinguish edited planning values from
-	// the currently available asset counts.
-	private ExamAssetExpectations selectedExamAssetExpectations;
 	private final List<Button> answerFileDeleteButtons = new ArrayList<>();
-	private final Consumer<AnswerFile> answerFileDeleteHandler;
-	private final Consumer<ExamBooklet> questionBookletDeleteHandler;
 
 	// New Exam is a workspace-level structural transaction. It reuses the existing
 	// Exam Details controls but does not create another Subject selector.
@@ -131,17 +152,6 @@ public final class ExamAssetsPane extends VBox {
 	private final Button clearNewExamButton = new Button("Clear");
 	private final Button cancelNewExamButton = new Button("Cancel");
 	private final Button saveNewExamButton = new Button("Save Exam");
-	private HBox examDetailsActionRow;
-	private HBox newExamActionRow;
-	private Subject workingSubject;
-	private boolean creatingNewExam;
-	private Long newExamReturnExamId;
-
-	// Selecting an Exam while applying a preloaded Subject snapshot must not
-	// trigger
-	// another synchronous SQLite read through the ordinary ComboBox listener.
-	private boolean applyingSubjectSnapshot;
-	private Runnable corpusDashboardReturnHandler;
 	private final Button returnToCorpusDashboardButton = new Button("Return to Corpus Dashboard");
 
 	/**
@@ -2423,7 +2433,12 @@ public final class ExamAssetsPane extends VBox {
 
 	private final class QuestionBookletEditor {
 
+		// Booklet assignment and editing state.
+		private AnswerFile assignedAnswerFile;
 		private ExamBooklet booklet;
+		private boolean editing;
+
+		// Controls and initial workflow state (initialisation order retained).
 		private final RadioButton selectionButton = new RadioButton();
 		private final Label heading = new Label();
 		private final ComboBox<String> nameField = new ComboBox<>();
@@ -2436,9 +2451,7 @@ public final class ExamAssetsPane extends VBox {
 		private final Button editButton = new Button("Edit");
 		private final Button cancelButton = new Button("Cancel");
 		private final Button saveButton = new Button("Save");
-		private boolean editing;
 		private final ComboBox<AnswerAssignmentChoice> answerField = new ComboBox<>();
-		private AnswerFile assignedAnswerFile;
 		private final Button deleteButton = new Button("Delete");
 
 		// Restore either the exact assigned AnswerFile or the explicit No Answer

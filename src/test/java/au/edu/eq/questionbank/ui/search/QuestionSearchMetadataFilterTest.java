@@ -25,6 +25,7 @@ import au.edu.eq.questionbank.model.Unit;
 
 class QuestionSearchMetadataFilterTest {
 
+	// Curriculum and assessment fixtures.
 	private Subject chemistry;
 	private SyllabusVersion current;
 	private Question currentWritten;
@@ -32,11 +33,11 @@ class QuestionSearchMetadataFilterTest {
 	private SyllabusVersion historical;
 	private Question historicalMcq;
 	private Question neapCurrentMcq;
+	private Question physicsWritten;
 	private ExamProvider qcaa;
 	private Exam qcaa2024;
 	private ExamBooklet qcaa2024Booklet;
 	private ExamBooklet qcaa2024SecondBooklet;
-	private Question physicsWritten;
 
 	private static Question question(long id, ExamBooklet booklet, CurriculumNode classification,
 			QuestionResponseType responseType, int marks) {

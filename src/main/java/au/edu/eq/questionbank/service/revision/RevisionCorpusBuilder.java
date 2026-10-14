@@ -25,9 +25,10 @@ import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
  */
 public final class RevisionCorpusBuilder {
 
+	// Workflow configuration and collaborators.
 	private final CurriculumRepository curriculumRepository;
-	private final QuestionRetrievalService questionRetrievalService;
 	private final QuestionOutputApplicabilityRepository outputApplicabilityRepository;
+	private final QuestionRetrievalService questionRetrievalService;
 
 	/**
 	 * Creates a builder combining current curriculum structure, derived Question
@@ -339,8 +340,9 @@ public final class RevisionCorpusBuilder {
 
 	private static final class MutableCorpusNode {
 
-		private final CurriculumNode curriculumNode;
+		// Curriculum node and accumulated Question placements.
 		private final List<MutableCorpusNode> children;
+		private final CurriculumNode curriculumNode;
 		private final Map<Long, Question> questionsById;
 
 		private MutableCorpusNode(CurriculumNode curriculumNode) {

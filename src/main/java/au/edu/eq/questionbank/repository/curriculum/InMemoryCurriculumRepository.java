@@ -20,9 +20,10 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
  */
 public class InMemoryCurriculumRepository implements CurriculumRepository {
 
+	// Stored curriculum hierarchy.
+	private final List<CurriculumNode> curriculumNodes;
 	private final List<Subject> subjects;
 	private final List<SyllabusVersion> syllabusVersions;
-	private final List<CurriculumNode> curriculumNodes;
 
 	/**
 	 * Creates an empty curriculum repository.

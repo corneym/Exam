@@ -44,11 +44,12 @@ import au.edu.eq.questionbank.pdf.QuestionExtractor;
 
 class QuestionContentRendererTest {
 
-	@TempDir
-	Path tempDir;
+	// Test fixtures and collaborators.
 	private ExamBooklet booklet;
 	private CurriculumNode classification;
 	private QuestionContentRenderer renderer;
+	@TempDir
+	Path tempDir;
 
 	@Test
 	void mixedQuestionRequiresPdfWhenItContainsPdfContent() throws Exception {

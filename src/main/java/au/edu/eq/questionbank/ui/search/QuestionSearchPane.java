@@ -91,8 +91,59 @@ public class QuestionSearchPane extends BorderPane {
 	private static final double OUTPUT_LIST_MIN_HEIGHT = 90.0;
 	private static final double PREVIEW_VIEWPORT_MIN_HEIGHT = 96.0;
 	private static final double PREVIEW_VIEWPORT_PREF_HEIGHT = 210.0;
+	// Search services and scope.
+	// Complete-bank retrieval is deliberately separate from current-curriculum
+	// applicability retrieval. All Questions does not evaluate syllabus mappings.
+	private final Supplier<List<Question>> allQuestionsSupplier;
+	private SyllabusVersion currentSyllabus;
 	private final CurriculumRepository curriculumRepository;
+	private QuestionSearchMetadataFilter metadataFilter;
+	private final QuestionOutputApplicabilityRepository outputApplicabilityRepository;
+	private final PerformanceRecorder performanceRecorder;
+	private final QuestionPreviewService previewService;
 	private final QuestionRetrievalService retrievalService;
+	private final QuestionSearchNarrowing searchNarrowing;
+
+	// Search inherits the workspace-level Working Subject. It does not own a
+	// separate application-level Subject selection.
+	private final Subject workingSubject;
+
+	// Background tasks and request generations.
+	private Task<?> activeHierarchyTask;
+	private PerformanceOperation activeOutputApplicabilityOperation;
+	private Task<List<QuestionOutputApplicabilityRow>> activeOutputApplicabilityTask;
+
+	// Output applicability changes save immediately. Keep the active write separate
+	// from the background task that reads applicability for a selected Question.
+	private Task<Void> activeOutputApplicabilityUpdateTask;
+	private PerformanceOperation activePreviewOperation;
+	private Task<Optional<BufferedImage>> activePreviewTask;
+	private PerformanceOperation activeSearchOperation;
+
+	// Background Search tasks publish only UI-facing Search results.
+	private Task<List<QuestionSearchResult>> activeSearchTask;
+	private long filterCatalogueGeneration;
+	private Task<QuestionSearchFilterCatalogue> filterCatalogueTask;
+	private long hierarchyGeneration;
+	private long outputApplicabilityGeneration;
+	private long previewGeneration;
+	private long searchGeneration;
+
+	// Search publication and editing state.
+	private boolean disposed;
+	private QuestionSearchFilterCatalogue filterCatalogue;
+
+	// Restoring the previously selected result after a cancelled navigation must
+	// not recursively trigger another navigation decision.
+	private boolean restoringResultSelection;
+	private boolean updatingControls;
+	private boolean updatingMetadataChoices;
+
+	// Population of the selected-Question classification controls must not be
+	// mistaken for a teacher edit.
+	private boolean updatingSelectedClassification;
+
+	// Controls and initial workflow state (initialisation order retained).
 	private final Label syllabusValue = new Label();
 	private final ComboBox<CurriculumNode> unitBox = new ComboBox<>();
 	private final ComboBox<CurriculumNode> topicBox = new ComboBox<>();
@@ -108,7 +159,6 @@ public class QuestionSearchPane extends BorderPane {
 	private final PauseTransition previewDelay = new PauseTransition(Duration.millis(PREVIEW_DELAY_MILLIS));
 	private long outputApplicabilityDisplayedQuestionId = -1;
 	private int descriptorQueueIndexToReselect = -1;
-	private QuestionSearchMetadataFilter metadataFilter;
 	private final ComboBox<QuestionSearchInclusionFilter> inclusionFilterBox = new ComboBox<>();
 
 	// Search presentation uses its own result type so current-curriculum matches
@@ -116,87 +166,43 @@ public class QuestionSearchPane extends BorderPane {
 	// semantics.
 	private final ListView<QuestionSearchResult> resultsList = new ListView<>();
 	private final TextArea detailsArea = new TextArea();
-	private SyllabusVersion currentSyllabus;
-
-	// Complete-bank retrieval is deliberately separate from current-curriculum
-	// applicability retrieval. All Questions does not evaluate syllabus mappings.
-	private final Supplier<List<Question>> allQuestionsSupplier;
 	private final ComboBox<QuestionSearchScope> searchScopeBox = new ComboBox<>();
-
-	// Background Search tasks publish only UI-facing Search results.
-	private Task<List<QuestionSearchResult>> activeSearchTask;
-	private long searchGeneration;
-	private boolean updatingControls;
-	private final QuestionPreviewService previewService;
 	private final ImageView previewImageView = new ImageView();
 	private final Label previewStatusLabel = new Label();
-	private Task<Optional<BufferedImage>> activePreviewTask;
-	private long previewGeneration;
-	private Task<?> activeHierarchyTask;
-	private long hierarchyGeneration;
-	private boolean disposed;
 	private long questionIdToReselect = -1;
 
 	// Distinguish "no subjects exist" from "the initial subject load was cancelled
 	// before completion". This lets Current syllabus restart an interrupted load.
 	private final BooleanProperty classificationDirty = new SimpleBooleanProperty(false);
 
-	// Population of the selected-Question classification controls must not be
-	// mistaken for a teacher edit.
-	private boolean updatingSelectedClassification;
-
 	// The containing Dialog owns the Save/Cancel decision because it owns modal
 	// warnings and persistence errors.
 	private BooleanSupplier classificationNavigationGuard = () -> false;
-
-	// Restoring the previously selected result after a cancelled navigation must
-	// not recursively trigger another navigation decision.
-	private boolean restoringResultSelection;
 	private final Button saveClassificationButton = new Button("Save");
-	private final QuestionOutputApplicabilityRepository outputApplicabilityRepository;
-	private PerformanceOperation activeSearchOperation;
-	private final PerformanceRecorder performanceRecorder;
 
 	// Revision-output applicability is loaded independently from Search results.
 	// In All Questions scope the selected Question requires a separate
 	// current-curriculum applicability lookup.
 	private final ListView<QuestionOutputApplicabilityRow> outputApplicabilityList = new ListView<>();
 	private final Label outputApplicabilityStatusLabel = new Label();
-	private Task<List<QuestionOutputApplicabilityRow>> activeOutputApplicabilityTask;
-	private long outputApplicabilityGeneration;
 	private final Button includeOutputApplicabilityButton = new Button("Include");
 	private final Button excludeOutputApplicabilityButton = new Button("Exclude");
 	private final ComboBox<FilterOption<ExamBooklet>> bookletFilterBox = new ComboBox<>();
 	private final Button clearMetadataFiltersButton = new Button("Clear filters");
 	private final ComboBox<FilterOption<Exam>> examFilterBox = new ComboBox<>();
-	private QuestionSearchFilterCatalogue filterCatalogue;
-	private long filterCatalogueGeneration;
-	private Task<QuestionSearchFilterCatalogue> filterCatalogueTask;
 	private final TitledPane metadataFilterPane = new TitledPane();
 	private final Label metadataFilterStatus = new Label();
 	private final ComboBox<FilterOption<SyllabusVersion>> originalSyllabusFilterBox = new ComboBox<>();
 	private final ComboBox<FilterOption<ExamProvider>> providerFilterBox = new ComboBox<>();
 	private final ComboBox<FilterOption<QuestionResponseType>> responseTypeFilterBox = new ComboBox<>();
-	private boolean updatingMetadataChoices;
 	private final ComboBox<FilterOption<Integer>> yearFromFilterBox = new ComboBox<>();
 	private final ComboBox<FilterOption<Integer>> yearToFilterBox = new ComboBox<>();
-
-	// Output applicability changes save immediately. Keep the active write separate
-	// from the background task that reads applicability for a selected Question.
-	private Task<Void> activeOutputApplicabilityUpdateTask;
 
 	// The Dialog owns persistence and supplies the action that commits the pending
 	// Descriptor refinement.
 	private Runnable classificationSaveHandler = () -> {
 		throw new IllegalStateException("Classification save handler is not configured");
 	};
-
-	// Search inherits the workspace-level Working Subject. It does not own a
-	// separate application-level Subject selection.
-	private final Subject workingSubject;
-	private final QuestionSearchNarrowing searchNarrowing;
-	private PerformanceOperation activeOutputApplicabilityOperation;
-	private PerformanceOperation activePreviewOperation;
 
 	/**
 	 * Creates an unrestricted question-search pane.

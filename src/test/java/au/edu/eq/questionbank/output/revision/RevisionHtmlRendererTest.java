@@ -434,21 +434,24 @@ class RevisionHtmlRendererTest {
 
 	private static final class Fixture {
 
+		// Test environment and collaborators.
+		private final InMemoryCurriculumRepository curriculumRepository;
+
+		// Curriculum and assessment fixtures.
+		private final Question answeredQuestion;
+		private final AnswerRegion answerRegion;
+		private final ExamBooklet booklet;
 		private final Subject chemistry;
 		private final Descriptor directDescriptor;
-		private final AnswerRegion answerRegion;
-		private final Question answeredQuestion;
-		private final Question noAnswerQuestion;
-		private final Question incompleteQuestion;
-		private final InMemoryCurriculumRepository curriculumRepository;
-		private final Subtopic subtopic;
-		private final Descriptor nestedDescriptor;
-		private final ExamBooklet booklet;
-		private final Descriptor historicalDescriptor;
-		private final Unit emptyUnit;
+		private final Subtopic emptySubtopic;
 		private final Topic emptyTopic;
 		private final Topic emptyTopicInPopulatedUnit;
-		private final Subtopic emptySubtopic;
+		private final Unit emptyUnit;
+		private final Descriptor historicalDescriptor;
+		private final Question incompleteQuestion;
+		private final Descriptor nestedDescriptor;
+		private final Question noAnswerQuestion;
+		private final Subtopic subtopic;
 
 		private Fixture() {
 			chemistry = new Subject(1, "Chemistry");

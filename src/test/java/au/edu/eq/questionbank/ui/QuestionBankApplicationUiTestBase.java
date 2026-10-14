@@ -69,12 +69,13 @@ import javafx.stage.Window;
 @ExtendWith(ApplicationExtension.class)
 abstract class QuestionBankApplicationUiTestBase {
 
+	// Test fixtures and collaborators.
 	QuestionBankApplication application;
 	ApplicationConfig applicationConfig;
-	Stage primaryStage;
+	Path databasePath;
 	Path examPdf;
 	Path pdfDataRoot;
-	Path databasePath;
+	Stage primaryStage;
 
 	static void closeDialog(FxRobot robot, String dialogTitle) {
 		waitForDialogShowing(robot, dialogTitle);

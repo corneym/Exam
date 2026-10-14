@@ -60,11 +60,14 @@ import javafx.stage.WindowEvent;
 @ExtendWith(ApplicationExtension.class)
 class CurriculumAuthoringApplicationRegressionTest {
 
+	// Test fixtures and collaborators.
+	private QuestionBankApplication application;
+	private SqliteDatabase database;
+	private Stage primaryStage;
 	@TempDir
 	Path tempDir;
-	private QuestionBankApplication application;
-	private Stage primaryStage;
-	private SqliteDatabase database;
+
+	// Initialised test fixtures and coordination state (initialisation order retained).
 	private final AtomicInteger exitRequests = new AtomicInteger();
 
 	@Test

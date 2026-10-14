@@ -36,10 +36,11 @@ import javafx.stage.Stage;
 @ExtendWith(ApplicationExtension.class)
 class CurriculumAuthoringPaneTest {
 
-	@TempDir
-	Path tempDir;
+	// Test fixtures and collaborators.
 	private CurriculumDraft draft;
 	private CurriculumAuthoringPane pane;
+	@TempDir
+	Path tempDir;
 
 	@Test
 	void capturesExplicitHierarchyWithoutEnteringCodesOrParents(FxRobot robot) throws Exception {

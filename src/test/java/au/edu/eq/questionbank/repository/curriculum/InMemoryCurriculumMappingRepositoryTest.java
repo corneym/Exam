@@ -20,14 +20,17 @@ import au.edu.eq.questionbank.model.Unit;
 
 class InMemoryCurriculumMappingRepositoryTest {
 
+	// Test environment and collaborators.
+	private CurriculumMappingRepository repository;
+
+	// Curriculum and assessment fixtures.
+	private CurriculumMapping mapping1;
+	private CurriculumMapping mapping2;
+	private CurriculumMapping mapping3;
 	private CurriculumNode source1;
 	private CurriculumNode source2;
 	private CurriculumNode target1;
 	private CurriculumNode target2;
-	private CurriculumMapping mapping1;
-	private CurriculumMapping mapping2;
-	private CurriculumMapping mapping3;
-	private CurriculumMappingRepository repository;
 
 	@Test
 	void findsAllMappings() {

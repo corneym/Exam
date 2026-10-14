@@ -282,16 +282,17 @@ class RevisionPresentationPlannerTest {
 
 	private static final class Fixture {
 
-		private final Subject chemistry;
-		private final SyllabusVersion historicalVersion;
-		private final SyllabusVersion currentVersion;
-		private final Descriptor historicalDescriptor;
-		private final Unit currentUnit;
-		private final Topic currentTopic;
-		private final Descriptor firstDescriptor;
-		private final Descriptor secondDescriptor;
+		// Curriculum and assessment fixtures.
 		private final ExamBooklet booklet;
+		private final Subject chemistry;
+		private final Topic currentTopic;
+		private final Unit currentUnit;
+		private final SyllabusVersion currentVersion;
+		private final Descriptor firstDescriptor;
+		private final Descriptor historicalDescriptor;
+		private final SyllabusVersion historicalVersion;
 		private final QuestionRegion region;
+		private final Descriptor secondDescriptor;
 
 		private Fixture() {
 			chemistry = new Subject(1, "Chemistry");

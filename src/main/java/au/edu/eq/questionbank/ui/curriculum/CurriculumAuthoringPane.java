@@ -60,9 +60,24 @@ public final class CurriculumAuthoringPane extends BorderPane implements AutoClo
 	private static final double WORKSPACE_DIVIDER_POSITION = 0.50;
 	private static final int PAGE_TEXT_ROWS = 18;
 	private static final int PAGE_TEXT_MIN_HEIGHT = 300;
+	// Authoring services and source document.
+	private final CurriculumAuthoringSession authoringSession;
+	private final CurriculumAuthoringWriter authoringWriter;
+	private final CurriculumDraft draft;
+	private final CurriculumLifecycleService lifecycleService;
 	private final Stage ownerStage;
 	private final PdfFilePicker pdfFilePicker;
-	private final CurriculumDraft draft;
+	private final CurriculumSourcePdfService sourcePdfService;
+	private Path syllabusPdfPath;
+
+	// Editor selection and unsaved state.
+	private boolean changingTree;
+	private boolean dirty;
+
+	// The editor remains bound to this node while tree selection is changing.
+	private Long editorDraftId;
+
+	// Controls and initial workflow state (initialisation order retained).
 	private final CurriculumDraftNumberingService numbering = new CurriculumDraftNumberingService();
 	private final CurriculumDraftTextExporter textExporter = new CurriculumDraftTextExporter();
 	private final PdfWorkspacePane pdfWorkspace = new PdfWorkspacePane();
@@ -85,20 +100,10 @@ public final class CurriculumAuthoringPane extends BorderPane implements AutoClo
 	private final Button moveDownButton = new Button("Move down");
 	private final TextArea validationArea = new TextArea();
 	private final Label statusLabel = new Label();
-	private Path syllabusPdfPath;
-	private final CurriculumAuthoringSession authoringSession;
-	private final CurriculumAuthoringWriter authoringWriter;
-	private final CurriculumSourcePdfService sourcePdfService;
-	private final CurriculumLifecycleService lifecycleService;
 	private final Button browseButton = new Button("Browse...");
 	private final Button saveButton = new Button("Save");
 	private final Button finaliseButton = new Button("Mark Final");
 	private final Button reopenButton = new Button("Reopen for editing");
-	private boolean dirty;
-
-	// The editor remains bound to this node while tree selection is changing.
-	private Long editorDraftId;
-	private boolean changingTree;
 	private final Label lifecycleLabel = new Label();
 
 	/**

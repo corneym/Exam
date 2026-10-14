@@ -28,14 +28,17 @@ import au.edu.eq.questionbank.service.revision.RevisionPresentationPlanner;
  */
 public final class RevisionExportService {
 
-	private final RevisionCorpusBuilder corpusBuilder;
-	private final RevisionQuestionAssetRenderer questionAssetRenderer;
+	// Corpus construction and revision rendering collaborators.
 	private final RevisionAnswerAssetRenderer answerAssetRenderer;
-	private final RevisionExportValidator validator;
-	private final RevisionPresentationPlanner presentationPlanner;
-	private final RevisionSharedContextAssetRenderer sharedContextAssetRenderer;
-	private final RevisionCorpusScope corpusScope = new RevisionCorpusScope();
 	private final Clock clock;
+	private final RevisionCorpusBuilder corpusBuilder;
+	private final RevisionPresentationPlanner presentationPlanner;
+	private final RevisionQuestionAssetRenderer questionAssetRenderer;
+	private final RevisionSharedContextAssetRenderer sharedContextAssetRenderer;
+	private final RevisionExportValidator validator;
+
+	// Revision scope selection (initialisation order retained).
+	private final RevisionCorpusScope corpusScope = new RevisionCorpusScope();
 
 	/**
 	 * Creates an exporter from corpus, rendering and validation services.

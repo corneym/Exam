@@ -27,13 +27,16 @@ public class CurriculumImportDialog extends Dialog<ButtonType> {
 	private static final int FORM_COLUMN_GAP = 10;
 	private static final int FORM_ROW_GAP = 8;
 	private static final int FORM_PADDING = 10;
+	// Dialog data and collaborators.
+	private final Path curriculumDataRoot;
+	private final Subject fixedSubject;
+	private Path selectedFile;
+
+	// Controls and initial workflow state (initialisation order retained).
 	private final TextField subjectField = new TextField();
 	private final TextField versionField = new TextField();
 	private final CheckBox currentCheckBox = new CheckBox();
 	private final TextField fileField = new TextField();
-	private Path selectedFile;
-	private final Path curriculumDataRoot;
-	private final Subject fixedSubject;
 
 	/**
 	 * Creates a curriculum-import dialog owned by the supplied window.

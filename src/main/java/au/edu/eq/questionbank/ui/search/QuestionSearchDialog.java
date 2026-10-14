@@ -35,9 +35,12 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 
 	private static final int DIALOG_WIDTH = 1100;
 	private static final int DIALOG_HEIGHT = 700;
-	private final QuestionSearchPane searchPane;
+	// Dialog data and collaborators.
 	private final BiFunction<Long, CurriculumNode, Question> classificationUpdater;
+	private boolean persistedClassificationChange;
+	private final QuestionSearchPane searchPane;
 
+	// Controls and initial workflow state (initialisation order retained).
 	// A Search edit temporarily hides and later reuses this same Dialog instance.
 	// Preserve teacher-adjusted dimensions across that hide/show cycle.
 	private double rememberedWidth = Double.NaN;
@@ -50,7 +53,6 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	private final ButtonType recaptureSharedContextButtonType = new ButtonType("Edit Shared Context",
 			ButtonBar.ButtonData.OTHER);
 	private final ButtonType splitQuestionButtonType = new ButtonType("Split Question...", ButtonBar.ButtonData.OTHER);
-	private boolean persistedClassificationChange;
 
 	/**
 	 * Creates an unrestricted question-search dialog owned by the supplied window.

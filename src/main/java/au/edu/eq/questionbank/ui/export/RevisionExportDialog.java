@@ -41,14 +41,17 @@ public final class RevisionExportDialog extends Dialog<ButtonType> {
 	private static final int FORM_PADDING = 10;
 	private static final int UNIT_SPACING = 4;
 	private static final double UNIT_LIST_HEIGHT = 120;
+	// Dialog data and collaborators.
+	private final BiPredicate<Subject, Set<Long>> descriptorGroupingAvailable;
+	private Path destinationParent;
+	private final Function<Subject, List<Unit>> exportableUnits;
+	private final Button exportButton;
+	private final Subject subject;
+
+	// Controls and initial workflow state (initialisation order retained).
 	private final ComboBox<RevisionGroupingMode> groupingBox = new ComboBox<>();
 	private final TextField destinationField = new TextField();
 	private final VBox unitBox = new VBox(UNIT_SPACING);
-	private final Function<Subject, List<Unit>> exportableUnits;
-	private final BiPredicate<Subject, Set<Long>> descriptorGroupingAvailable;
-	private Path destinationParent;
-	private final Button exportButton;
-	private final Subject subject;
 	private final Label subjectLabel = new Label();
 
 	/**

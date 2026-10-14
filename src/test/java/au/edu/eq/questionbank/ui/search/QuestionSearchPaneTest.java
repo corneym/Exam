@@ -113,22 +113,25 @@ import javafx.util.Duration;
 @ExtendWith(ApplicationExtension.class)
 public class QuestionSearchPaneTest {
 
+	// Test environment and collaborators.
+	private DelayedCurriculumRepository curriculumRepository;
+	private InMemoryQuestionOutputApplicabilityRepository outputApplicabilityRepository;
+	private QuestionPreviewService previewService;
+	private DelayedQuestionRetrievalRepository retrievalRepository;
+	private QuestionRetrievalService retrievalService;
+	private Stage stage;
+
+	// Curriculum and assessment fixtures.
 	private Subject chemistry;
-	private Unit currentUnit;
-	private Topic currentTopic;
-	private Subtopic currentSubtopic;
 	private Descriptor currentDescriptor;
-	private Unit historicalUnit;
+	private Subtopic currentSubtopic;
+	private Topic currentTopic;
+	private Unit currentUnit;
 	private Descriptor historicalDescriptor;
 	private Question historicalQuestion;
-	private Topic noMatchTopic;
+	private Unit historicalUnit;
 	private Descriptor noMatchDescriptor;
-	private DelayedCurriculumRepository curriculumRepository;
-	private DelayedQuestionRetrievalRepository retrievalRepository;
-	private QuestionPreviewService previewService;
-	private QuestionRetrievalService retrievalService;
-	private InMemoryQuestionOutputApplicabilityRepository outputApplicabilityRepository;
-	private Stage stage;
+	private Topic noMatchTopic;
 
 	@Test
 	public void allQuestionsScopeShowsWorkingSubjectWithoutCurriculumApplicability(FxRobot robot)
@@ -3617,12 +3620,15 @@ public class QuestionSearchPaneTest {
 
 	private static final class DelayedCurriculumRepository extends InMemoryCurriculumRepository {
 
+		// Test fixtures and collaborators.
 		private volatile CurriculumNode delayedParent;
+		private volatile boolean delaySubjectLoading;
 		private volatile CurriculumNode failingParent;
+
+		// Initialised test fixtures and coordination state (initialisation order retained).
 		private volatile CountDownLatch delayStarted = new CountDownLatch(0);
 		private volatile CountDownLatch delayRelease = new CountDownLatch(0);
 		private volatile CountDownLatch delayFinished = new CountDownLatch(0);
-		private volatile boolean delaySubjectLoading;
 		private volatile CountDownLatch subjectDelayStarted = new CountDownLatch(0);
 		private volatile CountDownLatch subjectDelayRelease = new CountDownLatch(0);
 
@@ -3769,9 +3775,12 @@ public class QuestionSearchPaneTest {
 
 	private static final class DelayedQuestionRetrievalRepository implements QuestionRetrievalRepository {
 
+		// Test fixtures and collaborators.
+		private volatile CurriculumNode delayedNode;
 		private final CurriculumNode matchingNode;
 		private final Question matchingQuestion;
-		private volatile CurriculumNode delayedNode;
+
+		// Initialised test fixtures and coordination state (initialisation order retained).
 		private volatile CountDownLatch delayStarted = new CountDownLatch(0);
 		private volatile CountDownLatch delayRelease = new CountDownLatch(0);
 		private volatile CountDownLatch delayFinished = new CountDownLatch(0);
@@ -3829,15 +3838,18 @@ public class QuestionSearchPaneTest {
 
 	private static final class LatestPreviewDebouncer implements AutoCloseable {
 
+		// Test fixtures and collaborators.
+		private final int delayMilliseconds;
+		private ScheduledFuture<?> pending;
+
+		// Initialised test fixtures and coordination state (initialisation order retained).
 		private final AtomicInteger active = new AtomicInteger();
 		private final AtomicInteger completed = new AtomicInteger();
 		private final AtomicLong currentQuestionId = new AtomicLong(-1);
-		private final int delayMilliseconds;
 		private final AtomicInteger peakConcurrent = new AtomicInteger();
 		private final AtomicInteger skipped = new AtomicInteger();
 		private final ScheduledExecutorService timer = Executors
 				.newSingleThreadScheduledExecutor(Thread.ofVirtual().factory());
-		private ScheduledFuture<?> pending;
 
 		private LatestPreviewDebouncer(int delayMilliseconds) {
 			if (delayMilliseconds < 0) {

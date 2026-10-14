@@ -57,7 +57,27 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	private static final Color STORED_REGION_STROKE = Color.rgb(110, 110, 110, 0.75);
 	private static final double STORED_REGION_STROKE_WIDTH = 1.5;
 	private static final double STORED_REGION_TOP_MARGIN = 12.0;
+	// PDF sessions and document lifecycle.
+	private Path answerPdfPath;
+	private PdfSession answerPdfSession;
+	private boolean closed;
+	private long documentRequest;
+	private PdfSession examPdfSession;
+	private PdfSession viewerPdfSession;
+
+	// Page viewport and selection geometry.
+	private boolean anchoredSelectionActive;
+	private DocumentMode anchoredSelectionDocument;
+	private boolean anchoredSelectionFullWidth;
+	private int anchoredSelectionPageNumber;
+	private double anchoredSelectionX;
+	private double anchoredSelectionY;
 	private final ScrollPane pageScrollPane;
+	private double selectionStartX;
+	private double selectionStartY;
+	private boolean storedRegionScrollPending;
+
+	// Controls and initial workflow state (initialisation order retained).
 	private final List<RegionSelection> storedRegionHighlights = new ArrayList<>();
 	private final List<StoredRegionHighlight> visibleStoredRegionHighlights = new ArrayList<>();
 	private final Pane pagePane = new Pane();
@@ -68,20 +88,12 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	private final Label pageLabel = new Label("No PDF selected");
 	private final TextField pageNumberField = new TextField();
 	private final CheckBox fullWidthSelectionCheckBox = new CheckBox("Full width selection");
-	private PdfSession examPdfSession;
-	private PdfSession answerPdfSession;
-	private Path answerPdfPath;
-	private long documentRequest;
-	private boolean closed;
-	private PdfSession viewerPdfSession;
 	private DocumentMode displayedDocument = DocumentMode.EXAM;
 	private DocumentMode viewerReturnDocument = DocumentMode.EXAM;
 	private int currentPageNumber = 1;
 	private int viewerReturnPageNumber = 1;
 	private int examPageNumber = 1;
 	private int answerPageNumber = 1;
-	private double selectionStartX;
-	private double selectionStartY;
 	private Predicate<DocumentMode> selectionAvailable = _ -> false;
 	private Consumer<RegionSelection> selectionHandler = _ -> {
 	};
@@ -91,13 +103,6 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	};
 	private BooleanSupplier pageNavigationAllowed = () -> true;
 	private final Circle selectionAnchorMarker = new Circle(ANCHOR_MARKER_RADIUS);
-	private boolean anchoredSelectionActive;
-	private double anchoredSelectionX;
-	private double anchoredSelectionY;
-	private int anchoredSelectionPageNumber;
-	private DocumentMode anchoredSelectionDocument;
-	private boolean anchoredSelectionFullWidth;
-	private boolean storedRegionScrollPending;
 	private final Button viewerCompletionButton = new Button("Finish Inspection");
 	private Runnable viewerCompletionHandler = () -> {
 	};

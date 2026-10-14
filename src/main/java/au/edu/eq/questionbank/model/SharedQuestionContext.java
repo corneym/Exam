@@ -11,8 +11,9 @@ import java.util.List;
  */
 public final class SharedQuestionContext {
 
-	private final long id;
+	// Shared Context identity and content.
 	private final ExamBooklet booklet;
+	private final long id;
 	private final String label;
 	private final List<SharedQuestionContextRegion> regions;
 

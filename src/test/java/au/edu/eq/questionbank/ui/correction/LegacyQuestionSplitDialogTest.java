@@ -42,10 +42,11 @@ import javafx.stage.Stage;
 @ExtendWith(ApplicationExtension.class)
 class LegacyQuestionSplitDialogTest {
 
-	private Stage owner;
+	// Test fixtures and collaborators.
 	private SqliteCurriculumRepository curriculumRepository;
-	private Question question;
 	private Subtopic firstSubtopic;
+	private Stage owner;
+	private Question question;
 	private Subtopic secondSubtopic;
 
 	@Test

@@ -23,17 +23,20 @@ import au.edu.eq.questionbank.service.curriculum.DescriptorLookupService.Descrip
 
 class DescriptorLookupServiceTest {
 
-	private SyllabusVersion current;
-	private SyllabusVersion historical;
-	private SyllabusVersion physicsVersion;
-	private Unit currentUnit;
-	private Topic reactionTopic;
-	private Subtopic ratesSubtopic;
-	private Descriptor ratesDescriptor;
+	// Test environment and collaborators.
+	private DescriptorLookupService service;
+
+	// Curriculum and assessment fixtures.
 	private Descriptor comparisonDescriptor;
+	private SyllabusVersion current;
+	private Unit currentUnit;
+	private SyllabusVersion historical;
 	private Descriptor historicalDescriptor;
 	private Descriptor physicsDescriptor;
-	private DescriptorLookupService service;
+	private SyllabusVersion physicsVersion;
+	private Descriptor ratesDescriptor;
+	private Subtopic ratesSubtopic;
+	private Topic reactionTopic;
 
 	@Test
 	void acceptsCaseInsensitivePartialWordsAndMultipleTerms() {

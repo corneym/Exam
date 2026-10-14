@@ -22,11 +22,12 @@ import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository
 
 class CurriculumMappingBuilderTest {
 
+	// Test fixtures and collaborators.
+	private CurriculumRepository repository;
+	private CurriculumNode source;
 	private SyllabusVersion syllabus2019;
 	private SyllabusVersion syllabus2025;
-	private CurriculumNode source;
 	private CurriculumNode target;
-	private CurriculumRepository repository;
 
 	@Test
 	void rejectsUnknown2019Code() {

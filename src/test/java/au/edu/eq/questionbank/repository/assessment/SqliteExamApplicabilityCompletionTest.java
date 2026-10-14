@@ -20,12 +20,13 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 class SqliteExamApplicabilityCompletionTest {
 
-	@TempDir
-	Path tempDir;
+	// Test fixtures and collaborators.
 	private SqliteDatabase database;
+	private Exam exam;
 	private SqliteExamWriter examWriter;
 	private BookletApplicabilityReviewRepository reviewRepository;
-	private Exam exam;
+	@TempDir
+	Path tempDir;
 
 	@Test
 	void changingToActiveNeverRequiresReviews() throws Exception {

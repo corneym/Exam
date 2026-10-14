@@ -23,20 +23,25 @@ import java.util.List;
  */
 public class Question {
 
-	private final long id;
+	// Identity and classification.
 	private final ExamBooklet booklet;
+	private final CurriculumNode classification;
+	private final long id;
 	private final String questionCode;
+
+	// Question content and assessment.
+	private Answer answer;
+	private final List<QuestionContentPart> contentParts;
+	private final int marks;
 	private final String questionText;
 	private final List<QuestionRegion> regions;
-	private final CurriculumNode classification;
-	private final int marks;
-	private final boolean sharedContextCaptureRequired;
-	private final SourceQuestion sourceQuestion;
-	private final SharedQuestionContext sharedContext;
-	private Answer answer;
 	private final QuestionResponseType responseType;
-	private final List<QuestionContentPart> contentParts;
+
+	// Source relationships and capture requirements.
+	private final SharedQuestionContext sharedContext;
+	private final boolean sharedContextCaptureRequired;
 	private final boolean sourceCaptureRequired;
+	private final SourceQuestion sourceQuestion;
 
 	/**
 	 * Creates a question through the normal capture workflow.

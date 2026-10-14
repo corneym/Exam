@@ -40,10 +40,13 @@ import au.edu.eq.questionbank.model.Unit;
 
 class QuestionExtractorTest {
 
+	// Test fixtures and collaborators.
+	private ExamBooklet booklet;
 	@TempDir
 	Path tempDir;
+
+	// Initialised test fixtures and coordination state (initialisation order retained).
 	private final QuestionExtractor extractor = new QuestionExtractor();
-	private ExamBooklet booklet;
 
 	@Test
 	void combinesMultipleRegionsInQuestionOrder() throws Exception {

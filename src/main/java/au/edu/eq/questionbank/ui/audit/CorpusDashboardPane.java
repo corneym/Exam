@@ -87,9 +87,34 @@ public final class CorpusDashboardPane extends VBox {
 	// the dialog is vertically constrained.
 	private static final double BOOKLET_TABLE_MAX_HEIGHT = 280.0;
 	private static final double BOOKLET_TABLE_MIN_HEIGHT = 125.0;
-	private final Subject workingSubject;
+	// Corpus and curriculum snapshots.
+	private boolean curriculumAvailable;
 	private List<ExamCorpusStatus> examStatuses;
+
+	// Curriculum mapping review is a Subject-level reporting dimension independent
+	// of ordinary Question and Exam completeness.
+	private List<CurriculumMappingCoverage> mappingCoverages;
 	private List<Question> questions;
+	private final Subject workingSubject;
+
+	// Dashboard filters and workflow state.
+	private boolean applicabilityReviewChangeInProgress;
+	private boolean changingQuestionFilter;
+	private boolean changingScopeFilters;
+	private boolean examLifecycleChangeInProgress;
+	private boolean mcqExplanationFilterActive;
+	private QuestionCorpusProblem selectedQuestionProblem;
+	private boolean summaryQuestionFilterActive;
+
+	// Dashboard layout sections.
+	private StackPane bookletsSection;
+	private HBox examEmptyStateRow;
+	private ScrollPane examEmptyStateScroll;
+	private HBox examFilterRow;
+	private VBox examOperationalContent;
+	private StackPane questionWorkSection;
+
+	// Controls and initial workflow state (initialisation order retained).
 	private final ComboBox<ExamProvider> providerBox = new ComboBox<>();
 	private final ComboBox<Integer> yearBox = new ComboBox<>();
 	private final ComboBox<ExamCaptureState> examStateBox = new ComboBox<>();
@@ -114,10 +139,6 @@ public final class CorpusDashboardPane extends VBox {
 	private final Button setSelectedMultipleChoiceButton = new Button("Set selected: Multiple choice");
 	private final Button setSelectedWrittenResponseButton = new Button("Set selected: Written");
 	private final Label mcqExplanationCoverageLabel = new Label();
-	private QuestionCorpusProblem selectedQuestionProblem;
-	private boolean changingScopeFilters;
-	private boolean changingQuestionFilter;
-	private ScrollPane examEmptyStateScroll;
 	private BiConsumer<List<Question>, QuestionResponseType> bulkResponseTypeHandler = (_, _) -> {
 	};
 	private final Button manageExamAssetsButton = new Button("Manage Exam / Assets");
@@ -135,52 +156,38 @@ public final class CorpusDashboardPane extends VBox {
 	private final Button addExamButton = new Button("Add Exam");
 	private Runnable addExamHandler = () -> {
 	};
-	private HBox examEmptyStateRow;
-	private VBox examOperationalContent;
 	private final Label noExamsLabel = new Label("No Exams have been added.");
-	private StackPane bookletsSection;
-	private StackPane questionWorkSection;
 	private final Button completeSelectedAnswerButton = new Button("Complete Selected Answer");
 	private final Button inspectBookletQuestionsButton = new Button("Inspect Questions");
 	private final Button inspectExamQuestionsButton = new Button("Inspect Questions");
 	private BiConsumer<Exam, ExamBooklet> questionInspectionHandler = (_, _) -> {
 	};
-	private boolean applicabilityReviewChangeInProgress;
 	private BiConsumer<ExamBooklet, Boolean> applicabilityReviewHandler = (_, _) -> {
 	};
 	private Set<Long> reviewedBookletIds = Set.of();
 	private final Button assignDescriptorsButton = new Button("Assign Descriptors");
 	private Consumer<ExamBooklet> descriptorAssignmentHandler = _ -> {
 	};
-
-	// Curriculum mapping review is a Subject-level reporting dimension independent
-	// of ordinary Question and Exam completeness.
-	private List<CurriculumMappingCoverage> mappingCoverages;
 	private final Label curriculumMappingSummaryLabel = new Label();
-	private boolean summaryQuestionFilterActive;
 	private final Button addCurriculumButton = new Button("+");
 	private Runnable addCurriculumHandler = () -> {
 	};
 	private final Button mapCurriculumButton = new Button("Map Curriculum");
 	private Runnable mapCurriculumHandler = () -> {
 	};
-	private boolean curriculumAvailable;
 
 	// Legacy metadata intake belongs to the Working Subject rather than to one
 	// selected Exam or booklet.
 	private final Button importLegacyQuestionsButton = new Button("Import Legacy");
 	private Runnable legacyQuestionImportHandler = () -> {
 	};
-	private HBox examFilterRow;
 	private final Button examLifecycleButton = new Button("Mark Complete");
 	private BiConsumer<Exam, ExamCaptureState> examLifecycleHandler = (_, _) -> {
 	};
 	private final Button captureMcqExplanationsButton = new Button("Capture MCQ Explanations");
 	private Consumer<Question> mcqExplanationCaptureHandler = _ -> {
 	};
-	private boolean mcqExplanationFilterActive;
 	private final Button missingMcqExplanationButton = new Button();
-	private boolean examLifecycleChangeInProgress;
 	private final Label examLifecycleProgressLabel = new Label("Updating Exam state...");
 	private final ProgressIndicator examLifecycleProgressIndicator = new ProgressIndicator();
 	private final HBox examLifecycleProgressRow = new HBox(SPACING);

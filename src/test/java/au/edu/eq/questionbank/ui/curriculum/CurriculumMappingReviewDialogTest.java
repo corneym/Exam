@@ -52,9 +52,12 @@ import javafx.stage.Stage;
 @ExtendWith(ApplicationExtension.class)
 class CurriculumMappingReviewDialogTest {
 
+	// Test environment and collaborators.
 	private CurriculumMappingReviewDialog dialog;
 	private CurriculumMappingReviewRepository reviewRepository;
 	private SqliteCurriculumMappingReviewWriter reviewWriter;
+
+	// Curriculum and assessment fixtures.
 	private Descriptor secondSourceDescriptor;
 	private SyllabusVersion sourceVersion;
 	private Subject subject;

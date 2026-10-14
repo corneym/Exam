@@ -98,28 +98,63 @@ public final class QuestionCapturePane extends VBox {
 	private static final String SECTION_HEADING_STYLE = "-fx-font-weight: bold;";
 	private static final String SUCCESS_STATUS_STYLE = "-fx-text-fill: #2e7d32;";
 
-	// Workflow dependencies and application callbacks.
-	private final QuestionRepository questionRepository;
-	private final QuestionExtractor questionExtractor;
+	// Capture dependencies and collaborators.
 	private final CurriculumSelectionModel curriculumSelectionModel;
 	private final CurriculumSelectorPane curriculumSelectorPane;
-	private final Supplier<ExamBooklet> bookletSupplier;
-	private final Supplier<PdfSession> examPdfSessionSupplier;
-	private final Runnable selectionClearHandler;
-	private final Consumer<List<Question>> questionsChangedHandler;
-	private final IntConsumer examPageNavigationHandler;
+	private final LegacyQuestionSplitService legacyQuestionSplitService;
+	private final SqliteQuestionCaptureService questionCaptureService;
+	private final QuestionExtractor questionExtractor;
+	private final QuestionRepository questionRepository;
+	private final SharedContextCapturePane sharedContextCapturePane;
+	private final SourceQuestionRepository sourceQuestionRepository;
 
+	// Application callbacks and workflow guards.
+	private final Supplier<ExamBooklet> bookletSupplier;
+	private final IntConsumer examPageNavigationHandler;
+	private final Supplier<PdfSession> examPdfSessionSupplier;
+	private final Predicate<Question> importedQuestionActivationHandler;
+	private final Consumer<List<Question>> questionsChangedHandler;
+	private final BooleanSupplier questionSelectionTransferHandler;
+	private final BooleanSupplier questionTargetChangeAllowed;
+	private final Runnable selectionClearHandler;
+
+	// Question capture and editing state.
 	// Reuse the worker's snapshot throughout synchronous listeners fired by save
 	// completion.
 	private List<Question> completionQuestions;
-	private final Predicate<Question> importedQuestionActivationHandler;
-	private final BooleanSupplier questionTargetChangeAllowed;
-	private final BooleanSupplier questionSelectionTransferHandler;
-	private final SharedContextCapturePane sharedContextCapturePane;
-	private final SourceQuestionRepository sourceQuestionRepository;
-	private final SqliteQuestionCaptureService questionCaptureService;
-	private final LegacyQuestionSplitService legacyQuestionSplitService;
+	private QuestionRegion currentSelection;
+	private Question editingQuestion;
+	private boolean importedCaptureMode;
+	private Question importedQuestion;
+	private LegacySplitCaptureState legacySplitCaptureState;
+	private boolean loadingQuestionEdit;
 
+	// New-Question capture is deliberately inactive until the user starts it.
+	private boolean newQuestionCaptureActive;
+	private boolean questionSaveInProgress;
+	private boolean refreshingImportedQuestions;
+
+	// Working Subject is transient workspace state. A null value preserves the
+	// existing all-subject behaviour until the workspace selector is applied.
+	private Subject workingSubject;
+
+	// Shared Context and response-type state.
+	private SharedQuestionContext inheritedMcqSharedContext;
+	private boolean mcqContinuationSelected;
+
+	// Independent MCQs use one persisted booklet-level continuation rather than
+	// SourceQuestion multipart identity.
+	private boolean mcqSharedContextCaptureActive;
+	private boolean refreshingSharedContextControls;
+
+	// Automatic defaults may be replaced by an explicit response-type choice.
+	private boolean responseTypeManuallySelected;
+
+	// Suppress inference while a response-type change itself updates the marks
+	// field.
+	private boolean updatingResponseTypeSelection;
+
+	// Controls and initial workflow state (initialisation order retained).
 	// Capture mode and imported-question selection.
 	private final ToggleButton importedQuestionsModeButton = new ToggleButton("Complete Imported Question");
 	private final ToggleGroup captureModeGroup = new ToggleGroup();
@@ -153,26 +188,9 @@ public final class QuestionCapturePane extends VBox {
 	private final Button cancelQuestionEditButton = new Button("Cancel");
 	private final Label saveStatusLabel = new Label();
 
-	// Transient capture and edit state.
-	private boolean refreshingSharedContextControls;
-
 	// The most recently refreshed Question corpus is sufficient for synchronous
 	// duplicate-code feedback without querying SQLite for every keystroke.
 	private List<Question> questionSnapshot = List.of();
-
-	// Independent MCQs use one persisted booklet-level continuation rather than
-	// SourceQuestion multipart identity.
-	private boolean mcqSharedContextCaptureActive;
-	private boolean mcqContinuationSelected;
-
-	// New-Question capture is deliberately inactive until the user starts it.
-	private boolean newQuestionCaptureActive;
-	private SharedQuestionContext inheritedMcqSharedContext;
-	private boolean questionSaveInProgress;
-	private Question importedQuestion;
-	private boolean refreshingImportedQuestions;
-	private boolean importedCaptureMode;
-	private QuestionRegion currentSelection;
 	private Consumer<Boolean> questionSaveBusyHandler = _ -> {
 	};
 
@@ -180,22 +198,8 @@ public final class QuestionCapturePane extends VBox {
 	// body.
 	// PDF selections and pasted images can therefore be interleaved arbitrarily.
 	private final List<QuestionContentPart> pendingContentParts = new ArrayList<>();
-	private Question editingQuestion;
-	private boolean loadingQuestionEdit;
 	private Runnable questionEditCompletedHandler = () -> {
 	};
-	private LegacySplitCaptureState legacySplitCaptureState;
-
-	// Working Subject is transient workspace state. A null value preserves the
-	// existing all-subject behaviour until the workspace selector is applied.
-	private Subject workingSubject;
-
-	// Automatic defaults may be replaced by an explicit response-type choice.
-	private boolean responseTypeManuallySelected;
-
-	// Suppress inference while a response-type change itself updates the marks
-	// field.
-	private boolean updatingResponseTypeSelection;
 	private long importedCaptureCompletionQuestionId = -1L;
 	private Runnable importedCaptureCompletedHandler = () -> {
 	};
@@ -3716,11 +3720,14 @@ public final class QuestionCapturePane extends VBox {
 
 	private static final class LegacySplitCaptureState {
 
-		private final Question originalQuestion;
-		private final LegacyQuestionSplitDialog.Result definition;
-		private final List<SplitPart> completedParts = new ArrayList<>();
-		private final Runnable completedHandler;
+		// Staged split definition and progress.
 		private int activePartIndex;
+		private final Runnable completedHandler;
+		private final LegacyQuestionSplitDialog.Result definition;
+		private final Question originalQuestion;
+
+		// Completed split parts (initialisation order retained).
+		private final List<SplitPart> completedParts = new ArrayList<>();
 
 		private LegacySplitCaptureState(Question originalQuestion, LegacyQuestionSplitDialog.Result definition,
 				Runnable completedHandler) {

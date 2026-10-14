@@ -20,17 +20,20 @@ import au.edu.eq.questionbank.service.curriculum.DescriptorLookupService;
  */
 public class CurriculumSelectionModel {
 
+	// Curriculum repository.
 	private final CurriculumRepository repository;
-	private Subject subject;
-	private SyllabusVersion syllabusVersion;
-	private CurriculumNode unit;
-	private CurriculumNode topic;
-	private CurriculumNode subtopic;
+
+	// Selected classification and Subject snapshot.
 	private CurriculumNode classification;
+	private Subject subject;
 
 	// A successfully loaded Subject snapshot supplies the Subject-transition
 	// choices without repeating their persistence reads on the JavaFX thread.
 	private SubjectSnapshot subjectSnapshot;
+	private CurriculumNode subtopic;
+	private SyllabusVersion syllabusVersion;
+	private CurriculumNode topic;
+	private CurriculumNode unit;
 
 	/**
 	 * Creates a selection model backed by curriculum lookups from a repository.

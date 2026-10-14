@@ -9,15 +9,16 @@ import org.junit.jupiter.api.Test;
 
 class CurriculumMappingTest {
 
+	// Curriculum and assessment fixtures.
 	private Subject chemistry;
-	private SyllabusVersion syllabus2019;
-	private SyllabusVersion syllabus2025;
-	private Unit unit2019;
-	private Unit unit2025;
-	private Topic topic2019;
-	private Topic topic2025;
 	private Subtopic subtopic2019;
 	private Subtopic subtopic2025;
+	private SyllabusVersion syllabus2019;
+	private SyllabusVersion syllabus2025;
+	private Topic topic2019;
+	private Topic topic2025;
+	private Unit unit2019;
+	private Unit unit2025;
 
 	@Test
 	void equalityUsesMappingIdentity() {

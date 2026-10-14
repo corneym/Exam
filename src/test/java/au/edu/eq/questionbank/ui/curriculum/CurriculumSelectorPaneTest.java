@@ -44,17 +44,20 @@ import javafx.stage.Stage;
 @ExtendWith(ApplicationExtension.class)
 public class CurriculumSelectorPaneTest {
 
-	private Subject chemistry;
-	private SyllabusVersion syllabus2019;
-	private SyllabusVersion syllabus2025;
-	private Unit unit3;
-	private Topic topic31;
-	private Subtopic subtopic311;
-	private Descriptor descriptor3111;
-	private Topic topic32;
-	private Descriptor descriptor321;
+	// Test environment and collaborators.
 	private CurriculumSelectionModel model;
 	private CurriculumSelectorPane pane;
+
+	// Curriculum and assessment fixtures.
+	private Subject chemistry;
+	private Descriptor descriptor3111;
+	private Descriptor descriptor321;
+	private Subtopic subtopic311;
+	private SyllabusVersion syllabus2019;
+	private SyllabusVersion syllabus2025;
+	private Topic topic31;
+	private Topic topic32;
+	private Unit unit3;
 
 	@Test
 	public void changingSyllabusClearsCodeAndClassificationButRetainsSubject(FxRobot robot) {

@@ -59,7 +59,32 @@ public class CurriculumSelectorPane extends VBox {
 	private static final String BORDER_STYLE = "-fx-border-color: #b0b0b0;-fx-border-width: 1;-fx-border-radius: 3;";
 	private static final String HEADING_STYLE = "-fx-font-weight: bold;";
 	private static final int DESCRIPTOR_LOOKUP_LIMIT = 5;
+	// Curriculum selection and lookup collaborators.
+	private VBox classificationContext;
+	private final DescriptorLookupService descriptorLookupService;
 	private final CurriculumSelectionModel model;
+	private VBox subjectContext;
+
+	// Selection publication and Subject coordination.
+	// A workflow may request restoration of a persisted Question classification
+	// immediately after activating its Working Subject. When Subject loading is
+	// application-managed, retain that request until the matching curriculum
+	// snapshot has been published.
+	private CurriculumNode deferredClassification;
+	private boolean refreshingCode;
+	private boolean refreshingSubjects;
+
+	// The desktop application owns asynchronous Working Subject transitions. A
+	// standalone selector keeps its existing synchronous Subject behaviour.
+	private boolean subjectRefreshManagedExternally;
+
+	// Descriptor lookup generations and snapshots.
+	private long descriptorContextGeneration;
+	private SyllabusVersion descriptorLoadedSyllabus;
+	private SyllabusVersion descriptorLoadingSyllabus;
+	private long descriptorQueryGeneration;
+
+	// Controls and initial workflow state (initialisation order retained).
 	private final ReadOnlyBooleanWrapper classificationSelected = new ReadOnlyBooleanWrapper();
 	private final ReadOnlyObjectWrapper<CurriculumNode> selectedClassification = new ReadOnlyObjectWrapper<>();
 	private final TextField codeField = new TextField();
@@ -71,35 +96,16 @@ public class CurriculumSelectorPane extends VBox {
 	private final ComboBox<CurriculumNode> descriptorBox = new ComboBox<>();
 	private final Label subtopicLabel = new Label("Subtopic");
 	private final Label descriptorLabel = new Label("Descriptor");
-	private boolean refreshingSubjects;
-	private boolean refreshingCode;
-	private VBox classificationContext;
-	private VBox subjectContext;
 	private final Label readOnlySubjectLabel = new Label();
 	private PerformanceRecorder performanceRecorder = new PerformanceRecorder(false, Path.of("performance.csv"));
-	private long descriptorContextGeneration;
-	private SyllabusVersion descriptorLoadedSyllabus;
-	private SyllabusVersion descriptorLoadingSyllabus;
 	private final ListView<DescriptorMatch> descriptorLookupResults = new ListView<>();
 	private final Label descriptorLookupStatus = new Label();
 	private final TextField descriptorLookupText = new TextField();
-	private long descriptorQueryGeneration;
 	private List<CurriculumNode> descriptorSnapshot = List.of();
-	private final DescriptorLookupService descriptorLookupService;
-
-	// The desktop application owns asynchronous Working Subject transitions. A
-	// standalone selector keeps its existing synchronous Subject behaviour.
-	private boolean subjectRefreshManagedExternally;
 
 	// Subject creation is an application-level action. The pane owns only its
 	// compact presentation; persistence is supplied by the containing application.
 	private final Button addSubjectButton = new Button("+");
-
-	// A workflow may request restoration of a persisted Question classification
-	// immediately after activating its Working Subject. When Subject loading is
-	// application-managed, retain that request until the matching curriculum
-	// snapshot has been published.
-	private CurriculumNode deferredClassification;
 
 	/**
 	 * Creates a selector bound to the supplied selection model.

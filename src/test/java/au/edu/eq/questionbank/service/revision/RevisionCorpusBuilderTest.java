@@ -299,21 +299,24 @@ class RevisionCorpusBuilderTest {
 
 	private static final class Fixture {
 
-		private final Subject chemistry;
-		private final SyllabusVersion currentVersion;
-		private final Unit firstUnit;
-		private final Unit secondUnit;
-		private final Topic descriptorModeTopic;
-		private final Topic subtopicModeTopic;
-		private final Topic secondUnitTopic;
-		private final Subtopic currentSubtopic;
-		private final Descriptor directDescriptor;
-		private final Descriptor subtopicDescriptor;
-		private final Descriptor secondUnitDescriptor;
-		private final Question subtopicQuestion;
-		private final Question renderableQuestion;
-		private final Question laterQuestion;
+		// Test environment and collaborators.
 		private final InMemoryCurriculumRepository curriculumRepository;
+
+		// Curriculum and assessment fixtures.
+		private final Subject chemistry;
+		private final Subtopic currentSubtopic;
+		private final SyllabusVersion currentVersion;
+		private final Topic descriptorModeTopic;
+		private final Descriptor directDescriptor;
+		private final Unit firstUnit;
+		private final Question laterQuestion;
+		private final Question renderableQuestion;
+		private final Unit secondUnit;
+		private final Descriptor secondUnitDescriptor;
+		private final Topic secondUnitTopic;
+		private final Descriptor subtopicDescriptor;
+		private final Topic subtopicModeTopic;
+		private final Question subtopicQuestion;
 
 		private Fixture() {
 			chemistry = new Subject(1, "Chemistry");
