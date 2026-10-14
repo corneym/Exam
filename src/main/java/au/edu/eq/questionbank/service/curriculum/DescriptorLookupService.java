@@ -153,6 +153,12 @@ public final class DescriptorLookupService {
 	 */
 	public record DescriptorMatch(CurriculumNode descriptor, String hierarchyPath) {
 
+		/**
+		 * Validates the Descriptor match components.
+		 *
+		 * @throws NullPointerException     if either component is null
+		 * @throws IllegalArgumentException if the node is not a Descriptor
+		 */
 		public DescriptorMatch {
 			Objects.requireNonNull(descriptor, "descriptor");
 			Objects.requireNonNull(hierarchyPath, "hierarchyPath");

@@ -131,9 +131,16 @@ public final class SharedContextCorrectionDialog extends Dialog<SharedContextCor
 		return content;
 	}
 
-	/** Correction operation selected by the user. */
+	/**
+	 * Correction operation selected by the user.
+	 */
 	public enum Mode {
-		CAPTURE_NEW, REUSE_EXISTING
+
+		/** Capture a new Shared Context from the source PDF. */
+		CAPTURE_NEW,
+
+		/** Reuse an existing Shared Context from the booklet. */
+		REUSE_EXISTING
 	}
 
 	/**
@@ -144,6 +151,13 @@ public final class SharedContextCorrectionDialog extends Dialog<SharedContextCor
 	 */
 	public record Decision(Mode mode, long contextId) {
 
+		/**
+		 * Validates the selected correction decision.
+		 *
+		 * @throws NullPointerException     if mode is null
+		 * @throws IllegalArgumentException if the context ID is invalid for the
+		 *                                  selected mode
+		 */
 		public Decision {
 			Objects.requireNonNull(mode, "mode");
 			if (mode == Mode.REUSE_EXISTING && contextId < 1) {
