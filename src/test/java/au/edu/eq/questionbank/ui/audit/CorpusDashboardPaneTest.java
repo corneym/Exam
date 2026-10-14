@@ -1997,6 +1997,7 @@ class CorpusDashboardPaneTest {
 	}
 
 	@Test
+	@SuppressWarnings("unchecked")
 	void uncapturedSummaryRespectsExamScopeAndUnknownExpectations(FxRobot robot) {
 		Button missingQuestions = robot.lookup("#corpus-dashboard-summary-missing-questions").queryButton();
 		ComboBox<ExamCaptureState> state = robot.lookup("#corpus-dashboard-filter-exam-state").queryAs(ComboBox.class);
