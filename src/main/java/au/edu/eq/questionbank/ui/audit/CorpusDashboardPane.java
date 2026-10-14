@@ -5,6 +5,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
@@ -148,6 +149,9 @@ public final class CorpusDashboardPane extends VBox {
 	private BiConsumer<ExamBooklet, Boolean> applicabilityReviewHandler = (_, _) -> {
 	};
 	private Set<Long> reviewedBookletIds = Set.of();
+	private final Button assignDescriptorsButton = new Button("Assign Descriptors");
+	private Consumer<ExamBooklet> descriptorAssignmentHandler = _ -> {
+	};
 
 	// Curriculum mapping review is a Subject-level reporting dimension independent
 	// of ordinary Question and Exam completeness.
@@ -431,6 +435,17 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	/**
+	 * Supplies the existing Search workflow used to assign missing Descriptors
+	 * within the selected Question booklet.
+	 *
+	 * @param handler operation receiving the authoritative selected booklet
+	 * @throws NullPointerException if handler is null
+	 */
+	public void setDescriptorAssignmentHandler(Consumer<ExamBooklet> handler) {
+		descriptorAssignmentHandler = Objects.requireNonNull(handler, "handler");
+	}
+
+	/**
 	 * Supplies the application-owned route into Exam / Assets for the selected Exam
 	 * and optional Question booklet.
 	 *
@@ -667,6 +682,17 @@ public final class CorpusDashboardPane extends VBox {
 		refreshDashboard();
 	}
 
+	private void assignSelectedBookletDescriptors() {
+		BookletCorpusStatus selected = bookletTable.getSelectionModel().getSelectedItem();
+		if (selected == null || selected.questionsWithoutDescriptorCount() == 0) {
+			return;
+		}
+
+		// The Dashboard owns the selected booklet identity.
+		// Search owns the outstanding classification queue and persistence.
+		descriptorAssignmentHandler.accept(selected.booklet());
+	}
+
 	private String bookletProblemLabel(BookletCorpusStatus status) {
 
 		// Use the authoritative booklet audit so structural findings,
@@ -787,7 +813,8 @@ public final class CorpusDashboardPane extends VBox {
 		bookletInspectionSpacer.setFocusTraversable(false);
 		HBox.setHgrow(bookletInspectionSpacer, Priority.ALWAYS);
 		HBox bookletActionsRow = new HBox(SPACING, captureQuestionsButton, captureAnswersButton,
-				captureMcqExplanationsButton, bookletInspectionSpacer, inspectBookletQuestionsButton);
+				captureMcqExplanationsButton, assignDescriptorsButton, bookletInspectionSpacer,
+				inspectBookletQuestionsButton);
 		bookletActionsRow.setAlignment(Pos.CENTER_LEFT);
 
 		// Preserve natural button widths when the user narrows the section.
@@ -1130,6 +1157,10 @@ public final class CorpusDashboardPane extends VBox {
 		completeSelectedQuestionButton.setTooltip(new Tooltip(
 				"Complete missing Question content or unresolved Shared Context for the selected Question."));
 		completeSelectedQuestionButton.setDisable(true);
+		assignDescriptorsButton.setId("corpus-dashboard-assign-descriptors");
+		assignDescriptorsButton.setTooltip(
+				new Tooltip("Open the remaining Questions without Descriptors " + "in the selected booklet."));
+		assignDescriptorsButton.setDisable(true);
 		inspectBookletQuestionsButton.setId("corpus-dashboard-inspect-booklet-questions");
 		inspectBookletQuestionsButton
 				.setTooltip(new Tooltip("Open Question Search narrowed to the selected Question booklet."));
@@ -1174,6 +1205,7 @@ public final class CorpusDashboardPane extends VBox {
 
 	private void configureCommandActions() {
 		addExamButton.setOnAction(_ -> addExamHandler.run());
+		assignDescriptorsButton.setOnAction(_ -> assignSelectedBookletDescriptors());
 		importLegacyQuestionsButton.setOnAction(_ -> legacyQuestionImportHandler.run());
 		inspectBookletQuestionsButton.setOnAction(_ -> inspectSelectedBookletQuestions());
 		inspectExamQuestionsButton.setOnAction(_ -> inspectSelectedExamQuestions());
@@ -2326,20 +2358,20 @@ public final class CorpusDashboardPane extends VBox {
 
 	private void updateCaptureActionState() {
 		BookletCorpusStatus selected = bookletTable.getSelectionModel().getSelectedItem();
+
+		// Descriptor refinement corrects existing Question metadata.
+		// It remains available for COMPLETE Exams.
+		assignDescriptorsButton.setDisable(selected == null || selected.questionsWithoutDescriptorCount() == 0);
 		Question existingQuestionWork = firstQuestionCaptureWorkQuestion(selected);
 
-		// Existing Question-side work may be completed even for a COMPLETE Exam.
-		// Creating a genuinely new Question still requires an ACTIVE Exam.
+		// Existing Question correction is permitted for COMPLETE Exams,
+		// while creating a new Question requires an ACTIVE Exam.
 		boolean questionCaptureAvailable = selected != null && selected.questionPdfAvailable()
 				&& (existingQuestionWork != null || !selected.booklet().getExam().isComplete());
 		captureQuestionsButton.setDisable(!questionCaptureAvailable);
-
-		// Booklet-level ordinary Answer capture retains its sequential unanswered
-		// workflow.
 		captureAnswersButton.setDisable(selected == null || firstMissingAnswerQuestion() == null);
 
-		// Explanation capture is correction of already-persisted Answer material and is
-		// therefore valid even when the Exam is already COMPLETE.
+		// Explanation correction remains available for COMPLETE Exams.
 		captureMcqExplanationsButton
 				.setDisable(selected == null || firstMissingMcqExplanationQuestion(selected) == null);
 	}

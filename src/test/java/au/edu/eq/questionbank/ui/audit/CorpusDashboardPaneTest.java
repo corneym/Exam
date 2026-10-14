@@ -90,17 +90,65 @@ class CorpusDashboardPaneTest {
 	private Fixture fixture;
 
 	@Test
+	@SuppressWarnings("unchecked")
+	void assignDescriptorsRequiresSelectedBookletWithOutstandingClassification(FxRobot robot) {
+		Button assign = robot.lookup("#corpus-dashboard-assign-descriptors").queryButton();
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		AtomicReference<ExamBooklet> requested = new AtomicReference<>();
+		robot.interact(() -> pane.setDescriptorAssignmentHandler(requested::set));
+
+		// An Exam is initially selected, but no booklet has been selected.
+		assertTrue(assign.isDisable());
+
+		// Paper 1 is already fully classified.
+		robot.interact(() -> booklets.getSelectionModel().select(fixture.paper1Status));
+		assertTrue(assign.isDisable());
+
+		// Paper 2 has three Questions without Descriptors.
+		robot.interact(() -> booklets.getSelectionModel().select(fixture.paper2Status));
+		assertFalse(assign.isDisable());
+		robot.interact(assign::fire);
+		assertNotNull(requested.get());
+		assertEquals(fixture.paper2.getId(), requested.get().getId());
+
+		// Simulate an authoritative refreshed audit snapshot in which
+		// the outstanding classification work has been completed.
+		BookletCorpusStatus classifiedPaper2 = new BookletCorpusStatus(fixture.paper2,
+				fixture.paper2Status.questionPdfAvailable(), fixture.paper2Status.assignedAnswerFile(),
+				fixture.paper2Status.encounteredTopLevelQuestionCount(), fixture.paper2Status.questionPartCount(), 0,
+				fixture.paper2Status.questionSummary(), fixture.paper2Status.mcqExplanationCoverage(),
+				fixture.paper2Status.findings());
+		ExamCorpusStatus refreshedExam = new ExamCorpusStatus(fixture.completeExam,
+				fixture.completeExamStatus.assetExpectations(), List.of(fixture.paper1Status, classifiedPaper2),
+				fixture.completeExamStatus.questionSummary(), fixture.completeExamStatus.mcqExplanationSummary(),
+				fixture.completeExamStatus.findings());
+		requested.set(null);
+		robot.interact(() -> {
+			pane.replaceData(List.of(refreshedExam), fixture.questions());
+			booklets.getSelectionModel().select(classifiedPaper2);
+		});
+		assertEquals(0, classifiedPaper2.questionsWithoutDescriptorCount());
+		assertTrue(assign.isDisable());
+
+		// Disabled controls must not route further classification work.
+		assertNull(requested.get());
+		robot.interact(() -> booklets.getSelectionModel().clearSelection());
+		assertTrue(assign.isDisable());
+	}
+
+	@Test
 	void bookletActionsSeparateCaptureFromInspectionAndScrollWhenNarrow(FxRobot robot) {
 		ScrollPane actions = robot.lookup("#corpus-dashboard-booklet-actions-scroll").queryAs(ScrollPane.class);
 		HBox row = (HBox) actions.getContent();
 		Button captureQuestions = robot.lookup("#corpus-dashboard-capture-questions").queryButton();
 		Button captureAnswers = robot.lookup("#corpus-dashboard-capture-answers").queryButton();
 		Button captureMcq = robot.lookup("#corpus-dashboard-capture-mcq-explanations").queryButton();
+		Button assign = robot.lookup("#corpus-dashboard-assign-descriptors").queryButton();
 		Button inspect = robot.lookup("#corpus-dashboard-inspect-booklet-questions").queryButton();
 		Region spacer = robot.lookup("#corpus-dashboard-booklet-action-spacer").queryAs(Region.class);
 
 		// Capture actions precede Inspection in both layout and keyboard order.
-		assertEquals(List.of(captureQuestions, captureAnswers, captureMcq, spacer, inspect), row.getChildren());
+		assertEquals(List.of(captureQuestions, captureAnswers, captureMcq, assign, spacer, inspect), row.getChildren());
 		assertEquals(Priority.ALWAYS, HBox.getHgrow(spacer));
 		assertFalse(spacer.isFocusTraversable());
 		assertTrue(actions.isFitToWidth());

@@ -4195,6 +4195,7 @@ public class QuestionBankApplication extends Application {
 			}
 		});
 		dashboard.setQuestionCorrectionHandler(this::showCorpusDashboardQuestionCorrection);
+		dashboard.setDescriptorAssignmentHandler(this::showDashboardDescriptorAssignment);
 		dashboard.setQuestionInspectionHandler(this::showDashboardQuestionInspection);
 		corpusDashboardPane = dashboard;
 		corpusDashboardHost.getChildren().setAll(dashboard);
@@ -4285,6 +4286,23 @@ public class QuestionBankApplication extends Application {
 		setCaptureWorkspaceSectionVisibility(false, false, true);
 		setWorkspaceMode(captureWorkspaceModePane);
 		refreshActiveExamContext();
+	}
+
+	private void showDashboardDescriptorAssignment(ExamBooklet booklet) {
+		Objects.requireNonNull(booklet, "booklet");
+		if (workingSubject == null || booklet.getExam().getSubject().getId() != workingSubject.getId()) {
+			throw new IllegalArgumentException("The selected booklet does not belong to the Working Subject");
+		}
+
+		// The Search narrowing retains persisted booklet identity and the
+		// missing-Descriptor condition across every Search refresh.
+		QuestionSearchNarrowing narrowing = QuestionSearchNarrowing.forMissingDescriptors(booklet);
+
+		// Use the same Search construction, SQLite classification updater
+		// and modal navigation lifecycle as ordinary Question inspection.
+		// Search close already triggers an authoritative Dashboard refresh
+		// when at least one classification change was persisted.
+		showQuestionSearch(primaryStage(), applicationConfig, narrowing);
 	}
 
 	private boolean showDashboardMcqExplanationCapture(Question question, Runnable returnHandler) {
