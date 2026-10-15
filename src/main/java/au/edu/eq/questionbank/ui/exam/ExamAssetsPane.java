@@ -13,6 +13,9 @@ import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
+import au.edu.eq.questionbank.importer.legacy.LegacyExamIdentity;
+import au.edu.eq.questionbank.importer.legacy.LegacyExamKey;
+import au.edu.eq.questionbank.importer.legacy.LegacyMappedBookletRequirement;
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamAssetExpectations;
@@ -585,6 +588,68 @@ public final class ExamAssetsPane extends VBox {
 		});
 		legacyImportCancelButton.setOnAction(_ -> cancelAction.run());
 		legacyImportRequirementsBox.getChildren().setAll(heading, context, instruction, requirementRows, actions);
+		legacyImportRequirementsBox.setVisible(true);
+		legacyImportRequirementsBox.setManaged(true);
+		updateUseSelectedBookletState();
+	}
+
+	/**
+	 * Displays booklet requirements with their confirmed examination identities,
+	 * allowing the teacher to create the necessary structures before rechecking the
+	 * import.
+	 *
+	 * @param syllabusName  selected historical syllabus
+	 * @param workbookPath  retained managed workbook
+	 * @param requirements  missing mapped booklet requirements
+	 * @param recheckAction revalidates persisted assets and imports
+	 * @param cancelAction  abandons the pending import
+	 */
+	public void showMappedLegacyImportRequirements(String syllabusName, Path workbookPath,
+			List<LegacyMappedBookletRequirement> requirements, Runnable recheckAction, Runnable cancelAction) {
+		Objects.requireNonNull(syllabusName, "syllabusName");
+		Objects.requireNonNull(workbookPath, "workbookPath");
+		Objects.requireNonNull(requirements, "requirements");
+		Objects.requireNonNull(recheckAction, "recheckAction");
+		Objects.requireNonNull(cancelAction, "cancelAction");
+		if (syllabusName.isBlank()) {
+			throw new IllegalArgumentException("Syllabus name must not be blank");
+		}
+		if (requirements.isEmpty()) {
+			throw new IllegalArgumentException("Missing requirements must not be empty");
+		}
+		legacyImportPending = true;
+		Label heading = new Label("LEGACY IMPORT");
+		heading.setStyle(HEADING_STYLE);
+		Label context = new Label("Syllabus: " + syllabusName + "\nWorkbook: " + workbookPath.getFileName());
+		context.setWrapText(true);
+		Label instructions = new Label("The following Question booklets must exist under the "
+				+ "specified examination. Use Add New Exam and " + "Add Question Booklet as required. "
+				+ "Save each change before selecting " + "Recheck and Import.");
+		instructions.setWrapText(true);
+		instructions.setId("exam-assets-legacy-import-instruction");
+		VBox requirementRows = new VBox(ROW_SPACING);
+		int index = 0;
+		for (LegacyMappedBookletRequirement requirement : requirements) {
+			LegacyExamIdentity identity = requirement.identity();
+			LegacyExamKey key = requirement.key();
+			String description = "%s / %d / %s / %s".formatted(identity.providerName(), key.year(), identity.examName(),
+					requirement.bookletName());
+			Label row = new Label(description);
+			row.setId("exam-assets-legacy-import-requirement-" + index);
+			row.setWrapText(true);
+			requirementRows.getChildren().add(row);
+			index++;
+		}
+		Region spacer = new Region();
+		HBox.setHgrow(spacer, Priority.ALWAYS);
+		HBox actions = new HBox(SPACING, legacyImportCancelButton, spacer, legacyImportRecheckButton);
+		legacyImportRecheckButton.setOnAction(_ -> {
+			if (canRecheckLegacyQuestionImport()) {
+				recheckAction.run();
+			}
+		});
+		legacyImportCancelButton.setOnAction(_ -> cancelAction.run());
+		legacyImportRequirementsBox.getChildren().setAll(heading, context, instructions, requirementRows, actions);
 		legacyImportRequirementsBox.setVisible(true);
 		legacyImportRequirementsBox.setManaged(true);
 		updateUseSelectedBookletState();

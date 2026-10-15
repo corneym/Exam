@@ -13,10 +13,12 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
+import java.util.Map;
 
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.ss.usermodel.WorkbookFactory;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -421,6 +423,100 @@ class LegacyQuestionMetadataImporterTest {
 	}
 
 	@Test
+	void mappedImportDistinguishesThreeQCAA2020Examinations() throws Exception {
+		Fixture fixture = createFixture("mapped-qcaa-exams.db", false);
+		SqliteDatabase database = fixture.database();
+
+		// The fixture already contains the authoritative
+		// QCAA 2020 External Assessment and its two booklets.
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, writer);
+		Subject chemistry = null;
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("SELECT id FROM subjects WHERE subject_name = 'Chemistry'")) {
+			assertTrue(result.next());
+
+			// Resolve the fixture's existing Subject through
+			// its ordinary model identity.
+			chemistry = new Subject(result.getLong("id"), "Chemistry");
+		}
+		for (String examName : List.of("Mock Examination", "Sample Examination")) {
+			String prefix = examName.equals("Mock Examination") ? "mock" : "sample";
+			examImporter.importExam(chemistry, "QCAA", 2020, examName, "MCQ booklet",
+					"Chemistry/2020/" + prefix + "-mcq.pdf");
+			examImporter.importExam(chemistry, "QCAA", 2020, examName, "Paper 1",
+					"Chemistry/2020/" + prefix + "-paper1.pdf");
+		}
+		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(database);
+		String[] worksheets = { "QCAA", "QCAA Mock", "QCAA Sample" };
+		String[] examinationNames = { "External Assessment", "Mock Examination", "Sample Examination" };
+		for (int index = 0; index < worksheets.length; index++) {
+			Path workbook = renamedWorkbook(fixture.workbookPath(), worksheets[index], "qcaa-2020-" + index + ".xlsx");
+			Map<LegacyExamKey, LegacyExamIdentity> mapping = Map.of(new LegacyExamKey(worksheets[index], 2020),
+					new LegacyExamIdentity("QCAA", examinationNames[index]));
+			assertTrue(importer.findMissingBookletsMapped(workbook, "Chemistry", "2019", mapping).isEmpty());
+			LegacyQuestionImportResult first = importer.importWorkbookMapped(workbook, "Chemistry", "2019", mapping);
+			assertEquals(2, first.insertedQuestions());
+			assertEquals(0, first.existingQuestions());
+			LegacyQuestionImportResult second = importer.importWorkbookMapped(workbook, "Chemistry", "2019", mapping);
+			assertEquals(0, second.insertedQuestions());
+			assertEquals(2, second.existingQuestions());
+		}
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet results = statement.executeQuery("""
+						SELECT e.exam_name, COUNT(q.id) AS question_count
+						FROM exams e
+						JOIN exam_booklets b ON b.exam_id = e.id
+						JOIN questions q ON q.booklet_id = b.id
+						WHERE e.exam_year = 2020
+						GROUP BY e.id, e.exam_name
+						ORDER BY e.exam_name
+						""")) {
+			int examCount = 0;
+			while (results.next()) {
+				examCount++;
+				assertEquals(2, results.getInt("question_count"));
+			}
+			assertEquals(3, examCount);
+		}
+	}
+
+	@Test
+	void mappedImportRejectsMissingExaminationIdentity() throws Exception {
+		Fixture fixture = createFixture("unconfirmed-exam-mapping.db", false);
+		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());
+		IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+				() -> importer.importWorkbookMapped(fixture.workbookPath(), "Chemistry", "2019", Map.of()));
+		assertTrue(exception.getMessage().contains("Missing confirmed examination mapping"));
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
+			assertEquals(0, countRows(statement, "questions"));
+			assertEquals(0, countRows(statement, "answers"));
+			assertEquals(0, countRows(statement, "source_questions"));
+		}
+	}
+
+	@Test
+	void mappedPreflightDoesNotConfuseExaminations() throws Exception {
+		Fixture fixture = createFixture("mapped-preflight.db", false);
+		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());
+		Map<LegacyExamKey, LegacyExamIdentity> mapping = Map.of(new LegacyExamKey("QCAA", 2020),
+				new LegacyExamIdentity("QCAA", "Mock Examination"));
+		List<LegacyMappedBookletRequirement> missing = importer.findMissingBookletsMapped(fixture.workbookPath(),
+				"Chemistry", "2019", mapping);
+
+		// Only External Assessment exists in this fixture.
+		// Its booklets must not satisfy Mock Examination.
+		assertEquals(2, missing.size());
+		assertTrue(missing.contains(new LegacyMappedBookletRequirement(new LegacyExamKey("QCAA", 2020),
+				new LegacyExamIdentity("QCAA", "Mock Examination"), "MCQ booklet")));
+		assertTrue(missing.contains(new LegacyMappedBookletRequirement(new LegacyExamKey("QCAA", 2020),
+				new LegacyExamIdentity("QCAA", "Mock Examination"), "Paper 1")));
+	}
+
+	@Test
 	void mcqQuestionMayRequireSharedContextWithoutInventingMultipartIdentity() throws Exception {
 		Fixture fixture = createFixture("mcq-shared-context.db", false, true);
 		new LegacyQuestionMetadataImporter(fixture.database()).importWorkbook(fixture.workbookPath(), "Chemistry",
@@ -711,6 +807,17 @@ class LegacyQuestionMetadataImporterTest {
 			}
 		}
 		return path;
+	}
+
+	private Path renamedWorkbook(Path source, String worksheetName, String targetFilename) throws Exception {
+		Path target = tempDirectory.resolve(targetFilename);
+		try (Workbook workbook = WorkbookFactory.create(Files.newInputStream(source))) {
+			workbook.setSheetName(0, worksheetName);
+			try (OutputStream output = Files.newOutputStream(target)) {
+				workbook.write(output);
+			}
+		}
+		return target;
 	}
 
 	private record Fixture(SqliteDatabase database, Path workbookPath) {

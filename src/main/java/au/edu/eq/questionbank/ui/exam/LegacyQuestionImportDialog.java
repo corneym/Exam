@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.ui.exam;
 
 import java.io.File;
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 import au.edu.eq.questionbank.model.Subject;
@@ -32,6 +33,7 @@ public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 	private static final int FILE_FIELD_WIDTH = 300;
 	private static final int FILE_CONTROL_SPACING = 6;
 	private static final int SELECTOR_WIDTH = 220;
+	private static Path lastWorkbookDirectory;
 
 	// Dialog data and collaborators.
 	private final CurriculumRepository curriculumRepository;
@@ -113,14 +115,24 @@ public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 		FileChooser chooser = new FileChooser();
 		chooser.setTitle("Select Legacy Question Metadata Workbook");
 		chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Excel workbooks", "*.xlsx"));
+
+		// Remember the last successful selection between imports.
+		// A directory may have been removed or disconnected meanwhile.
+		if (lastWorkbookDirectory != null && Files.isDirectory(lastWorkbookDirectory)) {
+			chooser.setInitialDirectory(lastWorkbookDirectory.toFile());
+		}
+
 		File file = chooser.showOpenDialog(owner);
 		if (file == null) {
-
-			// Cancelling the native chooser leaves the current dialog selections intact.
+			// Cancelling Browse does not change the remembered directory
+			// or the currently selected workbook.
 			return;
 		}
-		selectedFile = file.toPath();
+
+		selectedFile = file.toPath().toAbsolutePath().normalize();
 		fileField.setText(selectedFile.toString());
+
+		lastWorkbookDirectory = selectedFile.getParent();
 	}
 
 	private ButtonType configureDialog(Window owner) {
