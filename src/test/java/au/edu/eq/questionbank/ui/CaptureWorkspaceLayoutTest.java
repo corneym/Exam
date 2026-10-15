@@ -541,6 +541,54 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void dashboardCorrectionOpensSubjectFirstMockPdf(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Exam externalExam = examMetadataPane().getBooklet().getExam();
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
+
+		// Reproduce the production layout: the Mock PDF belongs under
+		// dataRoot/subjects, not under the old PDF root.
+		PdfStore store = new PdfStore(new ManagedDataLayout(applicationConfig.dataRoot()),
+				applicationConfig.pdfDataRoot());
+		Path sourcePdf = createPdf(pdfDataRoot.resolve("mock-question-source.pdf"), 3);
+		Path managedPdf = store.importExamPdf(sourcePdf, externalExam.getSubject().getName(),
+				externalExam.getProvider().getName(), externalExam.getYear(), "Mock Examination");
+		String relativePath = store.relativePath(managedPdf);
+		assertTrue(Files.isRegularFile(managedPdf));
+		assertFalse(Files.exists(applicationConfig.pdfDataRoot().resolve(relativePath)));
+		ExamBooklet mockBooklet = importer.importExam(externalExam.getSubject(), externalExam.getProvider().getName(),
+				externalExam.getYear(), "Mock Examination", "MCQ", relativePath,
+				ExamBookletQuestionFormat.MULTIPLE_CHOICE);
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		Question mockQuestion = new SqliteQuestionRepository(database).save(mockBooklet, "1", "", 1, List.of(),
+				classification, false, null, null, QuestionResponseType.MULTIPLE_CHOICE);
+
+		// Exercise the actual Dashboard correction route, including
+		// asynchronous PDF opening and capture-context activation.
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "showCorpusDashboardQuestionCorrection", new Class<?>[] { Question.class },
+					mockQuestion);
+			return null;
+		}).get();
+		ComboBox<Question> importedQuestions = comboBox(robot, "#imported-question");
+		WaitForAsyncUtils
+				.waitFor(10, TimeUnit.SECONDS,
+						() -> evaluateOnFx(robot, () -> importedQuestions.getValue() != null
+								&& importedQuestions.getValue().getId() == mockQuestion.getId()
+								&& examMetadataPane().getBooklet() != null
+								&& examMetadataPane().getBooklet().getId() == mockBooklet.getId()
+								&& pdfWorkspace().getDisplayedDocument() == PdfWorkspacePane.DocumentMode.EXAM));
+		assertEquals("Mock Examination", examMetadataPane().getBooklet().getExam().getName());
+		assertEquals(mockBooklet.getId(), importedQuestions.getValue().getBooklet().getId());
+
+		// The other examination's identity must remain unchanged.
+		assertEquals("External Assessment", externalExam.getName());
+	}
+
+	@Test
 	void dashboardLegacyPreflightRequirementsRemainInExamAssetsUntilResolved(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		fireControl(robot, "#change-exam-assets");

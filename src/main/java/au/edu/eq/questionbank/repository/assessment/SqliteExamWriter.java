@@ -673,19 +673,15 @@ public final class SqliteExamWriter {
 	 * @throws IllegalArgumentException if an examination identity is invalid
 	 */
 	public List<Exam> findOrCreateExams(Subject subject, List<ExamRegistration> registrations) throws SQLException {
-
 		if (subject == null) {
 			throw new NullPointerException("subject");
 		}
 		if (registrations == null) {
 			throw new NullPointerException("registrations");
 		}
-
 		Map<ExamRegistration, Exam> resolved = new LinkedHashMap<>();
-
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-
 			try {
 				for (ExamRegistration registration : registrations) {
 					if (registration == null) {
@@ -697,25 +693,18 @@ public final class SqliteExamWriter {
 					if (resolved.containsKey(registration)) {
 						continue;
 					}
-
 					ExamProvider provider = findExamProviderByName(connection, registration.providerName());
-
 					if (provider == null) {
 						provider = insertExamProvider(connection, registration.providerName());
 					}
-
 					Exam exam = findExam(connection, subject, provider, registration.year(), registration.examName());
-
 					if (exam == null) {
 						exam = insertExam(connection, subject, provider, registration.year(), registration.examName());
 					}
-
 					resolved.put(registration, exam);
 				}
-
 				connection.commit();
 				return List.copyOf(resolved.values());
-
 			} catch (SQLException | RuntimeException exception) {
 				try {
 					connection.rollback();
@@ -1737,7 +1726,6 @@ public final class SqliteExamWriter {
 			if (examName == null || examName.isBlank()) {
 				throw new IllegalArgumentException("Examination name must not be blank");
 			}
-
 			providerName = providerName.strip();
 			examName = examName.strip();
 		}

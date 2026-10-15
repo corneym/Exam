@@ -303,6 +303,8 @@ public class QuestionBankApplication extends Application {
 
 	// Legacy import and export workflows.
 	private boolean legacyQuestionImportDashboardOwned;
+	private boolean legacyQuestionPdfDirectorySeeded;
+	private Path legacyQuestionSourceDirectory;
 
 	// Legacy workbook intake may pause while the user creates missing authoritative
 	// Exam/booklet structure in Exam/Assets.
@@ -1019,7 +1021,23 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	/**
+	 * Chooses a Question booklet PDF, initially using the original legacy workbook
+	 * directory when an import is awaiting missing booklets.
+	 *
+	 * @param primaryStage  owning application window
+	 * @param bookletPicker application PDF file picker
+	 * @return selected PDF, or {@code null} when cancelled
+	 */
 	private Path chooseQuestionBookletSource(Stage primaryStage, PdfFilePicker bookletPicker) {
+		if (pendingLegacyQuestionImport != null && !legacyQuestionPdfDirectorySeeded
+				&& legacyQuestionSourceDirectory != null) {
+
+			// Seed once for this legacy intake. Further PDF selections
+			// use the location remembered by PdfFilePicker.
+			bookletPicker.preferInitialDirectory(legacyQuestionSourceDirectory);
+			legacyQuestionPdfDirectorySeeded = true;
+		}
 		return bookletPicker.chooseAnyPdf(primaryStage, "Choose Question booklet PDF");
 	}
 
@@ -1091,11 +1109,17 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	/**
+	 * Clears a pending legacy workbook import and its temporary file selection
+	 * context, without altering saved examination assets.
+	 */
 	private void clearPendingLegacyQuestionImport() {
+		legacyQuestionPdfDirectorySeeded = false;
+		legacyQuestionSourceDirectory = null;
 		pendingLegacyQuestionImport = null;
 
-		// Presentation follows the application-owned pending state rather than
-		// retaining an independently meaningful legacy transaction.
+		// Clear only the pending workflow presentation. Exams and
+		// PDFs already saved through Exam/Assets remain authoritative.
 		if (examAssetsPane != null) {
 			examAssetsPane.clearLegacyImportRequirements();
 		}
@@ -1516,40 +1540,32 @@ public class QuestionBankApplication extends Application {
 	 */
 	private void continueLegacyQuestionImport(Stage primaryStage, ApplicationConfig config,
 			PendingLegacyQuestionImport pending, boolean recheck) {
-
 		if (!Objects.equals(workingSubject, pending.subject())) {
 			resetLegacyQuestionImportState();
 			return;
 		}
-
 		try {
 			SqliteDatabase database = new SqliteDatabase(config.databasePath());
-
 			LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(database);
-
 			Path managedWorkbook = pending.managedWorkbookPath();
-
 			if (!recheck) {
+
 				// Register the confirmed Exams before presenting missing
 				// booklets. This does not create any Question or PDF assets.
 				new LegacyExamRegistrationService(database).prepareExams(managedWorkbook, pending.subject(),
 						pending.syllabusVersion().getName(), pending.mappings());
 			}
-
 			List<LegacyMappedBookletRequirement> missing = importer.findMissingBookletsMapped(managedWorkbook,
 					pending.subject().getName(), pending.syllabusVersion().getName(), pending.mappings());
-
 			if (!missing.isEmpty()) {
 				pendingLegacyQuestionImport = pending;
 
 				// Select the Exam that actually requires the next
 				// missing booklet, not the previously selected Exam.
 				selectMissingLegacyExam(database, pending.subject(), missing.getFirst());
-
 				examAssetsPane.showMappedLegacyImportRequirements(pending.syllabusVersion().getName(), managedWorkbook,
 						missing, () -> recheckPendingLegacyQuestionImport(primaryStage, config),
 						this::cancelPendingLegacyQuestionImport);
-
 				if (recheck) {
 					showMappedLegacyImportStillIncomplete(missing);
 				}
@@ -1560,19 +1576,14 @@ public class QuestionBankApplication extends Application {
 			// confirmed Exam identities. Perform the atomic metadata import.
 			LegacyQuestionImportResult importResult = importer.importWorkbookMapped(managedWorkbook,
 					pending.subject().getName(), pending.syllabusVersion().getName(), pending.mappings());
-
 			clearPendingLegacyQuestionImport();
-
 			startLegacyQuestionCaptureRefresh(pending.subject(), importResult);
-
 		} catch (IOException exception) {
 			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "Could not read the retained Excel workbook.",
 					exception.getMessage());
-
 		} catch (SQLException exception) {
 			showAlert(Alert.AlertType.ERROR, "Legacy Question Import",
 					"Could not prepare the examination or import its metadata.", exception.getMessage());
-
 		} catch (IllegalArgumentException | IllegalStateException exception) {
 			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "The legacy Question import failed.",
 					exception.getMessage());
@@ -2749,6 +2760,11 @@ public class QuestionBankApplication extends Application {
 			}
 			SyllabusVersion syllabusVersion = dialog.getSelectedSyllabusVersion();
 			Path sourceWorkbook = dialog.getSelectedFile();
+
+			// Preserve the directory of the external workbook, not the
+			// managed copy retained for legacy-import provenance.
+			legacyQuestionSourceDirectory = sourceWorkbook.toAbsolutePath().normalize().getParent();
+			legacyQuestionPdfDirectorySeeded = false;
 
 			// Read the complete workbook before asking the user
 			// to confirm examination identity.
@@ -4063,11 +4079,8 @@ public class QuestionBankApplication extends Application {
 	 */
 	private void selectMissingLegacyExam(SqliteDatabase database, Subject subject,
 			LegacyMappedBookletRequirement requirement) throws SQLException {
-
 		SqliteExamWriter writer = new SqliteExamWriter(database);
-
 		LegacyExamIdentity identity = requirement.identity();
-
 		Exam exam = writer.findExamsForSubject(subject).stream()
 				.filter(candidate -> candidate.getYear() == requirement.key().year()
 						&& candidate.getProvider().getName().equals(identity.providerName())
@@ -5142,7 +5155,10 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void startCorpusDashboardQuestionCorrection(Question question, Runnable returnHandler) {
-		PdfStore pdfStore = new PdfStore(applicationConfig.pdfDataRoot());
+
+		// Resolve both Subject-first and historical PDF paths using the
+		// application's authoritative managed-data configuration.
+		PdfStore pdfStore = createExamPdfStore(applicationConfig);
 		Path storedPath;
 		try {
 			if (question.getBooklet().getSourceDocument() == null) {

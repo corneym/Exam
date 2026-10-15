@@ -121,17 +121,15 @@ public final class LegacyQuestionImportDialog extends Dialog<ButtonType> {
 		if (lastWorkbookDirectory != null && Files.isDirectory(lastWorkbookDirectory)) {
 			chooser.setInitialDirectory(lastWorkbookDirectory.toFile());
 		}
-
 		File file = chooser.showOpenDialog(owner);
 		if (file == null) {
+
 			// Cancelling Browse does not change the remembered directory
 			// or the currently selected workbook.
 			return;
 		}
-
 		selectedFile = file.toPath().toAbsolutePath().normalize();
 		fileField.setText(selectedFile.toString());
-
 		lastWorkbookDirectory = selectedFile.getParent();
 	}
 

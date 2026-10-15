@@ -41,7 +41,6 @@ public final class LegacyExamRegistrationService {
 		if (database == null) {
 			throw new NullPointerException("database");
 		}
-
 		importer = new LegacyQuestionMetadataImporter(database);
 		writer = new SqliteExamWriter(database);
 	}
@@ -66,7 +65,6 @@ public final class LegacyExamRegistrationService {
 	 */
 	public List<Exam> prepareExams(Path workbookPath, Subject subject, String syllabusName,
 			Map<LegacyExamKey, LegacyExamIdentity> mappings) throws IOException, SQLException {
-
 		if (workbookPath == null) {
 			throw new NullPointerException("workbookPath");
 		}
@@ -84,15 +82,11 @@ public final class LegacyExamRegistrationService {
 		// classification before any Exam record is created.
 		List<LegacyMappedBookletRequirement> requirements = importer.findRequiredBookletsMapped(workbookPath,
 				subject.getName(), syllabusName, mappings);
-
 		if (requirements.isEmpty()) {
 			throw new IllegalArgumentException("The legacy workbook contains no question records");
 		}
-
 		Set<ExamRegistration> registrations = new LinkedHashSet<>();
-
 		for (LegacyMappedBookletRequirement requirement : requirements) {
-
 			registrations.add(new ExamRegistration(requirement.identity().providerName(), requirement.key().year(),
 					requirement.identity().examName()));
 		}

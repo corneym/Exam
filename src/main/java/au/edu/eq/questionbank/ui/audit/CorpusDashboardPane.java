@@ -104,7 +104,9 @@ public final class CorpusDashboardPane extends VBox {
 	private boolean changingScopeFilters;
 	private boolean examLifecycleChangeInProgress;
 	private boolean mcqExplanationFilterActive;
+	private boolean refreshingExamTable;
 	private QuestionCorpusProblem selectedQuestionProblem;
+	private boolean subjectWideQuestionWork;
 	private boolean summaryQuestionFilterActive;
 	private boolean uncapturedQuestionFilterActive;
 
@@ -666,6 +668,7 @@ public final class CorpusDashboardPane extends VBox {
 		selectedQuestionProblem = null;
 		mcqExplanationFilterActive = true;
 		summaryQuestionFilterActive = true;
+		subjectWideQuestionWork = true;
 		uncapturedQuestionFilterActive = false;
 		refreshDashboard();
 	}
@@ -678,9 +681,13 @@ public final class CorpusDashboardPane extends VBox {
 			changingQuestionFilter = false;
 		}
 		mcqExplanationFilterActive = false;
-		uncapturedQuestionFilterActive = false;
 		selectedQuestionProblem = problem;
 		summaryQuestionFilterActive = completion != QuestionCorpusCompletionFilter.ALL || problem != null;
+
+		// A headline click is always a fresh Subject-wide drill-down.
+		// The previously selected Exam must not restrict the result.
+		subjectWideQuestionWork = true;
+		uncapturedQuestionFilterActive = false;
 		refreshDashboard();
 	}
 
@@ -692,11 +699,12 @@ public final class CorpusDashboardPane extends VBox {
 			changingQuestionFilter = false;
 		}
 
-		// Missing Questions have no persisted Question record.
-		// Filter the structural hierarchy rather than Question Work.
+		// These expected Questions have no persisted Question rows.
+		// Continue to identify their Exams and booklets instead.
 		selectedQuestionProblem = null;
 		mcqExplanationFilterActive = false;
 		summaryQuestionFilterActive = false;
+		subjectWideQuestionWork = false;
 		uncapturedQuestionFilterActive = true;
 		refreshDashboard();
 	}
@@ -1019,6 +1027,7 @@ public final class CorpusDashboardPane extends VBox {
 			selectedQuestionProblem = null;
 			mcqExplanationFilterActive = false;
 			summaryQuestionFilterActive = false;
+			subjectWideQuestionWork = false;
 			uncapturedQuestionFilterActive = false;
 		} finally {
 			changingQuestionFilter = false;
@@ -1478,7 +1487,11 @@ public final class CorpusDashboardPane extends VBox {
 				return;
 			}
 
-			// Exam selection owns booklet and Question scope.
+			// An explicit Exam choice ends Subject-wide Question Work.
+			// Programmatic selection during a persistence refresh does not.
+			if (!refreshingExamTable) {
+				subjectWideQuestionWork = false;
+			}
 			showSelectedExam(selected, null);
 			refreshQuestionWork();
 		});
@@ -1493,16 +1506,16 @@ public final class CorpusDashboardPane extends VBox {
 				return;
 			}
 
-			// Booklet selection narrows both visible Question work and the explicit
-			// capture actions.
+			// Selecting a saved booklet is an intentional narrowing
+			// of the currently displayed Question Work scope.
+			if (!refreshingExamTable) {
+				subjectWideQuestionWork = false;
+			}
 			showSelectedBooklet(selected);
 			refreshQuestionWork();
 		});
 		questionTable.getSelectionModel().getSelectedItems()
 				.addListener((ListChangeListener<QuestionCorpusWorkItem>) _ -> {
-
-					// Bulk response-type resolution and single-Question correction derive
-					// independently from the same explicit table selection.
 					updateBulkActionState();
 					updateQuestionActionState();
 				});
@@ -2138,45 +2151,60 @@ public final class CorpusDashboardPane extends VBox {
 	private void refreshExamTable(Long preferredExamId, Long preferredBookletId) {
 		updateExamEmptyState();
 		List<ExamCorpusStatus> filtered = filteredExamStatuses();
-		examTable.getItems().setAll(filtered);
-		ExamCorpusStatus preferred = preferredExamId == null ? null
-				: filtered.stream().filter(status -> status.exam().getId() == preferredExamId.longValue()).findFirst()
-						.orElse(null);
-		if (preferred != null) {
-			examTable.getSelectionModel().select(preferred);
-			showSelectedExam(preferred, preferredBookletId);
-			return;
-		}
-		if (!filtered.isEmpty()) {
+		refreshingExamTable = true;
+		try {
+			examTable.getItems().setAll(filtered);
+			if (subjectWideQuestionWork) {
 
-			// The first visible Exam is selected automatically. Booklet scope remains
-			// unselected unless a compatible previous booklet can be restored.
-			examTable.getSelectionModel().selectFirst();
-			return;
+				// No Exam may appear selected while Question Work contains
+				// Questions from several Exams. Clicking an Exam later
+				// establishes its own explicit narrower scope.
+				examTable.getSelectionModel().clearSelection();
+				clearSelectedExam();
+				return;
+			}
+			ExamCorpusStatus preferred = preferredExamId == null ? null
+					: filtered.stream().filter(status -> status.exam().getId() == preferredExamId.longValue())
+							.findFirst().orElse(null);
+			if (preferred != null) {
+				examTable.getSelectionModel().select(preferred);
+				showSelectedExam(preferred, preferredBookletId);
+				return;
+			}
+			if (!filtered.isEmpty()) {
+
+				// Ordinary Dashboard entry retains its existing first-Exam
+				// selection when no headline drill-down is active.
+				examTable.getSelectionModel().selectFirst();
+				return;
+			}
+			examTable.getSelectionModel().clearSelection();
+			clearSelectedExam();
+		} finally {
+			refreshingExamTable = false;
 		}
-		examTable.getSelectionModel().clearSelection();
-		clearSelectedExam();
 	}
 
 	private void refreshQuestionWork() {
 		List<QuestionCorpusWorkItem> workItems;
-		if (mcqExplanationFilterActive) {
+		if (subjectWideQuestionWork) {
 
-			// Missing explanations may belong to ordinarily complete Questions, so they
-			// cannot be obtained from the standard incomplete-Question queue.
+			// The exact same Subject and structural scope supplies both
+			// the headline count and its displayed Question records.
+			workItems = summaryFilteredQuestionWork();
+		} else if (mcqExplanationFilterActive) {
 			workItems = missingMcqExplanationWorkItems(questionsForSelectedScope());
 		} else {
+
+			// An explicit Exam/booklet selection narrows Question Work
+			// without discarding the requested completeness filter.
 			workItems = QuestionCorpusQueue.build(questionsForSelectedScope(), questionWorkFilter());
 		}
 		questionTable.getItems().setAll(workItems);
-
-		// Reapply the table's current source-aware sort after replacing its rows. The
-		// default is Provider -> Year -> Exam -> Booklet -> natural Question code.
 		questionTable.sort();
 
-		// A scope rebuild must never transfer the old selected row index onto a
-		// different Question. Any deliberate post-correction restoration occurs later
-		// by persistent Question ID.
+		// Never carry a previous row selection into a different scope,
+		// where the same row index could represent another Question.
 		questionTable.getSelectionModel().clearSelection();
 		questionResultCountLabel.setText(String.format("Showing %d Questions", workItems.size()));
 		updateBulkActionState();

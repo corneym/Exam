@@ -34,6 +34,28 @@ class QuestionCapturePaneQueueTest {
 	}
 
 	@Test
+	void importedQuestionLabelsDistinguishExaminationNames() {
+		Subject chemistry = new Subject(2, "Chemistry");
+		ExamProvider provider = new ExamProvider(1, "QCAA");
+		Question external = question(10, chemistry, provider, "Chemistry/2020/external.pdf", "1");
+		Exam mockExam = new Exam(70, chemistry, provider, 2024, "Mock Examination");
+		ExamBooklet mockBooklet = new ExamBooklet(71, mockExam, "Paper 1",
+				new SourceDocument(72, "Chemistry/2020/mock.pdf"));
+		Question mock = new Question(73, mockBooklet, "1", "", 1, List.of(), external.getClassification(), false, null,
+				null, QuestionResponseType.WRITTEN_RESPONSE);
+		Exam sampleExam = new Exam(80, chemistry, provider, 2024, "Sample Examination");
+		ExamBooklet sampleBooklet = new ExamBooklet(81, sampleExam, "Paper 1",
+				new SourceDocument(82, "Chemistry/2020/sample.pdf"));
+		Question sample = new Question(83, sampleBooklet, "1", "", 1, List.of(), external.getClassification(), false,
+				null, null, QuestionResponseType.WRITTEN_RESPONSE);
+		ImportedQuestionStringConverter converter = new ImportedQuestionStringConverter();
+		assertEquals("QCAA 2024 — External Assessment — Paper 1 — 1 — 1 mark(s)", converter.toString(external));
+		assertEquals("QCAA 2024 — Mock Examination — Paper 1 — 1 — 1 mark(s)", converter.toString(mock));
+		assertEquals("QCAA 2024 — Sample Examination — Paper 1 — 1 — 1 mark(s)", converter.toString(sample));
+		assertEquals("", converter.toString(null));
+	}
+
+	@Test
 	void replacementInvalidatedQuestionRemainsInQueueDespitePreservedImageContent() {
 		ExamProvider provider = new ExamProvider(1, "QCAA");
 		Subject chemistry = new Subject(2, "Chemistry");

@@ -307,34 +307,25 @@ public final class LegacyQuestionMetadataImporter {
 		}
 	}
 
+	/**
+	 * Checks whether the confirmed examination has a uniquely matching Question
+	 * booklet, accepting recognised historical booklet aliases.
+	 *
+	 * @param connection  active database connection
+	 * @param subjectId   owning Subject identifier
+	 * @param identity    confirmed examination identity
+	 * @param year        examination year
+	 * @param bookletName conventional booklet name expected by the workbook
+	 * @return true when exactly one compatible booklet exists
+	 * @throws SQLException             if the lookup fails
+	 * @throws IllegalArgumentException if multiple compatible booklets exist
+	 */
 	private boolean bookletExists(Connection connection, long subjectId, LegacyExamIdentity identity, int year,
 			String bookletName) throws SQLException {
-		try (PreparedStatement statement = connection.prepareStatement("""
-				SELECT COUNT(*) AS booklet_count
-				FROM exam_booklets eb
-				JOIN exams e ON e.id = eb.exam_id
-				JOIN exam_providers p ON p.id = e.provider_id
-				WHERE e.subject_id = ?
-				  AND p.provider_name = ?
-				  AND e.exam_year = ?
-				  AND e.exam_name = ?
-				  AND eb.booklet_name = ?
-				""")) {
-			statement.setLong(1, subjectId);
-			statement.setString(2, identity.providerName());
-			statement.setInt(3, year);
-			statement.setString(4, identity.examName());
-			statement.setString(5, bookletName);
-			try (ResultSet result = statement.executeQuery()) {
-				result.next();
-				int count = result.getInt("booklet_count");
-				if (count > 1) {
-					throw new IllegalArgumentException("Ambiguous booklet identity: " + identity.providerName() + " "
-							+ year + " " + identity.examName() + " " + bookletName);
-				}
-				return count == 1;
-			}
-		}
+
+		// Preflight must use precisely the same booklet resolution
+		// as the final mapped question import.
+		return findMappedBooklet(connection, subjectId, identity, year, bookletName) != null;
 	}
 
 	private boolean bookletExists(Connection connection, long subjectId, String providerName, LegacyQuestionRow row)
@@ -384,40 +375,28 @@ public final class LegacyQuestionMetadataImporter {
 		return providerName + " " + row.year() + " " + bookletName(row.paperCode()) + " question " + row.questionCode();
 	}
 
+	/**
+	 * Resolves a legacy workbook row to one persisted Question booklet under its
+	 * confirmed examination identity.
+	 *
+	 * @param connection active database connection
+	 * @param subjectId  owning Subject identifier
+	 * @param identity   confirmed examination identity
+	 * @param row        workbook question row
+	 * @return the uniquely resolved booklet
+	 * @throws SQLException             if the lookup fails
+	 * @throws IllegalArgumentException if no booklet or multiple booklets match
+	 */
 	private ResolvedBooklet findBooklet(Connection connection, long subjectId, LegacyExamIdentity identity,
 			LegacyQuestionRow row) throws SQLException {
-		String name = bookletName(row.paperCode());
-		try (PreparedStatement statement = connection.prepareStatement("""
-				SELECT eb.id, eb.question_format
-				FROM exam_booklets eb
-				JOIN exams e ON e.id = eb.exam_id
-				JOIN exam_providers p ON p.id = e.provider_id
-				WHERE e.subject_id = ?
-				  AND p.provider_name = ?
-				  AND e.exam_year = ?
-				  AND e.exam_name = ?
-				  AND eb.booklet_name = ?
-				ORDER BY eb.id
-				""")) {
-			statement.setLong(1, subjectId);
-			statement.setString(2, identity.providerName());
-			statement.setInt(3, row.year());
-			statement.setString(4, identity.examName());
-			statement.setString(5, name);
-			String description = identity.providerName() + " " + row.year() + " " + identity.examName() + " " + name
-					+ " question " + row.questionCode();
-			try (ResultSet result = statement.executeQuery()) {
-				if (!result.next()) {
-					throw new IllegalArgumentException("No existing exam booklet for " + description);
-				}
-				ResolvedBooklet booklet = new ResolvedBooklet(result.getLong("id"),
-						ExamBookletQuestionFormat.valueOf(result.getString("question_format")));
-				if (result.next()) {
-					throw new IllegalArgumentException("More than one exam booklet matches " + description);
-				}
-				return booklet;
-			}
+		String expectedName = bookletName(row.paperCode());
+		ResolvedBooklet booklet = findMappedBooklet(connection, subjectId, identity, row.year(), expectedName);
+		if (booklet == null) {
+			throw new IllegalArgumentException(
+					"No Question booklet is mapped to Paper " + row.paperCode() + " for " + identity.providerName()
+							+ " / " + row.year() + " / " + identity.examName() + " / Question " + row.questionCode());
 		}
+		return booklet;
 	}
 
 	private ResolvedBooklet findBooklet(Connection connection, long subjectId, String providerName,
@@ -583,6 +562,63 @@ public final class LegacyQuestionMetadataImporter {
 							"Unknown syllabus " + syllabusName + " for subject " + subjectName);
 				}
 				return new ImportContext(subjectId, result.getLong("id"));
+			}
+		}
+	}
+
+	/**
+	 * Resolves a mapped legacy booklet using recognised conventional names.
+	 *
+	 * <p>
+	 * For MCQ, both "MCQ" and "MCQ booklet" are accepted. When both exist under the
+	 * same examination, resolution fails rather than arbitrarily selecting one.
+	 * Other paper codes retain their current conventional names until explicit
+	 * paper-to-booklet mapping is added.
+	 *
+	 * @param connection   active database connection
+	 * @param subjectId    owning Subject identifier
+	 * @param identity     confirmed examination identity
+	 * @param year         examination year
+	 * @param expectedName conventional booklet name
+	 * @return matching booklet, or null when missing
+	 * @throws SQLException             if the lookup fails
+	 * @throws IllegalArgumentException if the match is ambiguous
+	 */
+	private ResolvedBooklet findMappedBooklet(Connection connection, long subjectId, LegacyExamIdentity identity,
+			int year, String expectedName) throws SQLException {
+		String alternativeName = "MCQ booklet".equals(expectedName) ? "MCQ" : expectedName;
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT eb.id, eb.question_format
+				FROM exam_booklets eb
+				JOIN exams e ON e.id = eb.exam_id
+				JOIN exam_providers p ON p.id = e.provider_id
+				WHERE e.subject_id = ?
+				  AND p.provider_name = ?
+				  AND e.exam_year = ?
+				  AND e.exam_name = ?
+				  AND eb.booklet_name IN (?, ?)
+				ORDER BY eb.id
+				""")) {
+			statement.setLong(1, subjectId);
+			statement.setString(2, identity.providerName());
+			statement.setInt(3, year);
+			statement.setString(4, identity.examName());
+			statement.setString(5, expectedName);
+			statement.setString(6, alternativeName);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					return null;
+				}
+				ResolvedBooklet booklet = new ResolvedBooklet(result.getLong("id"),
+						ExamBookletQuestionFormat.valueOf(result.getString("question_format")));
+				if (result.next()) {
+
+					// Two compatible names under the same Exam must
+					// be resolved explicitly, never by row order.
+					throw new IllegalArgumentException("Ambiguous booklet identity for " + identity.providerName()
+							+ " / " + year + " / " + identity.examName() + " / " + expectedName);
+				}
+				return booklet;
 			}
 		}
 	}

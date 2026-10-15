@@ -23,9 +23,11 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionResponseType;
+import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
@@ -423,6 +425,44 @@ class LegacyQuestionMetadataImporterTest {
 	}
 
 	@Test
+	void mappedImportAcceptsSavedMcqBookletName() throws Exception {
+		Fixture fixture = createFixture("mapped-mcq-booklet-name.db", false);
+
+		// Reproduce the actual defect: the PDF is already attached
+		// under the user-selected booklet name "MCQ".
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
+			statement.executeUpdate("""
+					UPDATE exam_booklets
+					SET booklet_name = 'MCQ'
+					WHERE booklet_name = 'MCQ booklet'
+					""");
+		}
+		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());
+		Map<LegacyExamKey, LegacyExamIdentity> mappings = Map.of(new LegacyExamKey("QCAA", 2020),
+				new LegacyExamIdentity("QCAA", "External Assessment"));
+		assertTrue(importer.findMissingBookletsMapped(fixture.workbookPath(), "Chemistry", "2019", mappings).isEmpty());
+		LegacyQuestionImportResult first = importer.importWorkbookMapped(fixture.workbookPath(), "Chemistry", "2019",
+				mappings);
+		assertEquals(2, first.insertedQuestions());
+		LegacyQuestionImportResult second = importer.importWorkbookMapped(fixture.workbookPath(), "Chemistry", "2019",
+				mappings);
+		assertEquals(0, second.insertedQuestions());
+		assertEquals(2, second.existingQuestions());
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("""
+						SELECT b.booklet_name
+						FROM questions q
+						JOIN exam_booklets b ON b.id = q.booklet_id
+						WHERE q.question_code = '1'
+						""")) {
+			assertTrue(result.next());
+			assertEquals("MCQ", result.getString("booklet_name"));
+		}
+	}
+
+	@Test
 	void mappedImportDistinguishesThreeQCAA2020Examinations() throws Exception {
 		Fixture fixture = createFixture("mapped-qcaa-exams.db", false);
 		SqliteDatabase database = fixture.database();
@@ -480,6 +520,42 @@ class LegacyQuestionMetadataImporterTest {
 				assertEquals(2, results.getInt("question_count"));
 			}
 			assertEquals(3, examCount);
+		}
+	}
+
+	@Test
+	void mappedImportRejectsAmbiguousMcqBooklets() throws Exception {
+		Fixture fixture = createFixture("mapped-ambiguous-mcq.db", false);
+		SqliteExamWriter writer = new SqliteExamWriter(fixture.database());
+		long subjectId;
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("""
+						SELECT id
+						FROM subjects
+						WHERE subject_name = 'Chemistry'
+						""")) {
+			assertTrue(result.next());
+			subjectId = result.getLong("id");
+		}
+		Subject subject = new Subject(subjectId, "Chemistry");
+		Exam exam = writer.findExamsForSubject(subject).getFirst();
+		SourceDocument secondPdf = writer.insertSourceDocument("Chemistry/2020/second-mcq.pdf");
+		writer.insertExamBooklet(exam, secondPdf, "MCQ", ExamBookletQuestionFormat.MULTIPLE_CHOICE, null);
+		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());
+		Map<LegacyExamKey, LegacyExamIdentity> mappings = Map.of(new LegacyExamKey("QCAA", 2020),
+				new LegacyExamIdentity("QCAA", "External Assessment"));
+		IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+				() -> importer.findMissingBookletsMapped(fixture.workbookPath(), "Chemistry", "2019", mappings));
+		assertTrue(exception.getMessage().contains("Ambiguous booklet identity"));
+		assertThrows(IllegalArgumentException.class,
+				() -> importer.importWorkbookMapped(fixture.workbookPath(), "Chemistry", "2019", mappings));
+
+		// An ambiguous mapping must not partially import Questions.
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
+			assertEquals(0, countRows(statement, "questions"));
+			assertEquals(0, countRows(statement, "answers"));
 		}
 	}
 
