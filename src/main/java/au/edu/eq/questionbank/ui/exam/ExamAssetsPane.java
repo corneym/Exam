@@ -1255,10 +1255,11 @@ public final class ExamAssetsPane extends VBox {
 
 	private VBox createAnswerFileRow(AnswerFile answerFile) {
 		Label heading = new Label(answerFile.getName());
+		heading.setId("exam-assets-answer-heading-" + answerFile.getId());
 		heading.setStyle(HEADING_STYLE);
-		Label source = new Label(sourceFileName(answerFile.getSourceDocument().getRelativePath()));
-		source.setMinWidth(0);
-		source.setMaxWidth(Double.MAX_VALUE);
+		heading.setMinWidth(0);
+		heading.setMaxWidth(Double.MAX_VALUE);
+		heading.setTooltip(new Tooltip(sourceFileName(answerFile.getSourceDocument().getRelativePath())));
 		Button viewButton = new Button("View");
 		viewButton.setId("exam-assets-answer-view-" + answerFile.getId());
 		viewButton.setMinWidth(Region.USE_PREF_SIZE);
@@ -1272,26 +1273,24 @@ public final class ExamAssetsPane extends VBox {
 				return;
 			}
 
-			// The application owns confirmation, transactional deletion and managed-file
-			// cleanup. This row publishes only the selected persisted asset.
+			// Deletion and managed-file cleanup remain application-owned.
 			answerFileDeleteHandler.accept(answerFile);
 		});
 		answerFileDeleteButtons.add(deleteButton);
 
-		// The filename absorbs remaining horizontal space while the two asset actions
-		// stay fully visible.
-		HBox.setHgrow(source, Priority.ALWAYS);
-		HBox sourceRow = new HBox(SPACING, source, viewButton, deleteButton);
+		// The bold Answer Booklet title replaces the redundant filename
+		// row. View and Delete remain fully accessible on the right.
+		HBox.setHgrow(heading, Priority.ALWAYS);
+		HBox headingRow = new HBox(SPACING, heading, viewButton, deleteButton);
+		headingRow.setId("exam-assets-answer-heading-row-" + answerFile.getId());
 		CheckBox explanations = new CheckBox("Contains answer explanations");
 		explanations.setId("exam-assets-answer-explanations-" + answerFile.getId());
-
-		// The checkbox always reflects authoritative persisted AnswerFile metadata.
 		explanations.setSelected(answerFile.hasAnswerExplanations());
 
-		// Explanation presence is descriptive AnswerFile metadata rather than Exam
-		// structure, so it can be corrected directly.
+		// Explanation metadata remains editable independently of
+		// structural Answer Booklet transactions.
 		explanations.setOnAction(_ -> updateAnswerFileExplanationMetadata(answerFile, explanations));
-		VBox row = new VBox(ROW_SPACING, heading, sourceRow, explanations);
+		VBox row = new VBox(ROW_SPACING, headingRow, explanations);
 		row.setId("exam-assets-answer-file-" + answerFile.getId());
 		row.setPadding(SECTION_PADDING);
 		row.setStyle(BORDER_STYLE);

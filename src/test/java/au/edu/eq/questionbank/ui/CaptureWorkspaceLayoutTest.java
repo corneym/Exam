@@ -274,6 +274,19 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		fireControl(robot, "#change-exam-assets");
 		WaitForAsyncUtils.waitForFxEvents();
 		CheckBox explanations = lookup(robot, "#exam-assets-answer-explanations-" + answerFile.getId(), CheckBox.class);
+		VBox row = lookup(robot, "#exam-assets-answer-file-" + answerFile.getId(), VBox.class);
+		HBox headingRow = lookup(robot, "#exam-assets-answer-heading-row-" + answerFile.getId(), HBox.class);
+		Label heading = lookup(robot, "#exam-assets-answer-heading-" + answerFile.getId(), Label.class);
+		Button view = lookup(robot, "#exam-assets-answer-view-" + answerFile.getId(), Button.class);
+		Button delete = lookup(robot, "#exam-assets-answer-delete-" + answerFile.getId(), Button.class);
+
+		// Two visual rows: bold title and actions, then explanation metadata.
+		assertEquals(List.of(headingRow, explanations), row.getChildren());
+		assertEquals(List.of(heading, view, delete), headingRow.getChildren());
+		assertEquals(answerFile.getName(), heading.getText());
+
+		// The persisted source filename is retained for inspection on hover.
+		assertEquals("marking-guide.pdf", heading.getTooltip().getText());
 
 		// Newly created AnswerFiles default to no recorded explanations.
 		assertFalse(explanations.isSelected());
