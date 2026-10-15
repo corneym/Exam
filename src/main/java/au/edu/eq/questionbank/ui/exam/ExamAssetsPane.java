@@ -40,6 +40,7 @@ import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.scene.control.Toggle;
 import javafx.scene.control.ToggleGroup;
+import javafx.scene.control.Tooltip;
 import javafx.scene.input.ContextMenuEvent;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
@@ -86,6 +87,7 @@ public final class ExamAssetsPane extends VBox {
 	private final AnswerBookletCreationHandler answerBookletCreationHandler;
 	private final Supplier<Path> answerBookletSourceChooser;
 	private final Consumer<AnswerFile> answerFileDeleteHandler;
+	private final Runnable examSelectionPdfClearHandler;
 	private final QuestionBookletCreationHandler questionBookletCreationHandler;
 	private final Consumer<ExamBooklet> questionBookletDeleteHandler;
 	private final Supplier<Path> questionBookletSourceChooser;
@@ -94,12 +96,13 @@ public final class ExamAssetsPane extends VBox {
 
 	// Exam and asset editing state.
 	// Selecting an Exam while applying a preloaded Subject snapshot must not
-	// trigger
-	// another synchronous SQLite read through the ordinary ComboBox listener.
+	// trigger another synchronous SQLite read through the ordinary ComboBox
+	// listener.
 	private boolean applyingSubjectSnapshot;
 	private boolean creatingNewExam;
 	private QuestionBookletEditor editingBookletEditor;
 	private boolean editingExamDetails;
+	private Long lastLoadedExamId;
 	private boolean legacyImportPending;
 	private Long newExamReturnExamId;
 	private PendingAnswerBookletEditor pendingAnswerBookletEditor;
@@ -187,6 +190,9 @@ public final class ExamAssetsPane extends VBox {
 	 *                                                 new Answer booklet
 	 * @param answerBookletCreationHandler             imports and persists the new
 	 *                                                 Answer asset
+	 * @param examSelectionPdfClearHandler             clears the displayed PDF when
+	 *                                                 the selected persisted Exam
+	 *                                                 changes
 	 * @param questionBookletSourceChooser             chooses a source PDF for a
 	 *                                                 new Question booklet
 	 * @param questionBookletSourcePreviewHandler      opens a selected,
@@ -204,10 +210,11 @@ public final class ExamAssetsPane extends VBox {
 			ExamMetadataOptionsRepository optionsRepository, ExamCorrectionHandler correctionHandler,
 			Consumer<ExamBooklet> questionBookletDeleteHandler, Consumer<ExamBooklet> questionBookletViewHandler,
 			Consumer<AnswerFile> answerFileDeleteHandler, Consumer<AnswerFile> answerFileViewHandler,
-			Supplier<ExamBooklet> activeBookletSupplier, Consumer<ExamBooklet> captureBookletHandler,
-			Consumer<ExamBooklet> bookletMetadataUpdatedHandler, Supplier<Path> answerBookletSourceChooser,
-			AnswerBookletCreationHandler answerBookletCreationHandler, Supplier<Path> questionBookletSourceChooser,
-			Predicate<Path> questionBookletSourcePreviewHandler, Runnable questionBookletSourcePreviewCloseHandler,
+			Runnable examSelectionPdfClearHandler, Supplier<ExamBooklet> activeBookletSupplier,
+			Consumer<ExamBooklet> captureBookletHandler, Consumer<ExamBooklet> bookletMetadataUpdatedHandler,
+			Supplier<Path> answerBookletSourceChooser, AnswerBookletCreationHandler answerBookletCreationHandler,
+			Supplier<Path> questionBookletSourceChooser, Predicate<Path> questionBookletSourcePreviewHandler,
+			Runnable questionBookletSourcePreviewCloseHandler,
 			QuestionBookletCreationHandler questionBookletCreationHandler) {
 		if (examWriter == null) {
 			throw new NullPointerException("examWriter");
@@ -232,6 +239,9 @@ public final class ExamAssetsPane extends VBox {
 		}
 		if (answerFileViewHandler == null) {
 			throw new NullPointerException("answerFileViewHandler");
+		}
+		if (examSelectionPdfClearHandler == null) {
+			throw new NullPointerException("examSelectionPdfClearHandler");
 		}
 		if (activeBookletSupplier == null) {
 			throw new NullPointerException("activeBookletSupplier");
@@ -268,6 +278,7 @@ public final class ExamAssetsPane extends VBox {
 		this.questionBookletViewHandler = questionBookletViewHandler;
 		this.answerFileDeleteHandler = answerFileDeleteHandler;
 		this.answerFileViewHandler = answerFileViewHandler;
+		this.examSelectionPdfClearHandler = examSelectionPdfClearHandler;
 		this.activeBookletSupplier = activeBookletSupplier;
 		this.captureBookletHandler = captureBookletHandler;
 		this.bookletMetadataUpdatedHandler = bookletMetadataUpdatedHandler;
@@ -705,6 +716,10 @@ public final class ExamAssetsPane extends VBox {
 					.setAll(availableAnswerFiles.stream().map(this::createAnswerFileRow).toList());
 		}
 		setExamDetailsEditing(false);
+
+		// Record the actual Exam loaded, independently of transient
+		// ComboBox selection clearing during a persistence refresh.
+		lastLoadedExamId = exam.getId();
 	}
 
 	private boolean assetExpectationsChanged() {
@@ -1514,13 +1529,19 @@ public final class ExamAssetsPane extends VBox {
 	}
 
 	private void loadSelectedExamSafely(Exam exam) {
+
+		// Compare persisted identities rather than presentation objects.
+		// Reloading the same Exam must not discard its PDF preview.
+		if (exam != null && lastLoadedExamId != null && lastLoadedExamId.longValue() != exam.getId()) {
+
+			// An old Exam's PDF must disappear before the replacement
+			// Exam's assets are presented, including when loading fails.
+			examSelectionPdfClearHandler.run();
+		}
 		try {
 			loadSelectedExam(exam);
 		} catch (SQLException exception) {
 			clearSelectedExam();
-
-			// A persistence failure must not leave stale Exam or asset information
-			// visible as though it were authoritative.
 			Alert alert = new Alert(Alert.AlertType.ERROR);
 			alert.setTitle("Exam / Assets");
 			alert.setHeaderText("Exam assets could not be loaded.");
@@ -2680,40 +2701,49 @@ public final class ExamAssetsPane extends VBox {
 
 		private VBox createRow() {
 			heading.setStyle(HEADING_STYLE);
+			heading.setId("exam-assets-question-heading-" + booklet.getId());
+			heading.setMinWidth(0);
+			heading.setMaxWidth(110);
 			Label source = new Label(sourceFileName(booklet.getSourceDocument().getRelativePath()));
 			source.setId("exam-assets-question-source-" + booklet.getId());
 			source.setMinWidth(0);
 			source.setMaxWidth(Double.MAX_VALUE);
-			Region headingSpacer = new Region();
-			HBox.setHgrow(headingSpacer, Priority.ALWAYS);
+			source.setTooltip(new Tooltip(source.getText()));
 
-			// View and Delete operate on the persisted asset as a whole; metadata
-			// transaction controls remain on their existing lower row.
-			HBox headingRow = new HBox(SPACING, selectionButton, heading, headingSpacer, viewButton, deleteButton);
-
-			// Give the source filename the available width and allow JavaFX to abbreviate
-			// it
-			// rather than forcing the complete workspace wider.
-			HBox sourceRow = new HBox(source);
+			// The saved booklet label and physical PDF filename share the
+			// top line. The filename consumes available space and abbreviates
+			// when necessary, keeping View and Delete fully accessible.
 			HBox.setHgrow(source, Priority.ALWAYS);
+			HBox headingRow = new HBox(SPACING, selectionButton, heading, source, viewButton, deleteButton);
+			headingRow.setId("exam-assets-question-heading-row-" + booklet.getId());
 			HBox formatControls = new HBox(SPACING, mcqButton, writtenButton, bothButton);
 			formatControls.setId("exam-assets-question-format-row-" + booklet.getId());
+
+			// Name remains a separate editable field. Answer is above
+			// Expected Questions, preserving the existing edit controls.
 			GridPane metadata = new GridPane();
+			metadata.setId("exam-assets-question-metadata-" + booklet.getId());
 			metadata.setHgap(SPACING);
 			metadata.setVgap(ROW_SPACING);
 			metadata.addRow(0, new Label("Name"), nameField);
 			metadata.addRow(1, new Label("Type"), formatControls);
-			metadata.addRow(2, new Label("Expected Questions"), expectedField);
-			metadata.addRow(3, new Label("Answer"), answerField);
+			metadata.addRow(2, new Label("Answer"), answerField);
 			GridPane.setHgrow(nameField, Priority.ALWAYS);
 			GridPane.setHgrow(answerField, Priority.ALWAYS);
+			Label expectedLabel = new Label("Expected Questions");
+			expectedLabel.setMinWidth(Region.USE_PREF_SIZE);
 			Region actionSpacer = new Region();
 			HBox.setHgrow(actionSpacer, Priority.ALWAYS);
-			HBox actions = new HBox(SPACING, actionSpacer, editButton, cancelButton, saveButton);
 
-			// The source filename has its own responsive row; metadata and transaction
-			// controls therefore remain within the normal left workspace width.
-			VBox row = new VBox(ROW_SPACING, headingRow, sourceRow, metadata, actions);
+			// Edit, Cancel and Save occupy the right-hand side of the
+			// Expected Questions row, rather than adding a sixth row.
+			HBox expectedActionsRow = new HBox(SPACING, expectedLabel, expectedField, actionSpacer, editButton,
+					cancelButton, saveButton);
+			expectedActionsRow.setId("exam-assets-question-expected-actions-" + booklet.getId());
+
+			// One filename/header row, three metadata rows and one final
+			// expected-count/actions row: five visible rows in total.
+			VBox row = new VBox(ROW_SPACING, headingRow, metadata, expectedActionsRow);
 			row.setId("exam-assets-question-booklet-" + booklet.getId());
 			row.setPadding(SECTION_PADDING);
 			row.setStyle(BORDER_STYLE);

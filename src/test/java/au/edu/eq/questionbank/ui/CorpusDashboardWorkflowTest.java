@@ -11,6 +11,7 @@ import java.lang.reflect.Proxy;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -27,6 +28,8 @@ import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
+import au.edu.eq.questionbank.importer.legacy.LegacyExamIdentity;
+import au.edu.eq.questionbank.importer.legacy.LegacyExamKey;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Descriptor;
@@ -426,42 +429,45 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1",
 				ExamBookletQuestionFormat.MIXED);
 		WaitForAsyncUtils.asyncFx(() -> {
-
-			// Return from the fixture's Capture workspace to the operational home surface.
 			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
 			return null;
 		}).get();
-		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
-				() -> robot.lookup("#corpus-dashboard-import-legacy-questions").tryQuery().isPresent());
-		Button importLegacy = robot.lookup("#corpus-dashboard-import-legacy-questions").queryButton();
-		assertFalse(importLegacy.isDisable());
+		Node applicationRoot = primaryStage.getScene().getRoot();
 
-		// Import opens the existing modal intake dialog after mounting Exam/Assets for
-		// any structural preflight work that may be required.
+		// The workspace changes asynchronously. Every scene-graph
+		// lookup must execute on the JavaFX Application Thread.
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
+				() -> nodePresentOnFx(robot, applicationRoot, "#corpus-dashboard-import-legacy-questions"));
+		Button importLegacy = lookupOnFx(robot, applicationRoot, "#corpus-dashboard-import-legacy-questions",
+				Button.class);
+		assertFalse(evaluateOnFx(robot, importLegacy::isDisabled));
+
+		// The import dialog is modal; schedule its opening so
+		// the test thread remains available to inspect and close it.
 		Platform.runLater(importLegacy::fire);
+		waitForDialogShowing(robot, "Import Legacy Question Metadata");
 		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
-				() -> robot.lookup("#legacy-question-import-syllabus").tryQuery().isPresent());
+				() -> nodePresentOnFx(robot, applicationRoot, "#exam-assets-workspace"));
+		Node examAssetsWorkspace = lookupOnFx(robot, applicationRoot, "#exam-assets-workspace", Node.class);
+		assertTrue(evaluateOnFx(robot, examAssetsWorkspace::isVisible));
+		assertFalse(nodePresentOnFx(robot, applicationRoot, "#exam-assets-import-legacy-questions"));
+		Button returnDashboard = lookupOnFx(robot, applicationRoot, "#exam-assets-return-dashboard", Button.class);
+		assertTrue(evaluateOnFx(robot, () -> returnDashboard.isVisible() && returnDashboard.isManaged()));
 
-		// Exam/Assets remains available underneath Dashboard-started intake for
-		// structural resolution, but it must not expose a second import launcher.
-		Node examAssetsWorkspace = lookup(robot, "#exam-assets-workspace", Node.class);
-		assertTrue(examAssetsWorkspace.isVisible());
-		assertTrue(robot.lookup("#exam-assets-import-legacy-questions").tryQuery().isEmpty());
-		Button returnDashboard = lookup(robot, "#exam-assets-return-dashboard", Button.class);
-		assertTrue(returnDashboard.isVisible());
-		assertTrue(returnDashboard.isManaged());
-		DialogPane importDialog = robot.lookup(".dialog-pane").queryAs(DialogPane.class);
+		// Inspect the actual showing dialog rather than searching
+		// the application scene during a modal transition.
+		DialogPane importDialog = showingDialogPane(robot, "Import Legacy Question Metadata");
+		assertNotNull(importDialog);
 		Node cancelNode = importDialog.lookupButton(ButtonType.CANCEL);
 		assertTrue(cancelNode instanceof Button);
-
-		// Cancelling the initial Dashboard-owned intake abandons that transaction and
-		// returns directly home; there is no remaining Exam/Assets Return action to
-		// invoke afterwards.
 		robot.interact(((Button) cancelNode)::fire);
+		waitForDialogHidden(robot, "Import Legacy Question Metadata");
+
+		// Cancellation returns to Dashboard and removes the
+		// temporary Exam/Assets workspace.
 		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
-				() -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
-		assertTrue(robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
-		assertTrue(robot.lookup("#exam-assets-workspace").tryQuery().isEmpty());
+				() -> nodePresentOnFx(robot, applicationRoot, "#corpus-dashboard-home"));
+		assertFalse(nodePresentOnFx(robot, applicationRoot, "#exam-assets-workspace"));
 	}
 
 	@Test
@@ -895,9 +901,15 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 				() -> robot.lookup("#exam-assets-workspace").tryQuery().isPresent());
 		Class<?> pendingType = Class
 				.forName("au.edu.eq.questionbank.ui.QuestionBankApplication$PendingLegacyQuestionImport");
-		var constructor = pendingType.getDeclaredConstructor(Subject.class, SyllabusVersion.class, Path.class);
+
+		// The current pending-import record retains the confirmed
+		// worksheet/year-to-Exam mapping alongside the managed workbook.
+		var constructor = pendingType.getDeclaredConstructor(Subject.class, SyllabusVersion.class, Path.class,
+				Map.class);
 		constructor.setAccessible(true);
-		Object pending = constructor.newInstance(subject, historicalSyllabus, managedWorkbook);
+		Map<LegacyExamKey, LegacyExamIdentity> mappings = Map.of(new LegacyExamKey("QCAA", 2020),
+				new LegacyExamIdentity("QCAA", "External Assessment"));
+		Object pending = constructor.newInstance(subject, historicalSyllabus, managedWorkbook, mappings);
 
 		// This synthetic continuation represents a Dashboard-launched intake.
 		// Production

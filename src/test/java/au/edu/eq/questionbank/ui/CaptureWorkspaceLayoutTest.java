@@ -73,6 +73,7 @@ import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.input.ContextMenuEvent;
+import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
@@ -493,6 +494,45 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		ComboBox<?> syllabus = lookup(robot, "#curriculum-syllabus", ComboBox.class);
 		assertTrue(isDescendantOf(subject, workingSubject));
 		assertTrue(isDescendantOf(syllabus, classification));
+	}
+
+	@Test
+	void changingExamClearsAssetPdfPreview(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet originalBooklet = examMetadataPane().getBooklet();
+		Exam originalExam = originalBooklet.getExam();
+		SqliteExamWriter writer = new SqliteExamWriter(new SqliteDatabase(databasePath));
+		Exam mockExam = writer.createExam(originalExam.getSubject(), originalExam.getProvider().getName(),
+				originalExam.getYear(), "Mock Examination");
+		fireControl(robot, "#change-exam-assets");
+		WaitForAsyncUtils.waitForFxEvents();
+		@SuppressWarnings("unchecked")
+		ComboBox<Exam> exams = lookup(robot, "#exam-assets-exam", ComboBox.class);
+		Exam originalChoice = exams.getItems().stream().filter(exam -> exam.getId() == originalExam.getId()).findFirst()
+				.orElseThrow();
+		Exam mockChoice = exams.getItems().stream().filter(exam -> exam.getId() == mockExam.getId()).findFirst()
+				.orElseThrow();
+		robot.interact(() -> exams.getSelectionModel().select(originalChoice));
+
+		// First display the original Exam's Question PDF.
+		fireControl(robot, "#exam-assets-question-view-" + originalBooklet.getId());
+		assertEquals(PdfWorkspacePane.DocumentMode.VIEWER, pdfWorkspace().getDisplayedDocument());
+
+		// Switching Exams must discard both the previous viewer and
+		// underlying capture PDF, even if the new Exam has no booklets.
+		robot.interact(() -> exams.getSelectionModel().select(mockChoice));
+		assertEquals(mockExam.getId(), exams.getValue().getId());
+		assertNull(pdfWorkspace().getExamPdfSession());
+		assertNull(pdfWorkspace().getAnswerPdfSession());
+		assertEquals(PdfWorkspacePane.DocumentMode.EXAM, pdfWorkspace().getDisplayedDocument());
+
+		// Returning to the original Exam must allow normal inspection.
+		robot.interact(() -> exams.getSelectionModel().select(originalChoice));
+		fireControl(robot, "#exam-assets-question-view-" + originalBooklet.getId());
+		assertEquals(PdfWorkspacePane.DocumentMode.VIEWER, pdfWorkspace().getDisplayedDocument());
+
+		// Inspection must not change persisted capture identity.
+		assertEquals(originalBooklet.getId(), examMetadataPane().getBooklet().getId());
 	}
 
 	@Test
@@ -1804,6 +1844,63 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(addRegion.getParent(), addFromClipboard.getParent());
 		assertFalse(addRegion.getParent() == saveQuestion.getParent(),
 				"Question content actions must not share the Save row");
+	}
+
+	@Test
+	void questionBookletMetadataUsesCompactAssetRows(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		long id = booklet.getId();
+		fireControl(robot, "#change-exam-assets");
+		WaitForAsyncUtils.waitForFxEvents();
+		VBox row = lookup(robot, "#exam-assets-question-booklet-" + id, VBox.class);
+		HBox top = lookup(robot, "#exam-assets-question-heading-row-" + id, HBox.class);
+		GridPane metadata = lookup(robot, "#exam-assets-question-metadata-" + id, GridPane.class);
+		HBox bottom = lookup(robot, "#exam-assets-question-expected-actions-" + id, HBox.class);
+		RadioButton selection = lookup(robot, "#exam-assets-question-select-" + id, RadioButton.class);
+		Label heading = lookup(robot, "#exam-assets-question-heading-" + id, Label.class);
+		Label filename = lookup(robot, "#exam-assets-question-source-" + id, Label.class);
+		Button view = lookup(robot, "#exam-assets-question-view-" + id, Button.class);
+		Button delete = lookup(robot, "#exam-assets-question-delete-" + id, Button.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<String> name = lookup(robot, "#exam-assets-question-name-" + id, ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<?> answer = lookup(robot, "#exam-assets-question-answer-" + id, ComboBox.class);
+		TextField expected = lookup(robot, "#exam-assets-question-expected-" + id, TextField.class);
+		Button edit = lookup(robot, "#exam-assets-question-edit-" + id, Button.class);
+		Button cancel = lookup(robot, "#exam-assets-question-cancel-" + id, Button.class);
+		Button save = lookup(robot, "#exam-assets-question-save-" + id, Button.class);
+
+		// First line: selection, booklet label, PDF filename,
+		// View and Delete — in exactly that order.
+		assertEquals(List.of(selection, heading, filename, view, delete), top.getChildren());
+		assertEquals(booklet.getName(), heading.getText());
+		assertEquals(booklet.getSourceDocument().getRelativePath().replace('\\', '/').replaceAll("^.*/", ""),
+				filename.getText());
+
+		// Name, Type and Answer occupy their own metadata rows.
+		assertEquals(metadata, name.getParent());
+		assertEquals(Integer.valueOf(0), GridPane.getRowIndex(name));
+		assertEquals(Integer.valueOf(1), GridPane.getColumnIndex(name));
+		assertEquals(metadata, answer.getParent());
+		assertEquals(Integer.valueOf(2), GridPane.getRowIndex(answer));
+
+		// Expected Questions and transaction actions share the last row.
+		assertEquals(List.of(expected, edit, cancel, save), bottom.getChildren().stream()
+				.filter(node -> node == expected || node == edit || node == cancel || node == save).toList());
+
+		// Three containers represent exactly five visible lines.
+		assertEquals(List.of(top, metadata, bottom), row.getChildren());
+
+		// Editing behaviour remains unchanged.
+		assertTrue(name.isDisabled());
+		assertTrue(expected.isDisabled());
+		robot.interact(edit::fire);
+		assertFalse(name.isDisabled());
+		assertFalse(expected.isDisabled());
+		robot.interact(cancel::fire);
+		assertTrue(name.isDisabled());
+		assertTrue(expected.isDisabled());
 	}
 
 	@Test

@@ -2948,7 +2948,11 @@ public class QuestionBankApplication extends Application {
 				booklet -> deleteQuestionBookletFromExamAssets(booklet, config),
 				booklet -> viewQuestionBookletFromExamAssets(booklet, config),
 				answerFile -> deleteAnswerFileFromExamAssets(answerFile, config),
-				answerFile -> viewAnswerFileFromExamAssets(answerFile, config), examMetadataPane::getBooklet,
+				answerFile -> viewAnswerFileFromExamAssets(answerFile, config),
+
+				// Changing Exam invalidates the displayed PDF and any pending
+				// document load, without modifying stored Exam or booklet assets.
+				pdfWorkspace::clearDocuments, examMetadataPane::getBooklet,
 				booklet -> useExamAssetsBookletForCapture(booklet, config),
 				this::handleExamAssetsBookletMetadataUpdated,
 

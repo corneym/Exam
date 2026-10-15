@@ -1316,9 +1316,9 @@ public class QuestionSearchPane extends BorderPane {
 		selectedClassificationPane.add(createSelectorLabel("Descriptor"), 0, 5);
 		selectedClassificationPane.add(selectedDescriptorBox, 1, 5);
 
-		// Save is on its own row, directly below Descriptor.
-		// Align it with the left edge of the classification pane.
-		selectedClassificationPane.add(saveClassificationButton, 0, 6, 2, 1);
+		// Save remains directly below Descriptor, but starts in the
+		// selector column rather than beneath the classification labels.
+		selectedClassificationPane.add(saveClassificationButton, 1, 6);
 		GridPane.setHalignment(saveClassificationButton, HPos.LEFT);
 
 		// The label column takes its natural width.

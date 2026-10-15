@@ -522,10 +522,9 @@ public class QuestionSearchPaneTest {
 			assertEquals(Priority.ALWAYS, GridPane.getHgrow(control));
 		}
 
-		// Save must be on a separate row, with no third column.
-		assertEquals(Integer.valueOf(0), GridPane.getColumnIndex(save));
+		// Save belongs to the same grid column as the drop-downs.
+		assertEquals(Integer.valueOf(1), GridPane.getColumnIndex(save));
 		assertEquals(Integer.valueOf(6), GridPane.getRowIndex(save));
-		assertEquals(2, GridPane.getColumnSpan(save));
 		assertEquals(HPos.LEFT, GridPane.getHalignment(save));
 
 		// Exercise the Search dialog's nominal minimum width.
@@ -537,7 +536,7 @@ public class QuestionSearchPaneTest {
 			Label unitLabel = classificationPane.getChildren().stream().filter(node -> node instanceof Label)
 					.map(node -> (Label) node).filter(label -> "Unit".equals(label.getText())).findFirst()
 					.orElseThrow();
-			assertEquals(unitLabel.getBoundsInParent().getMinX(), save.getBoundsInParent().getMinX(), 1.0);
+			assertEquals(unit.getBoundsInParent().getMinX(), save.getBoundsInParent().getMinX(), 1.0);
 			assertTrue(descriptor.getWidth() > 150, "Descriptor must remain usable at minimum width");
 			assertTrue(save.getBoundsInParent().getMaxX() <= classificationPane.getWidth(),
 					"Save must remain within the classification pane");
