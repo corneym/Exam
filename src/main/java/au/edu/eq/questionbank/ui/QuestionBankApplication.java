@@ -135,6 +135,7 @@ import au.edu.eq.questionbank.service.curriculum.CurriculumWorkbookStore;
 import au.edu.eq.questionbank.service.curriculum.SubtopicMappingEvidenceService;
 import au.edu.eq.questionbank.service.curriculum.TfIdfCurriculumMappingSuggester;
 import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
+import au.edu.eq.questionbank.service.legacy.LegacyExamRegistrationService;
 import au.edu.eq.questionbank.service.legacy.LegacyQuestionWorkbookStore;
 import au.edu.eq.questionbank.service.migration.DataLayoutMigrationRequiredException;
 import au.edu.eq.questionbank.service.migration.DataLayoutMigrationStartupGuard;
@@ -1504,41 +1505,74 @@ public class QuestionBankApplication extends Application {
 		continueLegacyQuestionImport(primaryStage, config, pending, false);
 	}
 
+	/**
+	 * Resumes a confirmed legacy import, registering examinations on initial entry
+	 * and resolving their booklets before importing questions.
+	 *
+	 * @param primaryStage application window
+	 * @param config       current application configuration
+	 * @param pending      retained workbook and confirmed examination mappings
+	 * @param recheck      whether this invocation follows an asset recheck
+	 */
 	private void continueLegacyQuestionImport(Stage primaryStage, ApplicationConfig config,
 			PendingLegacyQuestionImport pending, boolean recheck) {
+
 		if (!Objects.equals(workingSubject, pending.subject())) {
 			resetLegacyQuestionImportState();
 			return;
 		}
+
 		try {
 			SqliteDatabase database = new SqliteDatabase(config.databasePath());
+
 			LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(database);
+
 			Path managedWorkbook = pending.managedWorkbookPath();
+
+			if (!recheck) {
+				// Register the confirmed Exams before presenting missing
+				// booklets. This does not create any Question or PDF assets.
+				new LegacyExamRegistrationService(database).prepareExams(managedWorkbook, pending.subject(),
+						pending.syllabusVersion().getName(), pending.mappings());
+			}
+
 			List<LegacyMappedBookletRequirement> missing = importer.findMissingBookletsMapped(managedWorkbook,
 					pending.subject().getName(), pending.syllabusVersion().getName(), pending.mappings());
+
 			if (!missing.isEmpty()) {
 				pendingLegacyQuestionImport = pending;
+
+				// Select the Exam that actually requires the next
+				// missing booklet, not the previously selected Exam.
+				selectMissingLegacyExam(database, pending.subject(), missing.getFirst());
+
 				examAssetsPane.showMappedLegacyImportRequirements(pending.syllabusVersion().getName(), managedWorkbook,
 						missing, () -> recheckPendingLegacyQuestionImport(primaryStage, config),
 						this::cancelPendingLegacyQuestionImport);
+
 				if (recheck) {
 					showMappedLegacyImportStillIncomplete(missing);
 				}
 				return;
 			}
 
-			// The exact same confirmed mapping is used for the
-			// final atomic import as for the booklet preflight.
+			// All required persisted booklets now exist under the
+			// confirmed Exam identities. Perform the atomic metadata import.
 			LegacyQuestionImportResult importResult = importer.importWorkbookMapped(managedWorkbook,
 					pending.subject().getName(), pending.syllabusVersion().getName(), pending.mappings());
+
 			clearPendingLegacyQuestionImport();
+
 			startLegacyQuestionCaptureRefresh(pending.subject(), importResult);
+
 		} catch (IOException exception) {
 			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "Could not read the retained Excel workbook.",
 					exception.getMessage());
+
 		} catch (SQLException exception) {
-			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "Could not save the Question metadata.",
-					exception.getMessage());
+			showAlert(Alert.AlertType.ERROR, "Legacy Question Import",
+					"Could not prepare the examination or import its metadata.", exception.getMessage());
+
 		} catch (IllegalArgumentException | IllegalStateException exception) {
 			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "The legacy Question import failed.",
 					exception.getMessage());
@@ -4011,6 +4045,39 @@ public class QuestionBankApplication extends Application {
 			suffix++;
 		}
 		return destination;
+	}
+
+	/**
+	 * Selects the examination owning the next outstanding legacy booklet.
+	 *
+	 * <p>
+	 * Selection is by the complete persisted examination identity. The Exam/Assets
+	 * workspace is reloaded so that newly registered examinations appear
+	 * immediately, including those without booklets.
+	 *
+	 * @param database    authoritative database
+	 * @param subject     Working Subject
+	 * @param requirement next missing booklet requirement
+	 * @throws SQLException          if examination data cannot be loaded
+	 * @throws IllegalStateException if the confirmed examination is missing
+	 */
+	private void selectMissingLegacyExam(SqliteDatabase database, Subject subject,
+			LegacyMappedBookletRequirement requirement) throws SQLException {
+
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+
+		LegacyExamIdentity identity = requirement.identity();
+
+		Exam exam = writer.findExamsForSubject(subject).stream()
+				.filter(candidate -> candidate.getYear() == requirement.key().year()
+						&& candidate.getProvider().getName().equals(identity.providerName())
+						&& candidate.getName().equals(identity.examName()))
+				.findFirst().orElseThrow(() -> new IllegalStateException("Confirmed examination was not found: "
+						+ identity.providerName() + " / " + requirement.key().year() + " / " + identity.examName()));
+
+		// This existing Exam/Assets API reloads the selection and
+		// its saved booklets, including the zero-booklet case.
+		examAssetsPane.showForCorrection(subject, exam.getId(), null);
 	}
 
 	private void setActiveExamBookletContext(ExamBooklet booklet) {

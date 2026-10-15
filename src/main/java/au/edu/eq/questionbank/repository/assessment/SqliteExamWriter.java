@@ -5,6 +5,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -651,6 +652,78 @@ public final class SqliteExamWriter {
 
 			// The setup UI receives a snapshot rather than a mutable repository result.
 			return List.copyOf(exams);
+		}
+	}
+
+	/**
+	 * Finds or creates the examinations identified by a confirmed import.
+	 *
+	 * <p>
+	 * Existing examinations retain their persistent identity, capture state and
+	 * planning metadata. Missing examinations are created as ACTIVE, with no
+	 * initial booklet or answer-file expectations. The complete operation uses one
+	 * SQLite transaction.
+	 *
+	 * @param subject       owning Subject
+	 * @param registrations examination identities to find or create
+	 * @return distinct persisted examinations in first-occurrence order
+	 * @throws SQLException             if registration fails
+	 * @throws NullPointerException     if subject, registrations or an entry is
+	 *                                  null
+	 * @throws IllegalArgumentException if an examination identity is invalid
+	 */
+	public List<Exam> findOrCreateExams(Subject subject, List<ExamRegistration> registrations) throws SQLException {
+
+		if (subject == null) {
+			throw new NullPointerException("subject");
+		}
+		if (registrations == null) {
+			throw new NullPointerException("registrations");
+		}
+
+		Map<ExamRegistration, Exam> resolved = new LinkedHashMap<>();
+
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+
+			try {
+				for (ExamRegistration registration : registrations) {
+					if (registration == null) {
+						throw new NullPointerException("registration");
+					}
+
+					// Different worksheets may resolve to the same Exam.
+					// Register that persistent identity only once.
+					if (resolved.containsKey(registration)) {
+						continue;
+					}
+
+					ExamProvider provider = findExamProviderByName(connection, registration.providerName());
+
+					if (provider == null) {
+						provider = insertExamProvider(connection, registration.providerName());
+					}
+
+					Exam exam = findExam(connection, subject, provider, registration.year(), registration.examName());
+
+					if (exam == null) {
+						exam = insertExam(connection, subject, provider, registration.year(), registration.examName());
+					}
+
+					resolved.put(registration, exam);
+				}
+
+				connection.commit();
+				return List.copyOf(resolved.values());
+
+			} catch (SQLException | RuntimeException exception) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					exception.addSuppressed(rollbackFailure);
+				}
+				throw exception;
+			}
 		}
 	}
 
@@ -1637,6 +1710,36 @@ public final class SqliteExamWriter {
 		}
 		if (name == null || name.isBlank()) {
 			throw new IllegalArgumentException("name must not be blank");
+		}
+	}
+
+	/**
+	 * Identifies an examination to register or reuse.
+	 *
+	 * @param providerName examination provider
+	 * @param year         examination year
+	 * @param examName     examination name
+	 */
+	public record ExamRegistration(String providerName, int year, String examName) {
+
+		/**
+		 * Validates and normalises the examination identity.
+		 *
+		 * @throws IllegalArgumentException if a name is blank or year is not positive
+		 */
+		public ExamRegistration {
+			if (providerName == null || providerName.isBlank()) {
+				throw new IllegalArgumentException("Provider must not be blank");
+			}
+			if (year < 1) {
+				throw new IllegalArgumentException("Examination year must be positive");
+			}
+			if (examName == null || examName.isBlank()) {
+				throw new IllegalArgumentException("Examination name must not be blank");
+			}
+
+			providerName = providerName.strip();
+			examName = examName.strip();
 		}
 	}
 }

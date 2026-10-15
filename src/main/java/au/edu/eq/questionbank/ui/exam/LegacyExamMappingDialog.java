@@ -109,8 +109,9 @@ public final class LegacyExamMappingDialog extends Dialog<Map<LegacyExamKey, Leg
 		ScrollPane scroll = new ScrollPane(grid);
 		scroll.setFitToWidth(true);
 		scroll.setPrefViewportHeight(Math.min(350, Math.max(90, row * 42)));
-		Label note = new Label("Confirming these identities does not create examinations "
-				+ "or import questions. Missing examination assets " + "will be resolved in Exam/Assets.");
+		Label note = new Label("Confirming these identities will create any missing "
+				+ "examinations and reuse existing ones. " + "Question booklets are not created automatically. "
+				+ "Attach their PDFs in Exam/Assets, then select " + "Recheck and Import.");
 		note.setWrapText(true);
 		content.getChildren().addAll(explanation, scroll, note);
 		getDialogPane().setContent(content);

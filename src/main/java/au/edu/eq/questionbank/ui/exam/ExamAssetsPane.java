@@ -622,9 +622,12 @@ public final class ExamAssetsPane extends VBox {
 		heading.setStyle(HEADING_STYLE);
 		Label context = new Label("Syllabus: " + syllabusName + "\nWorkbook: " + workbookPath.getFileName());
 		context.setWrapText(true);
-		Label instructions = new Label("The following Question booklets must exist under the "
-				+ "specified examination. Use Add New Exam and " + "Add Question Booklet as required. "
-				+ "Save each change before selecting " + "Recheck and Import.");
+		Label instructions = new Label("The confirmed examinations have been created or reused. "
+				+ "The Exam requiring the next missing booklet is selected above. "
+				+ "Use Add Question Booklet to attach the required PDF "
+				+ "to this Exam. Save each booklet before selecting "
+				+ "Recheck and Import. If the workbook references several "
+				+ "examinations, select the appropriate Exam before " + "attaching each PDF.");
 		instructions.setWrapText(true);
 		instructions.setId("exam-assets-legacy-import-instruction");
 		VBox requirementRows = new VBox(ROW_SPACING);
