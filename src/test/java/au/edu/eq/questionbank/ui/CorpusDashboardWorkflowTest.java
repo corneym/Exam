@@ -10,6 +10,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -43,6 +44,7 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
+import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
@@ -866,6 +868,12 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void pendingLegacyImportMapsCustomNamedBookletById(FxRobot robot) throws Exception {
+
+		verifyPendingLegacyPaperBookletMapping(robot, false);
+	}
+
+	@Test
 	void pendingLegacyImportRechecksManagedWorkbookAfterExternalSourceRemoval(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1",
 				ExamBookletQuestionFormat.MIXED);
@@ -939,6 +947,12 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 				() -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
 	}
 
+	@Test
+	void pendingLegacyImportResolvesAmbiguousMcqBookletsById(FxRobot robot) throws Exception {
+
+		verifyPendingLegacyPaperBookletMapping(robot, true);
+	}
+
 	@Override
 	@Start
 	void start(Stage stage) throws Exception {
@@ -946,9 +960,17 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	private Path createPendingLegacyWorkbook(Path path) throws Exception {
+
+		return createPendingLegacyWorkbook(path, "1");
+	}
+
+	private Path createPendingLegacyWorkbook(Path path, String paperCode) throws Exception {
+
 		Files.createDirectories(path.getParent());
+
 		try (Workbook workbook = new XSSFWorkbook()) {
 			Sheet sheet = workbook.createSheet("QCAA");
+
 			Row header = sheet.createRow(0);
 			header.createCell(0).setCellValue("Year");
 			header.createCell(1).setCellValue("Paper");
@@ -957,16 +979,157 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 			header.createCell(4).setCellValue("Topic");
 			header.createCell(5).setCellValue("Answer");
 			header.createCell(6).setCellValue("Preamble");
+
 			Row question = sheet.createRow(1);
 			question.createCell(0).setCellValue(2020);
-			question.createCell(1).setCellValue("1");
+			question.createCell(1).setCellValue(paperCode);
 			question.createCell(2).setCellValue("21a");
 			question.createCell(3).setCellValue(3);
 			question.createCell(4).setCellValue("3.1.1");
+
 			try (var output = Files.newOutputStream(path)) {
 				workbook.write(output);
 			}
 		}
+
 		return path;
+	}
+
+	private void verifyPendingLegacyPaperBookletMapping(FxRobot robot, boolean ambiguous) throws Exception {
+
+		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1",
+				ExamBookletQuestionFormat.MIXED);
+
+		Subject subject = field(application, "workingSubject", Subject.class);
+
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+
+		SyllabusVersion syllabus = new SqliteCurriculumRepository(database).findVersionsForSubject(subject).stream()
+				.filter(version -> "2019".equals(version.getName())).findFirst().orElseThrow();
+
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, new SqliteExamWriter(database));
+
+		String savedName = ambiguous ? "MCQ" : "Trial Paper A";
+		String paperCode = ambiguous ? "MCQ" : "1";
+
+		ExamBooklet selectedBooklet = examImporter.importExam(subject, "QCAA", 2020, "External Assessment", savedName,
+				"Chemistry/2020/selected-booklet.pdf",
+				ambiguous ? ExamBookletQuestionFormat.MULTIPLE_CHOICE : ExamBookletQuestionFormat.WRITTEN_RESPONSE);
+
+		if (ambiguous) {
+			// Two conventional MCQ aliases must force an explicit
+			// choice rather than selecting the first saved booklet.
+			examImporter.importExam(subject, "QCAA", 2020, "External Assessment", "MCQ booklet",
+					"Chemistry/2020/other-mcq-booklet.pdf", ExamBookletQuestionFormat.MULTIPLE_CHOICE);
+		}
+
+		Path externalWorkbook = createPendingLegacyWorkbook(databasePath.getParent().resolve("incoming")
+				.resolve(ambiguous ? "ambiguous-mcq.xlsx" : "custom-booklet.xlsx"), paperCode);
+
+		ManagedDataLayout layout = new ManagedDataLayout(applicationConfig.dataRoot());
+
+		Path managedWorkbook = new LegacyQuestionWorkbookStore(layout).manageWorkbook(subject.getName(),
+				syllabus.getName(), externalWorkbook);
+
+		// Enter the actual structural workspace before resuming the
+		// retained workbook, as a teacher would do from Dashboard.
+		fireControl(robot, "#change-exam-assets");
+		WaitForAsyncUtils.waitForFxEvents();
+
+		Class<?> pendingType = Class
+				.forName("au.edu.eq.questionbank.ui." + "QuestionBankApplication$PendingLegacyQuestionImport");
+
+		var constructor = pendingType.getDeclaredConstructor(Subject.class, SyllabusVersion.class, Path.class,
+				Map.class);
+
+		constructor.setAccessible(true);
+
+		Map<LegacyExamKey, LegacyExamIdentity> mappings = Map.of(new LegacyExamKey("QCAA", 2020),
+				new LegacyExamIdentity("QCAA", "External Assessment"));
+
+		Object pending = constructor.newInstance(subject, syllabus, managedWorkbook, mappings);
+
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "continueLegacyQuestionImport",
+					new Class<?>[] { Stage.class, applicationConfig.getClass(), pendingType }, primaryStage,
+					applicationConfig, pending);
+			return null;
+		}).get();
+
+		Node root = primaryStage.getScene().getRoot();
+
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
+				() -> nodePresentOnFx(robot, root, "#exam-assets-legacy-import-booklet-0"));
+
+		@SuppressWarnings("unchecked")
+		ComboBox<String> choice = lookupOnFx(robot, root, "#exam-assets-legacy-import-booklet-0", ComboBox.class);
+
+		assertNotNull(choice);
+
+		String selectedOption = choice.getItems().stream()
+				.filter(option -> option.contains("[ID " + selectedBooklet.getId() + "]")).findFirst().orElseThrow();
+
+		if (ambiguous) {
+			// Confirm that the second MCQ alias was actually persisted
+			// under the same Exam before inspecting the available choices.
+			List<ExamBooklet> persistedBooklets = new SqliteExamWriter(database).findAllExamBooklets();
+
+			ExamBooklet alternative = persistedBooklets.stream()
+					.filter(booklet -> booklet.getExam().getId() == selectedBooklet.getExam().getId()
+							&& "MCQ booklet".equals(booklet.getName()))
+					.findFirst()
+					.orElseThrow(() -> new AssertionError("The second MCQ booklet was not persisted. "
+							+ "Persisted booklets: " + persistedBooklets.stream()
+									.map(booklet -> booklet.getName() + " [ID " + booklet.getId() + "]").toList()));
+
+			// Read the JavaFX ComboBox contents on the FX thread.
+			List<String> availableOptions = new ArrayList<>();
+			robot.interact(() -> availableOptions.addAll(choice.getItems()));
+
+			// Compare persisted identity rather than the precise formatting
+			// of the option's display text.
+			assertTrue(
+					availableOptions.stream().anyMatch(option -> option.contains("[ID " + alternative.getId() + "]")),
+					() -> "The second saved MCQ booklet is missing from " + "the selection UI. Expected booklet ID "
+							+ alternative.getId() + "; actual choices: " + availableOptions);
+		}
+
+		// Direct selection is deterministic under TestFX and Xvfb.
+		robot.interact(() -> choice.getSelectionModel().select(selectedOption));
+
+		fireControl(robot, "#exam-assets-legacy-import-recheck");
+
+		// Successful import refreshes the corpus asynchronously and
+		// displays the normal import-result dialog.
+		waitForDialogShowing(robot, "Legacy Question Import");
+
+		DialogPane result = showingDialogPane(robot, "Legacy Question Import");
+
+		assertTrue(
+		        result.getContentText() != null
+		                && result.getContentText().contains("Questions imported: 1"),
+		        () -> "Expected successful legacy import, but received:"
+		                + "\nHeader: " + result.getHeaderText()
+		                + "\nContent: " + result.getContentText());		fireDialogButton(robot, "OK");
+		waitForDialogHidden(robot, "Legacy Question Import");
+
+		List<Question> persisted = new SqliteQuestionRepository(database).findAll();
+
+		Question imported = persisted.stream().filter(question -> "21a".equals(question.getQuestionCode())).findFirst()
+				.orElseThrow();
+
+		// This is the authoritative acceptance check: the Question
+		// refers to the explicitly selected persisted booklet ID.
+		assertEquals(selectedBooklet.getId(), imported.getBooklet().getId());
+
+		assertEquals(savedName, imported.getBooklet().getName());
+
+		assertEquals("External Assessment", imported.getBooklet().getExam().getName());
+
+		assertEquals(selectedBooklet.getSourceDocument().getRelativePath(),
+				imported.getBooklet().getSourceDocument().getRelativePath());
+
+		// A completed import must not retain stale selections.
+		assertNull(field(application, "pendingLegacyQuestionImport", Object.class));
 	}
 }

@@ -5,8 +5,10 @@ import java.nio.file.Path;
 import java.sql.SQLException;
 import java.time.Year;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
@@ -605,61 +607,124 @@ public final class ExamAssetsPane extends VBox {
 	}
 
 	/**
-	 * Displays booklet requirements with their confirmed examination identities,
-	 * allowing the teacher to create the necessary structures before rechecking the
-	 * import.
+	 * Displays workbook Paper requirements with optional explicit choices of
+	 * existing persisted Question Booklets.
 	 *
-	 * @param syllabusName  selected historical syllabus
-	 * @param workbookPath  retained managed workbook
-	 * @param requirements  missing mapped booklet requirements
-	 * @param recheckAction revalidates persisted assets and imports
-	 * @param cancelAction  abandons the pending import
+	 * Each choice belongs to the exact confirmed examination.
+	 *
+	 * @param syllabusName      historical syllabus
+	 * @param workbookPath      retained workbook
+	 * @param requirements      required worksheet/year/Paper identities
+	 * @param availableBooklets candidate saved booklets for each requirement
+	 * @param currentSelections previously confirmed booklet IDs
+	 * @param recheckAction     receives the current booklet choices on Recheck
+	 * @param cancelAction      abandons the pending import
 	 */
 	public void showMappedLegacyImportRequirements(String syllabusName, Path workbookPath,
-			List<LegacyMappedBookletRequirement> requirements, Runnable recheckAction, Runnable cancelAction) {
+			List<LegacyMappedBookletRequirement> requirements,
+			Map<LegacyMappedBookletRequirement, List<ExamBooklet>> availableBooklets,
+			Map<LegacyMappedBookletRequirement, Long> currentSelections,
+			Consumer<Map<LegacyMappedBookletRequirement, Long>> recheckAction, Runnable cancelAction) {
 		Objects.requireNonNull(syllabusName, "syllabusName");
 		Objects.requireNonNull(workbookPath, "workbookPath");
 		Objects.requireNonNull(requirements, "requirements");
+		Objects.requireNonNull(availableBooklets, "availableBooklets");
+		Objects.requireNonNull(currentSelections, "currentSelections");
 		Objects.requireNonNull(recheckAction, "recheckAction");
 		Objects.requireNonNull(cancelAction, "cancelAction");
-		if (syllabusName.isBlank()) {
-			throw new IllegalArgumentException("Syllabus name must not be blank");
-		}
-		if (requirements.isEmpty()) {
-			throw new IllegalArgumentException("Missing requirements must not be empty");
+		if (syllabusName.isBlank() || requirements.isEmpty()) {
+			throw new IllegalArgumentException("A syllabus and at least one Paper requirement are required");
 		}
 		legacyImportPending = true;
+
+		// Selections are transient import intent. They do not rename, move,
+		// or modify any persisted ExamBooklet.
+		Map<LegacyMappedBookletRequirement, Long> selections = new LinkedHashMap<>(currentSelections);
 		Label heading = new Label("LEGACY IMPORT");
 		heading.setStyle(HEADING_STYLE);
 		Label context = new Label("Syllabus: " + syllabusName + "\nWorkbook: " + workbookPath.getFileName());
 		context.setWrapText(true);
-		Label instructions = new Label("The confirmed examinations have been created or reused. "
-				+ "The Exam requiring the next missing booklet is selected above. "
-				+ "Use Add Question Booklet to attach the required PDF "
-				+ "to this Exam. Save each booklet before selecting "
-				+ "Recheck and Import. If the workbook references several "
-				+ "examinations, select the appropriate Exam before " + "attaching each PDF.");
-		instructions.setWrapText(true);
+		Label instructions = new Label("For each workbook Paper, use Automatic matching or choose "
+				+ "an existing Question booklet belonging to the confirmed Exam. "
+				+ "If its PDF has not been attached, select the appropriate Exam "
+				+ "above and use Add Question Booklet. " + "Save the booklet before choosing Recheck and Import. "
+				+ "Selecting an existing booklet does not rename or replace its PDF.");
 		instructions.setId("exam-assets-legacy-import-instruction");
+		instructions.setWrapText(true);
 		VBox requirementRows = new VBox(ROW_SPACING);
-		int index = 0;
-		for (LegacyMappedBookletRequirement requirement : requirements) {
-			LegacyExamIdentity identity = requirement.identity();
+		String automaticLabel = "Automatic (match conventional name)";
+		for (int index = 0; index < requirements.size(); index++) {
+			LegacyMappedBookletRequirement requirement = requirements.get(index);
 			LegacyExamKey key = requirement.key();
-			String description = "%s / %d / %s / %s".formatted(identity.providerName(), key.year(), identity.examName(),
-					requirement.bookletName());
-			Label row = new Label(description);
-			row.setId("exam-assets-legacy-import-requirement-" + index);
-			row.setWrapText(true);
-			requirementRows.getChildren().add(row);
-			index++;
+			LegacyExamIdentity identity = requirement.identity();
+			Label requirementLabel = new Label("%s / %d / %s / %s / %s".formatted(key.worksheetName(), key.year(),
+					identity.providerName(), identity.examName(), requirement.bookletName()));
+			requirementLabel.setId("exam-assets-legacy-import-requirement-" + index);
+			requirementLabel.setWrapText(true);
+			ComboBox<String> choice = new ComboBox<>();
+			choice.setId("exam-assets-legacy-import-booklet-" + index);
+			choice.setMaxWidth(Double.MAX_VALUE);
+			choice.setPrefWidth(320);
+			choice.setTooltip(new Tooltip("Choose a saved Question booklet for this workbook Paper, "
+					+ "or use Automatic conventional-name matching."));
+			Map<String, Long> optionIds = new LinkedHashMap<>();
+			choice.getItems().add(automaticLabel);
+			List<ExamBooklet> candidates = Objects
+					.requireNonNull(availableBooklets.getOrDefault(requirement, List.of()), "availableBooklets entry");
+
+			// Never display assets belonging to another confirmed Exam,
+			// even if a caller supplied an incorrectly broad candidate list.
+			for (ExamBooklet booklet : candidates) {
+				Exam exam = booklet.getExam();
+				if (workingSubject == null || exam.getSubject().getId() != workingSubject.getId()
+						|| exam.getYear() != key.year() || !exam.getProvider().getName().equals(identity.providerName())
+						|| !exam.getName().equals(identity.examName())) {
+					continue;
+				}
+				String option = "%s — %s [ID %d]".formatted(booklet.getName(),
+						sourceFileName(booklet.getSourceDocument().getRelativePath()), booklet.getId());
+				choice.getItems().add(option);
+				optionIds.put(option, booklet.getId());
+			}
+			String selectedLabel = automaticLabel;
+			Long previouslySelectedId = selections.get(requirement);
+			if (previouslySelectedId != null) {
+				String matchingOption = optionIds.entrySet().stream()
+						.filter(entry -> entry.getValue().equals(previouslySelectedId)).map(Map.Entry::getKey)
+						.findFirst().orElse(null);
+				if (matchingOption != null) {
+					selectedLabel = matchingOption;
+				} else {
+
+					// Preserve an invalidated choice so Recheck can reject it.
+					// Never silently substitute a different saved booklet.
+					selectedLabel = "Unavailable saved booklet [ID " + previouslySelectedId
+							+ "] — choose a replacement";
+					choice.getItems().add(selectedLabel);
+					optionIds.put(selectedLabel, previouslySelectedId);
+				}
+			}
+			choice.setValue(selectedLabel);
+			choice.valueProperty().addListener((_, _, value) -> {
+				Long selectedId = optionIds.get(value);
+				if (selectedId == null) {
+					selections.remove(requirement);
+				} else {
+					selections.put(requirement, selectedId);
+				}
+			});
+			VBox mappingRow = new VBox(ROW_SPACING, requirementLabel, choice);
+			mappingRow.setId("exam-assets-legacy-import-mapping-row-" + index);
+			requirementRows.getChildren().add(mappingRow);
 		}
 		Region spacer = new Region();
 		HBox.setHgrow(spacer, Priority.ALWAYS);
 		HBox actions = new HBox(SPACING, legacyImportCancelButton, spacer, legacyImportRecheckButton);
+
+		// Recheck receives a snapshot, not a mutable map retained by the UI.
 		legacyImportRecheckButton.setOnAction(_ -> {
 			if (canRecheckLegacyQuestionImport()) {
-				recheckAction.run();
+				recheckAction.accept(Map.copyOf(selections));
 			}
 		});
 		legacyImportCancelButton.setOnAction(_ -> cancelAction.run());
@@ -667,6 +732,25 @@ public final class ExamAssetsPane extends VBox {
 		legacyImportRequirementsBox.setVisible(true);
 		legacyImportRequirementsBox.setManaged(true);
 		updateUseSelectedBookletState();
+	}
+
+	/**
+	 * Displays mapped legacy import requirements using the existing conventional
+	 * booklet-matching workflow.
+	 *
+	 * @param syllabusName  historical syllabus
+	 * @param workbookPath  retained workbook
+	 * @param requirements  required workbook papers
+	 * @param recheckAction revalidates saved assets
+	 * @param cancelAction  abandons the pending import
+	 */
+	public void showMappedLegacyImportRequirements(String syllabusName, Path workbookPath,
+			List<LegacyMappedBookletRequirement> requirements, Runnable recheckAction, Runnable cancelAction) {
+		Objects.requireNonNull(recheckAction, "recheckAction");
+
+		// Existing callers retain the automatic booklet-matching behaviour.
+		showMappedLegacyImportRequirements(syllabusName, workbookPath, requirements, Map.of(), Map.of(),
+				_ -> recheckAction.run(), cancelAction);
 	}
 
 	private void applyExamSnapshot(ExamSnapshot snapshot) {

@@ -14,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -34,6 +35,9 @@ import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
+import au.edu.eq.questionbank.importer.legacy.LegacyExamIdentity;
+import au.edu.eq.questionbank.importer.legacy.LegacyExamKey;
+import au.edu.eq.questionbank.importer.legacy.LegacyMappedBookletRequirement;
 import au.edu.eq.questionbank.importer.legacy.LegacyQuestionImportResult;
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.AnswerRegion;
@@ -1691,6 +1695,77 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void mappedLegacyRequirementsAllowExplicitBookletSelection(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Exam exam = examMetadataPane().getBooklet().getExam();
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
+
+		// A custom-named booklet is already saved under the target Exam.
+		ExamBooklet custom = importer.importExam(exam.getSubject(), exam.getProvider().getName(), exam.getYear(),
+				exam.getName(), "Trial Paper A", "Chemistry/" + exam.getYear() + "/trial-paper-a.pdf");
+
+		// Another Exam has a separate booklet. It must never be offered
+		// as a choice for the confirmed External Assessment.
+		ExamBooklet wrongExam = importer.importExam(exam.getSubject(), exam.getProvider().getName(), exam.getYear(),
+				"Mock Examination", "Mock Paper A", "Chemistry/" + exam.getYear() + "/mock-paper-a.pdf");
+		fireControl(robot, "#change-exam-assets");
+		WaitForAsyncUtils.waitForFxEvents();
+		ExamAssetsPane pane = field(application, "examAssetsPane", ExamAssetsPane.class);
+		LegacyExamKey key = new LegacyExamKey("QCAA", exam.getYear());
+		LegacyExamIdentity identity = new LegacyExamIdentity(exam.getProvider().getName(), exam.getName());
+		LegacyMappedBookletRequirement requirement = new LegacyMappedBookletRequirement(key, identity, "Paper 1");
+		Map<LegacyMappedBookletRequirement, List<ExamBooklet>> candidates = Map.of(requirement,
+				List.of(custom, wrongExam));
+		AtomicReference<Map<LegacyMappedBookletRequirement, Long>> submitted = new AtomicReference<>();
+		robot.interact(() -> pane.showMappedLegacyImportRequirements("2019", Path.of("legacy.xlsx"),
+				List.of(requirement), candidates, Map.of(), submitted::set, pane::clearLegacyImportRequirements));
+		@SuppressWarnings("unchecked")
+		ComboBox<String> choice = lookup(robot, "#exam-assets-legacy-import-booklet-0", ComboBox.class);
+		assertEquals("Automatic (match conventional name)", choice.getValue());
+		assertTrue(choice.getItems().stream().anyMatch(option -> option.contains("Trial Paper A")));
+		assertFalse(choice.getItems().stream().anyMatch(option -> option.contains("Mock Paper A")));
+
+		// Selecting the saved booklet must submit its persisted ID,
+		// not the displayed name or its position in the list.
+		String customOption = choice.getItems().stream().filter(option -> option.contains("Trial Paper A")).findFirst()
+				.orElseThrow();
+		robot.interact(() -> choice.getSelectionModel().select(customOption));
+		fireControl(robot, "#exam-assets-legacy-import-recheck");
+		assertEquals(Map.of(requirement, custom.getId()), submitted.get());
+
+		// A subsequent Recheck presentation restores the explicit choice.
+		robot.interact(
+				() -> pane.showMappedLegacyImportRequirements("2019", Path.of("legacy.xlsx"), List.of(requirement),
+						candidates, submitted.get(), submitted::set, pane::clearLegacyImportRequirements));
+		@SuppressWarnings("unchecked")
+		ComboBox<String> restored = lookup(robot, "#exam-assets-legacy-import-booklet-0", ComboBox.class);
+		assertTrue(restored.getValue().contains("Trial Paper A"));
+
+		// A deleted or unavailable selected booklet must be shown as
+		// unavailable and must not silently revert to Automatic.
+		robot.interact(
+				() -> pane.showMappedLegacyImportRequirements("2019", Path.of("legacy.xlsx"), List.of(requirement),
+						candidates, Map.of(requirement, 99999L), submitted::set, pane::clearLegacyImportRequirements));
+		@SuppressWarnings("unchecked")
+		ComboBox<String> unavailable = lookup(robot, "#exam-assets-legacy-import-booklet-0", ComboBox.class);
+		assertTrue(unavailable.getValue().contains("Unavailable saved booklet"));
+		fireControl(robot, "#exam-assets-legacy-import-recheck");
+		assertEquals(Map.of(requirement, 99999L), submitted.get());
+
+		// The user can explicitly clear the selection and return to
+		// the established name-based matching behaviour.
+		robot.interact(() -> unavailable.getSelectionModel().selectFirst());
+		fireControl(robot, "#exam-assets-legacy-import-recheck");
+		assertEquals(Map.of(), submitted.get());
+		fireControl(robot, "#exam-assets-legacy-import-cancel");
+		VBox requirements = lookup(robot, "#exam-assets-legacy-import-requirements", VBox.class);
+		assertFalse(requirements.isVisible());
+		assertFalse(requirements.isManaged());
+	}
+
+	@Test
 	void multipleChoiceControlsRemainReadableAtMinimumWorkspaceWidth(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 
@@ -1877,7 +1952,6 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		Button delete = lookup(robot, "#exam-assets-question-delete-" + id, Button.class);
 		@SuppressWarnings("unchecked")
 		ComboBox<String> name = lookup(robot, "#exam-assets-question-name-" + id, ComboBox.class);
-		@SuppressWarnings("unchecked")
 		ComboBox<?> answer = lookup(robot, "#exam-assets-question-answer-" + id, ComboBox.class);
 		TextField expected = lookup(robot, "#exam-assets-question-expected-" + id, TextField.class);
 		Button edit = lookup(robot, "#exam-assets-question-edit-" + id, Button.class);

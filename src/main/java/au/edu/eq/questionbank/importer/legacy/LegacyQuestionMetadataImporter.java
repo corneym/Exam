@@ -95,21 +95,46 @@ public final class LegacyQuestionMetadataImporter {
 	}
 
 	/**
-	 * Finds missing booklets using explicitly confirmed examination identities
-	 * rather than provider/year-only matching.
+	 * Finds missing Question booklets using conventional booklet names and
+	 * confirmed examination identities.
 	 *
 	 * @param workbookPath source workbook
-	 * @param subjectName  existing subject
-	 * @param syllabusName existing historical syllabus
-	 * @param mappings     confirmed worksheet/year identities
-	 * @return missing booklet requirements
-	 * @throws IOException  when workbook reading fails
-	 * @throws SQLException when database access fails
+	 * @param subjectName  existing Subject
+	 * @param syllabusName historical syllabus
+	 * @param mappings     confirmed examination identities
+	 * @return outstanding booklet requirements
+	 * @throws IOException  if the workbook cannot be read
+	 * @throws SQLException if persistence queries fail
 	 */
 	public List<LegacyMappedBookletRequirement> findMissingBookletsMapped(Path workbookPath, String subjectName,
 			String syllabusName, Map<LegacyExamKey, LegacyExamIdentity> mappings) throws IOException, SQLException {
+		return findMissingBookletsMapped(workbookPath, subjectName, syllabusName, mappings, Map.of());
+	}
+
+	/**
+	 * Preflights a mapped legacy import with optional, explicitly selected
+	 * persisted Question Booklet identities.
+	 *
+	 * @param workbookPath      source workbook
+	 * @param subjectName       existing Subject
+	 * @param syllabusName      historical syllabus
+	 * @param mappings          confirmed examination identities
+	 * @param bookletSelections persisted booklet IDs keyed by source paper
+	 *                          requirement; absent entries retain conventional name
+	 *                          matching
+	 * @return outstanding booklet requirements
+	 * @throws IOException              if the workbook cannot be read
+	 * @throws SQLException             if database queries fail
+	 * @throws IllegalArgumentException if a chosen booklet does not belong to its
+	 *                                  confirmed examination
+	 */
+	public List<LegacyMappedBookletRequirement> findMissingBookletsMapped(Path workbookPath, String subjectName,
+			String syllabusName, Map<LegacyExamKey, LegacyExamIdentity> mappings,
+			Map<LegacyMappedBookletRequirement, Long> bookletSelections) throws IOException, SQLException {
 		List<LegacyQuestionSheet> sheets = reader.read(workbookPath);
 		validateMappings(sheets, mappings);
+		validateBookletSelections(sheets, mappings, bookletSelections);
+		Map<LegacyMappedBookletRequirement, Long> selections = Map.copyOf(bookletSelections);
 		Set<LegacyMappedBookletRequirement> missing = new LinkedHashSet<>();
 		try (Connection connection = database.openConnection()) {
 			ImportContext context = findImportContext(connection, subjectName, syllabusName);
@@ -118,16 +143,28 @@ public final class LegacyQuestionMetadataImporter {
 					LegacyExamKey key = new LegacyExamKey(sheet.providerName(), row.year());
 					LegacyExamIdentity identity = mappings.get(key);
 					findClassificationNodeId(connection, context.syllabusVersionId(), identity.providerName(), row);
-					String name = bookletName(row.paperCode());
-					if (!bookletExists(connection, context.subjectId(), identity, row.year(), name)) {
-						missing.add(new LegacyMappedBookletRequirement(key, identity, name));
+					LegacyMappedBookletRequirement requirement = new LegacyMappedBookletRequirement(key, identity,
+							bookletName(row.paperCode()));
+					Long selectedId = selections.get(requirement);
+					if (selectedId != null) {
+
+						// Explicit choices must be validated against the
+						// authoritative persisted Exam, not just the ID.
+						findSelectedBooklet(connection, context.subjectId(), requirement, selectedId.longValue());
+					} else if (!bookletExists(connection, context.subjectId(), identity, row.year(),
+							requirement.bookletName())) {
+
+						// A conventional-name match was not available.
+						missing.add(requirement);
 					}
 				}
 			}
 		}
 		List<LegacyMappedBookletRequirement> result = new ArrayList<>(missing);
-		result.sort(Comparator.comparing((LegacyMappedBookletRequirement r) -> r.identity().providerName())
-				.thenComparingInt(r -> r.key().year()).thenComparing(r -> r.identity().examName())
+		result.sort(Comparator
+				.comparing((LegacyMappedBookletRequirement requirement) -> requirement.identity().providerName())
+				.thenComparingInt(requirement -> requirement.key().year())
+				.thenComparing(requirement -> requirement.identity().examName())
 				.thenComparing(LegacyMappedBookletRequirement::bookletName));
 		return List.copyOf(result);
 	}
@@ -266,33 +303,52 @@ public final class LegacyQuestionMetadataImporter {
 	}
 
 	/**
-	 * Atomically imports legacy questions using confirmed worksheet/year
-	 * examination identities.
-	 *
-	 * <p>
-	 * All mappings are validated before opening a write transaction. Existing
-	 * compatible questions are reused.
+	 * Imports legacy questions under confirmed examination identities, using
+	 * conventional booklet-name resolution.
 	 *
 	 * @param workbookPath source workbook
-	 * @param subjectName  existing subject
-	 * @param syllabusName existing historical syllabus
+	 * @param subjectName  existing Subject
+	 * @param syllabusName historical syllabus
 	 * @param mappings     confirmed examination identities
-	 * @return import counts
-	 * @throws IOException  when workbook reading fails
-	 * @throws SQLException when persistence fails
+	 * @return persisted import counts
+	 * @throws IOException  if the workbook cannot be read
+	 * @throws SQLException if persistence fails
 	 */
 	public LegacyQuestionImportResult importWorkbookMapped(Path workbookPath, String subjectName, String syllabusName,
 			Map<LegacyExamKey, LegacyExamIdentity> mappings) throws IOException, SQLException {
+		return importWorkbookMapped(workbookPath, subjectName, syllabusName, mappings, Map.of());
+	}
+
+	/**
+	 * Atomically imports legacy questions using confirmed examination identities
+	 * and optional explicit persisted booklet selections.
+	 *
+	 * @param workbookPath      source workbook
+	 * @param subjectName       existing Subject
+	 * @param syllabusName      historical syllabus
+	 * @param mappings          confirmed examination identities
+	 * @param bookletSelections booklet IDs keyed by source paper requirement
+	 * @return persisted import counts
+	 * @throws IOException              if the workbook cannot be read
+	 * @throws SQLException             if persistence fails
+	 * @throws IllegalArgumentException if a mapping or source booklet conflicts
+	 *                                  with the confirmed examination
+	 */
+	public LegacyQuestionImportResult importWorkbookMapped(Path workbookPath, String subjectName, String syllabusName,
+			Map<LegacyExamKey, LegacyExamIdentity> mappings,
+			Map<LegacyMappedBookletRequirement, Long> bookletSelections) throws IOException, SQLException {
 		List<LegacyQuestionSheet> sheets = reader.read(workbookPath);
 		validateMappings(sheets, mappings);
+		validateBookletSelections(sheets, mappings, bookletSelections);
+		Map<LegacyMappedBookletRequirement, Long> selections = Map.copyOf(bookletSelections);
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
 				ImportContext context = findImportContext(connection, subjectName, syllabusName);
-				List<ResolvedQuestion> questions = resolveQuestions(connection, sheets, context, mappings);
+				List<ResolvedQuestion> questions = resolveQuestions(connection, sheets, context, mappings, selections);
 
-				// Persist only after the entire workbook has passed
-				// identity, structural and compatibility checks.
+				// No Question or Answer is persisted until every workbook
+				// row has passed identity and compatibility validation.
 				LegacyQuestionImportResult result = writeQuestions(connection, questions);
 				connection.commit();
 				return result;
@@ -663,6 +719,46 @@ public final class LegacyQuestionMetadataImporter {
 		}
 	}
 
+	/**
+	 * Resolves an explicitly selected persisted Question booklet, requiring the
+	 * exact confirmed examination identity.
+	 */
+	private ResolvedBooklet findSelectedBooklet(Connection connection, long subjectId,
+			LegacyMappedBookletRequirement requirement, long bookletId) throws SQLException {
+		LegacyExamKey key = requirement.key();
+		LegacyExamIdentity identity = requirement.identity();
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT eb.question_format
+				FROM exam_booklets eb
+				JOIN exams e ON e.id = eb.exam_id
+				JOIN exam_providers p ON p.id = e.provider_id
+				WHERE eb.id = ?
+				  AND e.subject_id = ?
+				  AND p.provider_name = ?
+				  AND e.exam_year = ?
+				  AND e.exam_name = ?
+				""")) {
+			statement.setLong(1, bookletId);
+			statement.setLong(2, subjectId);
+			statement.setString(3, identity.providerName());
+			statement.setInt(4, key.year());
+			statement.setString(5, identity.examName());
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalArgumentException("Selected booklet ID " + bookletId
+							+ " does not belong to the confirmed Exam: " + "worksheet '" + key.worksheetName() + "'"
+							+ ", year " + key.year() + ", " + identity.providerName() + " / " + identity.examName()
+							+ ", source " + requirement.bookletName());
+				}
+
+				// The saved booklet format remains authoritative even
+				// when its name differs from the workbook Paper code.
+				return new ResolvedBooklet(bookletId,
+						ExamBookletQuestionFormat.valueOf(result.getString("question_format")));
+			}
+		}
+	}
+
 	private void insertAnswer(Connection connection, long questionId, String answer) throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
 				INSERT INTO answers
@@ -752,6 +848,12 @@ public final class LegacyQuestionMetadataImporter {
 
 	private List<ResolvedQuestion> resolveQuestions(Connection connection, List<LegacyQuestionSheet> sheets,
 			ImportContext context, Map<LegacyExamKey, LegacyExamIdentity> mappings) throws SQLException {
+		return resolveQuestions(connection, sheets, context, mappings, Map.of());
+	}
+
+	private List<ResolvedQuestion> resolveQuestions(Connection connection, List<LegacyQuestionSheet> sheets,
+			ImportContext context, Map<LegacyExamKey, LegacyExamIdentity> mappings,
+			Map<LegacyMappedBookletRequirement, Long> bookletSelections) throws SQLException {
 		List<ResolvedQuestion> resolved = new ArrayList<>();
 		Set<QuestionKey> workbookQuestions = new HashSet<>();
 		for (LegacyQuestionSheet sheet : sheets) {
@@ -760,17 +862,25 @@ public final class LegacyQuestionMetadataImporter {
 				ResolvedBooklet booklet;
 				if (mappings == null) {
 
-					// Preserve the legacy API's established behaviour.
+					// Preserve the original non-mapped legacy API.
 					providerName = sheet.providerName();
 					booklet = findBooklet(connection, context.subjectId(), providerName, row);
 				} else {
 					LegacyExamKey key = new LegacyExamKey(sheet.providerName(), row.year());
 					LegacyExamIdentity identity = mappings.get(key);
 					providerName = identity.providerName();
+					LegacyMappedBookletRequirement requirement = new LegacyMappedBookletRequirement(key, identity,
+							bookletName(row.paperCode()));
+					Long selectedId = bookletSelections.get(requirement);
+					if (selectedId != null) {
+						booklet = findSelectedBooklet(connection, context.subjectId(), requirement,
+								selectedId.longValue());
+					} else {
 
-					// Mapped import must resolve the exact Exam,
-					// not merely the provider/year combination.
-					booklet = findBooklet(connection, context.subjectId(), identity, row);
+						// Conventional matching remains the default,
+						// including the existing unambiguous MCQ alias.
+						booklet = findBooklet(connection, context.subjectId(), identity, row);
+					}
 				}
 				long bookletId = booklet.id();
 				requireBookletExamActive(connection, bookletId);
@@ -877,6 +987,35 @@ public final class LegacyQuestionMetadataImporter {
 			statement.setLong(2, questionId);
 			if (statement.executeUpdate() != 1) {
 				throw new SQLException("Source-question relationship update affected an unexpected number of rows");
+			}
+		}
+	}
+
+	/**
+	 * Rejects selections unrelated to the workbook and invalid booklet IDs before
+	 * the import opens its write transaction.
+	 */
+	private void validateBookletSelections(List<LegacyQuestionSheet> sheets,
+			Map<LegacyExamKey, LegacyExamIdentity> mappings,
+			Map<LegacyMappedBookletRequirement, Long> bookletSelections) {
+		if (bookletSelections == null) {
+			throw new NullPointerException("bookletSelections");
+		}
+		Set<LegacyMappedBookletRequirement> required = new LinkedHashSet<>();
+		for (LegacyQuestionSheet sheet : sheets) {
+			for (LegacyQuestionRow row : sheet.questions()) {
+				LegacyExamKey key = new LegacyExamKey(sheet.providerName(), row.year());
+				required.add(new LegacyMappedBookletRequirement(key, mappings.get(key), bookletName(row.paperCode())));
+			}
+		}
+		for (Map.Entry<LegacyMappedBookletRequirement, Long> selection : bookletSelections.entrySet()) {
+			LegacyMappedBookletRequirement requirement = selection.getKey();
+			Long bookletId = selection.getValue();
+			if (requirement == null || !required.contains(requirement)) {
+				throw new IllegalArgumentException("Unexpected Paper-to-booklet selection: " + requirement);
+			}
+			if (bookletId == null || bookletId.longValue() <= 0) {
+				throw new IllegalArgumentException("Invalid selected booklet ID for " + requirement + ": " + bookletId);
 			}
 		}
 	}
