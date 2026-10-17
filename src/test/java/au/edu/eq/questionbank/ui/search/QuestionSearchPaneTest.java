@@ -533,9 +533,6 @@ public class QuestionSearchPaneTest {
 		robot.interact(() -> {
 			classificationPane.applyCss();
 			classificationPane.layout();
-			Label unitLabel = classificationPane.getChildren().stream().filter(node -> node instanceof Label)
-					.map(node -> (Label) node).filter(label -> "Unit".equals(label.getText())).findFirst()
-					.orElseThrow();
 			assertEquals(unit.getBoundsInParent().getMinX(), save.getBoundsInParent().getMinX(), 1.0);
 			assertTrue(descriptor.getWidth() > 150, "Descriptor must remain usable at minimum width");
 			assertTrue(save.getBoundsInParent().getMaxX() <= classificationPane.getWidth(),

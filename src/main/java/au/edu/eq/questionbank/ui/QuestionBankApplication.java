@@ -3501,14 +3501,6 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
-	private void recheckPendingLegacyQuestionImport(Stage primaryStage, ApplicationConfig config) {
-		PendingLegacyQuestionImport pending = pendingLegacyQuestionImport;
-		if (pending == null) {
-			return;
-		}
-		recheckPendingLegacyQuestionImport(primaryStage, config, pending.bookletSelections());
-	}
-
 	private void recheckPendingLegacyQuestionImport(Stage primaryStage, ApplicationConfig config,
 			Map<LegacyMappedBookletRequirement, Long> selections) {
 		PendingLegacyQuestionImport pending = pendingLegacyQuestionImport;
@@ -4731,6 +4723,7 @@ public class QuestionBankApplication extends Application {
 		showAlert(Alert.AlertType.INFORMATION, "Legacy Question Import", "Legacy Question metadata imported.", message);
 	}
 
+	@SuppressWarnings("unused")
 	private void showLegacyQuestionImportStillIncomplete(List<LegacyBookletRequirement> requirements) {
 		if (requirements == null) {
 			throw new NullPointerException("requirements");

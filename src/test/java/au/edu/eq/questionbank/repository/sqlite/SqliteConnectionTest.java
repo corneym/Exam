@@ -2063,6 +2063,125 @@ class SqliteConnectionTest {
 		}
 	}
 
+	@Test
+	void version22MigratesExistingBookletsWithoutGuessingPaperCodes() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("legacy-paper-migration.db"));
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("INSERT INTO subjects (id, subject_name) " + "VALUES (1, 'Chemistry')");
+			statement.execute("INSERT INTO exam_providers (id, provider_name) " + "VALUES (1, 'QCAA')");
+			statement.execute("""
+					INSERT INTO exams
+					    (id, subject_id, provider_id, exam_year, exam_name)
+					VALUES
+					    (100, 1, 1, 2020, 'Sample Examination'),
+					    (101, 1, 1, 2020, 'Mock Examination')
+					""");
+			statement.execute("""
+					INSERT INTO source_documents (id, relative_path)
+					VALUES
+					    (10, 'sample-mcq.pdf'),
+					    (11, 'sample-paper1.pdf'),
+					    (12, 'sample-extra.pdf'),
+					    (13, 'mock-mcq.pdf')
+					""");
+			statement.execute("""
+					INSERT INTO exam_booklets
+					    (id, exam_id, source_document_id, booklet_name)
+					VALUES
+					    (10, 100, 10, 'MCQ booklet'),
+					    (11, 100, 11, 'Paper 1'),
+					    (12, 100, 12, 'Supplementary'),
+					    (13, 101, 13, 'MCQ booklet')
+					""");
+
+			// Reconstruct the previous schema version to exercise the
+			// actual 21 -> 22 migration against saved booklet records.
+			statement.execute("DROP INDEX ux_exam_booklets_legacy_paper_code");
+			statement.execute("ALTER TABLE exam_booklets DROP COLUMN legacy_paper_code");
+			statement.execute("UPDATE schema_version SET version = 21");
+		}
+		assertEquals(21, database.schemaVersion());
+		database.initialiseSchema();
+		assertEquals(22, database.schemaVersion());
+		database.verifySchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+
+			// Migration must not guess Paper identity from a display name.
+			try (ResultSet result = statement.executeQuery("""
+					SELECT COUNT(*)
+					FROM exam_booklets
+					WHERE legacy_paper_code IS NULL
+					""")) {
+				assertTrue(result.next());
+				assertEquals(4, result.getInt(1));
+			}
+
+			// Link the existing booklet, retaining its ID and PDF.
+			assertEquals(1, statement.executeUpdate("""
+					UPDATE exam_booklets
+					SET legacy_paper_code = 'MCQ'
+					WHERE id = 10
+					"""));
+			assertEquals(1, statement.executeUpdate("""
+					UPDATE exam_booklets
+					SET booklet_name = 'Renamed Sample MCQ'
+					WHERE id = 10
+					"""));
+			try (ResultSet result = statement.executeQuery("""
+					SELECT id, exam_id, source_document_id,
+					       booklet_name, legacy_paper_code
+					FROM exam_booklets
+					WHERE id = 10
+					""")) {
+				assertTrue(result.next());
+				assertEquals(10, result.getLong("id"));
+				assertEquals(100, result.getLong("exam_id"));
+				assertEquals(10, result.getLong("source_document_id"));
+				assertEquals("Renamed Sample MCQ", result.getString("booklet_name"));
+				assertEquals("MCQ", result.getString("legacy_paper_code"));
+			}
+
+			// A second booklet cannot claim the same Paper in the Exam.
+			assertThrows(SQLException.class, () -> statement.executeUpdate("""
+					UPDATE exam_booklets
+					SET legacy_paper_code = 'MCQ'
+					WHERE id = 11
+					"""));
+
+			// Different Papers may belong to the same Exam.
+			assertEquals(1, statement.executeUpdate("""
+					UPDATE exam_booklets
+					SET legacy_paper_code = '1'
+					WHERE id = 11
+					"""));
+
+			// The same Paper code is valid in a different Exam.
+			assertEquals(1, statement.executeUpdate("""
+					UPDATE exam_booklets
+					SET legacy_paper_code = 'MCQ'
+					WHERE id = 13
+					"""));
+
+			// Unsupported Paper values are rejected by SQLite.
+			assertThrows(SQLException.class, () -> statement.executeUpdate("""
+					UPDATE exam_booklets
+					SET legacy_paper_code = '3'
+					WHERE id = 12
+					"""));
+
+			// An unrelated booklet remains unlinked.
+			try (ResultSet result = statement.executeQuery("""
+					SELECT legacy_paper_code
+					FROM exam_booklets
+					WHERE id = 12
+					""")) {
+				assertTrue(result.next());
+				assertNull(result.getString(1));
+			}
+		}
+	}
+
 	private void replaceQuestionsTable(SqliteDatabase database, String createTableSql) throws Exception {
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.execute("PRAGMA foreign_keys = OFF");

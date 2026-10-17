@@ -3,6 +3,7 @@ package au.edu.eq.questionbank.service.legacy;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.sql.SQLException;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -46,22 +47,27 @@ public final class LegacyExamRegistrationService {
 	}
 
 	/**
-	 * Creates or reuses all examinations identified by a confirmed workbook.
+	 * Validates a confirmed legacy workbook, registers its examinations and
+	 * establishes the authoritative expected Question booklet counts.
 	 *
 	 * <p>
-	 * Booklet requirements and historical classification codes are checked before
-	 * examination registration. No booklet or question is created by this
-	 * operation.
+	 * Every distinct workbook Paper code counts as one Question booklet within its
+	 * confirmed Exam. Repeated question rows do not increase the count. Worksheets
+	 * mapped to the same Exam contribute to the same distinct Paper set.
+	 *
+	 * <p>
+	 * Registration and expected-count persistence are atomic. This operation never
+	 * creates PDF assets, Question booklets or Questions.
 	 *
 	 * @param workbookPath retained legacy workbook
 	 * @param subject      authoritative Working Subject
-	 * @param syllabusName historical syllabus used for classifications
+	 * @param syllabusName historical syllabus for classification validation
 	 * @param mappings     confirmed worksheet/year examination identities
 	 * @return distinct persisted examinations
 	 * @throws IOException              if the workbook cannot be read
-	 * @throws SQLException             if validation or persistence fails
+	 * @throws SQLException             if persistence fails
 	 * @throws NullPointerException     if a required argument is null
-	 * @throws IllegalArgumentException if workbook or mapping is invalid
+	 * @throws IllegalArgumentException if the workbook or mapping is invalid
 	 */
 	public List<Exam> prepareExams(Path workbookPath, Subject subject, String syllabusName,
 			Map<LegacyExamKey, LegacyExamIdentity> mappings) throws IOException, SQLException {
@@ -78,21 +84,29 @@ public final class LegacyExamRegistrationService {
 			throw new NullPointerException("mappings");
 		}
 
-		// This validates every worksheet/year mapping and every
-		// classification before any Exam record is created.
+		// Validate all classifications and confirmed worksheet identities
+		// before starting any Exam persistence.
 		List<LegacyMappedBookletRequirement> requirements = importer.findRequiredBookletsMapped(workbookPath,
 				subject.getName(), syllabusName, mappings);
 		if (requirements.isEmpty()) {
 			throw new IllegalArgumentException("The legacy workbook contains no question records");
 		}
-		Set<ExamRegistration> registrations = new LinkedHashSet<>();
+		Map<ExamRegistration, Set<String>> papersByExam = new LinkedHashMap<>();
 		for (LegacyMappedBookletRequirement requirement : requirements) {
-			registrations.add(new ExamRegistration(requirement.identity().providerName(), requirement.key().year(),
-					requirement.identity().examName()));
+			ExamRegistration registration = new ExamRegistration(requirement.identity().providerName(),
+					requirement.key().year(), requirement.identity().examName());
+
+			// Distinct workbook Papers, not individual question rows,
+			// establish the number of expected Question booklets.
+			papersByExam.computeIfAbsent(registration, _ -> new LinkedHashSet<>()).add(requirement.bookletName());
+		}
+		Map<ExamRegistration, Integer> expectedCounts = new LinkedHashMap<>();
+		for (Map.Entry<ExamRegistration, Set<String>> entry : papersByExam.entrySet()) {
+			expectedCounts.put(entry.getKey(), entry.getValue().size());
 		}
 
-		// A single transaction creates all missing Exams and
-		// reuses every existing natural-key match.
-		return writer.findOrCreateExams(subject, List.copyOf(registrations));
+		// Registration and planning belong to one SQLite transaction.
+		// Existing Answer-file expectations are not modified.
+		return writer.findOrCreateExams(subject, List.copyOf(papersByExam.keySet()), expectedCounts);
 	}
 }

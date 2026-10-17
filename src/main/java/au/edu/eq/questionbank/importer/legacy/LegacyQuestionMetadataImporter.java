@@ -623,58 +623,95 @@ public final class LegacyQuestionMetadataImporter {
 	}
 
 	/**
-	 * Resolves a mapped legacy booklet using recognised conventional names.
+	 * Resolves a Question booklet under the exact confirmed Exam identity.
 	 *
 	 * <p>
-	 * For MCQ, both "MCQ" and "MCQ booklet" are accepted. When both exist under the
-	 * same examination, resolution fails rather than arbitrarily selecting one.
-	 * Other paper codes retain their current conventional names until explicit
-	 * paper-to-booklet mapping is added.
+	 * Explicit persisted legacy Paper identity takes precedence over the editable
+	 * booklet name. Unlinked historical booklets temporarily retain
+	 * conventional-name matching during migration to the new UI workflow.
 	 *
 	 * @param connection   active database connection
 	 * @param subjectId    owning Subject identifier
 	 * @param identity     confirmed examination identity
 	 * @param year         examination year
-	 * @param expectedName conventional booklet name
-	 * @return matching booklet, or null when missing
+	 * @param expectedName conventional name derived from workbook Paper
+	 * @return resolved booklet, or null when not found
 	 * @throws SQLException             if the lookup fails
-	 * @throws IllegalArgumentException if the match is ambiguous
+	 * @throws IllegalArgumentException if conventional matching is ambiguous
 	 */
 	private ResolvedBooklet findMappedBooklet(Connection connection, long subjectId, LegacyExamIdentity identity,
 			int year, String expectedName) throws SQLException {
+		String paperCode = switch (expectedName) {
+		case "MCQ booklet" -> "MCQ";
+		case "Paper 1" -> "1";
+		case "Paper 2" -> "2";
+		default -> throw new IllegalArgumentException("Unsupported legacy booklet requirement: " + expectedName);
+		};
 		String alternativeName = "MCQ booklet".equals(expectedName) ? "MCQ" : expectedName;
 		try (PreparedStatement statement = connection.prepareStatement("""
-				SELECT eb.id, eb.question_format
+				SELECT
+				    eb.id,
+				    eb.question_format,
+				    eb.legacy_paper_code
 				FROM exam_booklets eb
-				JOIN exams e ON e.id = eb.exam_id
-				JOIN exam_providers p ON p.id = e.provider_id
+				JOIN exams e
+				    ON e.id = eb.exam_id
+				JOIN exam_providers p
+				    ON p.id = e.provider_id
 				WHERE e.subject_id = ?
 				  AND p.provider_name = ?
 				  AND e.exam_year = ?
 				  AND e.exam_name = ?
-				  AND eb.booklet_name IN (?, ?)
+				  AND (
+				      eb.legacy_paper_code = ?
+				      OR (
+				          eb.legacy_paper_code IS NULL
+				          AND eb.booklet_name IN (?, ?)
+				      )
+				  )
 				ORDER BY eb.id
 				""")) {
 			statement.setLong(1, subjectId);
 			statement.setString(2, identity.providerName());
 			statement.setInt(3, year);
 			statement.setString(4, identity.examName());
-			statement.setString(5, expectedName);
-			statement.setString(6, alternativeName);
+			statement.setString(5, paperCode);
+			statement.setString(6, expectedName);
+			statement.setString(7, alternativeName);
 			try (ResultSet result = statement.executeQuery()) {
-				if (!result.next()) {
-					return null;
-				}
-				ResolvedBooklet booklet = new ResolvedBooklet(result.getLong("id"),
-						ExamBookletQuestionFormat.valueOf(result.getString("question_format")));
-				if (result.next()) {
+				ResolvedBooklet linked = null;
+				ResolvedBooklet named = null;
+				int namedMatches = 0;
+				while (result.next()) {
+					ResolvedBooklet candidate = new ResolvedBooklet(result.getLong("id"),
+							ExamBookletQuestionFormat.valueOf(result.getString("question_format")));
+					String storedPaperCode = result.getString("legacy_paper_code");
+					if (paperCode.equals(storedPaperCode)) {
 
-					// Two compatible names under the same Exam must
-					// be resolved explicitly, never by row order.
+						// The database uniqueness constraint guarantees
+						// one explicitly linked booklet per Exam/Paper.
+						linked = candidate;
+						continue;
+					}
+
+					// Only NULL-coded historical booklets are eligible
+					// for the temporary conventional-name fallback.
+					namedMatches++;
+					if (named == null) {
+						named = candidate;
+					}
+				}
+
+				// An explicit Paper assignment is authoritative even
+				// when the booklet has subsequently been renamed.
+				if (linked != null) {
+					return linked;
+				}
+				if (namedMatches > 1) {
 					throw new IllegalArgumentException("Ambiguous booklet identity for " + identity.providerName()
 							+ " / " + year + " / " + identity.examName() + " / " + expectedName);
 				}
-				return booklet;
+				return named;
 			}
 		}
 	}
@@ -891,8 +928,21 @@ public final class LegacyQuestionMetadataImporter {
 					throw new IllegalArgumentException(
 							"Duplicate workbook question: " + description(providerName, row));
 				}
-				Long sourceQuestionId = findOrCreateSourceQuestionId(connection, bookletId, row.questionCode());
 				QuestionResponseType importedResponseType = responseType(providerName, row, booklet.questionFormat());
+				if (importedResponseType == QuestionResponseType.MULTIPLE_CHOICE && row.marks() != 1) {
+
+					// Match the Question domain invariant before importing any
+					// Question or Answer. All earlier workbook rows must roll back.
+					String contextDescription = description(providerName, row);
+					if (mappings != null) {
+						LegacyExamKey examKey = new LegacyExamKey(sheet.providerName(), row.year());
+						contextDescription += " (worksheet '" + sheet.providerName() + "', Exam '"
+								+ mappings.get(examKey).examName() + "', booklet ID " + bookletId + ")";
+					}
+					throw new IllegalArgumentException("Multiple-choice questions must be worth exactly 1 mark for "
+							+ contextDescription + "; workbook Marks = " + row.marks());
+				}
+				Long sourceQuestionId = findOrCreateSourceQuestionId(connection, bookletId, row.questionCode());
 				ExistingQuestion existing = findExistingQuestion(connection, bookletId, row.questionCode());
 				Long existingQuestionId = null;
 				boolean insertAnswer = row.answer() != null;

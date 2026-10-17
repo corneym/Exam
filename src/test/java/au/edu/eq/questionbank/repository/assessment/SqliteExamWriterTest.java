@@ -411,6 +411,38 @@ class SqliteExamWriterTest {
 	}
 
 	@Test
+	void legacyExamPlanningRollsBackAllRegistrationsWhenOneExamIsComplete() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("legacy-planning-rollback.db"));
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		Exam sample = writer.createExam(chemistry, "QCAA", 2020, "Sample Examination");
+		writer.updateExamAssetExpectations(sample, 1, 0);
+
+		// Represent an Exam that was marked COMPLETE before this
+		// legacy workbook's different expected count was supplied.
+		HistoricalCompleteExamFixture.markComplete(database, writer, sample);
+		SqliteExamWriter.ExamRegistration mockRegistration = new SqliteExamWriter.ExamRegistration("QCAA", 2020,
+				"Mock Examination");
+		SqliteExamWriter.ExamRegistration sampleRegistration = new SqliteExamWriter.ExamRegistration("QCAA", 2020,
+				"Sample Examination");
+
+		// The first Exam would be newly created, but updating the
+		// second would violate the COMPLETE structural lock.
+		assertThrows(IllegalStateException.class, () -> writer.findOrCreateExams(chemistry,
+				List.of(mockRegistration, sampleRegistration), Map.of(mockRegistration, 2, sampleRegistration, 2)));
+
+		// Both the attempted new registration and any planning
+		// changes must have been rolled back.
+		List<Exam> exams = writer.findExamsForSubject(chemistry);
+		assertEquals(1, exams.size());
+		assertEquals(sample.getId(), exams.getFirst().getId());
+		var expectations = writer.findExamAssetExpectations(sample);
+		assertEquals(1, expectations.expectedQuestionBookletCount());
+		assertEquals(0, expectations.expectedAnswerFileCount());
+	}
+
+	@Test
 	void persistsAndFindsDuplicateSourceDocumentHashes() throws Exception {
 		Path databasePath = tempDirectory.resolve("source-document-hashes.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
@@ -612,6 +644,118 @@ class SqliteExamWriterTest {
 		Exam reloadedActive = writer.findExamByProviderAndYear(chemistry, "QCAA", 2025);
 		assertNotNull(reloadedActive);
 		assertEquals(ExamCaptureState.ACTIVE, reloadedActive.getCaptureState());
+	}
+
+	@Test
+	void persistsLegacyPaperIdentityIndependentlyOfEditableName() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("legacy-paper-identity.db"));
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		Exam sample = writer.createExam(chemistry, "QCAA", 2020, "Sample Examination");
+		Exam mock = writer.createExam(chemistry, "QCAA", 2020, "Mock Examination");
+		Exam ordinary = writer.createExam(chemistry, "NEAP", 2025, "Topic Test 1");
+		SourceDocument sampleMcqSource = writer.insertSourceDocument("Chemistry/QCAA/2020/sample-mcq.pdf");
+		SourceDocument samplePaperOneSource = writer.insertSourceDocument("Chemistry/QCAA/2020/sample-paper-1.pdf");
+		SourceDocument mockMcqSource = writer.insertSourceDocument("Chemistry/QCAA/2020/mock-mcq.pdf");
+		SourceDocument ordinarySource = writer.insertSourceDocument("Chemistry/NEAP/2025/topic-test-1.pdf");
+		ExamBooklet sampleMcq = writer.insertExamBooklet(sample, sampleMcqSource, "MCQ booklet",
+				ExamBookletQuestionFormat.MULTIPLE_CHOICE);
+		ExamBooklet samplePaperOne = writer.insertExamBooklet(sample, samplePaperOneSource, "Paper 1",
+				ExamBookletQuestionFormat.WRITTEN_RESPONSE);
+		ExamBooklet mockMcq = writer.insertExamBooklet(mock, mockMcqSource, "MCQ booklet",
+				ExamBookletQuestionFormat.MULTIPLE_CHOICE);
+		writer.insertExamBooklet(ordinary, ordinarySource, "Topic Test", ExamBookletQuestionFormat.MIXED);
+
+		// A booklet name must never automatically establish a Paper code.
+		assertTrue(writer.findLegacyPaperCodes(sample).isEmpty());
+		assertTrue(writer.findLegacyPaperCodes(mock).isEmpty());
+		assertTrue(writer.findLegacyPaperCodes(ordinary).isEmpty());
+		writer.updateLegacyPaperCode(sampleMcq, "MCQ");
+		writer.updateLegacyPaperCode(samplePaperOne, "1");
+		writer.updateLegacyPaperCode(mockMcq, "MCQ");
+		assertEquals(Map.of(sampleMcq.getId(), "MCQ", samplePaperOne.getId(), "1"),
+				writer.findLegacyPaperCodes(sample));
+		assertEquals(Map.of(mockMcq.getId(), "MCQ"), writer.findLegacyPaperCodes(mock));
+		assertTrue(writer.findLegacyPaperCodes(ordinary).isEmpty());
+
+		// Repeating an identical link is safe and has no side effects.
+		writer.updateLegacyPaperCode(sampleMcq, "MCQ");
+
+		// Ordinary booklet metadata correction changes only the Name,
+		// format, or expected count; it must not change Paper identity.
+		writer.updateExamBookletMetadata(sampleMcq, "Renamed Sample Multiple Choice",
+				ExamBookletQuestionFormat.MULTIPLE_CHOICE, null);
+		assertEquals("MCQ", writer.findLegacyPaperCodes(sample).get(sampleMcq.getId()));
+		ExamBooklet renamed = writer.findExamBooklets(sample).stream()
+				.filter(booklet -> booklet.getId() == sampleMcq.getId()).findFirst().orElseThrow();
+		assertEquals("Renamed Sample Multiple Choice", renamed.getName());
+		assertEquals(sampleMcq.getId(), renamed.getId());
+		assertEquals(sampleMcqSource.getId(), renamed.getSourceDocument().getId());
+		assertEquals(sampleMcqSource.getRelativePath(), renamed.getSourceDocument().getRelativePath());
+	}
+
+	@Test
+	void rejectsDuplicateAndUnsafeLegacyPaperReassignment() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("legacy-paper-guards.db"));
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		Exam exam = writer.createExam(chemistry, "QCAA", 2020, "Sample Examination");
+		Exam otherExam = writer.createExam(chemistry, "QCAA", 2020, "Mock Examination");
+		ExamBooklet mcq = writer.insertExamBooklet(exam, writer.insertSourceDocument("sample-mcq.pdf"), "MCQ booklet",
+				ExamBookletQuestionFormat.MULTIPLE_CHOICE);
+		ExamBooklet paperOne = writer.insertExamBooklet(exam, writer.insertSourceDocument("sample-paper1.pdf"),
+				"Paper 1", ExamBookletQuestionFormat.WRITTEN_RESPONSE);
+		ExamBooklet paperTwo = writer.insertExamBooklet(exam, writer.insertSourceDocument("sample-paper2.pdf"),
+				"Paper 2", ExamBookletQuestionFormat.WRITTEN_RESPONSE);
+		writer.updateLegacyPaperCode(mcq, "MCQ");
+		writer.updateLegacyPaperCode(paperOne, "1");
+
+		// The supported vocabulary is exact, not free text.
+		assertThrows(IllegalArgumentException.class, () -> writer.updateLegacyPaperCode(paperTwo, "3"));
+		assertThrows(IllegalArgumentException.class, () -> writer.updateLegacyPaperCode(paperTwo, "mcq"));
+		assertThrows(IllegalArgumentException.class, () -> writer.updateLegacyPaperCode(paperTwo, ""));
+
+		// No two saved booklets in the same Exam may own Paper 1.
+		assertThrows(IllegalArgumentException.class, () -> writer.updateLegacyPaperCode(paperTwo, "1"));
+		assertEquals(Map.of(mcq.getId(), "MCQ", paperOne.getId(), "1"), writer.findLegacyPaperCodes(exam));
+
+		// An incorrectly assigned code may be corrected before
+		// imported Question metadata is present.
+		writer.updateLegacyPaperCode(paperTwo, "2");
+		writer.updateLegacyPaperCode(paperTwo, null);
+		assertFalse(writer.findLegacyPaperCodes(exam).containsKey(paperTwo.getId()));
+		writer.updateLegacyPaperCode(paperTwo, "2");
+
+		// Existing multipart source identity makes the Paper assignment
+		// authoritative; further reassignment must be rejected.
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						INSERT INTO source_questions
+						    (booklet_id, source_question_code)
+						VALUES (?, '9')
+						""")) {
+			statement.setLong(1, paperTwo.getId());
+			assertEquals(1, statement.executeUpdate());
+		}
+		assertThrows(IllegalStateException.class, () -> writer.updateLegacyPaperCode(paperTwo, null));
+		assertEquals("2", writer.findLegacyPaperCodes(exam).get(paperTwo.getId()));
+
+		// The same booklet ID must not be accepted under a fabricated
+		// ownership relationship.
+		ExamBooklet incorrectOwner = new ExamBooklet(mcq.getId(), otherExam, mcq.getName(), mcq.getSourceDocument(),
+				mcq.getQuestionFormat());
+		assertThrows(IllegalArgumentException.class, () -> writer.updateLegacyPaperCode(incorrectOwner, "MCQ"));
+
+		// COMPLETE Exam structure is locked, including Paper assignments.
+		Exam complete = HistoricalCompleteExamFixture.markComplete(database, writer, exam);
+		assertTrue(complete.isComplete());
+		assertThrows(IllegalStateException.class, () -> writer.updateLegacyPaperCode(paperOne, "1"));
+
+		// Reads are still valid for COMPLETE Exams.
+		assertEquals(Map.of(mcq.getId(), "MCQ", paperOne.getId(), "1", paperTwo.getId(), "2"),
+				writer.findLegacyPaperCodes(complete));
 	}
 
 	@Test

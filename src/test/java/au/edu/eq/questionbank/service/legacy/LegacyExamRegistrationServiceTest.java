@@ -138,6 +138,66 @@ class LegacyExamRegistrationServiceTest {
 				.findMissingBookletsMapped(mockWorkbook, "Chemistry", "2019", mockMapping).isEmpty());
 	}
 
+	@Test
+	void registrationUsesDistinctWorkbookPapersAsExpectedBookletCount() throws Exception {
+		Fixture fixture = createFixture("legacy-paper-counts.db");
+		SqliteExamWriter writer = new SqliteExamWriter(fixture.database());
+		Exam existing = writer.createExam(fixture.subject(), "QCAA", 2020, "Sample Examination");
+
+		// Simulate existing manually entered planning metadata.
+		// The legacy workbook is authoritative for Question booklets,
+		// but not for Answer-file counts.
+		writer.updateExamAssetExpectations(existing, 3, 2);
+		Path workbookPath = tempDirectory.resolve("sample-distinct-papers.xlsx");
+		try (Workbook workbook = new XSSFWorkbook()) {
+			Sheet sheet = workbook.createSheet("QCAA Sample");
+			String[] headings = { "Year", "Paper", "Question", "Marks", "Topic", "Answer", "Preamble" };
+			Row header = sheet.createRow(0);
+			for (int column = 0; column < headings.length; column++) {
+				header.createCell(column).setCellValue(headings[column]);
+			}
+			String[] papers = { "MCQ", "1", "1" };
+			String[] codes = { "1", "9a", "9b" };
+			for (int index = 0; index < papers.length; index++) {
+				Row row = sheet.createRow(index + 1);
+				row.createCell(0).setCellValue(2020);
+				row.createCell(1).setCellValue(papers[index]);
+				row.createCell(2).setCellValue(codes[index]);
+				row.createCell(3).setCellValue("MCQ".equals(papers[index]) ? 1 : 3);
+				row.createCell(4).setCellValue("4.1.2");
+				if ("MCQ".equals(papers[index])) {
+					row.createCell(5).setCellValue("C");
+				}
+			}
+			try (OutputStream output = Files.newOutputStream(workbookPath)) {
+				workbook.write(output);
+			}
+		}
+		Map<LegacyExamKey, LegacyExamIdentity> mappings = Map.of(new LegacyExamKey("QCAA Sample", 2020),
+				new LegacyExamIdentity("QCAA", "Sample Examination"));
+		LegacyExamRegistrationService service = new LegacyExamRegistrationService(fixture.database());
+		List<Exam> registered = service.prepareExams(workbookPath, fixture.subject(), "2019", mappings);
+		assertEquals(1, registered.size());
+		assertEquals(existing.getId(), registered.getFirst().getId());
+		var expectations = writer.findExamAssetExpectations(registered.getFirst());
+
+		// Three workbook rows represent only two distinct Papers.
+		assertEquals(2, expectations.expectedQuestionBookletCount());
+
+		// Registration never fabricates saved booklet assets.
+		assertEquals(0, expectations.availableQuestionBookletCount());
+
+		// Existing Answer-file expectations remain untouched.
+		assertEquals(2, expectations.expectedAnswerFileCount());
+		assertEquals(0, expectations.availableAnswerFileCount());
+
+		// Repeating registration is idempotent.
+		List<Exam> repeated = service.prepareExams(workbookPath, fixture.subject(), "2019", mappings);
+		assertEquals(existing.getId(), repeated.getFirst().getId());
+		assertEquals(2, writer.findExamAssetExpectations(existing).expectedQuestionBookletCount());
+		assertEquals(1, writer.findExamsForSubject(fixture.subject()).size());
+	}
+
 	private Fixture createFixture(String databaseName) throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve(databaseName));
 		database.initialiseSchema();

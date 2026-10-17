@@ -2161,19 +2161,17 @@ public final class ExamAssetsPane extends VBox {
 	}
 
 	private void updateUseSelectedBookletState() {
-		boolean structuralTransactionActive = structuralTransactionActive();
+		boolean transactionActive = structuralTransactionActive();
 
-		// Capture activation must never abandon staged Exam, Question-booklet,
-		// Answer-booklet or pending legacy-import structural work.
+		// Capture activation cannot abandon an unfinished import or
+		// a staged Exam/booklet transaction.
 		useSelectedBookletButton
-				.setDisable(structuralTransactionActive || questionBookletSelectionGroup.getSelectedToggle() == null);
+				.setDisable(transactionActive || questionBookletSelectionGroup.getSelectedToggle() == null);
 
-		// Answer deletion is another structural action and must track pending legacy
-		// preflight as well as ordinary edit transactions.
+		// Pending legacy import may coexist with ordinary booklet
+		// metadata editing, but Recheck must wait for Save or Cancel.
+		legacyImportRecheckButton.setDisable(!canRecheckLegacyQuestionImport());
 		refreshAnswerFileDeleteStates();
-
-		// Dashboard return follows the same structural transaction boundary, including
-		// a pending legacy-import preflight awaiting Recheck or Cancel.
 		updateCorpusDashboardReturnState();
 	}
 
@@ -2952,15 +2950,17 @@ public final class ExamAssetsPane extends VBox {
 		private void updateActionState() {
 			boolean anotherStructuralTransaction = editingExamDetails || pendingQuestionBookletEditor != null
 					|| pendingAnswerBookletEditor != null
-					|| (editingBookletEditor != null && editingBookletEditor != this) || legacyImportPending;
+					|| (editingBookletEditor != null && editingBookletEditor != this);
 
-			// Editing and deletion are both structural. COMPLETE Exams expose inspection
-			// only, and another staged transaction locks both actions.
+			// Pending legacy import must not disable correction of a
+			// saved booklet. The import depends on such corrections.
 			editButton.setDisable(editing || booklet.getExam().isComplete() || anotherStructuralTransaction);
-			deleteButton.setDisable(editing || booklet.getExam().isComplete() || anotherStructuralTransaction);
-			cancelButton.setDisable(!editing);
 
-			// Save requires a real difference and a completely valid staged row.
+			// Deleting a saved booklet remains unavailable while a
+			// legacy workbook import is pending. Corrections use Edit.
+			deleteButton.setDisable(
+					editing || booklet.getExam().isComplete() || anotherStructuralTransaction || legacyImportPending);
+			cancelButton.setDisable(!editing);
 			saveButton.setDisable(!editing || !hasValidEditedValues() || !isDirty());
 		}
 	}
