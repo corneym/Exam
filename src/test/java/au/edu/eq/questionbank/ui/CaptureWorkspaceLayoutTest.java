@@ -14,7 +14,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -1695,70 +1694,80 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void mappedLegacyRequirementsAllowExplicitBookletSelection(FxRobot robot) throws Exception {
+	void mappedLegacyRequirementsUseSavedPaperLinks(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Exam exam = examMetadataPane().getBooklet().getExam();
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		SqliteExamWriter writer = new SqliteExamWriter(database);
 		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
 
-		// A custom-named booklet is already saved under the target Exam.
+		// An existing booklet has a custom Name.
 		ExamBooklet custom = importer.importExam(exam.getSubject(), exam.getProvider().getName(), exam.getYear(),
 				exam.getName(), "Trial Paper A", "Chemistry/" + exam.getYear() + "/trial-paper-a.pdf");
 
-		// Another Exam has a separate booklet. It must never be offered
-		// as a choice for the confirmed External Assessment.
+		// A separate Exam has an unrelated booklet.
 		ExamBooklet wrongExam = importer.importExam(exam.getSubject(), exam.getProvider().getName(), exam.getYear(),
 				"Mock Examination", "Mock Paper A", "Chemistry/" + exam.getYear() + "/mock-paper-a.pdf");
 		fireControl(robot, "#change-exam-assets");
-		WaitForAsyncUtils.waitForFxEvents();
 		ExamAssetsPane pane = field(application, "examAssetsPane", ExamAssetsPane.class);
 		LegacyExamKey key = new LegacyExamKey("QCAA", exam.getYear());
 		LegacyExamIdentity identity = new LegacyExamIdentity(exam.getProvider().getName(), exam.getName());
 		LegacyMappedBookletRequirement requirement = new LegacyMappedBookletRequirement(key, identity, "Paper 1");
-		Map<LegacyMappedBookletRequirement, List<ExamBooklet>> candidates = Map.of(requirement,
-				List.of(custom, wrongExam));
-		AtomicReference<Map<LegacyMappedBookletRequirement, Long>> submitted = new AtomicReference<>();
-		robot.interact(() -> pane.showMappedLegacyImportRequirements("2019", Path.of("legacy.xlsx"),
-				List.of(requirement), candidates, Map.of(), submitted::set, pane::clearLegacyImportRequirements));
+		AtomicInteger rechecks = new AtomicInteger();
+
+		// Use the current five-argument API. Recheck is a Runnable;
+		// it no longer submits transient booklet-ID selections.
+		WaitForAsyncUtils.asyncFx(() -> {
+			pane.showForCorrection(exam.getSubject(), exam.getId(), null);
+			pane.showMappedLegacyImportRequirements("2019", Path.of("legacy.xlsx"), List.of(requirement),
+					rechecks::incrementAndGet, pane::clearLegacyImportRequirements);
+			return null;
+		}).get();
+
+		// The former arbitrary booklet-ID mapping UI is gone.
+		assertTrue(robot.lookup("#exam-assets-legacy-import-booklet-0").tryQuery().isEmpty());
 		@SuppressWarnings("unchecked")
-		ComboBox<String> choice = lookup(robot, "#exam-assets-legacy-import-booklet-0", ComboBox.class);
-		assertEquals("Automatic (match conventional name)", choice.getValue());
-		assertTrue(choice.getItems().stream().anyMatch(option -> option.contains("Trial Paper A")));
-		assertFalse(choice.getItems().stream().anyMatch(option -> option.contains("Mock Paper A")));
+		ComboBox<String> paperChoice = lookup(robot, "#exam-assets-question-legacy-paper-" + custom.getId(),
+				ComboBox.class);
 
-		// Selecting the saved booklet must submit its persisted ID,
-		// not the displayed name or its position in the list.
-		String customOption = choice.getItems().stream().filter(option -> option.contains("Trial Paper A")).findFirst()
-				.orElseThrow();
-		robot.interact(() -> choice.getSelectionModel().select(customOption));
-		fireControl(robot, "#exam-assets-legacy-import-recheck");
-		assertEquals(Map.of(requirement, custom.getId()), submitted.get());
+		// Only workbook-required Paper identities are offered.
+		assertEquals("(Not linked)", paperChoice.getValue());
+		assertTrue(paperChoice.getItems().contains("Paper 1"));
+		assertFalse(paperChoice.getItems().contains("Mock Paper A"));
 
-		// A subsequent Recheck presentation restores the explicit choice.
-		robot.interact(
-				() -> pane.showMappedLegacyImportRequirements("2019", Path.of("legacy.xlsx"), List.of(requirement),
-						candidates, submitted.get(), submitted::set, pane::clearLegacyImportRequirements));
+		// Link the saved booklet without renaming it.
+		robot.interact(() -> paperChoice.getSelectionModel().select("Paper 1"));
+		fireControl(robot, "#exam-assets-question-legacy-link-" + custom.getId());
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// The link is stored in SQLite, not in a UI selection map.
+		assertEquals("1", writer.findLegacyPaperCodes(exam).get(custom.getId()));
+
+		// The unrelated Exam remains untouched.
+		assertTrue(writer.findLegacyPaperCodes(wrongExam.getExam()).isEmpty());
+		ExamBooklet saved = writer.findExamBooklets(exam).stream().filter(booklet -> booklet.getId() == custom.getId())
+				.findFirst().orElseThrow();
+		assertEquals("Trial Paper A", saved.getName());
+		assertEquals(custom.getSourceDocument().getRelativePath(), saved.getSourceDocument().getRelativePath());
+		Label progress = lookup(robot, "#exam-assets-legacy-import-progress", Label.class);
+		assertTrue(progress.getText().contains("Linked Papers: 1 / 1"));
+
+		// The Exam has an additional saved booklet. The progress
+		// must distinguish attachments from correctly linked Papers.
+		assertTrue(progress.getText().contains("Attached: 2 / 1"));
+
+		// The linked Paper must no longer be available for another
+		// saved booklet in the same Exam.
+		ExamBooklet original = writer.findExamBooklets(exam).stream()
+				.filter(booklet -> booklet.getId() != custom.getId()).findFirst().orElseThrow();
 		@SuppressWarnings("unchecked")
-		ComboBox<String> restored = lookup(robot, "#exam-assets-legacy-import-booklet-0", ComboBox.class);
-		assertTrue(restored.getValue().contains("Trial Paper A"));
+		ComboBox<String> otherChoice = lookup(robot, "#exam-assets-question-legacy-paper-" + original.getId(),
+				ComboBox.class);
+		assertFalse(otherChoice.getItems().contains("Paper 1"));
 
-		// A deleted or unavailable selected booklet must be shown as
-		// unavailable and must not silently revert to Automatic.
-		robot.interact(
-				() -> pane.showMappedLegacyImportRequirements("2019", Path.of("legacy.xlsx"), List.of(requirement),
-						candidates, Map.of(requirement, 99999L), submitted::set, pane::clearLegacyImportRequirements));
-		@SuppressWarnings("unchecked")
-		ComboBox<String> unavailable = lookup(robot, "#exam-assets-legacy-import-booklet-0", ComboBox.class);
-		assertTrue(unavailable.getValue().contains("Unavailable saved booklet"));
+		// Recheck requests a fresh persistence-based validation.
 		fireControl(robot, "#exam-assets-legacy-import-recheck");
-		assertEquals(Map.of(requirement, 99999L), submitted.get());
-
-		// The user can explicitly clear the selection and return to
-		// the established name-based matching behaviour.
-		robot.interact(() -> unavailable.getSelectionModel().selectFirst());
-		fireControl(robot, "#exam-assets-legacy-import-recheck");
-		assertEquals(Map.of(), submitted.get());
+		assertEquals(1, rechecks.get());
 		fireControl(robot, "#exam-assets-legacy-import-cancel");
 		VBox requirements = lookup(robot, "#exam-assets-legacy-import-requirements", VBox.class);
 		assertFalse(requirements.isVisible());

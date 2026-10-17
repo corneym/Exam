@@ -1056,7 +1056,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 			// Correctly linking one Paper must not permit an import
 			// with an additional unexpected saved booklet.
 			assertTrue(progress.getText().contains("Attached: 2 / 1"));
-			fireControl(robot, "#exam-assets-legacy-import-recheck");
+			fireControlLater(robot, "#exam-assets-legacy-import-recheck");
 			waitForDialogShowing(robot, "Legacy Question Import");
 			DialogPane dialog = showingDialogPane(robot, "Legacy Question Import");
 			assertEquals("Import not ready — booklet requirements remain.", dialog.getHeaderText());
@@ -1066,8 +1066,29 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 			assertTrue(new SqliteQuestionRepository(database).findAll().stream()
 					.noneMatch(question -> "21a".equals(question.getQuestionCode())
 							&& question.getBooklet().getExam().getId() == selectedBooklet.getExam().getId()));
-			fireControl(robot, "#exam-assets-legacy-import-cancel");
-			assertNull(field(application, "pendingLegacyQuestionImport", Object.class));
+
+			// Allow the modal Recheck handler to finish after its
+			// warning dialog has closed.
+			WaitForAsyncUtils.waitForFxEvents();
+			Button cancelImport = lookupOnFx(robot, root, "#exam-assets-legacy-import-cancel", Button.class);
+			assertNotNull(cancelImport.getOnAction(), "Cancel Import must retain its application callback");
+			assertFalse(cancelImport.isDisabled(), "Cancel Import must be enabled after Recheck");
+			fireControl(robot, cancelImport);
+
+			// Cancellation must clear the application-owned pending import.
+			// Observe completion on the JavaFX thread rather than reading
+			// application state immediately after a modal transition.
+			WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> {
+				AtomicBoolean cleared = new AtomicBoolean();
+				robot.interact(() -> {
+					try {
+						cleared.set(field(application, "pendingLegacyQuestionImport", Object.class) == null);
+					} catch (Exception exception) {
+						throw new RuntimeException(exception);
+					}
+				});
+				return cleared.get();
+			});
 			return;
 		}
 		assertTrue(progress.getText().contains("Attached: 1 / 1"));
