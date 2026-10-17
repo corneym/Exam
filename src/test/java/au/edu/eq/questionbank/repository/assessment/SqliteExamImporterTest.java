@@ -25,6 +25,43 @@ class SqliteExamImporterTest {
 	Path tempDirectory;
 
 	@Test
+	void atomicallyCreatesBookletWithLegacyPaperIdentity() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("atomic-legacy-booklet.db"));
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
+		String hash = "0123456789abcdef".repeat(4);
+		ExamBooklet mcq = importer.importExam(chemistry, "QCAA", 2020, "Sample Examination", "MCQ booklet",
+				"Chemistry/QCAA/2020/sample-mcq.pdf", ExamBookletQuestionFormat.MULTIPLE_CHOICE, 20, hash, "MCQ");
+		assertEquals("MCQ", writer.findLegacyPaperCodes(mcq.getExam()).get(mcq.getId()));
+
+		// Renaming the saved booklet cannot change its Paper identity.
+		writer.updateExamBookletMetadata(mcq, "Renamed Multiple Choice", ExamBookletQuestionFormat.MULTIPLE_CHOICE, 20);
+		assertEquals("MCQ", writer.findLegacyPaperCodes(mcq.getExam()).get(mcq.getId()));
+		String duplicatePath = "Chemistry/QCAA/2020/sample-other-mcq.pdf";
+
+		// The second booklet conflicts with the persisted MCQ link.
+		// Neither its new SourceDocument nor its booklet may commit.
+		assertThrows(IllegalArgumentException.class,
+				() -> importer.importExam(chemistry, "QCAA", 2020, "Sample Examination", "Other MCQ booklet",
+						duplicatePath, ExamBookletQuestionFormat.MULTIPLE_CHOICE, 20, "b".repeat(64), "MCQ"));
+		assertEquals(1, writer.findExamBooklets(mcq.getExam()).size());
+		assertNull(writer.findExamBookletBySourceDocumentPath(duplicatePath));
+
+		// A distinct Exam may have its own MCQ Paper.
+		ExamBooklet mock = importer.importExam(chemistry, "QCAA", 2020, "Mock Examination", "MCQ booklet",
+				"Chemistry/QCAA/2020/mock-mcq.pdf", ExamBookletQuestionFormat.MULTIPLE_CHOICE, 18, "c".repeat(64),
+				"MCQ");
+		assertEquals("MCQ", writer.findLegacyPaperCodes(mock.getExam()).get(mock.getId()));
+
+		// Ordinary NEAP creation has no legacy Paper identity.
+		ExamBooklet ordinary = importer.importExam(chemistry, "NEAP", 2025, "Topic Test 1", "Custom booklet",
+				"Chemistry/NEAP/2025/topic-test.pdf", ExamBookletQuestionFormat.MIXED, 12, "d".repeat(64), null);
+		assertEquals(0, writer.findLegacyPaperCodes(ordinary.getExam()).size());
+	}
+
+	@Test
 	void completeExamRejectsImportOfAnotherBooklet() throws Exception {
 		Path databasePath = tempDirectory.resolve("complete-exam-booklet-import.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);

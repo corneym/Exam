@@ -20,11 +20,16 @@ public final class HistoricalSchemaFixture {
 	}
 
 	/**
-	 * Removes the schema additions introduced by versions 20 and 21.
+	 * Removes schema additions introduced by versions 20, 21 and 22.
 	 *
+	 * <p>
 	 * The supplied database must be a disposable, freshly initialised test fixture.
-	 * The caller may then reverse older schema migrations and set the corresponding
-	 * historical schema version.
+	 * The caller may then remove other later-version structures and set the
+	 * required historical schema version.
+	 *
+	 * <p>
+	 * All fixture cleanup occurs in one transaction so failure does not leave a
+	 * partially reconstructed historical database.
 	 *
 	 * @param database disposable SQLite test database
 	 * @throws SQLException if schema cleanup fails
@@ -34,28 +39,55 @@ public final class HistoricalSchemaFixture {
 			throw new NullPointerException("database");
 		}
 		try (Connection connection = database.openConnection()) {
-			List<String> triggerNames = new ArrayList<>();
-			try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery("""
-					SELECT name
-					FROM sqlite_master
-					WHERE type = 'trigger'
-					  AND name GLOB 'app_review_*'
-					ORDER BY name
-					""")) {
-				while (result.next()) {
-					triggerNames.add(result.getString("name"));
-				}
-			}
-
-			// Remove v21 triggers before removing their v20 target table.
-			try (Statement statement = connection.createStatement()) {
-				for (String triggerName : triggerNames) {
-					if (!triggerName.matches("app_review_[a-z_]+_(insert|update|delete)")) {
-						throw new SQLException("Unexpected applicability trigger: " + triggerName);
+			connection.setAutoCommit(false);
+			try {
+				List<String> triggerNames = new ArrayList<>();
+				try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery("""
+						SELECT name
+						FROM sqlite_master
+						WHERE type = 'trigger'
+						  AND name GLOB 'app_review_*'
+						ORDER BY name
+						""")) {
+					while (result.next()) {
+						triggerNames.add(result.getString("name"));
 					}
-					statement.execute("DROP TRIGGER \"" + triggerName + "\"");
 				}
-				statement.execute("DROP TABLE booklet_applicability_reviews");
+				try (Statement statement = connection.createStatement()) {
+
+					// Remove v21 triggers before modifying their
+					// referenced tables.
+					for (String triggerName : triggerNames) {
+						if (!triggerName.matches("app_review_[a-z_]+_(insert|update|delete)")) {
+							throw new SQLException("Unexpected applicability trigger: " + triggerName);
+						}
+						statement.execute("DROP TRIGGER \"" + triggerName + "\"");
+					}
+
+					// Version 22 added both a unique index and a
+					// nullable legacy Paper identity column.
+					// The index must be removed before the column.
+					statement.execute("""
+							DROP INDEX ux_exam_booklets_legacy_paper_code
+							""");
+					statement.execute("""
+							ALTER TABLE exam_booklets
+							DROP COLUMN legacy_paper_code
+							""");
+
+					// Version 20 introduced the applicability table.
+					statement.execute("""
+							DROP TABLE booklet_applicability_reviews
+							""");
+				}
+				connection.commit();
+			} catch (SQLException | RuntimeException exception) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					exception.addSuppressed(rollbackFailure);
+				}
+				throw exception;
 			}
 		}
 	}

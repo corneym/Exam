@@ -74,7 +74,7 @@ The following rules supplement all preceding Java code-change instructions. They
 1. Begin each implementation batch with a level-two Markdown heading: `## Batch nn: Description`.
 
 2. Every time the target class changes, use a level-three Markdown heading containing the **fully qualified class name in bold**, for example:
-   `### **au.edu.eq.questionbank.repository.assessment.SqliteExamWriter**`
+   `### **au.edu.eq.questionbank.repository.assessment.SqliteExamWriter**`.  It MUST BE in a bigger font than the method name font.
 
 3. Within each class, give every changed method, constructor or field its own level-four Markdown heading, **in bold**, using the actual method signature or field name, for example:
    `#### **findOrCreateExams(Subject subject, List<ExamRegistration> registrations)**`

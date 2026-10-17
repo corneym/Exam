@@ -6,8 +6,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
 import java.time.Clock;
-import java.util.Comparator;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -1539,75 +1540,95 @@ public class QuestionBankApplication extends Application {
 		}
 		try {
 			SqliteDatabase database = new SqliteDatabase(config.databasePath());
+			SqliteExamWriter writer = new SqliteExamWriter(database);
 			LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(database);
-			Path managedWorkbook = pending.managedWorkbookPath();
+			Path workbook = pending.managedWorkbookPath();
 			String subjectName = pending.subject().getName();
 			String syllabusName = pending.syllabusVersion().getName();
+
+			// Classifications and confirmed examination mappings are
+			// validated before registration or Question import.
+			List<LegacyMappedBookletRequirement> required = importer.findRequiredBookletsMapped(workbook, subjectName,
+					syllabusName, pending.mappings());
 			if (!recheck) {
-
-				// Register the confirmed Exams before resolving Paper
-				// identities. This does not create PDFs or booklets.
-				new LegacyExamRegistrationService(database).prepareExams(managedWorkbook, pending.subject(),
-						syllabusName, pending.mappings());
-			}
-			List<LegacyMappedBookletRequirement> unresolved;
-			boolean ambiguousNames = false;
-			try {
-				unresolved = importer.findMissingBookletsMapped(managedWorkbook, subjectName, syllabusName,
-						pending.mappings(), pending.bookletSelections());
-			} catch (IllegalArgumentException exception) {
-				String message = exception.getMessage();
-				if (message == null || !message.startsWith("Ambiguous booklet identity")) {
-
-					// Classification, identity and structural failures must
-					// not be mistaken for a choice the teacher can resolve.
-					throw exception;
-				}
-
-				// Ambiguous conventional names need an explicit saved
-				// booklet choice. Show all workbook Paper requirements
-				// because automatic matching cannot safely continue.
-				unresolved = importer.findRequiredBookletsMapped(managedWorkbook, subjectName, syllabusName,
+				new LegacyExamRegistrationService(database).prepareExams(workbook, pending.subject(), syllabusName,
 						pending.mappings());
-				ambiguousNames = true;
 			}
-			if (!unresolved.isEmpty()) {
+			List<Exam> exams = writer.findExamsForSubject(pending.subject());
+			Map<Long, Exam> requiredExams = new LinkedHashMap<>();
+			Map<Long, Set<String>> requiredCodes = new LinkedHashMap<>();
+			for (LegacyMappedBookletRequirement requirement : required) {
+				LegacyExamIdentity identity = requirement.identity();
+				Exam exam = exams.stream()
+						.filter(candidate -> candidate.getYear() == requirement.key().year()
+								&& candidate.getProvider().getName().equals(identity.providerName())
+								&& candidate.getName().equals(identity.examName()))
+						.findFirst()
+						.orElseThrow(() -> new IllegalStateException(
+								"Confirmed examination not found: " + identity.providerName() + " / "
+										+ requirement.key().year() + " / " + identity.examName()));
+				requiredExams.put(exam.getId(), exam);
+				requiredCodes.computeIfAbsent(exam.getId(), _ -> new LinkedHashSet<>())
+						.add(legacyPaperCode(requirement.bookletName()));
+			}
+			List<LegacyMappedBookletRequirement> missing = new ArrayList<>();
+			List<String> problems = new ArrayList<>();
+			for (Exam exam : requiredExams.values()) {
+				Set<String> codes = requiredCodes.get(exam.getId());
+				Map<Long, String> linked = writer.findLegacyPaperCodes(exam);
+				int attachedCount = writer.findExamBooklets(exam).size();
+				int expectedCount = codes.size();
+				var expectations = writer.findExamAssetExpectations(exam);
+				for (LegacyMappedBookletRequirement requirement : required) {
+					if (requirement.key().year() == exam.getYear()
+							&& requirement.identity().providerName().equals(exam.getProvider().getName())
+							&& requirement.identity().examName().equals(exam.getName())
+							&& !linked.containsValue(legacyPaperCode(requirement.bookletName()))) {
+						missing.add(requirement);
+					}
+				}
+				String examLabel = "%s / %d / %s".formatted(exam.getProvider().getName(), exam.getYear(),
+						exam.getName());
+				if (attachedCount != expectedCount) {
+					problems.add("%s: %d attached, %d expected.".formatted(examLabel, attachedCount, expectedCount));
+				}
+				if (linked.size() != expectedCount || !codes.containsAll(linked.values())) {
+					problems.add("%s: %d correctly linked Papers required.".formatted(examLabel, expectedCount));
+				}
+				if (!Objects.equals(expectations.expectedQuestionBookletCount(), Integer.valueOf(expectedCount))) {
+					problems.add(examLabel + ": the saved Expected Question booklets "
+							+ "count does not match the workbook.");
+				}
+			}
+			if (!missing.isEmpty() || !problems.isEmpty()) {
 				pendingLegacyQuestionImport = pending;
-				Map<LegacyMappedBookletRequirement, List<ExamBooklet>> candidates = findLegacyQuestionBookletChoices(
-						database, pending.subject(), unresolved);
+				LegacyMappedBookletRequirement focus = missing.isEmpty() ? required.getFirst() : missing.getFirst();
+				selectMissingLegacyExam(database, pending.subject(), focus);
 
-				// Open the confirmed Exam rather than retaining an
-				// unrelated Exam from a previous workspace selection.
-				selectMissingLegacyExam(database, pending.subject(), unresolved.getFirst());
-				examAssetsPane.showMappedLegacyImportRequirements(syllabusName, managedWorkbook, unresolved, candidates,
-						pending.bookletSelections(),
-						selections -> recheckPendingLegacyQuestionImport(primaryStage, config, selections),
+				// This is the replacement for the transient saved-ID
+				// mapping UI. The pane receives all workbook Papers.
+				examAssetsPane.showMappedLegacyImportRequirements(syllabusName, workbook, required,
+						() -> recheckPendingLegacyQuestionImport(primaryStage, config),
 						this::cancelPendingLegacyQuestionImport);
 				if (recheck) {
-					if (ambiguousNames) {
-						showAlert(Alert.AlertType.WARNING, "Legacy Question Import",
-								"A workbook Paper matches multiple saved booklets.",
-								"Select the correct saved Question booklet "
-										+ "in the LEGACY IMPORT section, then choose " + "Recheck and Import again.");
-					} else {
-						showMappedLegacyImportStillIncomplete(unresolved);
-					}
+					showMappedLegacyImportStillIncomplete(missing, problems);
 				}
 				return;
 			}
 
-			// The same explicit booklet IDs used during preflight
-			// are validated again inside the atomic import transaction.
-			LegacyQuestionImportResult importResult = importer.importWorkbookMapped(managedWorkbook, subjectName,
-					syllabusName, pending.mappings(), pending.bookletSelections());
+			// Every required Paper now has one stable saved identity
+			// under its exact Exam. The importer revalidates Question
+			// compatibility inside its own atomic transaction.
+			LegacyQuestionImportResult result = importer.importWorkbookMapped(workbook, subjectName, syllabusName,
+					pending.mappings());
 			clearPendingLegacyQuestionImport();
-			startLegacyQuestionCaptureRefresh(pending.subject(), importResult);
+			startLegacyQuestionCaptureRefresh(pending.subject(), result);
 		} catch (IOException exception) {
 			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "Could not read the retained Excel workbook.",
 					exception.getMessage());
 		} catch (SQLException exception) {
 			showAlert(Alert.AlertType.ERROR, "Legacy Question Import",
-					"Could not prepare the examination or import its metadata.", exception.getMessage());
+					"Could not prepare the examination or import metadata.", exception.getMessage());
 		} catch (IllegalArgumentException | IllegalStateException exception) {
 			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "The legacy Question import failed.",
 					exception.getMessage());
@@ -2442,30 +2463,6 @@ public class QuestionBankApplication extends Application {
 		return matchingContext;
 	}
 
-	private Map<LegacyMappedBookletRequirement, List<ExamBooklet>> findLegacyQuestionBookletChoices(
-			SqliteDatabase database, Subject subject, List<LegacyMappedBookletRequirement> requirements)
-			throws SQLException {
-		SqliteExamWriter writer = new SqliteExamWriter(database);
-
-// Read persisted booklet identities once. The UI displays
-// candidates; the importer remains responsible for validating
-// every selected ID before writing any Question metadata.
-		List<ExamBooklet> savedBooklets = writer.findAllExamBooklets();
-		Map<LegacyMappedBookletRequirement, List<ExamBooklet>> choices = new LinkedHashMap<>();
-		for (LegacyMappedBookletRequirement requirement : requirements) {
-			LegacyExamKey key = requirement.key();
-			LegacyExamIdentity identity = requirement.identity();
-			List<ExamBooklet> matching = savedBooklets.stream().filter(booklet -> {
-				Exam exam = booklet.getExam();
-				return exam.getSubject().getId() == subject.getId() && exam.getYear() == key.year()
-						&& exam.getProvider().getName().equals(identity.providerName())
-						&& exam.getName().equals(identity.examName());
-			}).sorted(Comparator.comparing(ExamBooklet::getName).thenComparingLong(ExamBooklet::getId)).toList();
-			choices.put(requirement, matching);
-		}
-		return Map.copyOf(choices);
-	}
-
 	private void finishCorpusDashboardLifecycleChange(CorpusDashboardPane initiatingDashboard) {
 		corpusDashboardLifecycleChangeRunning = false;
 
@@ -2847,45 +2844,32 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private ExamBooklet importQuestionBookletFromExamAssets(Exam exam, Path sourcePath, String name,
-			ExamBookletQuestionFormat questionFormat, Integer expectedQuestionCount, ApplicationConfig config)
-			throws IOException, SQLException {
-		if (exam == null) {
-			throw new NullPointerException("exam");
-		}
-		if (sourcePath == null) {
-			throw new NullPointerException("sourcePath");
-		}
-		if (questionFormat == null) {
-			throw new NullPointerException("questionFormat");
-		}
-		if (config == null) {
-			throw new NullPointerException("config");
-		}
+			ExamBookletQuestionFormat questionFormat, Integer expectedQuestionCount, String legacyPaperCode,
+			ApplicationConfig config) throws IOException, SQLException {
+		Objects.requireNonNull(exam, "exam");
+		Objects.requireNonNull(sourcePath, "sourcePath");
+		Objects.requireNonNull(questionFormat, "questionFormat");
+		Objects.requireNonNull(config, "config");
 		if (name == null || name.isBlank()) {
 			throw new IllegalArgumentException("Question booklet name must not be blank");
 		}
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
 		SqliteExamWriter writer = new SqliteExamWriter(database);
-
-		// Detect byte-identical managed material before PdfStore creates another
-		// managed file with a different filename.
 		String sourceHash = requireNewManagedPdfContent(sourcePath, writer, "Question booklet");
 		PdfStore pdfStore = createExamPdfStore(config);
 		Path storedPath = pdfStore.importExamPdf(sourcePath, exam.getSubject().getName(), exam.getProvider().getName(),
 				exam.getYear(), exam.getName());
 		String storedHash = new SourceDocumentHashService().sha256(storedPath);
 		if (!sourceHash.equals(storedHash)) {
-
-			// The selected bytes changed between duplicate detection and managed copying.
-			// Do not publish a SourceDocument identity based on inconsistent evidence.
-			throw new IOException("Question booklet PDF changed while it was being copied");
+			throw new IOException("Question booklet PDF changed while being copied");
 		}
 		String relativePath = pdfStore.relativePath(storedPath);
 		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
 
-		// Persistence receives the verified final managed-byte identity.
+		// The importer assigns the Paper code in the same transaction
+		// as booklet and SourceDocument creation.
 		return importer.importExam(exam.getSubject(), exam.getProvider().getName(), exam.getYear(), exam.getName(),
-				name.strip(), relativePath, questionFormat, expectedQuestionCount, storedHash);
+				name.strip(), relativePath, questionFormat, expectedQuestionCount, storedHash, legacyPaperCode);
 	}
 
 	private void initialiseCapturePanes(Stage primaryStage, ApplicationConfig config, SqliteDatabase database,
@@ -2984,8 +2968,7 @@ public class QuestionBankApplication extends Application {
 		// The new main-window Exam/Assets workspace reads the same authoritative
 		// repositories as the transitional modal Exam Setup workflow.
 		// The new workspace owns Exam editing presentation while the application
-		// retains
-		// responsibility for correction, PDF-session handling and capture-state
+		// retains responsibility for correction, PDF-session handling and capture-state
 		// refresh.
 		// Returning to Capture is no longer coupled to Cancel. The later explicit
 		// Use Selected Booklet for Capture action will own that transition.
@@ -3025,8 +3008,9 @@ public class QuestionBankApplication extends Application {
 				this::closePendingQuestionBookletSourceFromExamAssets,
 
 				// Save imports, hashes and persists the managed Question booklet.
-				(exam, sourcePath, name, questionFormat, expectedQuestionCount) -> importQuestionBookletFromExamAssets(
-						exam, sourcePath, name, questionFormat, expectedQuestionCount, config));
+				(exam, sourcePath, name, questionFormat, expectedQuestionCount,
+						legacyPaperCode) -> importQuestionBookletFromExamAssets(exam, sourcePath, name, questionFormat,
+								expectedQuestionCount, legacyPaperCode, config));
 		workingSubjectExamAssetsSnapshotLoader = subject -> {
 			try {
 
@@ -3068,6 +3052,15 @@ public class QuestionBankApplication extends Application {
 
 		// An active booklet alone no longer implies that Question capture has begun.
 		return examMetadataPane.getBooklet() != null && questionCapturePane.canCaptureRegions();
+	}
+
+	private String legacyPaperCode(String bookletName) {
+		return switch (bookletName) {
+		case "MCQ booklet", "MCQ" -> "MCQ";
+		case "Paper 1" -> "1";
+		case "Paper 2" -> "2";
+		default -> throw new IllegalArgumentException("Unsupported legacy booklet requirement: " + bookletName);
+		};
 	}
 
 	private void loadCorpusDashboardHome(Subject dashboardSubject, long generation, long preferredQuestionId) {
@@ -3501,21 +3494,17 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
-	private void recheckPendingLegacyQuestionImport(Stage primaryStage, ApplicationConfig config,
-			Map<LegacyMappedBookletRequirement, Long> selections) {
+	private void recheckPendingLegacyQuestionImport(Stage primaryStage, ApplicationConfig config) {
 		PendingLegacyQuestionImport pending = pendingLegacyQuestionImport;
 		if (pending == null) {
 
-			// A stale Recheck action cannot restart a cancelled import.
+			// A stale button cannot restart a cancelled import.
 			return;
 		}
 
-		// Preserve the confirmed worksheet/Exam mappings and workbook.
-		// Only the teacher's explicit booklet choices may change.
-		PendingLegacyQuestionImport updated = new PendingLegacyQuestionImport(pending.subject(),
-				pending.syllabusVersion(), pending.managedWorkbookPath(), pending.mappings(), selections);
-		pendingLegacyQuestionImport = updated;
-		continueLegacyQuestionImport(primaryStage, config, updated, true);
+		// Paper assignments are now persisted. Recheck reads the
+		// authoritative booklets, not transient UI selections.
+		continueLegacyQuestionImport(primaryStage, config, pending, true);
 	}
 
 	private void refreshActiveExamContext() {
@@ -4756,29 +4745,30 @@ public class QuestionBankApplication extends Application {
 						.formatted(requirements.size(), remaining));
 	}
 
-	private void showMappedLegacyImportStillIncomplete(List<LegacyMappedBookletRequirement> requirements) {
-		StringBuilder remaining = new StringBuilder();
-		for (LegacyMappedBookletRequirement requirement : requirements) {
-			if (!remaining.isEmpty()) {
-				remaining.append(System.lineSeparator());
+	private void showMappedLegacyImportStillIncomplete(List<LegacyMappedBookletRequirement> missing,
+			List<String> problems) {
+		StringBuilder message = new StringBuilder();
+		if (!missing.isEmpty()) {
+			message.append("The following workbook Papers are not linked:\n");
+			for (LegacyMappedBookletRequirement requirement : missing) {
+				message.append("\n• %s / %d / %s / %s".formatted(requirement.identity().providerName(),
+						requirement.key().year(), requirement.identity().examName(), requirement.bookletName()));
 			}
-			remaining.append("• %s / %d / %s / %s".formatted(requirement.identity().providerName(),
-					requirement.key().year(), requirement.identity().examName(), requirement.bookletName()));
 		}
+		if (!problems.isEmpty()) {
+			if (!message.isEmpty()) {
+				message.append("\n\n");
+			}
+			message.append("Other booklet requirements:\n");
+			for (String problem : problems) {
+				message.append("\n• ").append(problem);
+			}
+		}
+		message.append("\n\nSelect the correct Exam in Exam/Assets. " + "Use Add Question Booklet for a missing PDF, "
+				+ "or save a legacy Paper link on an existing booklet. "
+				+ "Remove unexpected extra booklets if necessary. " + "Then choose Recheck and Import.");
 		showAlert(Alert.AlertType.WARNING, "Legacy Question Import", "Import not ready — booklet requirements remain.",
-				"""
-						The following workbook Papers are not yet mapped
-						to saved Question booklets:
-
-						%s
-
-						Choose an existing saved Question booklet in the
-						LEGACY IMPORT section, or attach its missing PDF
-						using Add Question Booklet.
-
-						Save any structural changes before selecting
-						Recheck and Import again.
-						""".formatted(remaining));
+				message.toString());
 	}
 
 	private void showNewCurriculumAuthoring(Stage primaryStage, ApplicationConfig config, Subject subject) {
@@ -5968,31 +5958,20 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private record PendingLegacyQuestionImport(Subject subject, SyllabusVersion syllabusVersion,
-			Path managedWorkbookPath, Map<LegacyExamKey, LegacyExamIdentity> mappings,
-			Map<LegacyMappedBookletRequirement, Long> bookletSelections) {
-
-		private PendingLegacyQuestionImport(Subject subject, SyllabusVersion syllabusVersion, Path managedWorkbookPath,
-				Map<LegacyExamKey, LegacyExamIdentity> mappings) {
-
-			// Retain the original constructor used by existing
-			// application code and reflective workflow fixtures.
-			this(subject, syllabusVersion, managedWorkbookPath, mappings, Map.of());
-		}
+			Path managedWorkbookPath, Map<LegacyExamKey, LegacyExamIdentity> mappings) {
 
 		private PendingLegacyQuestionImport {
 			Objects.requireNonNull(subject, "subject");
 			Objects.requireNonNull(syllabusVersion, "syllabusVersion");
 			Objects.requireNonNull(managedWorkbookPath, "managedWorkbookPath");
 			Objects.requireNonNull(mappings, "mappings");
-			Objects.requireNonNull(bookletSelections, "bookletSelections");
 			if (!subject.equals(syllabusVersion.getSubject())) {
 				throw new IllegalArgumentException("Legacy import syllabus does not belong " + "to Working Subject");
 			}
 
-			// Freeze both the confirmed Exam identities and booklet
-			// selections for this pending-import snapshot.
+			// Persisted Paper links replace transient booklet selections.
+			// Retain only the confirmed Exam mapping and managed workbook.
 			mappings = Map.copyOf(mappings);
-			bookletSelections = Map.copyOf(bookletSelections);
 		}
 	}
 

@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.repository.assessment;
 
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.List;
 
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
@@ -122,6 +123,42 @@ public final class SqliteExamImporter {
 	}
 
 	/**
+	 * Creates or reuses a booklet and persists its legacy Paper identity in the
+	 * same SQLite transaction.
+	 *
+	 * <p>
+	 * A null legacyPaperCode retains the ordinary non-legacy workflow.
+	 *
+	 * @param subject               owning Subject
+	 * @param providerName          issuing provider
+	 * @param year                  examination year
+	 * @param examName              examination name
+	 * @param bookletName           editable booklet name
+	 * @param relativePath          managed PDF path
+	 * @param questionFormat        explicit booklet format
+	 * @param expectedQuestionCount expected top-level Questions, or null
+	 * @param contentSha256         source-byte identity, or null
+	 * @param legacyPaperCode       MCQ, 1, 2, or null
+	 * @return saved booklet with its persistent identity
+	 * @throws SQLException if persistence fails
+	 */
+	public ExamBooklet importExam(Subject subject, String providerName, int year, String examName, String bookletName,
+			String relativePath, ExamBookletQuestionFormat questionFormat, Integer expectedQuestionCount,
+			String contentSha256, String legacyPaperCode) throws SQLException {
+		if (questionFormat == null) {
+			throw new NullPointerException("questionFormat");
+		}
+		if (expectedQuestionCount != null && (expectedQuestionCount < 1 || expectedQuestionCount > 99)) {
+			throw new IllegalArgumentException("expectedQuestionCount must be between 1 and 99");
+		}
+		if (legacyPaperCode != null && !List.of("MCQ", "1", "2").contains(legacyPaperCode)) {
+			throw new IllegalArgumentException("Unsupported legacy Paper code: " + legacyPaperCode);
+		}
+		return importExamInternal(subject, providerName, year, examName, bookletName, relativePath, questionFormat,
+				expectedQuestionCount, contentSha256, legacyPaperCode);
+	}
+
+	/**
 	 * Finds or creates Exam metadata while retaining a supplied source-document
 	 * SHA-256 identity.
 	 *
@@ -177,56 +214,53 @@ public final class SqliteExamImporter {
 	private ExamBooklet importExamInternal(Subject subject, String providerName, int year, String examName,
 			String bookletName, String relativePath, ExamBookletQuestionFormat questionFormat,
 			Integer expectedQuestionCount, String contentSha256) throws SQLException {
+
+		// Existing callers do not establish a legacy Paper identity.
+		return importExamInternal(subject, providerName, year, examName, bookletName, relativePath, questionFormat,
+				expectedQuestionCount, contentSha256, null);
+	}
+
+	private ExamBooklet importExamInternal(Subject subject, String providerName, int year, String examName,
+			String bookletName, String relativePath, ExamBookletQuestionFormat questionFormat,
+			Integer expectedQuestionCount, String contentSha256, String legacyPaperCode) throws SQLException {
 		if (subject == null) {
 			throw new NullPointerException("subject");
 		}
 		if (expectedQuestionCount != null && questionFormat == null) {
-
-			// Legacy intake may leave both values unknown, but it must not establish a
-			// Question count without an explicit booklet format.
-			throw new IllegalArgumentException("Expected Question count requires an explicit Question format");
+			throw new IllegalArgumentException("Expected Question count requires an explicit format");
 		}
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
 				ExamProvider provider = writer.findExamProviderByName(connection, providerName);
 				if (provider == null) {
-
-					// Provider, Exam, source and booklet continue to form one atomic
-					// persistence transaction.
 					provider = writer.insertExamProvider(connection, providerName);
 				}
 				SourceDocument sourceDocument = writer.findSourceDocumentByPath(connection, relativePath);
 				if (sourceDocument == null) {
-
-					// Fresh managed Question PDFs persist their byte identity immediately.
 					sourceDocument = writer.insertSourceDocument(connection, relativePath, contentSha256);
 				} else if (contentSha256 != null) {
-
-					// Recording missing byte identity for an existing managed source does
-					// not alter which structural asset the Exam owns.
 					sourceDocument = writer.recordSourceDocumentHash(connection, sourceDocument, contentSha256);
 				}
 				Exam exam = writer.findExam(connection, subject, provider, year, examName);
 				if (exam == null) {
-
-					// Existing importer callers may still create the Exam and its first
-					// booklet in one transaction.
 					exam = writer.insertExam(connection, subject, provider, year, examName);
 				}
 				ExamBooklet booklet = writer.findExamBooklet(connection, exam, bookletName, sourceDocument);
 				if (booklet == null) {
 					if (questionFormat == null) {
-
-						// Legacy intake deliberately leaves structural planning unknown.
 						booklet = writer.insertExamBooklet(connection, exam, sourceDocument, bookletName);
 					} else {
-
-						// Fresh Exam/Assets intake persists the format and reviewed expected
-						// Question count in the same transaction as the booklet itself.
 						booklet = writer.insertExamBooklet(connection, exam, sourceDocument, bookletName,
 								questionFormat, expectedQuestionCount);
 					}
+				}
+				if (legacyPaperCode != null) {
+
+					// The caller owns the transaction. A duplicate or
+					// invalid Paper assignment rolls back source-document
+					// and booklet creation as well.
+					writer.updateLegacyPaperCode(connection, booklet, legacyPaperCode);
 				}
 				connection.commit();
 				return booklet;

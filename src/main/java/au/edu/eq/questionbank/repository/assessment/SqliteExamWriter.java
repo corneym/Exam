@@ -1230,136 +1230,17 @@ public final class SqliteExamWriter {
 	}
 
 	/**
-	 * Assigns or deliberately corrects a persisted booklet's legacy Paper identity
-	 * without changing its name, source PDF or persistent ID.
+	 * Persists a legacy Paper link in its own transaction.
 	 *
-	 * <p>
-	 * An unlinked booklet may be linked even when historical Questions already
-	 * exist. Once a linked booklet contains Questions or Source Questions, its
-	 * assigned Paper may no longer be changed.
-	 *
-	 * <p>
-	 * A null Paper code explicitly removes a link, provided that doing so does not
-	 * invalidate existing Question metadata.
-	 *
-	 * @param booklet   persisted Question booklet
+	 * @param booklet   persisted booklet
 	 * @param paperCode MCQ, 1, 2, or null to unlink
-	 * @throws SQLException             if persistence fails
-	 * @throws NullPointerException     if booklet is null
-	 * @throws IllegalArgumentException if the code is unsupported, the booklet does
-	 *                                  not belong to its recorded Exam, or another
-	 *                                  booklet already owns the Paper
-	 * @throws IllegalStateException    if the Exam is COMPLETE or a populated Paper
-	 *                                  link is changed
+	 * @throws SQLException if persistence fails
 	 */
 	public void updateLegacyPaperCode(ExamBooklet booklet, String paperCode) throws SQLException {
-		if (booklet == null) {
-			throw new NullPointerException("booklet");
-		}
-		if (paperCode != null && !"MCQ".equals(paperCode) && !"1".equals(paperCode) && !"2".equals(paperCode)) {
-			throw new IllegalArgumentException("Unsupported legacy Paper code: " + paperCode);
-		}
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
-
-				// Legacy Paper identity is structural metadata.
-				requireExamActive(connection, booklet.getExam().getId());
-				String currentCode;
-				try (PreparedStatement statement = connection.prepareStatement("""
-						SELECT eb.legacy_paper_code
-						FROM exam_booklets eb
-						JOIN exams e
-						    ON e.id = eb.exam_id
-						WHERE eb.id = ?
-						  AND eb.exam_id = ?
-						  AND e.subject_id = ?
-						""")) {
-					statement.setLong(1, booklet.getId());
-					statement.setLong(2, booklet.getExam().getId());
-					statement.setLong(3, booklet.getExam().getSubject().getId());
-					try (ResultSet result = statement.executeQuery()) {
-						if (!result.next()) {
-							throw new IllegalArgumentException(
-									"Question booklet does not belong " + "to its recorded Exam: " + booklet.getId());
-						}
-						currentCode = result.getString("legacy_paper_code");
-					}
-				}
-
-				// An unchanged assignment must not perform an UPDATE:
-				// structural update triggers can invalidate reviews.
-				if (Objects.equals(currentCode, paperCode)) {
-					connection.commit();
-					return;
-				}
-				if (currentCode != null) {
-
-					// Once Question metadata has been captured under a
-					// particular Paper identity, silently reassigning it
-					// would change the meaning of those Questions.
-					try (PreparedStatement statement = connection.prepareStatement("""
-							SELECT
-							    EXISTS (
-							        SELECT 1
-							        FROM questions
-							        WHERE booklet_id = ?
-							    ) AS has_questions,
-							    EXISTS (
-							        SELECT 1
-							        FROM source_questions
-							        WHERE booklet_id = ?
-							    ) AS has_source_questions
-							""")) {
-						statement.setLong(1, booklet.getId());
-						statement.setLong(2, booklet.getId());
-						try (ResultSet result = statement.executeQuery()) {
-							if (result.next() && (result.getBoolean("has_questions")
-									|| result.getBoolean("has_source_questions"))) {
-								throw new IllegalStateException(
-										"Legacy Paper " + currentCode + " cannot be reassigned: "
-												+ "the booklet already contains " + "Question metadata.");
-							}
-						}
-					}
-				}
-				if (paperCode != null) {
-
-					// Give a useful error before relying on SQLite's
-					// unique constraint as the final integrity guard.
-					try (PreparedStatement statement = connection.prepareStatement("""
-							SELECT id
-							FROM exam_booklets
-							WHERE exam_id = ?
-							  AND legacy_paper_code = ?
-							  AND id <> ?
-							""")) {
-						statement.setLong(1, booklet.getExam().getId());
-						statement.setString(2, paperCode);
-						statement.setLong(3, booklet.getId());
-						try (ResultSet result = statement.executeQuery()) {
-							if (result.next()) {
-								throw new IllegalArgumentException(
-										"Legacy Paper " + paperCode + " is already linked to " + "booklet ID "
-												+ result.getLong("id") + " in this Exam.");
-							}
-						}
-					}
-				}
-				try (PreparedStatement statement = connection.prepareStatement("""
-						UPDATE exam_booklets
-						SET legacy_paper_code = ?
-						WHERE id = ?
-						  AND exam_id = ?
-						""")) {
-					statement.setString(1, paperCode);
-					statement.setLong(2, booklet.getId());
-					statement.setLong(3, booklet.getExam().getId());
-					if (statement.executeUpdate() != 1) {
-						throw new IllegalStateException(
-								"The legacy Paper link could not be saved " + "for booklet ID " + booklet.getId());
-					}
-				}
+				updateLegacyPaperCode(connection, booklet, paperCode);
 				connection.commit();
 			} catch (SQLException | RuntimeException exception) {
 				try {
@@ -1808,6 +1689,107 @@ public final class SqliteExamWriter {
 		}
 		return new ExamBooklet(booklet.getId(), booklet.getExam(), normalizedName, booklet.getSourceDocument(),
 				questionFormat, expectedQuestionCount);
+	}
+
+	/**
+	 * Updates a saved booklet's legacy Paper identity inside the caller's
+	 * transaction without committing or closing that connection.
+	 *
+	 * @param connection caller-owned SQLite connection
+	 * @param booklet    authoritative persisted booklet
+	 * @param paperCode  MCQ, 1, 2, or null to unlink
+	 * @throws SQLException if persistence fails
+	 */
+	void updateLegacyPaperCode(Connection connection, ExamBooklet booklet, String paperCode) throws SQLException {
+		Objects.requireNonNull(connection, "connection");
+		Objects.requireNonNull(booklet, "booklet");
+		if (paperCode != null && !"MCQ".equals(paperCode) && !"1".equals(paperCode) && !"2".equals(paperCode)) {
+			throw new IllegalArgumentException("Unsupported legacy Paper code: " + paperCode);
+		}
+		requireExamActive(connection, booklet.getExam().getId());
+		String currentCode;
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT eb.legacy_paper_code
+				FROM exam_booklets eb
+				JOIN exams e ON e.id = eb.exam_id
+				WHERE eb.id = ?
+				  AND eb.exam_id = ?
+				  AND e.subject_id = ?
+				""")) {
+			statement.setLong(1, booklet.getId());
+			statement.setLong(2, booklet.getExam().getId());
+			statement.setLong(3, booklet.getExam().getSubject().getId());
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalArgumentException(
+							"Question booklet does not belong to its " + "recorded Exam: " + booklet.getId());
+				}
+				currentCode = result.getString("legacy_paper_code");
+			}
+		}
+		if (Objects.equals(currentCode, paperCode)) {
+
+			// An unchanged Paper identity needs no structural UPDATE.
+			return;
+		}
+		if (currentCode != null) {
+			try (PreparedStatement statement = connection.prepareStatement("""
+					SELECT
+					    EXISTS (
+					        SELECT 1
+					        FROM questions
+					        WHERE booklet_id = ?
+					    ) AS has_questions,
+					    EXISTS (
+					        SELECT 1
+					        FROM source_questions
+					        WHERE booklet_id = ?
+					    ) AS has_source_questions
+					""")) {
+				statement.setLong(1, booklet.getId());
+				statement.setLong(2, booklet.getId());
+				try (ResultSet result = statement.executeQuery()) {
+					if (result.next()
+							&& (result.getBoolean("has_questions") || result.getBoolean("has_source_questions"))) {
+						throw new IllegalStateException("Legacy Paper " + currentCode + " cannot be reassigned: "
+								+ "this booklet contains Question metadata.");
+					}
+				}
+			}
+		}
+		if (paperCode != null) {
+			try (PreparedStatement statement = connection.prepareStatement("""
+					SELECT id
+					FROM exam_booklets
+					WHERE exam_id = ?
+					  AND legacy_paper_code = ?
+					  AND id <> ?
+					""")) {
+				statement.setLong(1, booklet.getExam().getId());
+				statement.setString(2, paperCode);
+				statement.setLong(3, booklet.getId());
+				try (ResultSet result = statement.executeQuery()) {
+					if (result.next()) {
+						throw new IllegalArgumentException("Legacy Paper " + paperCode
+								+ " is already linked to booklet ID " + result.getLong("id") + " in this Exam.");
+					}
+				}
+			}
+		}
+		try (PreparedStatement statement = connection.prepareStatement("""
+				UPDATE exam_booklets
+				SET legacy_paper_code = ?
+				WHERE id = ?
+				  AND exam_id = ?
+				""")) {
+			statement.setString(1, paperCode);
+			statement.setLong(2, booklet.getId());
+			statement.setLong(3, booklet.getExam().getId());
+			if (statement.executeUpdate() != 1) {
+				throw new IllegalStateException(
+						"Legacy Paper link could not be saved for booklet ID " + booklet.getId());
+			}
+		}
 	}
 
 	private Exam correctExamMetadata(Connection connection, Exam exam, String providerName, int year, String name)
