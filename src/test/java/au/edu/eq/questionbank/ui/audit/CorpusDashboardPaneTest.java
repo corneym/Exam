@@ -444,19 +444,17 @@ class CorpusDashboardPaneTest {
 	@Test
 	@SuppressWarnings("unchecked")
 	void captureQuestionsCompletesExistingQuestionWorkBeforeOfferingNewQuestion(FxRobot robot) {
-		AtomicReference<Question> routedQuestion = new AtomicReference<>();
+		AtomicReference<Question> generalCorrection = new AtomicReference<>();
+		AtomicReference<Question> bookletCorrection = new AtomicReference<>();
 		AtomicReference<ExamBooklet> routedNewBooklet = new AtomicReference<>();
-
-		// Reproduce the legacy condition: Expected equals Found, but persisted
-		// Questions
-		// in the booklet still require Question-content capture.
 		BookletCorpusStatus atExpectedWithExistingWork = new BookletCorpusStatus(fixture.paper2, true,
 				fixture.markingGuide, 30, 34, fixture.paper2Status.questionsWithoutDescriptorCount(),
 				fixture.paper2Status.questionSummary(), fixture.paper2Status.mcqExplanationCoverage(),
 				EnumSet.noneOf(BookletCorpusFinding.class));
 		robot.interact(() -> {
 			pane.setNewQuestionCaptureHandler(routedNewBooklet::set);
-			pane.setQuestionCorrectionHandler(routedQuestion::set);
+			pane.setQuestionCorrectionHandler(generalCorrection::set);
+			pane.setBookletQuestionCorrectionHandler(bookletCorrection::set);
 		});
 		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
 		Button captureQuestions = robot.lookup("#corpus-dashboard-capture-questions").queryButton();
@@ -464,18 +462,22 @@ class CorpusDashboardPaneTest {
 			booklets.getItems().setAll(atExpectedWithExistingWork);
 			booklets.getSelectionModel().select(atExpectedWithExistingWork);
 		});
-
-		// Existing Question work remains actionable even though the Exam is COMPLETE
-		// and
-		// the booklet has already reached its expected Question count.
 		assertFalse(captureQuestions.isDisable());
 		robot.interact(captureQuestions::fire);
 
-		// Capture Questions must resolve the first existing Question-side task rather
-		// than offer to create an additional Question.
-		assertNotNull(routedQuestion.get());
-		assertEquals("Q7", routedQuestion.get().getQuestionCode());
+		// The booklet-specific route owns this action.
+		assertNotNull(bookletCorrection.get());
+		assertEquals("Q7", bookletCorrection.get().getQuestionCode());
+		assertEquals(fixture.paper2.getId(), bookletCorrection.get().getBooklet().getId());
+
+		// General correction must not receive booklet-entry work.
+		assertNull(generalCorrection.get());
+
+		// Existing incomplete work must not create another Question.
 		assertNull(routedNewBooklet.get());
+
+		// Completing an existing Question must not warn about
+		// increasing the top-level Question count.
 		assertTrue(robot.lookup("#corpus-dashboard-capture-count-confirmation").tryQuery().isEmpty());
 	}
 

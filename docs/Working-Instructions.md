@@ -93,6 +93,46 @@ The following rules supplement all preceding Java code-change instructions. They
 
 10. These presentation rules take precedence over the older `Class:` and `Method:` label format wherever the formats differ. All other existing working instructions remain mandatory.
 
+## Chat Continuity Protocol
+
+Monitor this conversation for signs that accumulated context may threaten continuity.
+
+You cannot directly measure remaining context capacity. Instead, assess risk qualitatively using conversation length, accumulated code, tool outputs, number of issues addressed and complexity of previous decisions.
+
+Use three classifications: LOW, MODERATE and HIGH.
+
+**Checkpoint rules:**
+
+1. Reassess after completing each GitHub issue or pull request.
+2. Reassess before beginning a substantial new implementation.
+3. Reassess after unusually long debugging, code-review or investigation sessions.
+4. Reassess immediately whenever I say "capacity check".
+
+Do not routinely report LOW status.
+
+When risk becomes MODERATE, briefly recommend moving to a new chat at the next logical checkpoint.
+
+When risk becomes HIGH, recommend transferring before starting further substantial work.
+
+When I request "prepare handover", produce a self-contained handover containing:
+
+- Current issue, sprint and development objective.
+- Current branch and relevant GitHub references, where verified.
+- Completed work and outstanding tasks.
+- Important design decisions and constraints.
+- Implementation and testing state.
+- Known problems or blockers.
+- Exact recommended next action.
+- Instructions for the new conversation to consult the authoritative GitHub repository and `docs/Working-Instructions.md`.
+
+Distinguish verified information from assumptions. Do not invent repository state.
+
+End the handover with a ready-to-copy opening prompt for the new conversation.
+
+Do not interrupt an active implementation unnecessarily. Prefer issue boundaries for transfers.
+
+The purpose is to protect development continuity, not to predict an exact context limit.
+
 ### TestFX
 
 When adding or modifying a TestFX workflow test, audit the complete test method and every helper it uses for `robot.clickOn(...)` or other pointer-based activation of ordinary controls.

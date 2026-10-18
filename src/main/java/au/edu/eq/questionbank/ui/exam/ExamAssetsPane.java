@@ -151,7 +151,6 @@ public final class ExamAssetsPane extends VBox {
 	private final TextField expectedAnswerBookletsField = new TextField();
 	private final TextField expectedQuestionBookletsField = new TextField();
 	private final List<Button> answerFileDeleteButtons = new ArrayList<>();
-	private final VBox legacyImportPaperRows = new VBox(ROW_SPACING);
 	private final Label legacyImportProgressLabel = new Label();
 	private List<LegacyMappedBookletRequirement> legacyRequiredPapers = List.of();
 	private Map<Long, String> selectedLegacyPaperCodes = Map.of();
@@ -391,7 +390,6 @@ public final class ExamAssetsPane extends VBox {
 	public void clearLegacyImportRequirements() {
 		legacyImportPending = false;
 		legacyRequiredPapers = List.of();
-		legacyImportPaperRows.getChildren().clear();
 		legacyImportRequirementsBox.getChildren().clear();
 		legacyImportRequirementsBox.setVisible(false);
 		legacyImportRequirementsBox.setManaged(false);
@@ -614,12 +612,12 @@ public final class ExamAssetsPane extends VBox {
 	}
 
 	/**
-	 * Presents every workbook-required Paper for the confirmed Exams.
+	 * Presents the workbook-required Papers for the confirmed Exams.
 	 *
 	 * <p>
-	 * The teacher links Papers through the saved booklet rows or creates new
-	 * booklets using the remaining required Names. No transient Paper-to-booklet-ID
-	 * selections are retained.
+	 * The compact import footer stays visible while the user scrolls through saved
+	 * Exam assets. Individual Paper links are edited in the corresponding Question
+	 * Booklet rows rather than duplicated in the footer.
 	 *
 	 * @param syllabusName  historical syllabus
 	 * @param workbookPath  retained workbook
@@ -641,15 +639,22 @@ public final class ExamAssetsPane extends VBox {
 		legacyRequiredPapers = List.copyOf(requirements);
 		Label heading = new Label("LEGACY IMPORT");
 		heading.setStyle(HEADING_STYLE);
-		Label context = new Label("Syllabus: " + syllabusName + "\nWorkbook: " + workbookPath.getFileName());
+		heading.setMinWidth(Region.USE_PREF_SIZE);
+		Label context = new Label("Syllabus: " + syllabusName + "  |  Workbook: " + workbookPath.getFileName());
 		context.setWrapText(true);
-		Label instructions = new Label("The workbook defines the required Question Papers. "
-				+ "Select the confirmed Exam above. " + "Use Add Question Booklet for a missing Paper, "
-				+ "or use Save Paper Link on an existing booklet. " + "A Paper disappears from the available choices "
-				+ "once it has been linked. " + "Names can still be edited independently. "
-				+ "When all required Papers are linked, " + "choose Recheck and Import.");
+		context.setMinWidth(0);
+		context.setTooltip(new Tooltip("Workbook: " + workbookPath));
+		HBox headingRow = new HBox(SPACING, heading, context);
+		HBox.setHgrow(context, Priority.ALWAYS);
+		Label instructions = new Label(
+				"Link each required Paper to a saved Question booklet, then choose Recheck and Import.");
 		instructions.setId("exam-assets-legacy-import-instruction");
 		instructions.setWrapText(true);
+		instructions
+				.setTooltip(new Tooltip("Select the confirmed Exam above. Add a Question booklet for a missing PDF, "
+						+ "or use Save Paper Link on an existing booklet. "
+						+ "Linked Papers are removed from the other available choices. "
+						+ "Booklet names can be edited independently of their Paper links."));
 		legacyImportProgressLabel.setId("exam-assets-legacy-import-progress");
 		legacyImportProgressLabel.setWrapText(true);
 		Region spacer = new Region();
@@ -661,8 +666,10 @@ public final class ExamAssetsPane extends VBox {
 			}
 		});
 		legacyImportCancelButton.setOnAction(_ -> cancelAction.run());
-		legacyImportRequirementsBox.getChildren().setAll(heading, context, instructions, legacyImportProgressLabel,
-				legacyImportPaperRows, actions);
+
+		// The fixed footer shows only actionable summary information; saved
+		// Question Booklet rows already expose the individual Legacy Paper links.
+		legacyImportRequirementsBox.getChildren().setAll(headingRow, instructions, legacyImportProgressLabel, actions);
 		legacyImportRequirementsBox.setVisible(true);
 		legacyImportRequirementsBox.setManaged(true);
 		for (QuestionBookletEditor editor : questionBookletEditors) {
@@ -885,25 +892,20 @@ public final class ExamAssetsPane extends VBox {
 		GridPane.setHgrow(examBox, Priority.ALWAYS);
 		VBox examDetails = createExamDetailsSection();
 		newExamActionRow = createNewExamActionRow();
-
-		// New Exam transaction controls belong to the Exam they are creating.
 		VBox examContent = new VBox(ROW_SPACING, examSelectorGrid, examDetails, newExamActionRow);
 		VBox examSection = createWorkspaceSection("exam-assets-exam-section", "EXAM", null, examContent);
 		VBox questionBooklets = createQuestionBookletsSection();
 		VBox answerBooklets = createAnswerBookletsSection();
 
-		// Dashboard return is workspace navigation rather than structural Exam content.
-		// Keep it outside the scroll pane so the route home remains visible regardless
-		// of how far down the Exam asset list the user has moved.
+		// Dashboard return is navigation, so keep it outside the scroll pane.
 		HBox dashboardNavigation = new HBox(returnToCorpusDashboardButton);
 		dashboardNavigation.setId("exam-assets-dashboard-navigation");
 		dashboardNavigation.visibleProperty().bind(returnToCorpusDashboardButton.visibleProperty());
 		dashboardNavigation.managedProperty().bind(returnToCorpusDashboardButton.managedProperty());
 
-		// All structural Exam and booklet work belongs to one scrolling body. Pending
-		// legacy requirements remain here because they are resolved using these same
-		// authoritative controls.
-		VBox body = new VBox(ROW_SPACING, examSection, questionBooklets, answerBooklets, legacyImportRequirementsBox);
+		// Only the Exam and booklet sections scroll. Adding a saved booklet
+		// must never push the pending-import controls out of view.
+		VBox body = new VBox(ROW_SPACING, examSection, questionBooklets, answerBooklets);
 		body.setId("exam-assets-scroll-content");
 		body.setFillWidth(true);
 		ScrollPane bodyScroll = new ScrollPane(body);
@@ -914,9 +916,9 @@ public final class ExamAssetsPane extends VBox {
 		bodyScroll.setMinHeight(0);
 		VBox.setVgrow(bodyScroll, Priority.ALWAYS);
 
-		// Only the structural body scrolls. Subject remains fixed by the application
-		// shell and Dashboard return remains fixed by this pane.
-		getChildren().addAll(dashboardNavigation, bodyScroll);
+		// The pending-import footer is a sibling of the structural scroll pane.
+		// Visible/managed state is already maintained by the import workflow.
+		getChildren().addAll(dashboardNavigation, bodyScroll, legacyImportRequirementsBox);
 	}
 
 	private boolean canBeginAnswerBookletAdd(Exam exam) {
@@ -1159,13 +1161,15 @@ public final class ExamAssetsPane extends VBox {
 		addAnswerBookletButton.setMinWidth(Region.USE_PREF_SIZE);
 		addQuestionBookletButton.setId("exam-assets-add-question-booklet");
 		addQuestionBookletButton.setMinWidth(Region.USE_PREF_SIZE);
+		addQuestionBookletButton.setTooltip(new Tooltip("Attach a Question PDF to the selected Exam. "
+				+ "During legacy import, choose an unlinked workbook Paper."));
 
 		// Source selection starts one temporary structural Question-booklet
 		// transaction.
 		addQuestionBookletButton.setOnAction(_ -> beginQuestionBookletAdd());
 		updateQuestionBookletAddState();
 
-		// Source selection begins the temporary Answer-booklet editing transaction.
+		// Source selection starts one temporary Answer-booklet transaction.
 		addAnswerBookletButton.setOnAction(_ -> beginAnswerBookletAdd());
 		updateAnswerBookletAddState();
 		addNewExamButton.setId("exam-assets-add-new-exam");
@@ -1179,8 +1183,13 @@ public final class ExamAssetsPane extends VBox {
 		saveNewExamButton.setOnAction(_ -> saveNewExam());
 		legacyImportRecheckButton.setId("exam-assets-legacy-import-recheck");
 		legacyImportRecheckButton.setMinWidth(Region.USE_PREF_SIZE);
+		legacyImportRecheckButton
+				.setTooltip(new Tooltip("Recheck the saved Exam, booklet counts and workbook Paper links. "
+						+ "Import Question metadata only if all requirements are satisfied."));
 		legacyImportCancelButton.setId("exam-assets-legacy-import-cancel");
 		legacyImportCancelButton.setMinWidth(Region.USE_PREF_SIZE);
+		legacyImportCancelButton.setTooltip(new Tooltip("Cancel this workbook import. Existing saved Exams, PDFs, "
+				+ "Question booklets and Paper links are retained."));
 
 		// The requirements section is dormant until workbook preflight reports
 		// authoritative Exam/booklet structure that does not yet exist.
@@ -1656,13 +1665,11 @@ public final class ExamAssetsPane extends VBox {
 		Exam exam = examBox.getValue();
 		if (exam == null || selectedExamAssetExpectations == null) {
 			legacyImportProgressLabel.setText("Select a confirmed Exam to link its workbook Papers.");
-			legacyImportPaperRows.getChildren().clear();
 			return;
 		}
 		List<String> required = requiredLegacyPaperNames(exam);
 		if (required.isEmpty()) {
 			legacyImportProgressLabel.setText("The selected Exam is not required by this workbook.");
-			legacyImportPaperRows.getChildren().clear();
 			return;
 		}
 		int linked = (int) required.stream()
@@ -1671,16 +1678,6 @@ public final class ExamAssetsPane extends VBox {
 		legacyImportProgressLabel.setText("Expected Question booklets: %d | ".formatted(required.size())
 				+ "Attached: %d / %d | ".formatted(attached, required.size())
 				+ "Linked Papers: %d / %d".formatted(linked, required.size()));
-		List<Node> rows = new ArrayList<>();
-		for (int index = 0; index < required.size(); index++) {
-			String paperName = required.get(index);
-			boolean isLinked = selectedLegacyPaperCodes.containsValue(legacyPaperCode(paperName));
-			Label row = new Label(paperName + " — " + (isLinked ? "Linked" : "Not linked"));
-			row.setId("exam-assets-legacy-import-requirement-" + index);
-			row.setWrapText(true);
-			rows.add(row);
-		}
-		legacyImportPaperRows.getChildren().setAll(rows);
 	}
 
 	private void refreshMetadataOptions() {
@@ -2367,6 +2364,10 @@ public final class ExamAssetsPane extends VBox {
 				// A pending workbook permits only the required, still-unlinked
 				// Papers for the selected confirmed Exam.
 				List<String> available = remainingLegacyPaperNames(exam);
+
+				// Pending legacy creation offers only Papers not already linked.
+				nameField.setTooltip(new Tooltip("Choose a required workbook Paper not yet linked to another booklet. "
+						+ "Once saved, the booklet Name can be edited independently of its Paper link."));
 				nameField.setEditable(false);
 				nameField.getItems().setAll(available);
 				if (available.size() == 1) {
@@ -2748,8 +2749,13 @@ public final class ExamAssetsPane extends VBox {
 			nameField.getItems().setAll(bookletNameSuggestions);
 			legacyPaperField.setId("exam-assets-question-legacy-paper-" + bookletId);
 			legacyPaperField.setMaxWidth(Double.MAX_VALUE);
+			legacyPaperField.setTooltip(new Tooltip("Identify the workbook Paper represented by this saved booklet. "
+					+ "The persisted link survives booklet Name changes and repeat imports. "
+					+ "Papers linked elsewhere in this Exam cannot be chosen."));
 			legacyPaperSaveButton.setId("exam-assets-question-legacy-link-" + bookletId);
 			legacyPaperSaveButton.setMinWidth(Region.USE_PREF_SIZE);
+			legacyPaperSaveButton.setTooltip(new Tooltip("Save the selected Paper identity for this booklet. "
+					+ "The link is normally assigned once and reused when importing the workbook again."));
 			legacyPaperSaveButton.setOnAction(_ -> saveLegacyPaperLink());
 			legacyPaperField.valueProperty().addListener((_, _, _) -> updateLegacyPaperLinkActionState());
 			mcqButton.setId("exam-assets-question-format-mcq-" + bookletId);

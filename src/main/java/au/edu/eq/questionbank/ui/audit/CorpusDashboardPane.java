@@ -167,6 +167,8 @@ public final class CorpusDashboardPane extends VBox {
 	private final Button inspectExamQuestionsButton = new Button("Inspect Questions");
 	private BiConsumer<Exam, ExamBooklet> questionInspectionHandler = (_, _) -> {
 	};
+	private Consumer<Question> bookletQuestionCorrectionHandler = _ -> {
+	};
 	private BiConsumer<ExamBooklet, Boolean> applicabilityReviewHandler = (_, _) -> {
 	};
 	private Set<Long> reviewedBookletIds = Set.of();
@@ -430,6 +432,22 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	/**
+	 * Supplies Question correction initiated through a selected Question booklet's
+	 * Capture Questions action.
+	 *
+	 * <p>
+	 * The application must scope subsequent incomplete-Question navigation to the
+	 * same persisted booklet.
+	 *
+	 * @param handler operation receiving the first outstanding Question belonging
+	 *                to the selected booklet
+	 * @throws NullPointerException if handler is null
+	 */
+	public void setBookletQuestionCorrectionHandler(Consumer<Question> handler) {
+		bookletQuestionCorrectionHandler = Objects.requireNonNull(handler, "handler");
+	}
+
+	/**
 	 * Supplies the persistence action for resolving the response type of selected
 	 * Questions in bulk.
 	 *
@@ -574,21 +592,19 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	/**
-	 * Supplies the application-owned route for completing Question-side work for an
-	 * existing Question.
+	 * Supplies the general Question correction route.
 	 *
-	 * @param handler operation receiving the Question whose outstanding work should
-	 *                open
-	 * @throws NullPointerException if {@code handler} is {@code null}
+	 * <p>
+	 * The booklet callback initially shares this route for callers that have not
+	 * installed a specialised booklet-entry handler.
+	 *
+	 * @param handler general Question correction operation
+	 * @throws NullPointerException if handler is null
 	 */
 	public void setQuestionCorrectionHandler(Consumer<Question> handler) {
-		if (handler == null) {
-			throw new NullPointerException("handler");
-		}
-
-		// Existing incomplete Question correction remains distinct from adding new
-		// Questions to an incomplete booklet.
+		Objects.requireNonNull(handler, "handler");
 		questionCorrectionHandler = handler;
+		bookletQuestionCorrectionHandler = handler;
 	}
 
 	/**
@@ -972,16 +988,16 @@ public final class CorpusDashboardPane extends VBox {
 		Question existingQuestionWork = firstQuestionCaptureWorkQuestion(selected);
 		if (existingQuestionWork != null) {
 
-			// Existing persisted Questions take precedence over adding another Question.
-			// Legacy imports commonly reach Expected == Found before their Question
-			// content has been captured, so that completion work must not be treated as
-			// over-capture.
-			questionCorrectionHandler.accept(existingQuestionWork);
+			// This action originates from a selected booklet.
+			// Complete its existing Question work without turning
+			// the queue into Subject-wide navigation.
+			bookletQuestionCorrectionHandler.accept(existingQuestionWork);
 			return;
 		}
 
-		// Only a genuinely new Question can increase the encountered Question count.
-		// Warn when that addition would meet or exceed the recorded expectation.
+		// Preserve the existing expected-count warning for now.
+		// Moving this validation to the known Question code is a
+		// separate agreed correction, still outstanding under #179.
 		if (!confirmQuestionCaptureBeyondExpected(selected)) {
 			return;
 		}

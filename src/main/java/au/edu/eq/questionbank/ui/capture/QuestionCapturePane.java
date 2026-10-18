@@ -19,6 +19,7 @@ import java.util.function.Supplier;
 
 import au.edu.eq.questionbank.diagnostics.PerformanceOperation;
 import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
+import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ImageQuestionContentPart;
 import au.edu.eq.questionbank.model.PdfQuestionContentPart;
@@ -205,6 +206,7 @@ public final class QuestionCapturePane extends VBox {
 	};
 	private final Label importedQuestionQueueLabel = new Label("Question(s) awaiting capture");
 	private PerformanceRecorder performanceRecorder = new PerformanceRecorder(false, Path.of("performance.csv"));
+	private ExamBooklet importedQuestionBookletScope;
 
 	/**
 	 * Creates the question-capture workflow and its repository integration.
@@ -273,34 +275,49 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	/**
-	 * Returns imported Questions still requiring Question-body or shared-context
-	 * capture, optionally restricted to one Working Subject.
+	 * Returns incomplete Questions for the Working Subject without an additional
+	 * booklet restriction.
 	 *
 	 * @param questions      current Question snapshot
-	 * @param workingSubject active Working Subject, or {@code null} for all
-	 *                       Subjects
+	 * @param workingSubject Working Subject, or null for all Subjects
 	 * @return Questions awaiting Question-side capture
 	 */
 	static List<Question> awaitingCaptureForWorkingSubject(List<Question> questions, Subject workingSubject) {
-		if (questions == null) {
-			throw new NullPointerException("questions");
-		}
+		return awaitingCaptureForWorkingSubject(questions, workingSubject, null);
+	}
+
+	/**
+	 * Returns incomplete Questions restricted by Working Subject and, optionally,
+	 * one persisted Question booklet.
+	 *
+	 * <p>
+	 * The existing completion rules remain unchanged. Only the operational scope of
+	 * the returned queue is different.
+	 *
+	 * @param questions      complete Question snapshot
+	 * @param workingSubject Working Subject, or null for all Subjects
+	 * @param bookletId      required persisted booklet ID, or null for Subject-wide
+	 *                       capture
+	 * @return incomplete Questions within the requested scope
+	 */
+	static List<Question> awaitingCaptureForWorkingSubject(List<Question> questions, Subject workingSubject,
+			Long bookletId) {
+		Objects.requireNonNull(questions, "questions");
 		List<Question> awaitingCapture = new ArrayList<>();
 		for (Question question : questions) {
 
-			// Working Subject is only a transient workspace filter. Questions belonging
-			// to another Subject remain persisted but are omitted from this queue.
+			// A booklet-specific session must never include another
+			// booklet, even when Provider, Year, Exam Name or
+			// Question code coincide.
+			if (bookletId != null && question.getBooklet().getId() != bookletId.longValue()) {
+				continue;
+			}
 			if (workingSubject != null && !question.getExam().getSubject().equals(workingSubject)) {
 				continue;
 			}
 
-			// A Question belongs in the queue when any one of these independent
-			// conditions is unresolved:
-			//
-			// 1. it has no Question body yet;
-			// 2. replacement invalidated its PDF source capture, even if independent
-			// image content survived;
-			// 3. its Shared Context is still unresolved.
+			// Preserve all established reasons for Question-side work:
+			// missing content, invalidated source or unresolved context.
 			if (question.getContentParts().isEmpty() || question.isSourceCaptureRequired()
 					|| question.isSharedContextUnresolved()) {
 				awaitingCapture.add(question);
@@ -864,6 +881,41 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	/**
+	 * Restricts the imported/incomplete Question queue to one persisted Question
+	 * booklet, or restores the Working Subject-wide queue.
+	 *
+	 * <p>
+	 * Booklet capture must never offer incomplete Questions from another booklet
+	 * while the selected source PDF remains active. A null booklet deliberately
+	 * restores general correction navigation.
+	 *
+	 * @param booklet the required Question booklet, or null for Working
+	 *                Subject-wide capture
+	 * @throws IllegalArgumentException if the booklet belongs to another Working
+	 *                                  Subject
+	 */
+	public void setImportedQuestionBookletScope(ExamBooklet booklet) {
+		if (booklet != null && workingSubject != null
+				&& booklet.getExam().getSubject().getId() != workingSubject.getId()) {
+			throw new IllegalArgumentException("Capture booklet does not belong to the Working Subject");
+		}
+
+		// Compare persistent identities rather than Java object instances.
+		if (booklet == null && importedQuestionBookletScope == null) {
+			return;
+		}
+		if (booklet != null && importedQuestionBookletScope != null
+				&& booklet.getId() == importedQuestionBookletScope.getId()) {
+			return;
+		}
+		importedQuestionBookletScope = booklet;
+
+		// Reuse the last authoritative corpus snapshot. Changing only
+		// the visible queue scope requires no additional database read.
+		refreshImportedQuestions(questionSnapshot);
+	}
+
+	/**
 	 * Configures shared application performance diagnostics.
 	 *
 	 * @param performanceRecorder application recorder
@@ -904,19 +956,24 @@ public final class QuestionCapturePane extends VBox {
 	 * Changes the transient Working Subject and rebuilds the imported-Question
 	 * queue from an already-loaded Question snapshot.
 	 *
-	 * @param workingSubject Subject to display, or {@code null} to display all
-	 *                       Subjects
+	 * <p>
+	 * A booklet-specific queue is retained while refreshing the same Subject, but
+	 * must not survive switching to another Subject.
+	 *
+	 * @param workingSubject Subject to display, or null for all Subjects
 	 * @param questions      complete Question snapshot to filter
-	 * @throws NullPointerException if {@code questions} is {@code null}
+	 * @throws NullPointerException if questions is null
 	 */
 	public void setWorkingSubject(Subject workingSubject, List<Question> questions) {
-		if (questions == null) {
-			throw new NullPointerException("questions");
-		}
-
-		// The application can now publish one shared corpus snapshot to both capture
-		// panes without causing this pane to perform another repository read.
+		Objects.requireNonNull(questions, "questions");
 		this.workingSubject = workingSubject;
+		if (importedQuestionBookletScope != null && (workingSubject == null
+				|| importedQuestionBookletScope.getExam().getSubject().getId() != workingSubject.getId())) {
+
+			// A scope from the previous Subject cannot control the
+			// imported Question queue in the new Subject.
+			importedQuestionBookletScope = null;
+		}
 		refreshImportedQuestions(questions);
 	}
 
@@ -2692,19 +2749,26 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private void refreshImportedQuestions(List<Question> questions) {
-		if (questions == null) {
-			throw new NullPointerException("questions");
-		}
+		Objects.requireNonNull(questions, "questions");
 
-		// Retain the complete refreshed corpus for synchronous duplicate-code
-		// validation while the teacher types.
+		// Preserve the complete authoritative snapshot for Question
+		// validation. Filtering affects presentation, not persistence.
 		questionSnapshot = List.copyOf(questions);
 		Question selected = importedQuestion;
+		ExamBooklet scopedBooklet = importedQuestionBookletScope;
+		Long scopedBookletId = scopedBooklet == null ? null : Long.valueOf(scopedBooklet.getId());
+		List<Question> awaitingCapture = awaitingCaptureForWorkingSubject(questionSnapshot, workingSubject,
+				scopedBookletId);
+		if (scopedBooklet == null) {
+			importedQuestionQueueLabel.setText("Question(s) awaiting capture");
+		} else {
+			Exam exam = scopedBooklet.getExam();
 
-		// Reuse the existing authoritative incomplete-Question rules. This queue
-		// already accounts for Working Subject, missing body content, source
-		// recapture and unresolved Shared Context.
-		List<Question> awaitingCapture = awaitingCaptureForWorkingSubject(questionSnapshot, workingSubject);
+			// Expose source provenance explicitly. In particular,
+			// External, Mock and Sample must not look interchangeable.
+			importedQuestionQueueLabel.setText("Question(s) awaiting capture — %s %d — %s — %s"
+					.formatted(exam.getProvider().getName(), exam.getYear(), exam.getName(), scopedBooklet.getName()));
+		}
 		refreshingImportedQuestions = true;
 		try {
 			importedQuestionBox.getItems().setAll(awaitingCapture);
@@ -2712,8 +2776,8 @@ public final class QuestionCapturePane extends VBox {
 			if (selected != null) {
 				for (Question question : awaitingCapture) {
 
-					// Preserve the current imported Question only while it still belongs
-					// to the filtered operational queue.
+					// Retain selection only when the persisted Question
+					// still belongs to the current operational scope.
 					if (question.getId() == selected.getId()) {
 						matchingSelection = question;
 						break;
@@ -2726,8 +2790,8 @@ public final class QuestionCapturePane extends VBox {
 			refreshingImportedQuestions = false;
 		}
 
-		// Queue availability directly controls whether imported capture is part of
-		// the visible workspace.
+		// An empty booklet queue must not fall back to unresolved
+		// Questions from other booklets or Examinations.
 		updateImportedCaptureAvailability(!awaitingCapture.isEmpty());
 	}
 

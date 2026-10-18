@@ -646,18 +646,20 @@ public class QuestionBankApplication extends Application {
 				&& !answerCapturePane.canAbandonMcqExplanationCapture();
 		boolean captureWorkInProgress = captureSelectionState.hasPendingSelection()
 				|| questionCapturePane.hasAcceptedRegions() || answerCapturePane.hasAcceptedRegions()
-				|| questionCapturePane.isCapturingSharedContext() || questionCapturePane.isSaveInProgress()
-				|| answerCapturePane.isSaveInProgress() || blockingAnswerEdit;
+				|| questionCapturePane.isSaveInProgress() || answerCapturePane.isSaveInProgress() || blockingAnswerEdit;
 		if (!captureWorkInProgress) {
+
+			// Selecting a Question with unresolved Shared Context automatically
+			// starts context capture. Capture mode alone does not mean that
+			// any PDF region has been selected or accepted.
+			//
+			// The guards above still protect pending selections, accepted
+			// Question and Shared Context regions, and active saves.
 			return true;
 		}
-
-		// A clean explanation candidate is only a persisted A-D Answer being viewed. It
-		// may be abandoned explicitly by returning to Dashboard. Genuine unsaved
-		// region,
-		// selection, Answer-edit or save state remains protected.
 		showAlert(Alert.AlertType.WARNING, "Corpus Dashboard", "Capture work is in progress",
-				"Save, clear or cancel the current Question, Shared Context or Answer work before returning to the Corpus Dashboard.");
+				"Save, clear or cancel the current Question, Shared Context or Answer work "
+						+ "before returning to the Corpus Dashboard.");
 		return false;
 	}
 
@@ -3970,17 +3972,15 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 
-		// A clean explanation candidate is merely the current place in a work queue.
-		// Explicit Dashboard return ends that session without requiring a pointless
-		// Cancel operation first.
+		// A clean explanation candidate is only a position in a work queue.
+		// It can be abandoned without cancelling saved Answer data.
 		if (answerCapturePane.canAbandonMcqExplanationCapture()) {
 			answerCapturePane.abandonMcqExplanationCapture();
 		}
 		try {
 
-			// Dashboard-launched capture owns the temporary Exam or Answer document.
-			// Returning must leave an empty PDF workspace rather than exposing that stale
-			// document after the Dashboard is later closed.
+			// Close the temporary Dashboard-owned PDF before restoring
+			// Dashboard navigation.
 			pdfWorkspace.closeManagedPdfSessions();
 		} catch (IllegalStateException exception) {
 			showAlert(Alert.AlertType.ERROR, "Corpus Dashboard", "The capture PDF could not be closed.",
@@ -3988,15 +3988,18 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 
-		// Dashboard task-specific visibility and Exam scope belong only to the
-		// completed
-		// capture session. Restore the reusable workspace before its next entry.
+		// Returning from an empty automatically started Shared Context
+		// capture must discard that transient mode. Otherwise a later
+		// capture session could inherit stale context-capture state.
+		//
+		// The navigation guard has already rejected genuine unsaved
+		// regions, pending selections and active saves.
+		questionCapturePane.clearForNewPdf();
 		answerCapturePane.setExamScope(null);
 		setCaptureWorkspaceSectionVisibility(true, true, true);
 		curriculumSelectorPane.setClassificationControlsDisabled(false);
 
-		// Consume the session before starting the asynchronous Dashboard refresh so an
-		// obsolete return action cannot survive while persistence is loading.
+		// Consume the Dashboard session before starting its refresh.
 		Runnable handler = corpusDashboardCaptureReturnHandler;
 		clearCorpusDashboardCaptureReturn();
 		handler.run();
@@ -4255,12 +4258,21 @@ public class QuestionBankApplication extends Application {
 
 	private void showCaptureWorkspaceMode() {
 
-		// Generic Capture restores the complete reusable workspace. Dashboard-specific
-		// entry points narrow it again for their individual tasks.
+		// Generic Capture is a deliberate return to unrestricted
+		// Working Subject navigation. No previous booklet-entry
+		// queue restriction may survive this transition.
+		questionCapturePane.setImportedQuestionBookletScope(null);
 		answerCapturePane.setExamScope(null);
 		setCaptureWorkspaceSectionVisibility(true, true, true);
 		setWorkspaceMode(captureWorkspaceModePane);
 		refreshActiveExamContext();
+	}
+
+	private void showCorpusDashboardBookletQuestionCorrection(Question question) {
+
+		// Dashboard Capture Questions was pressed on a selected
+		// booklet. All subsequent Question work stays in that booklet.
+		showCorpusDashboardQuestionCorrection(question, true);
 	}
 
 	private void showCorpusDashboardHome() {
@@ -4284,22 +4296,24 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void showCorpusDashboardQuestionCorrection(Question question) {
-		if (question == null) {
-			throw new NullPointerException("question");
-		}
+
+		// An explicitly selected Question is a general correction
+		// entry point rather than a booklet-only Capture action.
+		showCorpusDashboardQuestionCorrection(question, false);
+	}
+
+	private void showCorpusDashboardQuestionCorrection(Question question, boolean bookletScoped) {
+		Objects.requireNonNull(question, "question");
 		clearCorpusDashboardCaptureReturn();
 		showDashboardQuestionCaptureWorkspace();
 
-		// Dashboard owns navigation for the whole imported/incomplete capture session.
-		// Saving one Question therefore advances the queue; only the visible Return
-		// action navigates home.
+		// Saving a Question continues the imported/incomplete queue.
+		// The route's bookletScoped flag determines which Questions
+		// may participate in that queue.
 		Runnable returnHandler = this::refreshAndShowCorpusDashboardHome;
 		setCorpusDashboardCaptureReturn(returnHandler);
-
-		// Opening and initially rendering a different Question booklet is visibly slow
-		// against real corpus data, so acknowledge the transition immediately.
 		showWorkspaceBusy("Opening Question booklet...");
-		startCorpusDashboardQuestionCorrection(question, returnHandler);
+		startCorpusDashboardQuestionCorrection(question, returnHandler, bookletScoped);
 	}
 
 	private void showCorpusDashboardSnapshot(Subject dashboardSubject, CorpusDashboardSnapshot snapshot) {
@@ -4333,6 +4347,7 @@ public class QuestionBankApplication extends Application {
 			}
 		});
 		dashboard.setQuestionCorrectionHandler(this::showCorpusDashboardQuestionCorrection);
+		dashboard.setBookletQuestionCorrectionHandler(this::showCorpusDashboardBookletQuestionCorrection);
 		dashboard.setDescriptorAssignmentHandler(this::showDashboardDescriptorAssignment);
 		dashboard.setQuestionInspectionHandler(this::showDashboardQuestionInspection);
 		corpusDashboardPane = dashboard;
@@ -4537,8 +4552,10 @@ public class QuestionBankApplication extends Application {
 
 	private void showDashboardQuestionCaptureWorkspace() {
 
-		// New or corrective Question work requires Classification and Question capture,
-		// but Answer controls are unrelated to the current task.
+		// The entry route will establish a specific booklet scope
+		// when required. First discard any scope left by an earlier
+		// Exam/Assets capture session.
+		questionCapturePane.setImportedQuestionBookletScope(null);
 		answerCapturePane.setExamScope(null);
 		curriculumSelectorPane.setClassificationControlsDisabled(false);
 		setCaptureWorkspaceSectionVisibility(true, true, false);
@@ -5203,20 +5220,17 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
-	private void startCorpusDashboardQuestionCorrection(Question question, Runnable returnHandler) {
+	private void startCorpusDashboardQuestionCorrection(Question question, Runnable returnHandler,
+			boolean bookletScoped) {
 
-		// Resolve both Subject-first and historical PDF paths using the
-		// application's authoritative managed-data configuration.
+		// The shared Exam PDF store handles both Subject-first and
+		// historical managed paths.
 		PdfStore pdfStore = createExamPdfStore(applicationConfig);
 		Path storedPath;
 		try {
 			if (question.getBooklet().getSourceDocument() == null) {
 				throw new IllegalStateException("The Question booklet has no managed Question PDF.");
 			}
-
-			// Dashboard correction always opens the authoritative managed source belonging
-			// to the persisted Question rather than relying on whichever booklet happened
-			// to be active previously.
 			storedPath = pdfStore.resolve(question.getBooklet().getSourceDocument().getRelativePath());
 		} catch (IllegalArgumentException | IllegalStateException exception) {
 			failCorpusDashboardQuestionCorrection(returnHandler, exception);
@@ -5229,9 +5243,6 @@ public class QuestionBankApplication extends Application {
 		}
 		try {
 			if (pdfWorkspace.getDisplayedDocument() == PdfWorkspacePane.DocumentMode.VIEWER) {
-
-				// A read-only Exam/Assets preview cannot remain the document presented for
-				// Question correction.
 				pdfWorkspace.closeViewerPdf();
 			}
 			pdfWorkspace.openExamPdfAsync(storedPath, failure -> {
@@ -5241,21 +5252,22 @@ public class QuestionBankApplication extends Application {
 				}
 				if (corpusDashboardCaptureReturnHandler != returnHandler) {
 
-					// The user has already left this Dashboard-owned transition.
+					// A newer transition owns the workspace.
 					return;
 				}
 				try {
+					ExamBooklet booklet = question.getBooklet();
 
-					// Publish the authoritative structural context before entering the
-					// imported queue. The pane's ordinary activation guard then sees this
-					// booklet/PDF as already active and does not reopen it synchronously.
-					examMetadataPane.activateExistingBooklet(question.getBooklet(), storedPath);
+					// Activate the Question's actual persisted PDF
+					// before exposing it for imported capture.
+					examMetadataPane.activateExistingBooklet(booklet, storedPath);
 					refreshActiveExamContext();
+					questionCapturePane.setImportedQuestionBookletScope(bookletScoped ? booklet : null);
 					boolean started = questionCapturePane.captureImportedQuestion(question, () -> {
 
-						// Dashboard correction is a queue session, not a one-Question modal
-						// operation. Save advances to the next Question and leaves navigation
-						// to the explicit Return to Corpus Dashboard action.
+						// Remain in capture after Save.
+						// Navigation is controlled by
+						// the explicit Dashboard Return.
 					});
 					if (!started) {
 						failCorpusDashboardQuestionCorrection(returnHandler,
@@ -5342,33 +5354,22 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void startDashboardQuestionCaptureRefresh(ExamBooklet booklet, Path storedPath, Runnable returnHandler) {
-		Task<List<Question>> task = new ApplicationBackgroundTask<>(() -> {
-
-			// Both Question and Answer panes need the same post-routing corpus snapshot.
-			// Load it once off the JavaFX thread instead of making each pane perform a
-			// synchronous SQLite query.
-			return List.copyOf(questionRepository.findAll());
-		});
+		Task<List<Question>> task = new ApplicationBackgroundTask<>(() -> List.copyOf(questionRepository.findAll()));
 		task.setOnSucceeded(_ -> {
 			if (corpusDashboardCaptureReturnHandler != returnHandler) {
-
-				// This worker no longer owns the Dashboard transition.
-				// It must not dismiss the overlay of a newer operation.
 				return;
 			}
 			try {
 				Subject subject = booklet.getExam().getSubject();
-
-				// Publish structural identity only after the source PDF is completely open.
 				examMetadataPane.activateExistingBooklet(booklet, storedPath);
 				List<Question> questions = task.getValue();
-
-				// One immutable corpus generation supplies both capture panes without
-				// further repository reads on the JavaFX thread.
 				questionCapturePane.setWorkingSubject(subject, questions);
 				answerCapturePane.setWorkingSubject(subject, questions);
 
-				// Dashboard Capture Questions enters ordinary new-Question capture directly.
+				// Dashboard Capture Questions was entered through
+				// this booklet. Retain only its incomplete Questions,
+				// even if another Exam has identical question codes.
+				questionCapturePane.setImportedQuestionBookletScope(booklet);
 				questionCapturePane.startNewQuestionCapture();
 				hideWorkspaceBusy();
 			} catch (RuntimeException exception) {
@@ -5376,34 +5377,27 @@ public class QuestionBankApplication extends Application {
 			}
 		});
 		task.setOnFailed(_ -> failDashboardNewQuestionCapture(returnHandler, task.getException()));
-
-		// Repository queue reconstruction runs independently of JavaFX after the PDF
-		// worker has completed.
 		Thread.ofVirtual().name("dashboard-question-capture-refresh").start(task);
 	}
 
 	private void startExamAssetsQuestionCaptureRefresh(ExamBooklet booklet, Path storedPath) {
-		Task<List<Question>> task = new ApplicationBackgroundTask<>(() -> {
-
-			// Rebuild both capture panes from one persistence snapshot rather than
-			// blocking JavaFX with two synchronous repository refreshes.
-			return List.copyOf(questionRepository.findAll());
-		});
+		Task<List<Question>> task = new ApplicationBackgroundTask<>(() -> List.copyOf(questionRepository.findAll()));
 		task.setOnSucceeded(_ -> {
 			try {
 				Subject subject = booklet.getExam().getSubject();
-
-				// Publish structural identity only after the managed PDF and corpus
-				// snapshot are both ready.
 				examMetadataPane.activateExistingBooklet(booklet, storedPath);
 				List<Question> questions = task.getValue();
 				questionCapturePane.setWorkingSubject(subject, questions);
 				answerCapturePane.setWorkingSubject(subject, questions);
-
-				// Exam/Assets has handed the Dashboard-owned session to Capture. Remove
-				// only the hidden Exam/Assets presentation of the Return action.
 				examAssetsPane.clearCorpusDashboardReturnHandler();
+
+				// This generic workspace transition clears any
+				// previous queue scope.
 				showCaptureWorkspaceMode();
+
+				// Establish the new booklet scope AFTER the generic
+				// transition, using its persisted booklet identity.
+				questionCapturePane.setImportedQuestionBookletScope(booklet);
 				questionCapturePane.startNewQuestionCapture();
 				hideWorkspaceBusy();
 			} catch (RuntimeException exception) {
@@ -5411,9 +5405,6 @@ public class QuestionBankApplication extends Application {
 			}
 		});
 		task.setOnFailed(_ -> failExamAssetsQuestionCaptureRefresh(task.getException()));
-
-		// Corpus reconstruction is persistence work and should not stall JavaFX after
-		// the PDF has already loaded.
 		Thread.ofVirtual().name("exam-assets-question-capture-refresh").start(task);
 	}
 

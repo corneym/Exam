@@ -756,6 +756,86 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void dashboardReturnAllowsEmptyRequiredSharedContextAndProtectsAcceptedContext(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+
+		// Persist a legacy-style incomplete Question that explicitly
+		// requires Shared Context but has no captured regions.
+		Question question = repository.save(booklet, "9a", "", 2, List.of(), classification, true, null, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		assertTrue(question.isSharedContextUnresolved());
+		ApplicationBusyOverlay overlay = (ApplicationBusyOverlay) primaryStage.getScene().getRoot();
+		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
+
+		// Open the actual Dashboard Question-correction workflow.
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "showCorpusDashboardQuestionCorrection", new Class<?>[] { Question.class }, question);
+			return null;
+		}).get();
+		ComboBox<Question> imported = comboBox(robot, "#imported-question");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot,
+						() -> imported.getValue() != null && imported.getValue().getId() == question.getId()
+								&& questionCapturePane().isCapturingSharedContext() && !overlay.isBusy()));
+
+		// The Shared Context workflow has started automatically,
+		// but the teacher has not selected or accepted any region.
+		assertFalse(selectionState.hasPendingSelection());
+		assertFalse(questionCapturePane().hasAcceptedRegions());
+		assertTrue(questionCapturePane().isCapturingSharedContext());
+		Button returnDashboard = lookup(robot, "#return-corpus-dashboard", Button.class);
+
+		// This previously produced "Capture work is in progress".
+		fireControl(robot, returnDashboard);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
+		assertFalse(questionCapturePane().isCapturingSharedContext());
+
+		// Abandoning empty capture must not change persisted metadata.
+		assertTrue(repository.findById(question.getId()).orElseThrow().isSharedContextUnresolved());
+
+		// Re-enter the same Question to verify that actual unsaved
+		// Shared Context regions are still protected.
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "showCorpusDashboardQuestionCorrection", new Class<?>[] { Question.class }, question);
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot,
+						() -> imported.getValue() != null && imported.getValue().getId() == question.getId()
+								&& questionCapturePane().isCapturingSharedContext() && !overlay.isBusy()));
+
+		// A PDF drag is intentional here: this test must establish
+		// that a genuine Shared Context region was accepted.
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-question-region");
+		assertTrue(questionCapturePane().hasAcceptedRegions());
+
+		// Modal warning: schedule the action rather than blocking
+		// the test thread with a nested JavaFX event loop.
+		Platform.runLater(returnDashboard::fire);
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> robot.lookup("Capture work is in progress").tryQuery().isPresent());
+		DialogPane warning = robot.lookup(".dialog-pane").queryAs(DialogPane.class);
+		assertEquals("Capture work is in progress", warning.getHeaderText());
+
+		// Dismiss the exact dialog action using its DialogPane.
+		Button ok = (Button) warning.lookupButton(ButtonType.OK);
+		robot.interact(ok::fire);
+
+		// Genuine unsaved capture must leave the teacher in Capture.
+		assertTrue(robot.lookup("#capture-workspace-mode").tryQuery().isPresent());
+		assertTrue(questionCapturePane().hasAcceptedRegions());
+
+		// The accepted context is still transient; no save occurred.
+		assertTrue(repository.findById(question.getId()).orElseThrow().isSharedContextUnresolved());
+	}
+
+	@Test
 	void dashboardSelectedAnswerCaptureTargetsQuestionAndRemainsSequential(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Question first = captureQuestion(robot, "A1");
@@ -1475,6 +1555,93 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void examAssetsQuestionCaptureScopesQueueToSelectedMockBooklet(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet externalBooklet = examMetadataPane().getBooklet();
+		Exam externalExam = externalBooklet.getExam();
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+
+		// Persist incomplete metadata under External Assessment.
+		Question externalQuestion = repository.save(externalBooklet, "1", "", 1, List.of(), classification, false, null,
+				null, QuestionResponseType.WRITTEN_RESPONSE);
+		PdfStore store = new PdfStore(new ManagedDataLayout(applicationConfig.dataRoot()),
+				applicationConfig.pdfDataRoot());
+		Path mockSource = createPdf(pdfDataRoot.resolve("mock-mcq-source.pdf"), 3);
+		Path mockStored = store.importExamPdf(mockSource, externalExam.getSubject().getName(),
+				externalExam.getProvider().getName(), externalExam.getYear(), "Mock Examination");
+		ExamBooklet mockMcq = importer.importExam(externalExam.getSubject(), externalExam.getProvider().getName(),
+				externalExam.getYear(), "Mock Examination", "MCQ", store.relativePath(mockStored),
+				ExamBookletQuestionFormat.MULTIPLE_CHOICE);
+		Question mockQuestion = repository.save(mockMcq, "1", "", 1, List.of(), classification, false, null, null,
+				QuestionResponseType.MULTIPLE_CHOICE);
+
+		// Add a second booklet under the SAME Mock examination.
+		Path mockPaper1Source = createPdf(pdfDataRoot.resolve("mock-paper1-source.pdf"), 4);
+		Path mockPaper1Stored = store.importExamPdf(mockPaper1Source, externalExam.getSubject().getName(),
+				externalExam.getProvider().getName(), externalExam.getYear(), "Mock Examination");
+		ExamBooklet mockPaper1 = importer.importExam(externalExam.getSubject(), externalExam.getProvider().getName(),
+				externalExam.getYear(), "Mock Examination", "Paper 1", store.relativePath(mockPaper1Stored),
+				ExamBookletQuestionFormat.WRITTEN_RESPONSE);
+		repository.save(mockPaper1, "1", "", 1, List.of(), classification, false, null, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+
+		// Sample Examination is a third distinct persisted Exam.
+		Path sampleSource = createPdf(pdfDataRoot.resolve("sample-mcq-source.pdf"), 5);
+		Path sampleStored = store.importExamPdf(sampleSource, externalExam.getSubject().getName(),
+				externalExam.getProvider().getName(), externalExam.getYear(), "Sample Examination");
+		ExamBooklet sampleMcq = importer.importExam(externalExam.getSubject(), externalExam.getProvider().getName(),
+				externalExam.getYear(), "Sample Examination", "MCQ", store.relativePath(sampleStored),
+				ExamBookletQuestionFormat.MULTIPLE_CHOICE);
+		repository.save(sampleMcq, "1", "", 1, List.of(), classification, false, null, null,
+				QuestionResponseType.MULTIPLE_CHOICE);
+
+		// Enter the real Exam/Assets workflow.
+		fireControl(robot, "#change-exam-assets");
+		@SuppressWarnings("unchecked")
+		ComboBox<Exam> examSelector = lookup(robot, "#exam-assets-exam", ComboBox.class);
+		robot.interact(() -> {
+			Exam selectedMock = examSelector.getItems().stream()
+					.filter(exam -> exam.getId() == mockMcq.getExam().getId()).findFirst().orElseThrow();
+			examSelector.getSelectionModel().select(selectedMock);
+		});
+		WaitForAsyncUtils.waitForFxEvents();
+		RadioButton mockSelection = lookup(robot, "#exam-assets-question-select-" + mockMcq.getId(), RadioButton.class);
+		fireControl(robot, mockSelection);
+		Button useSelected = lookup(robot, "#exam-assets-use-selected-booklet", Button.class);
+		assertFalse(useSelected.isDisabled());
+		fireControl(robot, useSelected);
+		ComboBox<Question> imported = comboBox(robot, "#imported-question");
+
+		// Wait for the real asynchronous PDF and corpus loading,
+		// not merely for the entry button to have fired.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot,
+						() -> examMetadataPane().getBooklet() != null
+								&& examMetadataPane().getBooklet().getId() == mockMcq.getId()
+								&& pdfWorkspace().getDisplayedDocument() == PdfWorkspacePane.DocumentMode.EXAM
+								&& imported.getItems().size() == 1
+								&& imported.getItems().getFirst().getId() == mockQuestion.getId()));
+		assertEquals(mockMcq.getId(), examMetadataPane().getBooklet().getId());
+		assertEquals("Mock Examination", examMetadataPane().getBooklet().getExam().getName());
+
+		// The queue must contain exactly one Question: Mock MCQ.
+		assertEquals(List.of(mockQuestion.getId()), imported.getItems().stream().map(Question::getId).toList());
+		assertFalse(imported.getItems().stream().anyMatch(question -> question.getId() == externalQuestion.getId()));
+		Label queueLabel = lookup(robot, "#imported-question-queue-label", Label.class);
+		assertTrue(queueLabel.getText().contains("Mock Examination"));
+		assertTrue(queueLabel.getText().contains("MCQ"));
+
+		// The initial capture PDF and imported queue must agree
+		// on the persisted booklet identity.
+		assertTrue(imported.getItems().stream().allMatch(question -> question.getBooklet().getId() == mockMcq.getId()));
+	}
+
+	@Test
 	void examAssetsRejectsAnswerContentAlreadyManagedAsQuestionPdf(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet existing = examMetadataPane().getBooklet();
@@ -1691,6 +1858,104 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		// The additional application and Exam context introduced above the capture
 		// panes requires more initial vertical space than the former 840 px layout.
 		assertEquals(900.0, primaryStage.getScene().getHeight(), 1.0);
+	}
+
+	@Test
+	void mappedLegacyImportFooterStaysVisibleWhileBookletsScroll(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Exam exam = examMetadataPane().getBooklet().getExam();
+		long existingBookletId = examMetadataPane().getBooklet().getId();
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
+
+		// Make the Exam/Assets list taller than the available viewport.
+		for (int index = 1; index <= 8; index++) {
+			importer.importExam(exam.getSubject(), exam.getProvider().getName(), exam.getYear(), exam.getName(),
+					"Extra booklet " + index,
+					"Chemistry/" + exam.getYear() + "/extra-question-booklet-" + index + ".pdf");
+		}
+		fireControl(robot, "#change-exam-assets");
+		ExamAssetsPane pane = field(application, "examAssetsPane", ExamAssetsPane.class);
+		LegacyExamKey key = new LegacyExamKey(exam.getProvider().getName(), exam.getYear());
+		LegacyExamIdentity identity = new LegacyExamIdentity(exam.getProvider().getName(), exam.getName());
+		LegacyMappedBookletRequirement requirement = new LegacyMappedBookletRequirement(key, identity, "Paper 1");
+		AtomicInteger rechecks = new AtomicInteger();
+		WaitForAsyncUtils.asyncFx(() -> {
+			pane.showForCorrection(exam.getSubject(), exam.getId(), null);
+			pane.showMappedLegacyImportRequirements("2019", Path.of("legacy.xlsx"), List.of(requirement),
+					rechecks::incrementAndGet, pane::clearLegacyImportRequirements);
+			return null;
+		}).get();
+		ScrollPane bodyScroll = lookup(robot, "#exam-assets-body-scroll", ScrollPane.class);
+		VBox body = lookup(robot, "#exam-assets-scroll-content", VBox.class);
+		VBox footer = lookup(robot, "#exam-assets-legacy-import-requirements", VBox.class);
+		Button recheck = lookup(robot, "#exam-assets-legacy-import-recheck", Button.class);
+		Button cancel = lookup(robot, "#exam-assets-legacy-import-cancel", Button.class);
+		Button addBooklet = lookup(robot, "#exam-assets-add-question-booklet", Button.class);
+		ComboBox<?> paperChoice = lookup(robot, "#exam-assets-question-legacy-paper-" + existingBookletId,
+				ComboBox.class);
+		Button savePaperLink = lookup(robot, "#exam-assets-question-legacy-link-" + existingBookletId, Button.class);
+		Label progress = lookup(robot, "#exam-assets-legacy-import-progress", Label.class);
+		Label instructions = lookup(robot, "#exam-assets-legacy-import-instruction", Label.class);
+
+		// The Exam and booklet sections remain in the same scroll pane.
+		assertEquals(body, bodyScroll.getContent());
+		assertNotNull(body.lookup("#exam-assets-exam-section"));
+		assertNotNull(body.lookup("#exam-assets-question-booklets"));
+		assertNotNull(body.lookup("#exam-assets-answer-booklets"));
+
+		// The footer is separate from the scroll pane and no longer
+		// contains a duplicate individual-Paper details view.
+		assertEquals(pane, footer.getParent());
+		assertFalse(body.getChildren().contains(footer));
+		assertNull(footer.lookup("#exam-assets-legacy-import-paper-details"));
+		assertNull(footer.lookup("#exam-assets-legacy-import-paper-scroll"));
+		assertTrue(footer.isVisible());
+		assertTrue(footer.isManaged());
+		assertTrue(recheck.isVisible());
+		assertTrue(cancel.isVisible());
+
+		// Critical progress and next action remain immediately visible.
+		assertTrue(progress.getText().contains("Expected Question booklets: 1"));
+		assertTrue(progress.getText().contains("Attached:"));
+		assertTrue(progress.getText().contains("Linked Papers:"));
+		assertTrue(instructions.getText().contains("Recheck and Import"));
+
+		// All the Paper-link actions still explain what they do.
+		assertNotNull(recheck.getTooltip());
+		assertNotNull(cancel.getTooltip());
+		assertNotNull(addBooklet.getTooltip());
+		assertNotNull(paperChoice.getTooltip());
+		assertNotNull(savePaperLink.getTooltip());
+		AtomicReference<Double> footerY = new AtomicReference<>();
+		robot.interact(() -> {
+			primaryStage.getScene().getRoot().applyCss();
+			primaryStage.getScene().getRoot().layout();
+			assertTrue(
+					bodyScroll.getContent().getLayoutBounds().getHeight() > bodyScroll.getViewportBounds().getHeight(),
+					"The test needs genuine structural scrolling");
+			footerY.set(footer.localToScene(footer.getBoundsInLocal()).getMinY());
+			bodyScroll.setVvalue(1.0);
+		});
+		WaitForAsyncUtils.waitForFxEvents();
+		robot.interact(() -> {
+			primaryStage.getScene().getRoot().layout();
+			assertEquals(footerY.get(), footer.localToScene(footer.getBoundsInLocal()).getMinY(), 1.0);
+			assertTrue(recheck.localToScene(recheck.getBoundsInLocal()).getMaxY() <= primaryStage.getScene().getHeight()
+					+ 1.0);
+			assertTrue(cancel.localToScene(cancel.getBoundsInLocal()).getMaxY() <= primaryStage.getScene().getHeight()
+					+ 1.0);
+		});
+
+		// Recheck still uses the original import callback.
+		assertFalse(recheck.isDisabled());
+		fireControl(robot, recheck);
+		assertEquals(1, rechecks.get());
+		fireControl(robot, cancel);
+		assertFalse(footer.isVisible());
+		assertFalse(footer.isManaged());
+		assertEquals(body, bodyScroll.getContent());
 	}
 
 	@Test

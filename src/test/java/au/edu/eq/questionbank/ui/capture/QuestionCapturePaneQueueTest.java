@@ -22,6 +22,49 @@ import au.edu.eq.questionbank.model.Unit;
 class QuestionCapturePaneQueueTest {
 
 	@Test
+	void bookletScopeExcludesOtherExamsAndOtherBooklets() {
+		Subject chemistry = new Subject(2, "Chemistry");
+		ExamProvider provider = new ExamProvider(1, "QCAA");
+		Question external = question(10, chemistry, provider, "Chemistry/2020/external.pdf", "1");
+		Exam mockExam = new Exam(100, chemistry, provider, 2020, "Mock Examination");
+		ExamBooklet mockMcq = new ExamBooklet(101, mockExam, "MCQ",
+				new SourceDocument(102, "Chemistry/2020/mock-mcq.pdf"));
+		ExamBooklet mockPaper1 = new ExamBooklet(103, mockExam, "Paper 1",
+				new SourceDocument(104, "Chemistry/2020/mock-paper1.pdf"));
+		Exam sampleExam = new Exam(200, chemistry, provider, 2020, "Sample Examination");
+		ExamBooklet sampleMcq = new ExamBooklet(201, sampleExam, "MCQ",
+				new SourceDocument(202, "Chemistry/2020/sample-mcq.pdf"));
+		Question mockQuestion = new Question(110, mockMcq, "1", "", 1, List.of(), external.getClassification(), false,
+				null, null, QuestionResponseType.MULTIPLE_CHOICE);
+		Question otherMockPaper = new Question(111, mockPaper1, "1", "", 1, List.of(), external.getClassification(),
+				false, null, null, QuestionResponseType.WRITTEN_RESPONSE);
+		Question sampleQuestion = new Question(210, sampleMcq, "1", "", 1, List.of(), external.getClassification(),
+				false, null, null, QuestionResponseType.MULTIPLE_CHOICE);
+		List<Question> allQuestions = List.of(external, mockQuestion, otherMockPaper, sampleQuestion);
+
+		// Subject-wide correction deliberately retains Questions
+		// from all three different examinations.
+		assertEquals(allQuestions, QuestionCapturePane.awaitingCaptureForWorkingSubject(allQuestions, chemistry));
+
+		// Opening Mock MCQ permits only Mock MCQ Question work.
+		assertEquals(List.of(mockQuestion),
+				QuestionCapturePane.awaitingCaptureForWorkingSubject(allQuestions, chemistry, mockMcq.getId()));
+
+		// Another booklet under the same Mock Exam must also be
+		// excluded from the MCQ queue.
+		assertEquals(List.of(otherMockPaper),
+				QuestionCapturePane.awaitingCaptureForWorkingSubject(allQuestions, chemistry, mockPaper1.getId()));
+
+		// Sample MCQ is not interchangeable with Mock MCQ.
+		assertEquals(List.of(sampleQuestion),
+				QuestionCapturePane.awaitingCaptureForWorkingSubject(allQuestions, chemistry, sampleMcq.getId()));
+
+		// A booklet with no outstanding metadata must produce an
+		// empty queue, not a fallback to Subject-wide Questions.
+		assertEquals(List.of(), QuestionCapturePane.awaitingCaptureForWorkingSubject(allQuestions, chemistry, 9999L));
+	}
+
+	@Test
 	void imageOnlyQuestionDoesNotRemainInAwaitingCaptureQueue() {
 		ExamProvider provider = new ExamProvider(1, "QCAA");
 		Subject chemistry = new Subject(2, "Chemistry");

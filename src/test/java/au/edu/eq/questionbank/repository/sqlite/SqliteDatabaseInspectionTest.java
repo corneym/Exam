@@ -25,7 +25,7 @@ class SqliteDatabaseInspectionTest {
 		Path databasePath = tempDir.resolve("pending-mcq-context.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		database.initialiseSchema();
-		HistoricalSchemaFixture.removePostVersion19Objects(database);
+		assertDoesNotThrow(database::verifySchema);
 		boolean columnFound = false;
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();
@@ -691,6 +691,158 @@ class SqliteDatabaseInspectionTest {
 					SET expected_answer_file_count = -1
 					WHERE id = 1
 					"""));
+		}
+	}
+
+	@Test
+	void version21MigrationRollsBackFailedVersionUpdateAndRetries() throws Exception {
+		Path databasePath = tempDir.resolve("version-22-rollback.db");
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		database.initialiseSchema();
+
+		// Seed an existing Exam and Question booklet so that the
+		// migration must preserve real persisted asset identities.
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					INSERT INTO subjects (id, subject_name)
+					VALUES (1, 'Chemistry')
+					""");
+			statement.execute("""
+					INSERT INTO exam_providers (id, provider_name)
+					VALUES (1, 'QCAA')
+					""");
+			statement.execute("""
+					INSERT INTO source_documents (id, relative_path)
+					VALUES (
+					    1,
+					    'subjects/Chemistry/exams/QCAA/2020/Mock Examination/mcq.pdf'
+					)
+					""");
+			statement.execute("""
+					INSERT INTO exams (
+					    id, subject_id, provider_id,
+					    exam_year, exam_name
+					)
+					VALUES (
+					    1, 1, 1, 2020, 'Mock Examination'
+					)
+					""");
+			statement.execute("""
+					INSERT INTO exam_booklets (
+					    id, exam_id, source_document_id, booklet_name
+					)
+					VALUES (1, 1, 1, 'MCQ')
+					""");
+
+			// Construct the genuine version-21 structure.
+			// Do not remove version-20 reviews or version-21 triggers.
+			statement.execute("""
+					DROP INDEX ux_exam_booklets_legacy_paper_code
+					""");
+			statement.execute("""
+					ALTER TABLE exam_booklets
+					DROP COLUMN legacy_paper_code
+					""");
+			statement.execute("""
+					UPDATE schema_version
+					SET version = 21
+					""");
+
+			// Force the final version update to fail after the
+			// migration has created its column and unique index.
+			statement.execute("""
+					CREATE TRIGGER reject_v22_version_update
+					BEFORE UPDATE OF version ON schema_version
+					WHEN NEW.version = 22
+					BEGIN
+					    SELECT RAISE(
+					        ABORT,
+					        'simulated version-22 failure'
+					    );
+					END
+					""");
+		}
+		assertEquals(21, database.schemaVersion());
+		assertDoesNotThrow(database::verifySchema);
+		SQLException failure = assertThrows(SQLException.class, database::initialiseSchema);
+		assertTrue(failure.getMessage().contains("SQL script statement"),
+				() -> "Expected migration statement context: " + failure);
+		assertTrue(
+				failure.getCause() != null && failure.getCause().getMessage().contains("simulated version-22 failure"),
+				() -> "Expected the original SQLite failure: " + failure);
+
+		// The entire migration must roll back, including both
+		// DDL statements that preceded the failed version update.
+		assertEquals(21, database.schemaVersion());
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			try (ResultSet result = statement.executeQuery("PRAGMA table_info(exam_booklets)")) {
+				while (result.next()) {
+					assertFalse("legacy_paper_code".equals(result.getString("name")));
+				}
+			}
+			try (ResultSet result = statement.executeQuery("""
+					SELECT COUNT(*)
+					FROM sqlite_master
+					WHERE type = 'index'
+					  AND name = 'ux_exam_booklets_legacy_paper_code'
+					""")) {
+				assertTrue(result.next());
+				assertEquals(0, result.getInt(1));
+			}
+
+			// Existing booklet and PDF identity must survive.
+			try (ResultSet result = statement.executeQuery("""
+					SELECT
+					    eb.id,
+					    eb.booklet_name,
+					    sd.relative_path
+					FROM exam_booklets eb
+					JOIN source_documents sd
+					    ON sd.id = eb.source_document_id
+					WHERE eb.id = 1
+					""")) {
+				assertTrue(result.next());
+				assertEquals(1, result.getLong("id"));
+				assertEquals("MCQ", result.getString("booklet_name"));
+				assertEquals("subjects/Chemistry/exams/QCAA/2020/Mock Examination/mcq.pdf",
+						result.getString("relative_path"));
+				assertFalse(result.next());
+			}
+
+			// Remove only the deliberately injected failure.
+			statement.execute("""
+					DROP TRIGGER reject_v22_version_update
+					""");
+		}
+
+		// The unchanged production migration must now succeed.
+		database.initialiseSchema();
+		assertEquals(22, database.schemaVersion());
+		assertDoesNotThrow(database::verifySchema);
+		assertDoesNotThrow(database::verifyIntegrity);
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("""
+						SELECT
+						    eb.id,
+						    eb.booklet_name,
+						    eb.legacy_paper_code,
+						    sd.relative_path
+						FROM exam_booklets eb
+						JOIN source_documents sd
+						    ON sd.id = eb.source_document_id
+						WHERE eb.id = 1
+						""")) {
+			assertTrue(result.next());
+			assertEquals(1, result.getLong("id"));
+			assertEquals("MCQ", result.getString("booklet_name"));
+
+			// Migration must never infer a legacy Paper identity
+			// from the saved booklet name.
+			assertEquals(null, result.getObject("legacy_paper_code"));
+			assertEquals("subjects/Chemistry/exams/QCAA/2020/Mock Examination/mcq.pdf",
+					result.getString("relative_path"));
+			assertFalse(result.next());
 		}
 	}
 }
