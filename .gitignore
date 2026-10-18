@@ -38,6 +38,9 @@ Thumbs.db
 *~
 /.junit-tmp/
 
+# Eclipse-generated temporary launch arguments
+/.temp-Launcher-args-*.txt
+
 # Local application-data archive
 /data.zip
 
