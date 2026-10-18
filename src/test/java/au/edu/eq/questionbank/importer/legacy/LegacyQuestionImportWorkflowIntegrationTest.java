@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.importer.legacy;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.OutputStream;
@@ -165,6 +166,9 @@ class LegacyQuestionImportWorkflowIntegrationTest {
 					requirement.bookletName(), relativePath);
 		}
 		assertTrue(metadataImporter.findMissingBooklets(workbook, "Chemistry", "2019").isEmpty());
+
+		// A first import creates metadata. A metadata-only repeat
+		// must reuse every existing Question.
 		LegacyQuestionImportResult first = metadataImporter.importWorkbook(workbook, "Chemistry", "2019");
 		LegacyQuestionImportResult second = metadataImporter.importWorkbook(workbook, "Chemistry", "2019");
 		assertEquals(new LegacyQuestionImportResult(5, 0, 2), first);
@@ -190,14 +194,57 @@ class LegacyQuestionImportWorkflowIntegrationTest {
 		assertFalse(paper1.hasAnswer());
 		assertFalse(paper1.isSharedContextCaptureRequired());
 		assertTrue(paper2.isSharedContextCaptureRequired());
+
+		// Capturing a Question region changes this Exam from
+		// metadata-only to developed content.
 		ExamBooklet booklet = paper1.getBooklet();
 		Question captured = repository.attachRegions(paper1.getId(),
 				List.of(new QuestionRegion(booklet, 2, 0.10, 0.20, 0.70, 0.15)));
 		assertEquals(1, captured.getRegions().size());
-		LegacyQuestionImportResult afterCapture = metadataImporter.importWorkbook(workbook, "Chemistry", "2019");
-		assertEquals(new LegacyQuestionImportResult(0, 5, 0), afterCapture);
-		Question reloaded = new SqliteQuestionRepository(database).findById(paper1.getId()).orElseThrow();
+
+		// Snapshot every Question before the prohibited reimport.
+		// All workbook identities must remain untouched on rejection.
+		List<Question> beforeRejectedImport = repository.findAll();
+		assertEquals(5, beforeRejectedImport.size());
+		IllegalStateException rejection = assertThrows(IllegalStateException.class,
+				() -> metadataImporter.importWorkbook(workbook, "Chemistry", "2019"));
+		assertTrue(rejection.getMessage().contains("captured Question content"));
+		List<Question> afterRejectedImport = repository.findAll();
+		assertEquals(beforeRejectedImport.size(), afterRejectedImport.size());
+		for (Question before : beforeRejectedImport) {
+			Question after = repository.findById(before.getId()).orElseThrow();
+
+			// Rejection cannot replace or move a Question.
+			assertEquals(before.getId(), after.getId());
+			assertEquals(before.getQuestionCode(), after.getQuestionCode());
+			assertEquals(before.getExam().getId(), after.getExam().getId());
+			assertEquals(before.getBooklet().getId(), after.getBooklet().getId());
+
+			// Existing PDF associations remain authoritative.
+			assertEquals(before.getBooklet().getSourceDocument().getId(),
+					after.getBooklet().getSourceDocument().getId());
+			assertEquals(before.getBooklet().getSourceDocument().getRelativePath(),
+					after.getBooklet().getSourceDocument().getRelativePath());
+
+			// Imported metadata and subsequent capture are preserved.
+			assertEquals(before.getClassification().getId(), after.getClassification().getId());
+			assertEquals(before.getMarks(), after.getMarks());
+			assertEquals(before.getResponseType(), after.getResponseType());
+			assertEquals(before.isSharedContextCaptureRequired(), after.isSharedContextCaptureRequired());
+			assertEquals(before.getRegions().size(), after.getRegions().size());
+
+			// Existing imported Answers must not be replaced.
+			assertEquals(before.hasAnswer(), after.hasAnswer());
+			if (before.hasAnswer()) {
+				assertEquals(before.getAnswer().getAnswerText(), after.getAnswer().getAnswerText());
+			}
+		}
+
+		// The accepted Question region survives the rejected import.
+		Question reloaded = repository.findById(paper1.getId()).orElseThrow();
 		assertEquals(1, reloaded.getRegions().size());
+
+		// Source documents must remain linked to their original files.
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("SELECT relative_path FROM source_documents")) {
