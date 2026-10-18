@@ -27,8 +27,114 @@ class SqliteBookletApplicabilityReviewRepositoryTest {
 	Path tempDir;
 
 	@Test
+	void answerAndClassificationEditsStillInvalidateReview() throws Exception {
+		insertQuestionFixture();
+		repository.setReviewed(10, true);
+		repository.setReviewed(20, true);
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.executeUpdate("""
+					UPDATE questions
+					SET classification_node_id = 101
+					WHERE id = 300
+					""");
+		}
+		assertFalse(repository.isReviewed(10));
+		assertTrue(repository.isReviewed(20));
+		repository.setReviewed(10, true);
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.executeUpdate("""
+					INSERT INTO answers (question_id, answer_text)
+					VALUES (300, 'C')
+					""");
+		}
+		assertFalse(repository.isReviewed(10));
+		assertTrue(repository.isReviewed(20));
+		repository.setReviewed(10, true);
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.executeUpdate("""
+					UPDATE answers
+					SET answer_text = 'D'
+					WHERE question_id = 300
+					""");
+		}
+		assertFalse(repository.isReviewed(10));
+		assertTrue(repository.isReviewed(20));
+	}
+
+	@Test
+	void bookletNameOnlyChangePreservesReviewWhileSourceChangeInvalidates() throws Exception {
+		repository.setReviewed(10, true);
+		repository.setReviewed(20, true);
+		repository.setReviewed(30, true);
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+
+			// Renaming changes presentation metadata, not Question applicability.
+			statement.executeUpdate("""
+					UPDATE exam_booklets
+					SET booklet_name = 'Renamed Paper'
+					WHERE id = 10
+					""");
+		}
+		assertTrue(repository.isReviewed(10));
+		assertTrue(repository.isReviewed(20));
+		assertTrue(repository.isReviewed(30));
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+
+			// Changing the source PDF association is a material change.
+			statement.executeUpdate("""
+					UPDATE exam_booklets
+					SET source_document_id = 2
+					WHERE id = 10
+					""");
+		}
+		assertFalse(repository.isReviewed(10));
+		assertTrue(repository.isReviewed(20));
+		assertTrue(repository.isReviewed(30));
+	}
+
+	@Test
 	void cannotReviewNonexistentBooklet() {
 		assertThrows(IllegalStateException.class, () -> repository.setReviewed(999, true));
+	}
+
+	@Test
+	void combinedPaperAndMaterialEditStillInvalidatesReview() throws Exception {
+		repository.setReviewed(10, true);
+		repository.setReviewed(20, true);
+		repository.setReviewed(30, true);
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.executeUpdate("""
+					UPDATE exam_booklets
+					SET legacy_paper_code = '1',
+					    expected_question_count = 4
+					WHERE id = 10
+					""");
+			try (ResultSet result = statement.executeQuery("""
+					SELECT legacy_paper_code, expected_question_count
+					FROM exam_booklets
+					WHERE id = 10
+					""")) {
+				assertTrue(result.next());
+				assertEquals("1", result.getString("legacy_paper_code"));
+				assertEquals(4, result.getInt("expected_question_count"));
+			}
+		}
+		assertFalse(repository.isReviewed(10));
+		assertTrue(repository.isReviewed(20));
+		assertTrue(repository.isReviewed(30));
+
+		// Changing only the administrative Paper link must preserve review.
+		repository.setReviewed(10, true);
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.executeUpdate("""
+					UPDATE exam_booklets
+					SET legacy_paper_code = NULL
+					WHERE id = 10
+					""");
+		}
+		assertTrue(repository.isReviewed(10));
+		assertTrue(repository.isReviewed(20));
+		assertTrue(repository.isReviewed(30));
 	}
 
 	@Test
@@ -131,6 +237,97 @@ class SqliteBookletApplicabilityReviewRepositoryTest {
 	}
 
 	@Test
+	void legacyPaperLinkOnlyPreservesReviewedBooklets() throws Exception {
+		repository.setReviewed(10, true);
+		repository.setReviewed(20, true);
+		repository.setReviewed(30, true);
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			assertEquals(1, statement.executeUpdate("""
+					UPDATE exam_booklets
+					SET legacy_paper_code = '1'
+					WHERE id = 10
+					"""));
+		}
+
+		// The old v21 trigger deleted booklet 10's attestation here.
+		assertEquals(Set.of(10L, 20L), repository.findReviewedBookletIds(1));
+		assertTrue(repository.isReviewed(30));
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			assertEquals(1, statement.executeUpdate("""
+					UPDATE exam_booklets
+					SET legacy_paper_code = 'MCQ'
+					WHERE id = 10
+					"""));
+			assertEquals(1, statement.executeUpdate("""
+					UPDATE exam_booklets
+					SET expected_question_count = expected_question_count
+					WHERE id = 10
+					"""));
+		}
+		assertTrue(repository.isReviewed(10));
+		assertTrue(repository.isReviewed(20));
+		assertTrue(repository.isReviewed(30));
+	}
+
+	@Test
+	void materialBookletChangeAndReviewInvalidationRollBackTogether() throws Exception {
+		repository.setReviewed(10, true);
+		repository.setReviewed(20, true);
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try (Statement statement = connection.createStatement()) {
+				statement.executeUpdate("""
+						UPDATE exam_booklets
+						SET expected_question_count = 2
+						WHERE id = 10
+						""");
+				try (ResultSet result = statement.executeQuery("""
+						SELECT COUNT(*)
+						FROM booklet_applicability_reviews
+						WHERE booklet_id = 10
+						""")) {
+					assertTrue(result.next());
+					assertEquals(0, result.getInt(1));
+				}
+
+				// Roll back both the booklet change and the trigger's deletion.
+				connection.rollback();
+			}
+		}
+		assertTrue(repository.isReviewed(10));
+		assertTrue(repository.isReviewed(20));
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("""
+						SELECT expected_question_count
+						FROM exam_booklets
+						WHERE id = 10
+						""")) {
+			assertTrue(result.next());
+			assertEquals(null, result.getObject(1));
+		}
+
+		// A committed material update must still invalidate the review.
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.executeUpdate("""
+					UPDATE exam_booklets
+					SET expected_question_count = 2
+					WHERE id = 10
+					""");
+			try (ResultSet result = statement.executeQuery("""
+					SELECT expected_question_count
+					FROM exam_booklets
+					WHERE id = 10
+					""")) {
+				assertTrue(result.next());
+				assertEquals(2, result.getInt(1));
+			}
+		}
+		assertFalse(repository.isReviewed(10));
+		assertTrue(repository.isReviewed(20));
+	}
+
+	@Test
 	void missingInvalidationTriggerFailsSchemaVerification() throws Exception {
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.execute("""
@@ -138,6 +335,61 @@ class SqliteBookletApplicabilityReviewRepositoryTest {
 					""");
 		}
 		assertThrows(SQLException.class, database::verifySchema);
+	}
+
+	@Test
+	void nullableAnswerAssignmentChangesInvalidateReview() throws Exception {
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.executeUpdate("""
+					INSERT INTO answer_files
+					    (id, exam_id, source_document_id, answer_file_name)
+					VALUES (90, 1, 1, 'Solutions')
+					""");
+		}
+		repository.setReviewed(10, true);
+		repository.setReviewed(20, true);
+		repository.setReviewed(30, true);
+
+		// NULL to non-NULL is a material assignment change.
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.executeUpdate("""
+					UPDATE exam_booklets
+					SET answer_file_id = 90
+					WHERE id = 10
+					""");
+			try (ResultSet result = statement.executeQuery("""
+					SELECT answer_file_id
+					FROM exam_booklets
+					WHERE id = 10
+					""")) {
+				assertTrue(result.next());
+				assertEquals(90, result.getLong(1));
+			}
+		}
+		assertFalse(repository.isReviewed(10));
+		assertTrue(repository.isReviewed(20));
+		assertTrue(repository.isReviewed(30));
+
+		// Removing an existing Answer assignment also requires review.
+		repository.setReviewed(10, true);
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.executeUpdate("""
+					UPDATE exam_booklets
+					SET answer_file_id = NULL
+					WHERE id = 10
+					""");
+			try (ResultSet result = statement.executeQuery("""
+					SELECT answer_file_id
+					FROM exam_booklets
+					WHERE id = 10
+					""")) {
+				assertTrue(result.next());
+				assertEquals(null, result.getObject(1));
+			}
+		}
+		assertFalse(repository.isReviewed(10));
+		assertTrue(repository.isReviewed(20));
+		assertTrue(repository.isReviewed(30));
 	}
 
 	@Test

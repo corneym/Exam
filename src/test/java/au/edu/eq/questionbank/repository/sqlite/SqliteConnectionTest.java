@@ -1835,7 +1835,7 @@ class SqliteConnectionTest {
 					""");
 		}
 		database.initialiseSchema();
-		assertEquals(22, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		assertDoesNotThrow(database::verifySchema);
 		assertDoesNotThrow(database::verifyIntegrity);
 		try (Connection connection = database.openConnection();
@@ -2255,7 +2255,7 @@ class SqliteConnectionTest {
 		}
 		assertEquals(21, database.schemaVersion());
 		database.initialiseSchema();
-		assertEquals(22, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		database.verifySchema();
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 
