@@ -25,7 +25,10 @@ final class ImportedQuestionStringConverter extends StringConverter<Question> {
 		}
 		ExamBooklet booklet = question.getBooklet();
 		Exam exam = booklet.getExam();
-		return String.format("%s %d — %s — %s — %d mark(s)", exam.getProvider().getName(), exam.getYear(),
-				booklet.getName(), question.getQuestionCode(), question.getMarks());
+
+		// Include the assessment name because External, Mock and Sample
+		// can share Provider, Year, booklet labels and Question codes.
+		return String.format("%s %d — %s — %s — %s — %d mark(s)", exam.getProvider().getName(), exam.getYear(),
+				exam.getName(), booklet.getName(), question.getQuestionCode(), question.getMarks());
 	}
 }

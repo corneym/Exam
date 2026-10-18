@@ -42,10 +42,7 @@ import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
-import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
-import javafx.scene.control.ButtonBar;
-import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
@@ -104,7 +101,9 @@ public final class CorpusDashboardPane extends VBox {
 	private boolean changingScopeFilters;
 	private boolean examLifecycleChangeInProgress;
 	private boolean mcqExplanationFilterActive;
+	private boolean refreshingExamTable;
 	private QuestionCorpusProblem selectedQuestionProblem;
+	private boolean subjectWideQuestionWork;
 	private boolean summaryQuestionFilterActive;
 	private boolean uncapturedQuestionFilterActive;
 
@@ -164,6 +163,8 @@ public final class CorpusDashboardPane extends VBox {
 	private final Button inspectBookletQuestionsButton = new Button("Inspect Questions");
 	private final Button inspectExamQuestionsButton = new Button("Inspect Questions");
 	private BiConsumer<Exam, ExamBooklet> questionInspectionHandler = (_, _) -> {
+	};
+	private Consumer<Question> bookletQuestionCorrectionHandler = _ -> {
 	};
 	private BiConsumer<ExamBooklet, Boolean> applicabilityReviewHandler = (_, _) -> {
 	};
@@ -428,6 +429,22 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	/**
+	 * Supplies Question correction initiated through a selected Question booklet's
+	 * Capture Questions action.
+	 *
+	 * <p>
+	 * The application must scope subsequent incomplete-Question navigation to the
+	 * same persisted booklet.
+	 *
+	 * @param handler operation receiving the first outstanding Question belonging
+	 *                to the selected booklet
+	 * @throws NullPointerException if handler is null
+	 */
+	public void setBookletQuestionCorrectionHandler(Consumer<Question> handler) {
+		bookletQuestionCorrectionHandler = Objects.requireNonNull(handler, "handler");
+	}
+
+	/**
 	 * Supplies the persistence action for resolving the response type of selected
 	 * Questions in bulk.
 	 *
@@ -572,21 +589,19 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	/**
-	 * Supplies the application-owned route for completing Question-side work for an
-	 * existing Question.
+	 * Supplies the general Question correction route.
 	 *
-	 * @param handler operation receiving the Question whose outstanding work should
-	 *                open
-	 * @throws NullPointerException if {@code handler} is {@code null}
+	 * <p>
+	 * The booklet callback initially shares this route for callers that have not
+	 * installed a specialised booklet-entry handler.
+	 *
+	 * @param handler general Question correction operation
+	 * @throws NullPointerException if handler is null
 	 */
 	public void setQuestionCorrectionHandler(Consumer<Question> handler) {
-		if (handler == null) {
-			throw new NullPointerException("handler");
-		}
-
-		// Existing incomplete Question correction remains distinct from adding new
-		// Questions to an incomplete booklet.
+		Objects.requireNonNull(handler, "handler");
 		questionCorrectionHandler = handler;
+		bookletQuestionCorrectionHandler = handler;
 	}
 
 	/**
@@ -666,6 +681,7 @@ public final class CorpusDashboardPane extends VBox {
 		selectedQuestionProblem = null;
 		mcqExplanationFilterActive = true;
 		summaryQuestionFilterActive = true;
+		subjectWideQuestionWork = true;
 		uncapturedQuestionFilterActive = false;
 		refreshDashboard();
 	}
@@ -678,9 +694,13 @@ public final class CorpusDashboardPane extends VBox {
 			changingQuestionFilter = false;
 		}
 		mcqExplanationFilterActive = false;
-		uncapturedQuestionFilterActive = false;
 		selectedQuestionProblem = problem;
 		summaryQuestionFilterActive = completion != QuestionCorpusCompletionFilter.ALL || problem != null;
+
+		// A headline click is always a fresh Subject-wide drill-down.
+		// The previously selected Exam must not restrict the result.
+		subjectWideQuestionWork = true;
+		uncapturedQuestionFilterActive = false;
 		refreshDashboard();
 	}
 
@@ -692,11 +712,12 @@ public final class CorpusDashboardPane extends VBox {
 			changingQuestionFilter = false;
 		}
 
-		// Missing Questions have no persisted Question record.
-		// Filter the structural hierarchy rather than Question Work.
+		// These expected Questions have no persisted Question rows.
+		// Continue to identify their Exams and booklets instead.
 		selectedQuestionProblem = null;
 		mcqExplanationFilterActive = false;
 		summaryQuestionFilterActive = false;
+		subjectWideQuestionWork = false;
 		uncapturedQuestionFilterActive = true;
 		refreshDashboard();
 	}
@@ -964,19 +985,14 @@ public final class CorpusDashboardPane extends VBox {
 		Question existingQuestionWork = firstQuestionCaptureWorkQuestion(selected);
 		if (existingQuestionWork != null) {
 
-			// Existing persisted Questions take precedence over adding another Question.
-			// Legacy imports commonly reach Expected == Found before their Question
-			// content has been captured, so that completion work must not be treated as
-			// over-capture.
-			questionCorrectionHandler.accept(existingQuestionWork);
+			// Booklet Capture Questions first resolves existing unfinished Question
+			// content within the selected source booklet.
+			bookletQuestionCorrectionHandler.accept(existingQuestionWork);
 			return;
 		}
 
-		// Only a genuinely new Question can increase the encountered Question count.
-		// Warn when that addition would meet or exceed the recorded expectation.
-		if (!confirmQuestionCaptureBeyondExpected(selected)) {
-			return;
-		}
+		// Do not warn before a Question code exists. Parts of an existing
+		// source Question do not increase its top-level count.
 		newQuestionCaptureHandler.accept(selected.booklet());
 	}
 
@@ -1019,6 +1035,7 @@ public final class CorpusDashboardPane extends VBox {
 			selectedQuestionProblem = null;
 			mcqExplanationFilterActive = false;
 			summaryQuestionFilterActive = false;
+			subjectWideQuestionWork = false;
 			uncapturedQuestionFilterActive = false;
 		} finally {
 			changingQuestionFilter = false;
@@ -1478,7 +1495,11 @@ public final class CorpusDashboardPane extends VBox {
 				return;
 			}
 
-			// Exam selection owns booklet and Question scope.
+			// An explicit Exam choice ends Subject-wide Question Work.
+			// Programmatic selection during a persistence refresh does not.
+			if (!refreshingExamTable) {
+				subjectWideQuestionWork = false;
+			}
 			showSelectedExam(selected, null);
 			refreshQuestionWork();
 		});
@@ -1493,16 +1514,16 @@ public final class CorpusDashboardPane extends VBox {
 				return;
 			}
 
-			// Booklet selection narrows both visible Question work and the explicit
-			// capture actions.
+			// Selecting a saved booklet is an intentional narrowing
+			// of the currently displayed Question Work scope.
+			if (!refreshingExamTable) {
+				subjectWideQuestionWork = false;
+			}
 			showSelectedBooklet(selected);
 			refreshQuestionWork();
 		});
 		questionTable.getSelectionModel().getSelectedItems()
 				.addListener((ListChangeListener<QuestionCorpusWorkItem>) _ -> {
-
-					// Bulk response-type resolution and single-Question correction derive
-					// independently from the same explicit table selection.
 					updateBulkActionState();
 					updateQuestionActionState();
 				});
@@ -1523,41 +1544,6 @@ public final class CorpusDashboardPane extends VBox {
 		missingMcqExplanationButton.setId("corpus-dashboard-summary-missing-mcq-explanations");
 		missingMcqExplanationButton
 				.setTooltip(new Tooltip("Show answered MCQs still missing required explanation regions."));
-	}
-
-	private boolean confirmQuestionCaptureBeyondExpected(BookletCorpusStatus status) {
-		Integer expected = status.expectedTopLevelQuestionCount();
-		int found = status.encounteredTopLevelQuestionCount();
-
-		// An unknown expectation, or a genuine shortfall, requires no warning.
-		if (expected == null || found < expected.intValue()) {
-			return true;
-		}
-		ButtonType captureButton = new ButtonType("Capture Another Question", ButtonBar.ButtonData.OK_DONE);
-		Alert confirmation = new Alert(Alert.AlertType.WARNING);
-
-		// Keep this warning owned by the Dashboard when it is currently displayed.
-		if (getScene() != null && getScene().getWindow() != null) {
-			confirmation.initOwner(getScene().getWindow());
-		}
-		confirmation.setTitle("Capture Questions");
-		confirmation.getDialogPane().setId("corpus-dashboard-capture-count-confirmation");
-		if (found == expected.intValue()) {
-			confirmation.setHeaderText("Expected Question count already reached.");
-			confirmation.setContentText("This booklet records " + expected + " expected top-level Questions and "
-					+ found + " have already been found.\n\n"
-					+ "Capture another Question only if the source genuinely contains another Question. "
-					+ "If the expected count is wrong, correct it in Exam / Assets.");
-		} else {
-			confirmation.setHeaderText("Found Question count already exceeds the expectation.");
-			confirmation.setContentText("This booklet records " + expected + " expected top-level Questions, but "
-					+ found + " have already been found.\n\n" + "Check the booklet before capturing another Question. "
-					+ "If the expected count is wrong, correct it in Exam / Assets.");
-		}
-		confirmation.getButtonTypes().setAll(captureButton, ButtonType.CANCEL);
-
-		// Only the explicit Capture Another Question decision may continue.
-		return confirmation.showAndWait().orElse(ButtonType.CANCEL) == captureButton;
 	}
 
 	private TableCell<BookletCorpusStatus, Boolean> createApplicabilityReviewCell() {
@@ -2138,45 +2124,60 @@ public final class CorpusDashboardPane extends VBox {
 	private void refreshExamTable(Long preferredExamId, Long preferredBookletId) {
 		updateExamEmptyState();
 		List<ExamCorpusStatus> filtered = filteredExamStatuses();
-		examTable.getItems().setAll(filtered);
-		ExamCorpusStatus preferred = preferredExamId == null ? null
-				: filtered.stream().filter(status -> status.exam().getId() == preferredExamId.longValue()).findFirst()
-						.orElse(null);
-		if (preferred != null) {
-			examTable.getSelectionModel().select(preferred);
-			showSelectedExam(preferred, preferredBookletId);
-			return;
-		}
-		if (!filtered.isEmpty()) {
+		refreshingExamTable = true;
+		try {
+			examTable.getItems().setAll(filtered);
+			if (subjectWideQuestionWork) {
 
-			// The first visible Exam is selected automatically. Booklet scope remains
-			// unselected unless a compatible previous booklet can be restored.
-			examTable.getSelectionModel().selectFirst();
-			return;
+				// No Exam may appear selected while Question Work contains
+				// Questions from several Exams. Clicking an Exam later
+				// establishes its own explicit narrower scope.
+				examTable.getSelectionModel().clearSelection();
+				clearSelectedExam();
+				return;
+			}
+			ExamCorpusStatus preferred = preferredExamId == null ? null
+					: filtered.stream().filter(status -> status.exam().getId() == preferredExamId.longValue())
+							.findFirst().orElse(null);
+			if (preferred != null) {
+				examTable.getSelectionModel().select(preferred);
+				showSelectedExam(preferred, preferredBookletId);
+				return;
+			}
+			if (!filtered.isEmpty()) {
+
+				// Ordinary Dashboard entry retains its existing first-Exam
+				// selection when no headline drill-down is active.
+				examTable.getSelectionModel().selectFirst();
+				return;
+			}
+			examTable.getSelectionModel().clearSelection();
+			clearSelectedExam();
+		} finally {
+			refreshingExamTable = false;
 		}
-		examTable.getSelectionModel().clearSelection();
-		clearSelectedExam();
 	}
 
 	private void refreshQuestionWork() {
 		List<QuestionCorpusWorkItem> workItems;
-		if (mcqExplanationFilterActive) {
+		if (subjectWideQuestionWork) {
 
-			// Missing explanations may belong to ordinarily complete Questions, so they
-			// cannot be obtained from the standard incomplete-Question queue.
+			// The exact same Subject and structural scope supplies both
+			// the headline count and its displayed Question records.
+			workItems = summaryFilteredQuestionWork();
+		} else if (mcqExplanationFilterActive) {
 			workItems = missingMcqExplanationWorkItems(questionsForSelectedScope());
 		} else {
+
+			// An explicit Exam/booklet selection narrows Question Work
+			// without discarding the requested completeness filter.
 			workItems = QuestionCorpusQueue.build(questionsForSelectedScope(), questionWorkFilter());
 		}
 		questionTable.getItems().setAll(workItems);
-
-		// Reapply the table's current source-aware sort after replacing its rows. The
-		// default is Provider -> Year -> Exam -> Booklet -> natural Question code.
 		questionTable.sort();
 
-		// A scope rebuild must never transfer the old selected row index onto a
-		// different Question. Any deliberate post-correction restoration occurs later
-		// by persistent Question ID.
+		// Never carry a previous row selection into a different scope,
+		// where the same row index could represent another Question.
 		questionTable.getSelectionModel().clearSelection();
 		questionResultCountLabel.setText(String.format("Showing %d Questions", workItems.size()));
 		updateBulkActionState();

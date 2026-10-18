@@ -533,11 +533,10 @@ public final class SqliteAnswerWriter {
 		}
 	}
 
-	private void assignAnswerFile(Connection connection, ExamBooklet booklet, AnswerFile answerFile)
-			throws SQLException {
+	void assignAnswerFile(Connection connection, ExamBooklet booklet, AnswerFile answerFile) throws SQLException {
 
-		// Match both Exam identities in SQL as well as in Java. This rejects stale or
-		// fabricated domain objects without relying only on caller-side validation.
+		// Check both persisted Exam identities in SQL. This overload is used by
+		// SqliteExamImporter inside the same transaction as new booklet creation.
 		try (PreparedStatement statement = connection.prepareStatement("""
 				UPDATE exam_booklets
 				SET answer_file_id = ?

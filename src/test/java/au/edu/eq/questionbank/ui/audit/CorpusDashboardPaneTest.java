@@ -56,18 +56,14 @@ import au.edu.eq.questionbank.service.audit.QuestionCorpusSummary;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusWorkItem;
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingCoverage;
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingLevelCoverage;
-import javafx.application.Platform;
 import javafx.css.PseudoClass;
 import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
-import javafx.scene.control.ButtonBar;
-import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
-import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.ScrollPane;
@@ -443,45 +439,7 @@ class CorpusDashboardPaneTest {
 
 	@Test
 	@SuppressWarnings("unchecked")
-	void captureQuestionsCompletesExistingQuestionWorkBeforeOfferingNewQuestion(FxRobot robot) {
-		AtomicReference<Question> routedQuestion = new AtomicReference<>();
-		AtomicReference<ExamBooklet> routedNewBooklet = new AtomicReference<>();
-
-		// Reproduce the legacy condition: Expected equals Found, but persisted
-		// Questions
-		// in the booklet still require Question-content capture.
-		BookletCorpusStatus atExpectedWithExistingWork = new BookletCorpusStatus(fixture.paper2, true,
-				fixture.markingGuide, 30, 34, fixture.paper2Status.questionsWithoutDescriptorCount(),
-				fixture.paper2Status.questionSummary(), fixture.paper2Status.mcqExplanationCoverage(),
-				EnumSet.noneOf(BookletCorpusFinding.class));
-		robot.interact(() -> {
-			pane.setNewQuestionCaptureHandler(routedNewBooklet::set);
-			pane.setQuestionCorrectionHandler(routedQuestion::set);
-		});
-		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
-		Button captureQuestions = robot.lookup("#corpus-dashboard-capture-questions").queryButton();
-		robot.interact(() -> {
-			booklets.getItems().setAll(atExpectedWithExistingWork);
-			booklets.getSelectionModel().select(atExpectedWithExistingWork);
-		});
-
-		// Existing Question work remains actionable even though the Exam is COMPLETE
-		// and
-		// the booklet has already reached its expected Question count.
-		assertFalse(captureQuestions.isDisable());
-		robot.interact(captureQuestions::fire);
-
-		// Capture Questions must resolve the first existing Question-side task rather
-		// than offer to create an additional Question.
-		assertNotNull(routedQuestion.get());
-		assertEquals("Q7", routedQuestion.get().getQuestionCode());
-		assertNull(routedNewBooklet.get());
-		assertTrue(robot.lookup("#corpus-dashboard-capture-count-confirmation").tryQuery().isEmpty());
-	}
-
-	@Test
-	@SuppressWarnings("unchecked")
-	void captureQuestionsWarnsWhenExpectedCountAlreadyReached(FxRobot robot) throws TimeoutException {
+	void captureQuestionsAtExpectedCountStartsCaptureWithoutPrematureWarning(FxRobot robot) {
 		AtomicReference<ExamBooklet> routedBooklet = new AtomicReference<>();
 		BookletCorpusStatus atExpectedCount = new BookletCorpusStatus(fixture.activePaper, true, null, 10, 10, 0,
 				new QuestionCorpusSummary(10, 10, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0),
@@ -490,37 +448,57 @@ class CorpusDashboardPaneTest {
 		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
 		Button captureQuestions = robot.lookup("#corpus-dashboard-capture-questions").queryButton();
 		robot.interact(() -> {
-
-			// Construct the exact live-data condition under test: ACTIVE booklet, PDF
-			// available, and encountered count equal to its expected count.
 			booklets.getItems().setAll(atExpectedCount);
 			booklets.getSelectionModel().select(atExpectedCount);
 		});
 		assertFalse(captureQuestions.isDisable());
-		Platform.runLater(captureQuestions::fire);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
-				() -> robot.lookup("#corpus-dashboard-capture-count-confirmation").tryQuery().isPresent());
-		DialogPane warning = robot.lookup("#corpus-dashboard-capture-count-confirmation").queryAs(DialogPane.class);
-		assertTrue(warning.getContentText().contains("10 expected top-level Questions"));
-		assertTrue(warning.getContentText().contains("10 have already been found"));
-		Node cancelNode = warning.lookupButton(ButtonType.CANCEL);
-		assertTrue(cancelNode instanceof Button);
 
-		// Cancelling the warning must not route into capture.
-		robot.interact(((Button) cancelNode)::fire);
-		assertNull(routedBooklet.get());
-		Platform.runLater(captureQuestions::fire);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
-				() -> robot.lookup("#corpus-dashboard-capture-count-confirmation").tryQuery().isPresent());
-		warning = robot.lookup("#corpus-dashboard-capture-count-confirmation").queryAs(DialogPane.class);
-		ButtonType proceedType = warning.getButtonTypes().stream()
-				.filter(type -> type.getButtonData() == ButtonBar.ButtonData.OK_DONE).findFirst().orElseThrow();
-		Node proceedNode = warning.lookupButton(proceedType);
-		assertTrue(proceedNode instanceof Button);
-
-		// Only an explicit second decision allows capture beyond the recorded count.
-		robot.interact(((Button) proceedNode)::fire);
+		// Expected-count confirmation now occurs after the proposed new Question
+		// code is known, not when entering the selected booklet.
+		robot.interact(captureQuestions::fire);
+		assertNotNull(routedBooklet.get());
 		assertEquals(fixture.activePaper.getId(), routedBooklet.get().getId());
+		assertTrue(robot.lookup("#corpus-dashboard-capture-count-confirmation").tryQuery().isEmpty());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void captureQuestionsCompletesExistingQuestionWorkBeforeOfferingNewQuestion(FxRobot robot) {
+		AtomicReference<Question> generalCorrection = new AtomicReference<>();
+		AtomicReference<Question> bookletCorrection = new AtomicReference<>();
+		AtomicReference<ExamBooklet> routedNewBooklet = new AtomicReference<>();
+		BookletCorpusStatus atExpectedWithExistingWork = new BookletCorpusStatus(fixture.paper2, true,
+				fixture.markingGuide, 30, 34, fixture.paper2Status.questionsWithoutDescriptorCount(),
+				fixture.paper2Status.questionSummary(), fixture.paper2Status.mcqExplanationCoverage(),
+				EnumSet.noneOf(BookletCorpusFinding.class));
+		robot.interact(() -> {
+			pane.setNewQuestionCaptureHandler(routedNewBooklet::set);
+			pane.setQuestionCorrectionHandler(generalCorrection::set);
+			pane.setBookletQuestionCorrectionHandler(bookletCorrection::set);
+		});
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		Button captureQuestions = robot.lookup("#corpus-dashboard-capture-questions").queryButton();
+		robot.interact(() -> {
+			booklets.getItems().setAll(atExpectedWithExistingWork);
+			booklets.getSelectionModel().select(atExpectedWithExistingWork);
+		});
+		assertFalse(captureQuestions.isDisable());
+		robot.interact(captureQuestions::fire);
+
+		// The booklet-specific route owns this action.
+		assertNotNull(bookletCorrection.get());
+		assertEquals("Q7", bookletCorrection.get().getQuestionCode());
+		assertEquals(fixture.paper2.getId(), bookletCorrection.get().getBooklet().getId());
+
+		// General correction must not receive booklet-entry work.
+		assertNull(generalCorrection.get());
+
+		// Existing incomplete work must not create another Question.
+		assertNull(routedNewBooklet.get());
+
+		// Completing an existing Question must not warn about
+		// increasing the top-level Question count.
+		assertTrue(robot.lookup("#corpus-dashboard-capture-count-confirmation").tryQuery().isEmpty());
 	}
 
 	@Test
@@ -538,7 +516,11 @@ class CorpusDashboardPaneTest {
 		// Missing Answers deliberately narrows all three Dashboard hierarchy levels.
 		robot.interact(missingAnswers::fire);
 		assertEquals(1, exams.getItems().size());
-		assertEquals(1, booklets.getItems().size());
+
+		// A headline drill-down has Subject scope until an Exam is
+		// deliberately selected. No single Exam owns the displayed work.
+		assertNull(exams.getSelectionModel().getSelectedItem());
+		assertTrue(booklets.getItems().isEmpty());
 		assertEquals(2, questions.getItems().size());
 
 		// Clear means remove every Dashboard-local restriction, not merely the
@@ -1177,6 +1159,36 @@ class CorpusDashboardPaneTest {
 	}
 
 	@Test
+	@SuppressWarnings("unchecked")
+	void headlineTotalShowsFiveHundredQuestionsAcrossExams(FxRobot robot) {
+		List<Question> manyQuestions = new ArrayList<>();
+
+		// Both Exams contribute to the headline count. This is
+		// deliberately larger than the ordinary small test fixture.
+		for (int number = 1; number <= 500; number++) {
+			ExamBooklet booklet = number % 2 == 0 ? fixture.paper1 : fixture.activePaper;
+			manyQuestions.add(fixture.question(5000 + number, booklet, "Q" + number,
+					QuestionResponseType.MULTIPLE_CHOICE, true, false));
+		}
+		robot.interact(
+				() -> pane.replaceData(List.of(fixture.completeExamStatus, fixture.activeExamStatus), manyQuestions));
+		Button total = robot.lookup("#corpus-dashboard-summary-total").queryButton();
+		TableView<QuestionCorpusWorkItem> work = robot.lookup("#corpus-dashboard-question-work")
+				.queryAs(TableView.class);
+		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		ComboBox<QuestionCorpusCompletionFilter> show = robot.lookup("#corpus-dashboard-question-view")
+				.queryAs(ComboBox.class);
+		Label count = robot.lookup("#corpus-dashboard-question-count").queryAs(Label.class);
+		assertEquals("500 Questions", total.getText());
+		robot.interact(total::fire);
+		assertEquals(QuestionCorpusCompletionFilter.ALL, show.getValue());
+		assertEquals(500, work.getItems().size());
+		assertEquals("Showing 500 Questions", count.getText());
+		assertNull(exams.getSelectionModel().getSelectedItem());
+		assertEquals(2, work.getItems().stream().map(item -> item.question().getExam().getId()).distinct().count());
+	}
+
+	@Test
 	void horizontalScrollRowsKeepLabelsReadableAfterResize(FxRobot robot) {
 		ScrollPane filters = robot.lookup("#corpus-dashboard-exam-filters-scroll").queryAs(ScrollPane.class);
 		Label providerLabel = (Label) ((HBox) filters.getContent()).getChildren().get(0);
@@ -1370,15 +1382,18 @@ class CorpusDashboardPaneTest {
 		robot.interact(() -> pane.replaceData(statuses, initial));
 		assertEquals("2 Missing descriptors", missingDescriptors.getText());
 
-		// A Subject-level drill-down keeps only matching Exams and booklets.
+		// The Subject-level summary exposes every matching Question,
+		// including Questions under different Exams.
 		robot.interact(missingDescriptors::fire);
 		assertEquals(2, exams.getItems().size());
-		assertEquals(1, booklets.getItems().size());
-		assertEquals(fixture.paper2.getId(), booklets.getItems().getFirst().booklet().getId());
-		assertEquals(1, questions.getItems().size());
-		assertEquals(missingComplete.getId(), questions.getItems().getFirst().question().getId());
+		assertNull(exams.getSelectionModel().getSelectedItem());
+		assertTrue(booklets.getItems().isEmpty());
+		assertEquals(2, questions.getItems().size());
+		assertTrue(questions.getItems().stream().anyMatch(item -> item.question().getId() == missingComplete.getId()));
+		assertTrue(questions.getItems().stream().anyMatch(item -> item.question().getId() == missingActive.getId()));
 
-		// Selecting the other Exam must not lose the active Descriptor filter.
+		// Selecting an Exam deliberately narrows the existing Descriptor
+		// filter to that examination.
 		robot.interact(() -> exams.getSelectionModel().select(fixture.activeExamStatus));
 		assertEquals(1, booklets.getItems().size());
 		assertEquals(fixture.activePaper.getId(), booklets.getItems().getFirst().booklet().getId());
@@ -1504,6 +1519,12 @@ class CorpusDashboardPaneTest {
 		// and booklet that own the outstanding explanation work.
 		assertEquals(1, exams.getItems().size());
 		assertEquals(fixture.completeExam.getId(), exams.getItems().getFirst().exam().getId());
+
+		// The headline first shows Subject-wide Question Work.
+		// Select the relevant Exam before inspecting its booklet rows.
+		assertNull(exams.getSelectionModel().getSelectedItem());
+		assertEquals(1, questions.getItems().size());
+		robot.interact(() -> exams.getSelectionModel().selectFirst());
 		assertEquals(1, booklets.getItems().size());
 		assertEquals(fixture.paper1.getId(), booklets.getItems().getFirst().booklet().getId());
 		TableColumn<BookletCorpusStatus, String> bookletProblemColumn = booklets.getColumns().stream()
@@ -1892,44 +1913,98 @@ class CorpusDashboardPaneTest {
 		Button missingAnswers = robot.lookup("#corpus-dashboard-summary-missing-answer").queryButton();
 		String subjectCount = missingAnswers.getText();
 
-		// The Subject-level Missing Answers summary must narrow every lower hierarchy
-		// level to records that actually contribute to that count.
+		// The Subject-level Missing Answers summary shows every matching
+		// Question, even when the earlier selected Exam was narrower.
 		robot.interact(missingAnswers::fire);
 		assertTrue(exams.getItems().stream().allMatch(status -> status.questionSummary().missingAnswer() > 0));
-		assertTrue(booklets.getItems().stream().allMatch(status -> status.questionSummary().missingAnswer() > 0));
+		assertNull(exams.getSelectionModel().getSelectedItem());
+		assertTrue(booklets.getItems().isEmpty());
+		assertEquals(2, questions.getItems().size());
 		assertTrue(questions.getItems().stream()
 				.allMatch(item -> item.status().hasProblem(QuestionCorpusProblem.MISSING_ANSWER)));
-
-		// Drill-down must not rewrite its own Subject-level summary count.
 		assertEquals(subjectCount, missingAnswers.getText());
 	}
 
 	@Test
 	@SuppressWarnings("unchecked")
-	void summaryButtonsFilterQuestionWorkWithoutChangingExamSelection(FxRobot robot) {
+	void summaryButtonsShowAllMatchingQuestionsThenNarrowToExamAndBooklet(FxRobot robot) {
+
+		// Add a genuinely incomplete Question in the second Exam,
+		// so a Subject-wide Need attention count cannot accidentally
+		// pass by showing only the first Exam.
+		Question activeIncomplete = fixture.question(205, fixture.activePaper, "Q3",
+				QuestionResponseType.WRITTEN_RESPONSE, false, false);
+		List<Question> allQuestions = new ArrayList<>(fixture.questions());
+		allQuestions.add(activeIncomplete);
+		List<Question> activeQuestions = allQuestions.stream()
+				.filter(question -> question.getBooklet().getId() == fixture.activePaper.getId()).toList();
+		BookletCorpusStatus updatedActiveBooklet = BookletCorpusAudit.assess(fixture.activePaper, activeQuestions, null,
+				true);
+		ExamCorpusStatus updatedActiveExam = ExamCorpusAudit.assess(fixture.activeExam,
+				new ExamAssetExpectations(2, 1, 0, 0), List.of(updatedActiveBooklet));
+		List<ExamCorpusStatus> statuses = List.of(fixture.completeExamStatus, updatedActiveExam);
+		robot.interact(() -> pane.replaceData(statuses, allQuestions));
 		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
-		TableView<QuestionCorpusWorkItem> questions = robot.lookup("#corpus-dashboard-question-work")
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		TableView<QuestionCorpusWorkItem> work = robot.lookup("#corpus-dashboard-question-work")
 				.queryAs(TableView.class);
+		ComboBox<QuestionCorpusCompletionFilter> show = robot.lookup("#corpus-dashboard-question-view")
+				.queryAs(ComboBox.class);
+		ComboBox<Integer> years = robot.lookup("#corpus-dashboard-filter-year").queryAs(ComboBox.class);
+		Label count = robot.lookup("#corpus-dashboard-question-count").queryAs(Label.class);
 		Button total = robot.lookup("#corpus-dashboard-summary-total").queryButton();
 		Button attention = robot.lookup("#corpus-dashboard-summary-attention").queryButton();
-		Button missingAnswer = robot.lookup("#corpus-dashboard-summary-missing-answer").queryButton();
-		assertEquals("5 Questions", total.getText());
-		assertEquals("3 Need attention", attention.getText());
-		assertEquals("2 Missing answers", missingAnswer.getText());
+		assertEquals("6 Questions", total.getText());
+		assertEquals("4 Need attention", attention.getText());
 
-		// Default Question view is Needs attention for the selected 2025 Exam.
-		assertEquals(3, questions.getItems().size());
-		assertEquals(fixture.completeExamStatus, exams.getSelectionModel().getSelectedItem());
-		robot.interact(missingAnswer::fire);
-		assertEquals(2, questions.getItems().size());
-		assertTrue(questions.getItems().stream().allMatch(item -> item.status()
-				.hasProblem(au.edu.eq.questionbank.service.audit.QuestionCorpusProblem.MISSING_ANSWER)));
-
-		// Clicking the Subject-scope total changes only the Question-work filter. It
-		// deliberately leaves the selected Exam unchanged.
+		// Subject-wide All Questions must include both Exams.
 		robot.interact(total::fire);
-		assertEquals(4, questions.getItems().size());
-		assertEquals(fixture.completeExamStatus, exams.getSelectionModel().getSelectedItem());
+		assertEquals(QuestionCorpusCompletionFilter.ALL, show.getValue());
+		assertEquals(6, work.getItems().size());
+		assertEquals("Showing 6 Questions", count.getText());
+		assertNull(exams.getSelectionModel().getSelectedItem());
+		assertTrue(booklets.getItems().isEmpty());
+
+		// Choosing an Exam narrows All Questions to that Exam.
+		robot.interact(() -> exams.getSelectionModel().select(fixture.completeExamStatus));
+		assertEquals(4, work.getItems().size());
+		assertEquals("Showing 4 Questions", count.getText());
+
+		// Choosing a booklet narrows further.
+		robot.interact(() -> booklets.getSelectionModel().select(fixture.paper1Status));
+		assertEquals(1, work.getItems().size());
+		assertEquals(fixture.paper1.getId(), work.getItems().getFirst().question().getBooklet().getId());
+
+		// A headline click discards the previous Exam/booklet scope.
+		robot.interact(attention::fire);
+		assertEquals(QuestionCorpusCompletionFilter.INCOMPLETE, show.getValue());
+		assertEquals(4, work.getItems().size());
+		assertEquals("Showing 4 Questions", count.getText());
+		assertNull(exams.getSelectionModel().getSelectedItem());
+		assertTrue(booklets.getItems().isEmpty());
+		assertTrue(work.getItems().stream().anyMatch(item -> item.question().getId() == activeIncomplete.getId()));
+
+		// A persistence refresh must preserve the Subject-wide scope.
+		robot.interact(() -> pane.replaceData(statuses, allQuestions));
+		assertEquals(4, work.getItems().size());
+		assertNull(exams.getSelectionModel().getSelectedItem());
+
+		// Structural filters apply to both the headline and its rows.
+		robot.interact(() -> years.setValue(2024));
+		assertEquals("1 Need attention", attention.getText());
+		assertEquals(1, work.getItems().size());
+		assertEquals(activeIncomplete.getId(), work.getItems().getFirst().question().getId());
+		robot.interact(() -> years.setValue(null));
+		assertEquals("4 Need attention", attention.getText());
+		assertEquals(4, work.getItems().size());
+
+		// Selecting the active Exam switches to its own incomplete work.
+		robot.interact(() -> exams.getSelectionModel().select(updatedActiveExam));
+		assertEquals(1, work.getItems().size());
+		assertEquals("Showing 1 Questions", count.getText());
+		robot.interact(() -> booklets.getSelectionModel().select(updatedActiveBooklet));
+		assertEquals(1, work.getItems().size());
+		assertEquals(activeIncomplete.getId(), work.getItems().getFirst().question().getId());
 	}
 
 	@Test

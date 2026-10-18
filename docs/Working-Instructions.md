@@ -67,6 +67,72 @@ Include inline `//` comments that explain the algorithmic meaning of non-obvious
 
 When tests contain nested helper classes or fixtures, distinguish the outer test class from the nested class explicitly.
 
+### Mandatory visual formatting for Java code changes
+
+The following rules supplement all preceding Java code-change instructions. They change the presentation format, not the existing requirements for code content, precision, completeness or ordering.
+
+1. Begin each implementation batch with a level-two Markdown heading: `## Batch nn: Description`.
+
+2. Every time the target class changes, use a level-three Markdown heading containing the **fully qualified class name in bold**, for example:
+   `### **au.edu.eq.questionbank.repository.assessment.SqliteExamWriter**`.  It MUST BE in a bigger font than the method name font.
+
+3. Within each class, give every changed method, constructor or field its own level-four Markdown heading, **in bold**, using the actual method signature or field name, for example:
+   `#### **findOrCreateExams(Subject subject, List<ExamRegistration> registrations)**`
+
+4. Immediately beneath the method heading, display the operation in bold: **ADD**, **DELETE**, **REPLACE** or **EDIT**.
+
+5. Provide the complete copy/paste-ready code in a visible, syntax-highlighted fenced code block. Never substitute descriptions, abbreviated code or references to previous responses for required code.
+
+6. Group all changes belonging to one class together. Start a new level-three class heading whenever switching classes, including when moving between production and test classes. Never place a test method beneath the heading of a production class.
+
+7. Explicitly identify the outer class or nested class that owns each test method. Verify package visibility of helper classes before referencing them in code.
+
+8. Finish every batch with a `### Verification` heading and complete, copyable Maven test commands.
+
+9. If a correction is required, reproduce the affected code and all outstanding verification commands rather than relying on an earlier response being visible.
+
+10. These presentation rules take precedence over the older `Class:` and `Method:` label format wherever the formats differ. All other existing working instructions remain mandatory.
+
+## Chat Continuity Protocol
+
+Monitor this conversation for signs that accumulated context may threaten continuity.
+
+You cannot directly measure remaining context capacity. Instead, assess risk qualitatively using conversation length, accumulated code, tool outputs, number of issues addressed and complexity of previous decisions.
+
+Use three classifications: LOW, MODERATE and HIGH.
+
+**Checkpoint rules:**
+
+1. Reassess after completing each GitHub issue or pull request.
+2. Reassess before beginning a substantial new implementation.
+3. Reassess after unusually long debugging, code-review or investigation sessions.
+4. Reassess immediately whenever I say "capacity check".
+
+Do not routinely report LOW status.
+
+When risk becomes MODERATE, briefly recommend moving to a new chat at the next logical checkpoint.
+
+When risk becomes HIGH, recommend transferring before starting further substantial work.
+
+When I request "prepare handover", produce a self-contained handover containing:
+
+- Current issue, sprint and development objective.
+- Current branch and relevant GitHub references, where verified.
+- Completed work and outstanding tasks.
+- Important design decisions and constraints.
+- Implementation and testing state.
+- Known problems or blockers.
+- Exact recommended next action.
+- Instructions for the new conversation to consult the authoritative GitHub repository and `docs/Working-Instructions.md`.
+
+Distinguish verified information from assumptions. Do not invent repository state.
+
+End the handover with a ready-to-copy opening prompt for the new conversation.
+
+Do not interrupt an active implementation unnecessarily. Prefer issue boundaries for transfers.
+
+The purpose is to protect development continuity, not to predict an exact context limit.
+
 ### TestFX
 
 When adding or modifying a TestFX workflow test, audit the complete test method and every helper it uses for `robot.clickOn(...)` or other pointer-based activation of ordinary controls.

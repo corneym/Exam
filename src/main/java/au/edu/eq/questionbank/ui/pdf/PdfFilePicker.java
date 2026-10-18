@@ -72,6 +72,25 @@ public final class PdfFilePicker {
 	}
 
 	/**
+	 * Sets the preferred directory for the next PDF file selection.
+	 *
+	 * <p>
+	 * This supports workflows in which a related non-PDF file, such as a legacy
+	 * Excel workbook, has already established a useful folder. After a successful
+	 * PDF selection, the normal remembered-directory behaviour resumes.
+	 *
+	 * <p>
+	 * If the preferred directory becomes unavailable, the chooser falls back to its
+	 * configured PDF data root.
+	 *
+	 * @param directory preferred starting directory
+	 * @throws NullPointerException if {@code directory} is null
+	 */
+	public void preferInitialDirectory(Path directory) {
+		lastSelectedDirectory = Objects.requireNonNull(directory, "directory").toAbsolutePath().normalize();
+	}
+
+	/**
 	 * Shows a PDF chooser and validates the selected path.
 	 *
 	 * @param stage              the owner stage

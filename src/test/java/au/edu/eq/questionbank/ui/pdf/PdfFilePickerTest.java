@@ -85,6 +85,42 @@ class PdfFilePickerTest {
 	}
 
 	@Test
+	void preferredWorkbookDirectoryIsUsedOnceAndPdfHistoryResumes() throws Exception {
+		Path previousDirectory = Files.createDirectory(dataRoot.resolve("previous"));
+		Path workbookDirectory = Files.createDirectory(dataRoot.resolve("workbooks"));
+		Path pdfDirectory = Files.createDirectory(dataRoot.resolve("pdfs"));
+		Path previousPdf = Files.createFile(previousDirectory.resolve("previous.pdf"));
+		Path selectedPdf = Files.createFile(pdfDirectory.resolve("mcq.pdf"));
+		AtomicInteger invocation = new AtomicInteger();
+		List<Path> initialDirectories = new ArrayList<>();
+		PdfFilePicker picker = new PdfFilePicker(dataRoot, (chooser, _) -> {
+			initialDirectories.add(chooser.getInitialDirectory().toPath());
+			return switch (invocation.getAndIncrement()) {
+			case 0 -> previousPdf.toFile();
+			case 1 -> null;
+			case 2 -> selectedPdf.toFile();
+			case 3 -> null;
+			default -> throw new AssertionError("Unexpected file chooser invocation");
+			};
+		});
+
+		// Simulate directory history established by earlier PDF work.
+		assertEquals(previousPdf, picker.chooseAnyPdf(null, "Previous PDF"));
+
+		// A new legacy import overrides that history with the
+		// source spreadsheet directory.
+		picker.preferInitialDirectory(workbookDirectory);
+
+		// Cancelling must not discard the preferred directory.
+		assertNull(picker.chooseAnyPdf(null, "Choose Question booklet PDF"));
+		assertEquals(selectedPdf, picker.chooseAnyPdf(null, "Choose Question booklet PDF"));
+
+		// Once a PDF is selected, its directory becomes authoritative.
+		assertNull(picker.chooseAnyPdf(null, "Choose Question booklet PDF"));
+		assertEquals(List.of(dataRoot, workbookDirectory, workbookDirectory, pdfDirectory), initialDirectories);
+	}
+
+	@Test
 	void rejectsSiblingWhoseNameOnlySharesTheRootPrefix() {
 		PdfFilePicker picker = new PdfFilePicker(dataRoot);
 		Path sibling = dataRoot.resolveSibling(dataRoot.getFileName() + "-other").resolve("exam.pdf");

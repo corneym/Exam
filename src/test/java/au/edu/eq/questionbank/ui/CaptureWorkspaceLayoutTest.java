@@ -34,6 +34,9 @@ import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
+import au.edu.eq.questionbank.importer.legacy.LegacyExamIdentity;
+import au.edu.eq.questionbank.importer.legacy.LegacyExamKey;
+import au.edu.eq.questionbank.importer.legacy.LegacyMappedBookletRequirement;
 import au.edu.eq.questionbank.importer.legacy.LegacyQuestionImportResult;
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.AnswerRegion;
@@ -53,6 +56,8 @@ import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.audit.BookletCorpusAudit;
+import au.edu.eq.questionbank.service.audit.BookletCorpusStatus;
 import au.edu.eq.questionbank.ui.exam.ExamAssetsPane;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
@@ -70,9 +75,11 @@ import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.input.ContextMenuEvent;
+import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
@@ -273,6 +280,19 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		fireControl(robot, "#change-exam-assets");
 		WaitForAsyncUtils.waitForFxEvents();
 		CheckBox explanations = lookup(robot, "#exam-assets-answer-explanations-" + answerFile.getId(), CheckBox.class);
+		VBox row = lookup(robot, "#exam-assets-answer-file-" + answerFile.getId(), VBox.class);
+		HBox headingRow = lookup(robot, "#exam-assets-answer-heading-row-" + answerFile.getId(), HBox.class);
+		Label heading = lookup(robot, "#exam-assets-answer-heading-" + answerFile.getId(), Label.class);
+		Button view = lookup(robot, "#exam-assets-answer-view-" + answerFile.getId(), Button.class);
+		Button delete = lookup(robot, "#exam-assets-answer-delete-" + answerFile.getId(), Button.class);
+
+		// Two visual rows: bold title and actions, then explanation metadata.
+		assertEquals(List.of(headingRow, explanations), row.getChildren());
+		assertEquals(List.of(heading, view, delete), headingRow.getChildren());
+		assertEquals(answerFile.getName(), heading.getText());
+
+		// The persisted source filename is retained for inspection on hover.
+		assertEquals("marking-guide.pdf", heading.getTooltip().getText());
 
 		// Newly created AnswerFiles default to no recorded explanations.
 		assertFalse(explanations.isSelected());
@@ -496,6 +516,45 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void changingExamClearsAssetPdfPreview(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet originalBooklet = examMetadataPane().getBooklet();
+		Exam originalExam = originalBooklet.getExam();
+		SqliteExamWriter writer = new SqliteExamWriter(new SqliteDatabase(databasePath));
+		Exam mockExam = writer.createExam(originalExam.getSubject(), originalExam.getProvider().getName(),
+				originalExam.getYear(), "Mock Examination");
+		fireControl(robot, "#change-exam-assets");
+		WaitForAsyncUtils.waitForFxEvents();
+		@SuppressWarnings("unchecked")
+		ComboBox<Exam> exams = lookup(robot, "#exam-assets-exam", ComboBox.class);
+		Exam originalChoice = exams.getItems().stream().filter(exam -> exam.getId() == originalExam.getId()).findFirst()
+				.orElseThrow();
+		Exam mockChoice = exams.getItems().stream().filter(exam -> exam.getId() == mockExam.getId()).findFirst()
+				.orElseThrow();
+		robot.interact(() -> exams.getSelectionModel().select(originalChoice));
+
+		// First display the original Exam's Question PDF.
+		fireControl(robot, "#exam-assets-question-view-" + originalBooklet.getId());
+		assertEquals(PdfWorkspacePane.DocumentMode.VIEWER, pdfWorkspace().getDisplayedDocument());
+
+		// Switching Exams must discard both the previous viewer and
+		// underlying capture PDF, even if the new Exam has no booklets.
+		robot.interact(() -> exams.getSelectionModel().select(mockChoice));
+		assertEquals(mockExam.getId(), exams.getValue().getId());
+		assertNull(pdfWorkspace().getExamPdfSession());
+		assertNull(pdfWorkspace().getAnswerPdfSession());
+		assertEquals(PdfWorkspacePane.DocumentMode.EXAM, pdfWorkspace().getDisplayedDocument());
+
+		// Returning to the original Exam must allow normal inspection.
+		robot.interact(() -> exams.getSelectionModel().select(originalChoice));
+		fireControl(robot, "#exam-assets-question-view-" + originalBooklet.getId());
+		assertEquals(PdfWorkspacePane.DocumentMode.VIEWER, pdfWorkspace().getDisplayedDocument());
+
+		// Inspection must not change persisted capture identity.
+		assertEquals(originalBooklet.getId(), examMetadataPane().getBooklet().getId());
+	}
+
+	@Test
 	void dashboardCaptureRoutesExposeOnlyTaskRelevantSections(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Node classification = lookup(robot, "#classification-context", Node.class);
@@ -538,6 +597,54 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(classification.isVisible());
 		assertTrue(questionCapturePane().isVisible());
 		assertTrue(answerCapturePane().isVisible());
+	}
+
+	@Test
+	void dashboardCorrectionOpensSubjectFirstMockPdf(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Exam externalExam = examMetadataPane().getBooklet().getExam();
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
+
+		// Reproduce the production layout: the Mock PDF belongs under
+		// dataRoot/subjects, not under the old PDF root.
+		PdfStore store = new PdfStore(new ManagedDataLayout(applicationConfig.dataRoot()),
+				applicationConfig.pdfDataRoot());
+		Path sourcePdf = createPdf(pdfDataRoot.resolve("mock-question-source.pdf"), 3);
+		Path managedPdf = store.importExamPdf(sourcePdf, externalExam.getSubject().getName(),
+				externalExam.getProvider().getName(), externalExam.getYear(), "Mock Examination");
+		String relativePath = store.relativePath(managedPdf);
+		assertTrue(Files.isRegularFile(managedPdf));
+		assertFalse(Files.exists(applicationConfig.pdfDataRoot().resolve(relativePath)));
+		ExamBooklet mockBooklet = importer.importExam(externalExam.getSubject(), externalExam.getProvider().getName(),
+				externalExam.getYear(), "Mock Examination", "MCQ", relativePath,
+				ExamBookletQuestionFormat.MULTIPLE_CHOICE);
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		Question mockQuestion = new SqliteQuestionRepository(database).save(mockBooklet, "1", "", 1, List.of(),
+				classification, false, null, null, QuestionResponseType.MULTIPLE_CHOICE);
+
+		// Exercise the actual Dashboard correction route, including
+		// asynchronous PDF opening and capture-context activation.
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "showCorpusDashboardQuestionCorrection", new Class<?>[] { Question.class },
+					mockQuestion);
+			return null;
+		}).get();
+		ComboBox<Question> importedQuestions = comboBox(robot, "#imported-question");
+		WaitForAsyncUtils
+				.waitFor(10, TimeUnit.SECONDS,
+						() -> evaluateOnFx(robot, () -> importedQuestions.getValue() != null
+								&& importedQuestions.getValue().getId() == mockQuestion.getId()
+								&& examMetadataPane().getBooklet() != null
+								&& examMetadataPane().getBooklet().getId() == mockBooklet.getId()
+								&& pdfWorkspace().getDisplayedDocument() == PdfWorkspacePane.DocumentMode.EXAM));
+		assertEquals("Mock Examination", examMetadataPane().getBooklet().getExam().getName());
+		assertEquals(mockBooklet.getId(), importedQuestions.getValue().getBooklet().getId());
+
+		// The other examination's identity must remain unchanged.
+		assertEquals("External Assessment", externalExam.getName());
 	}
 
 	@Test
@@ -586,6 +693,108 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		assertFalse(status.isVisible());
 		assertFalse(status.isManaged());
 		assertTrue(robot.lookup("#exam-assets-workspace").tryQuery().isPresent());
+	}
+
+	@Test
+	void dashboardNewQuestionPartsDoNotWarnAtExpectedTopLevelCount(FxRobot robot) throws Exception {
+		ExamBooklet booklet = openDashboardNewQuestionCaptureAtExpectedCount(robot);
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		Button save = lookup(robot, "#save-question", Button.class);
+
+		// The same exact part cannot be captured again. This is ordinary
+		// duplicate-code validation, independent of the expected-count warning.
+		stageDashboardQuestionRegion(robot, "9a");
+		assertTrue(save.isDisabled());
+		assertTrue(lookup(robot, "#question-code-status", Label.class).isVisible());
+
+		// Correct the proposed part before saving. Source 9 already exists,
+		// so 9b adds a Question record but no new top-level Question.
+		robot.interact(() -> questionCode.setText("9b"));
+		assertFalse(save.isDisabled());
+		fireControl(robot, save);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findAll().stream()
+						.anyMatch(question -> question.getBooklet().getId() == booklet.getId()
+								&& "9b".equals(question.getQuestionCode())));
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> questionCode.getText().isEmpty()
+				&& !((ApplicationBusyOverlay) primaryStage.getScene().getRoot()).isBusy()));
+		assertFalse(nodePresentOnFx(robot, primaryStage.getScene().getRoot(), "#question-capture-count-confirmation"));
+		Question partA = repository.findAll().stream().filter(
+				question -> question.getBooklet().getId() == booklet.getId() && "9a".equals(question.getQuestionCode()))
+				.findFirst().orElseThrow();
+		Question partB = repository.findAll().stream().filter(
+				question -> question.getBooklet().getId() == booklet.getId() && "9b".equals(question.getQuestionCode()))
+				.findFirst().orElseThrow();
+		assertTrue(partA.hasSourceQuestion());
+		assertTrue(partB.hasSourceQuestion());
+		assertEquals(partA.getSourceQuestion().getId(), partB.getSourceQuestion().getId());
+
+		// Sequential new capture remains active; adding 9c is likewise
+		// a second new part, not a new numbered source Question.
+		stageDashboardQuestionRegion(robot, "9c");
+		fireControl(robot, save);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findAll().stream()
+						.anyMatch(question -> question.getBooklet().getId() == booklet.getId()
+								&& "9c".equals(question.getQuestionCode())));
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> questionCode.getText().isEmpty()
+				&& !((ApplicationBusyOverlay) primaryStage.getScene().getRoot()).isBusy()));
+		Question partC = repository.findAll().stream().filter(
+				question -> question.getBooklet().getId() == booklet.getId() && "9c".equals(question.getQuestionCode()))
+				.findFirst().orElseThrow();
+		assertEquals(partA.getSourceQuestion().getId(), partC.getSourceQuestion().getId());
+		assertEquals(3, repository.findAll().stream()
+				.filter(question -> question.getBooklet().getId() == booklet.getId()).count());
+		assertEquals(1, BookletCorpusAudit.assess(booklet, repository.findAll(), null, true)
+				.encounteredTopLevelQuestionCount());
+	}
+
+	@Test
+	void dashboardNewTopLevelQuestionWarnsOnSaveAndPreservesDraftOnCancel(FxRobot robot) throws Exception {
+		ExamBooklet booklet = openDashboardNewQuestionCaptureAtExpectedCount(robot);
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		Button save = lookup(robot, "#save-question", Button.class);
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		stageDashboardQuestionRegion(robot, "10");
+		assertFalse(save.isDisabled());
+
+		// showAndWait must not block the test thread. Wait for the actual
+		// Save-time confirmation, not a transient overlay flag.
+		Platform.runLater(save::fire);
+		waitForDialogShowing(robot, "Capture Questions");
+		DialogPane warning = showingDialogPane(robot, "Capture Questions");
+		assertEquals("question-capture-count-confirmation", warning.getId());
+		assertTrue(warning.getContentText().contains("Question 10 introduces a new top-level Question"));
+		assertTrue(warning.getContentText().contains("Expected top-level Questions: 1"));
+		assertTrue(warning.getContentText().contains("Already encountered: 1"));
+		Button cancel = (Button) warning.lookupButton(ButtonType.CANCEL);
+		robot.interact(cancel::fire);
+		waitForDialogHidden(robot, "Capture Questions");
+
+		// Cancel must neither persist 10 nor throw away the accepted region
+		// or entered Question code. The teacher may correct or retry.
+		assertFalse(repository.findAll().stream().anyMatch(question -> question.getBooklet().getId() == booklet.getId()
+				&& "10".equals(question.getQuestionCode())));
+		assertEquals("10", questionCode.getText());
+		assertTrue(questionCapturePane().hasAcceptedRegions());
+		assertFalse(save.isDisabled());
+		Platform.runLater(save::fire);
+		waitForDialogShowing(robot, "Capture Questions");
+		warning = showingDialogPane(robot, "Capture Questions");
+		Button proceed = (Button) warning.getButtonTypes().stream()
+				.filter(type -> "Save New Question".equals(type.getText())).map(warning::lookupButton).findFirst()
+				.orElseThrow();
+		robot.interact(proceed::fire);
+		waitForDialogHidden(robot, "Capture Questions");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findAll().stream()
+						.anyMatch(question -> question.getBooklet().getId() == booklet.getId()
+								&& "10".equals(question.getQuestionCode())));
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> questionCode.getText().isEmpty()
+				&& !((ApplicationBusyOverlay) primaryStage.getScene().getRoot()).isBusy()));
+		assertEquals(2, BookletCorpusAudit.assess(booklet, repository.findAll(), null, true)
+				.encounteredTopLevelQuestionCount());
 	}
 
 	@Test
@@ -649,6 +858,86 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
 		assertTrue(robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
+	}
+
+	@Test
+	void dashboardReturnAllowsEmptyRequiredSharedContextAndProtectsAcceptedContext(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+
+		// Persist a legacy-style incomplete Question that explicitly
+		// requires Shared Context but has no captured regions.
+		Question question = repository.save(booklet, "9a", "", 2, List.of(), classification, true, null, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		assertTrue(question.isSharedContextUnresolved());
+		ApplicationBusyOverlay overlay = (ApplicationBusyOverlay) primaryStage.getScene().getRoot();
+		CaptureSelectionState selectionState = field(application, "captureSelectionState", CaptureSelectionState.class);
+
+		// Open the actual Dashboard Question-correction workflow.
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "showCorpusDashboardQuestionCorrection", new Class<?>[] { Question.class }, question);
+			return null;
+		}).get();
+		ComboBox<Question> imported = comboBox(robot, "#imported-question");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot,
+						() -> imported.getValue() != null && imported.getValue().getId() == question.getId()
+								&& questionCapturePane().isCapturingSharedContext() && !overlay.isBusy()));
+
+		// The Shared Context workflow has started automatically,
+		// but the teacher has not selected or accepted any region.
+		assertFalse(selectionState.hasPendingSelection());
+		assertFalse(questionCapturePane().hasAcceptedRegions());
+		assertTrue(questionCapturePane().isCapturingSharedContext());
+		Button returnDashboard = lookup(robot, "#return-corpus-dashboard", Button.class);
+
+		// This previously produced "Capture work is in progress".
+		fireControl(robot, returnDashboard);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
+		assertFalse(questionCapturePane().isCapturingSharedContext());
+
+		// Abandoning empty capture must not change persisted metadata.
+		assertTrue(repository.findById(question.getId()).orElseThrow().isSharedContextUnresolved());
+
+		// Re-enter the same Question to verify that actual unsaved
+		// Shared Context regions are still protected.
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "showCorpusDashboardQuestionCorrection", new Class<?>[] { Question.class }, question);
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot,
+						() -> imported.getValue() != null && imported.getValue().getId() == question.getId()
+								&& questionCapturePane().isCapturingSharedContext() && !overlay.isBusy()));
+
+		// A PDF drag is intentional here: this test must establish
+		// that a genuine Shared Context region was accepted.
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-question-region");
+		assertTrue(questionCapturePane().hasAcceptedRegions());
+
+		// Modal warning: schedule the action rather than blocking
+		// the test thread with a nested JavaFX event loop.
+		Platform.runLater(returnDashboard::fire);
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> robot.lookup("Capture work is in progress").tryQuery().isPresent());
+		DialogPane warning = robot.lookup(".dialog-pane").queryAs(DialogPane.class);
+		assertEquals("Capture work is in progress", warning.getHeaderText());
+
+		// Dismiss the exact dialog action using its DialogPane.
+		Button ok = (Button) warning.lookupButton(ButtonType.OK);
+		robot.interact(ok::fire);
+
+		// Genuine unsaved capture must leave the teacher in Capture.
+		assertTrue(robot.lookup("#capture-workspace-mode").tryQuery().isPresent());
+		assertTrue(questionCapturePane().hasAcceptedRegions());
+
+		// The accepted context is still transient; no save occurred.
+		assertTrue(repository.findById(question.getId()).orElseThrow().isSharedContextUnresolved());
 	}
 
 	@Test
@@ -1371,6 +1660,93 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void examAssetsQuestionCaptureScopesQueueToSelectedMockBooklet(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet externalBooklet = examMetadataPane().getBooklet();
+		Exam externalExam = externalBooklet.getExam();
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+
+		// Persist incomplete metadata under External Assessment.
+		Question externalQuestion = repository.save(externalBooklet, "1", "", 1, List.of(), classification, false, null,
+				null, QuestionResponseType.WRITTEN_RESPONSE);
+		PdfStore store = new PdfStore(new ManagedDataLayout(applicationConfig.dataRoot()),
+				applicationConfig.pdfDataRoot());
+		Path mockSource = createPdf(pdfDataRoot.resolve("mock-mcq-source.pdf"), 3);
+		Path mockStored = store.importExamPdf(mockSource, externalExam.getSubject().getName(),
+				externalExam.getProvider().getName(), externalExam.getYear(), "Mock Examination");
+		ExamBooklet mockMcq = importer.importExam(externalExam.getSubject(), externalExam.getProvider().getName(),
+				externalExam.getYear(), "Mock Examination", "MCQ", store.relativePath(mockStored),
+				ExamBookletQuestionFormat.MULTIPLE_CHOICE);
+		Question mockQuestion = repository.save(mockMcq, "1", "", 1, List.of(), classification, false, null, null,
+				QuestionResponseType.MULTIPLE_CHOICE);
+
+		// Add a second booklet under the SAME Mock examination.
+		Path mockPaper1Source = createPdf(pdfDataRoot.resolve("mock-paper1-source.pdf"), 4);
+		Path mockPaper1Stored = store.importExamPdf(mockPaper1Source, externalExam.getSubject().getName(),
+				externalExam.getProvider().getName(), externalExam.getYear(), "Mock Examination");
+		ExamBooklet mockPaper1 = importer.importExam(externalExam.getSubject(), externalExam.getProvider().getName(),
+				externalExam.getYear(), "Mock Examination", "Paper 1", store.relativePath(mockPaper1Stored),
+				ExamBookletQuestionFormat.WRITTEN_RESPONSE);
+		repository.save(mockPaper1, "1", "", 1, List.of(), classification, false, null, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+
+		// Sample Examination is a third distinct persisted Exam.
+		Path sampleSource = createPdf(pdfDataRoot.resolve("sample-mcq-source.pdf"), 5);
+		Path sampleStored = store.importExamPdf(sampleSource, externalExam.getSubject().getName(),
+				externalExam.getProvider().getName(), externalExam.getYear(), "Sample Examination");
+		ExamBooklet sampleMcq = importer.importExam(externalExam.getSubject(), externalExam.getProvider().getName(),
+				externalExam.getYear(), "Sample Examination", "MCQ", store.relativePath(sampleStored),
+				ExamBookletQuestionFormat.MULTIPLE_CHOICE);
+		repository.save(sampleMcq, "1", "", 1, List.of(), classification, false, null, null,
+				QuestionResponseType.MULTIPLE_CHOICE);
+
+		// Enter the real Exam/Assets workflow.
+		fireControl(robot, "#change-exam-assets");
+		@SuppressWarnings("unchecked")
+		ComboBox<Exam> examSelector = lookup(robot, "#exam-assets-exam", ComboBox.class);
+		robot.interact(() -> {
+			Exam selectedMock = examSelector.getItems().stream()
+					.filter(exam -> exam.getId() == mockMcq.getExam().getId()).findFirst().orElseThrow();
+			examSelector.getSelectionModel().select(selectedMock);
+		});
+		WaitForAsyncUtils.waitForFxEvents();
+		RadioButton mockSelection = lookup(robot, "#exam-assets-question-select-" + mockMcq.getId(), RadioButton.class);
+		fireControl(robot, mockSelection);
+		Button useSelected = lookup(robot, "#exam-assets-use-selected-booklet", Button.class);
+		assertFalse(useSelected.isDisabled());
+		fireControl(robot, useSelected);
+		ComboBox<Question> imported = comboBox(robot, "#imported-question");
+
+		// Wait for the real asynchronous PDF and corpus loading,
+		// not merely for the entry button to have fired.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot,
+						() -> examMetadataPane().getBooklet() != null
+								&& examMetadataPane().getBooklet().getId() == mockMcq.getId()
+								&& pdfWorkspace().getDisplayedDocument() == PdfWorkspacePane.DocumentMode.EXAM
+								&& imported.getItems().size() == 1
+								&& imported.getItems().getFirst().getId() == mockQuestion.getId()));
+		assertEquals(mockMcq.getId(), examMetadataPane().getBooklet().getId());
+		assertEquals("Mock Examination", examMetadataPane().getBooklet().getExam().getName());
+
+		// The queue must contain exactly one Question: Mock MCQ.
+		assertEquals(List.of(mockQuestion.getId()), imported.getItems().stream().map(Question::getId).toList());
+		assertFalse(imported.getItems().stream().anyMatch(question -> question.getId() == externalQuestion.getId()));
+		Label queueLabel = lookup(robot, "#imported-question-queue-label", Label.class);
+		assertTrue(queueLabel.getText().contains("Mock Examination"));
+		assertTrue(queueLabel.getText().contains("MCQ"));
+
+		// The initial capture PDF and imported queue must agree
+		// on the persisted booklet identity.
+		assertTrue(imported.getItems().stream().allMatch(question -> question.getBooklet().getId() == mockMcq.getId()));
+	}
+
+	@Test
 	void examAssetsRejectsAnswerContentAlreadyManagedAsQuestionPdf(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet existing = examMetadataPane().getBooklet();
@@ -1582,11 +1958,239 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void legacyNewQuestionBookletCanAssignExistingAnswerAndPaperTogether(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Exam exam = examMetadataPane().getBooklet().getExam();
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		SqliteAnswerWriter answers = new SqliteAnswerWriter(database, writer);
+		AnswerFile guide = answers.findOrCreateAnswerFile(exam, "Marking Guide",
+				"Chemistry/QCAA/2024/legacy-marking-guide.pdf");
+		Path source = createPdf(pdfDataRoot.resolve("new-legacy-paper-2.pdf"), 3);
+		fireControl(robot, "#change-exam-assets");
+		ExamAssetsPane pane = field(application, "examAssetsPane", ExamAssetsPane.class);
+		LegacyMappedBookletRequirement requirement = new LegacyMappedBookletRequirement(
+				new LegacyExamKey("QCAA", exam.getYear()),
+				new LegacyExamIdentity(exam.getProvider().getName(), exam.getName()), "Paper 2");
+		WaitForAsyncUtils.asyncFx(() -> {
+			pane.showMappedLegacyImportRequirements("2019", Path.of("legacy.xlsx"), List.of(requirement), () -> {
+			}, pane::clearLegacyImportRequirements);
+			return null;
+		}).get();
+		robot.interact(() -> {
+			try {
+				invoke(pane, "beginQuestionBookletAdd", new Class<?>[] { Path.class }, source);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
+		@SuppressWarnings("unchecked")
+		ComboBox<String> name = lookup(robot, "#exam-assets-new-question-name", ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Object> answer = lookup(robot, "#exam-assets-new-question-answer", ComboBox.class);
+		RadioButton written = lookup(robot, "#exam-assets-new-question-format-written", RadioButton.class);
+		Button save = lookup(robot, "#exam-assets-new-question-save", Button.class);
+		assertEquals("Paper 2", name.getValue());
+		assertEquals("No Answer Booklet", answer.getValue().toString());
+		robot.interact(() -> answer.getSelectionModel().select(1));
+		fireControl(robot, written);
+		assertFalse(save.isDisabled());
+		fireControl(robot, save);
+		WaitForAsyncUtils.waitForFxEvents();
+		ExamBooklet created = writer.findExamBooklets(exam).stream()
+				.filter(booklet -> "Paper 2".equals(booklet.getName())).findFirst().orElseThrow();
+		assertEquals("2", writer.findLegacyPaperCodes(exam).get(created.getId()));
+		assertEquals(guide.getId(), answers.findAnswerFile(created).getId());
+		@SuppressWarnings("unchecked")
+		ComboBox<Object> savedAnswer = lookup(robot, "#exam-assets-question-answer-" + created.getId(), ComboBox.class);
+		assertEquals("Marking Guide", savedAnswer.getValue().toString());
+	}
+
+	@Test
 	void mainWorkspaceUsesExpandedInitialHeight() {
 
 		// The additional application and Exam context introduced above the capture
 		// panes requires more initial vertical space than the former 840 px layout.
 		assertEquals(900.0, primaryStage.getScene().getHeight(), 1.0);
+	}
+
+	@Test
+	void mappedLegacyImportFooterStaysVisibleWhileBookletsScroll(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Exam exam = examMetadataPane().getBooklet().getExam();
+		long existingBookletId = examMetadataPane().getBooklet().getId();
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
+
+		// Make the Exam/Assets list taller than the available viewport.
+		for (int index = 1; index <= 8; index++) {
+			importer.importExam(exam.getSubject(), exam.getProvider().getName(), exam.getYear(), exam.getName(),
+					"Extra booklet " + index,
+					"Chemistry/" + exam.getYear() + "/extra-question-booklet-" + index + ".pdf");
+		}
+		fireControl(robot, "#change-exam-assets");
+		ExamAssetsPane pane = field(application, "examAssetsPane", ExamAssetsPane.class);
+		LegacyExamKey key = new LegacyExamKey(exam.getProvider().getName(), exam.getYear());
+		LegacyExamIdentity identity = new LegacyExamIdentity(exam.getProvider().getName(), exam.getName());
+		LegacyMappedBookletRequirement requirement = new LegacyMappedBookletRequirement(key, identity, "Paper 1");
+		AtomicInteger rechecks = new AtomicInteger();
+		WaitForAsyncUtils.asyncFx(() -> {
+			pane.showForCorrection(exam.getSubject(), exam.getId(), null);
+			pane.showMappedLegacyImportRequirements("2019", Path.of("legacy.xlsx"), List.of(requirement),
+					rechecks::incrementAndGet, pane::clearLegacyImportRequirements);
+			return null;
+		}).get();
+		ScrollPane bodyScroll = lookup(robot, "#exam-assets-body-scroll", ScrollPane.class);
+		VBox body = lookup(robot, "#exam-assets-scroll-content", VBox.class);
+		VBox footer = lookup(robot, "#exam-assets-legacy-import-requirements", VBox.class);
+		Button recheck = lookup(robot, "#exam-assets-legacy-import-recheck", Button.class);
+		Button cancel = lookup(robot, "#exam-assets-legacy-import-cancel", Button.class);
+		Button addBooklet = lookup(robot, "#exam-assets-add-question-booklet", Button.class);
+		ComboBox<?> paperChoice = lookup(robot, "#exam-assets-question-legacy-paper-" + existingBookletId,
+				ComboBox.class);
+		Button savePaperLink = lookup(robot, "#exam-assets-question-legacy-link-" + existingBookletId, Button.class);
+		Label progress = lookup(robot, "#exam-assets-legacy-import-progress", Label.class);
+		Label instructions = lookup(robot, "#exam-assets-legacy-import-instruction", Label.class);
+
+		// The Exam and booklet sections remain in the same scroll pane.
+		assertEquals(body, bodyScroll.getContent());
+		assertNotNull(body.lookup("#exam-assets-exam-section"));
+		assertNotNull(body.lookup("#exam-assets-question-booklets"));
+		assertNotNull(body.lookup("#exam-assets-answer-booklets"));
+
+		// The footer is separate from the scroll pane and no longer
+		// contains a duplicate individual-Paper details view.
+		assertEquals(pane, footer.getParent());
+		assertFalse(body.getChildren().contains(footer));
+		assertNull(footer.lookup("#exam-assets-legacy-import-paper-details"));
+		assertNull(footer.lookup("#exam-assets-legacy-import-paper-scroll"));
+		assertTrue(footer.isVisible());
+		assertTrue(footer.isManaged());
+		assertTrue(recheck.isVisible());
+		assertTrue(cancel.isVisible());
+
+		// Critical progress and next action remain immediately visible.
+		assertTrue(progress.getText().contains("Expected Question booklets: 1"));
+		assertTrue(progress.getText().contains("Attached:"));
+		assertTrue(progress.getText().contains("Linked Papers:"));
+		assertTrue(instructions.getText().contains("Recheck and Import"));
+
+		// All the Paper-link actions still explain what they do.
+		assertNotNull(recheck.getTooltip());
+		assertNotNull(cancel.getTooltip());
+		assertNotNull(addBooklet.getTooltip());
+		assertNotNull(paperChoice.getTooltip());
+		assertNotNull(savePaperLink.getTooltip());
+		AtomicReference<Double> footerY = new AtomicReference<>();
+		robot.interact(() -> {
+			primaryStage.getScene().getRoot().applyCss();
+			primaryStage.getScene().getRoot().layout();
+			assertTrue(
+					bodyScroll.getContent().getLayoutBounds().getHeight() > bodyScroll.getViewportBounds().getHeight(),
+					"The test needs genuine structural scrolling");
+			footerY.set(footer.localToScene(footer.getBoundsInLocal()).getMinY());
+			bodyScroll.setVvalue(1.0);
+		});
+		WaitForAsyncUtils.waitForFxEvents();
+		robot.interact(() -> {
+			primaryStage.getScene().getRoot().layout();
+			assertEquals(footerY.get(), footer.localToScene(footer.getBoundsInLocal()).getMinY(), 1.0);
+			assertTrue(recheck.localToScene(recheck.getBoundsInLocal()).getMaxY() <= primaryStage.getScene().getHeight()
+					+ 1.0);
+			assertTrue(cancel.localToScene(cancel.getBoundsInLocal()).getMaxY() <= primaryStage.getScene().getHeight()
+					+ 1.0);
+		});
+
+		// Recheck still uses the original import callback.
+		assertFalse(recheck.isDisabled());
+		fireControl(robot, recheck);
+		assertEquals(1, rechecks.get());
+		fireControl(robot, cancel);
+		assertFalse(footer.isVisible());
+		assertFalse(footer.isManaged());
+		assertEquals(body, bodyScroll.getContent());
+	}
+
+	@Test
+	void mappedLegacyRequirementsUseSavedPaperLinks(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Exam exam = examMetadataPane().getBooklet().getExam();
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
+
+		// An existing booklet has a custom Name.
+		ExamBooklet custom = importer.importExam(exam.getSubject(), exam.getProvider().getName(), exam.getYear(),
+				exam.getName(), "Trial Paper A", "Chemistry/" + exam.getYear() + "/trial-paper-a.pdf");
+
+		// A separate Exam has an unrelated booklet.
+		ExamBooklet wrongExam = importer.importExam(exam.getSubject(), exam.getProvider().getName(), exam.getYear(),
+				"Mock Examination", "Mock Paper A", "Chemistry/" + exam.getYear() + "/mock-paper-a.pdf");
+		fireControl(robot, "#change-exam-assets");
+		ExamAssetsPane pane = field(application, "examAssetsPane", ExamAssetsPane.class);
+		LegacyExamKey key = new LegacyExamKey("QCAA", exam.getYear());
+		LegacyExamIdentity identity = new LegacyExamIdentity(exam.getProvider().getName(), exam.getName());
+		LegacyMappedBookletRequirement requirement = new LegacyMappedBookletRequirement(key, identity, "Paper 1");
+		AtomicInteger rechecks = new AtomicInteger();
+
+		// Use the current five-argument API. Recheck is a Runnable;
+		// it no longer submits transient booklet-ID selections.
+		WaitForAsyncUtils.asyncFx(() -> {
+			pane.showForCorrection(exam.getSubject(), exam.getId(), null);
+			pane.showMappedLegacyImportRequirements("2019", Path.of("legacy.xlsx"), List.of(requirement),
+					rechecks::incrementAndGet, pane::clearLegacyImportRequirements);
+			return null;
+		}).get();
+
+		// The former arbitrary booklet-ID mapping UI is gone.
+		assertTrue(robot.lookup("#exam-assets-legacy-import-booklet-0").tryQuery().isEmpty());
+		@SuppressWarnings("unchecked")
+		ComboBox<String> paperChoice = lookup(robot, "#exam-assets-question-legacy-paper-" + custom.getId(),
+				ComboBox.class);
+
+		// Only workbook-required Paper identities are offered.
+		assertEquals("(Not linked)", paperChoice.getValue());
+		assertTrue(paperChoice.getItems().contains("Paper 1"));
+		assertFalse(paperChoice.getItems().contains("Mock Paper A"));
+
+		// Link the saved booklet without renaming it.
+		robot.interact(() -> paperChoice.getSelectionModel().select("Paper 1"));
+		fireControl(robot, "#exam-assets-question-legacy-link-" + custom.getId());
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// The link is stored in SQLite, not in a UI selection map.
+		assertEquals("1", writer.findLegacyPaperCodes(exam).get(custom.getId()));
+
+		// The unrelated Exam remains untouched.
+		assertTrue(writer.findLegacyPaperCodes(wrongExam.getExam()).isEmpty());
+		ExamBooklet saved = writer.findExamBooklets(exam).stream().filter(booklet -> booklet.getId() == custom.getId())
+				.findFirst().orElseThrow();
+		assertEquals("Trial Paper A", saved.getName());
+		assertEquals(custom.getSourceDocument().getRelativePath(), saved.getSourceDocument().getRelativePath());
+		Label progress = lookup(robot, "#exam-assets-legacy-import-progress", Label.class);
+		assertTrue(progress.getText().contains("Linked Papers: 1 / 1"));
+
+		// The Exam has an additional saved booklet. The progress
+		// must distinguish attachments from correctly linked Papers.
+		assertTrue(progress.getText().contains("Attached: 2 / 1"));
+
+		// The linked Paper must no longer be available for another
+		// saved booklet in the same Exam.
+		ExamBooklet original = writer.findExamBooklets(exam).stream()
+				.filter(booklet -> booklet.getId() != custom.getId()).findFirst().orElseThrow();
+		@SuppressWarnings("unchecked")
+		ComboBox<String> otherChoice = lookup(robot, "#exam-assets-question-legacy-paper-" + original.getId(),
+				ComboBox.class);
+		assertFalse(otherChoice.getItems().contains("Paper 1"));
+
+		// Recheck requests a fresh persistence-based validation.
+		fireControl(robot, "#exam-assets-legacy-import-recheck");
+		assertEquals(1, rechecks.get());
+		fireControl(robot, "#exam-assets-legacy-import-cancel");
+		VBox requirements = lookup(robot, "#exam-assets-legacy-import-requirements", VBox.class);
+		assertFalse(requirements.isVisible());
+		assertFalse(requirements.isManaged());
 	}
 
 	@Test
@@ -1635,6 +2239,52 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		// the useful regression check that the row is not being compressed.
 		assertTrue(clearChoice.getWidth() + 0.5 >= clearChoice.minWidth(clearChoice.getHeight()),
 				"Clear choice must remain fully readable at minimum workspace width");
+	}
+
+	@Test
+	void newQuestionBookletCanAssignExistingAnswerBeforeFirstSave(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet first = examMetadataPane().getBooklet();
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		SqliteAnswerWriter answers = new SqliteAnswerWriter(database, writer);
+		AnswerFile guide = answers.findOrCreateAnswerFile(first.getExam(), "Marking Guide",
+				"Chemistry/QCAA/2024/guide-for-new-booklet.pdf");
+		Path source = createPdf(pdfDataRoot.resolve("new-booklet-with-answer.pdf"), 4);
+		fireControl(robot, "#change-exam-assets");
+		ExamAssetsPane pane = field(application, "examAssetsPane", ExamAssetsPane.class);
+		robot.interact(() -> {
+			try {
+				invoke(pane, "beginQuestionBookletAdd", new Class<?>[] { Path.class }, source);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
+		@SuppressWarnings("unchecked")
+		ComboBox<String> name = lookup(robot, "#exam-assets-new-question-name", ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Object> answer = lookup(robot, "#exam-assets-new-question-answer", ComboBox.class);
+		RadioButton written = lookup(robot, "#exam-assets-new-question-format-written", RadioButton.class);
+		Button save = lookup(robot, "#exam-assets-new-question-save", Button.class);
+		assertEquals(2, answer.getItems().size());
+		assertEquals("No Answer Booklet", answer.getItems().getFirst().toString());
+		assertEquals("No Answer Booklet", answer.getValue().toString());
+		assertEquals("Marking Guide", answer.getItems().get(1).toString());
+		robot.interact(() -> {
+			name.getEditor().setText("Paper 2");
+			answer.getSelectionModel().select(1);
+		});
+		fireControl(robot, written);
+		assertFalse(save.isDisabled());
+		fireControl(robot, save);
+		WaitForAsyncUtils.waitForFxEvents();
+		ExamBooklet created = writer.findExamBooklets(first.getExam()).stream()
+				.filter(booklet -> "Paper 2".equals(booklet.getName())).findFirst().orElseThrow();
+		assertEquals(guide.getId(), answers.findAnswerFile(created).getId());
+		@SuppressWarnings("unchecked")
+		ComboBox<Object> savedAnswer = lookup(robot, "#exam-assets-question-answer-" + created.getId(), ComboBox.class);
+		assertEquals("Marking Guide", savedAnswer.getValue().toString());
+		assertEquals(0, writer.findLegacyPaperCodes(first.getExam()).size());
 	}
 
 	@Test
@@ -1756,6 +2406,67 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(addRegion.getParent(), addFromClipboard.getParent());
 		assertFalse(addRegion.getParent() == saveQuestion.getParent(),
 				"Question content actions must not share the Save row");
+	}
+
+	@Test
+	void questionBookletMetadataUsesCompactAssetRows(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		long id = booklet.getId();
+		fireControl(robot, "#change-exam-assets");
+		WaitForAsyncUtils.waitForFxEvents();
+		VBox row = lookup(robot, "#exam-assets-question-booklet-" + id, VBox.class);
+		HBox top = lookup(robot, "#exam-assets-question-heading-row-" + id, HBox.class);
+		GridPane metadata = lookup(robot, "#exam-assets-question-metadata-" + id, GridPane.class);
+		HBox legacyPaperRow = lookup(robot, "#exam-assets-question-legacy-row-" + id, HBox.class);
+		HBox bottom = lookup(robot, "#exam-assets-question-expected-actions-" + id, HBox.class);
+		RadioButton selection = lookup(robot, "#exam-assets-question-select-" + id, RadioButton.class);
+		Label heading = lookup(robot, "#exam-assets-question-heading-" + id, Label.class);
+		Label filename = lookup(robot, "#exam-assets-question-source-" + id, Label.class);
+		Button view = lookup(robot, "#exam-assets-question-view-" + id, Button.class);
+		Button delete = lookup(robot, "#exam-assets-question-delete-" + id, Button.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<String> name = lookup(robot, "#exam-assets-question-name-" + id, ComboBox.class);
+		ComboBox<?> answer = lookup(robot, "#exam-assets-question-answer-" + id, ComboBox.class);
+		TextField expected = lookup(robot, "#exam-assets-question-expected-" + id, TextField.class);
+		Button edit = lookup(robot, "#exam-assets-question-edit-" + id, Button.class);
+		Button cancel = lookup(robot, "#exam-assets-question-cancel-" + id, Button.class);
+		Button save = lookup(robot, "#exam-assets-question-save-" + id, Button.class);
+
+		// First visible line: selection, booklet label, PDF filename, View and
+		// Delete, in that order.
+		assertEquals(List.of(selection, heading, filename, view, delete), top.getChildren());
+		assertEquals(booklet.getName(), heading.getText());
+		assertEquals(booklet.getSourceDocument().getRelativePath().replace('\\', '/').replaceAll("^.*/", ""),
+				filename.getText());
+
+		// Name, Type and Answer occupy the original metadata rows.
+		assertEquals(metadata, name.getParent());
+		assertEquals(Integer.valueOf(0), GridPane.getRowIndex(name));
+		assertEquals(Integer.valueOf(1), GridPane.getColumnIndex(name));
+		assertEquals(metadata, answer.getParent());
+		assertEquals(Integer.valueOf(2), GridPane.getRowIndex(answer));
+
+		// Expected Questions and transaction actions share the last visible row.
+		assertEquals(List.of(expected, edit, cancel, save), bottom.getChildren().stream()
+				.filter(node -> node == expected || node == edit || node == cancel || node == save).toList());
+
+		// Retain the inactive legacy editor in the scene graph, but verify that
+		// it occupies no layout space outside a pending legacy import.
+		assertEquals(row, legacyPaperRow.getParent());
+		assertFalse(legacyPaperRow.isVisible());
+		assertFalse(legacyPaperRow.isManaged());
+		assertEquals(List.of(top, metadata, bottom), row.getChildren().stream().filter(Node::isManaged).toList());
+
+		// Ordinary booklet editing behaviour remains unchanged.
+		assertTrue(name.isDisabled());
+		assertTrue(expected.isDisabled());
+		robot.interact(edit::fire);
+		assertFalse(name.isDisabled());
+		assertFalse(expected.isDisabled());
+		robot.interact(cancel::fire);
+		assertTrue(name.isDisabled());
+		assertTrue(expected.isDisabled());
 	}
 
 	@Test
@@ -2352,6 +3063,54 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		return false;
 	}
 
+	private ExamBooklet openDashboardNewQuestionCaptureAtExpectedCount(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1",
+				ExamBookletQuestionFormat.WRITTEN_RESPONSE);
+		Question initial = captureQuestion(robot, "9a");
+		assertTrue(initial.hasSourceQuestion());
+
+		// Construct a genuine persisted 1/1 count. One part of one source
+		// Question counts as one top-level Question.
+		SqliteExamWriter writer = new SqliteExamWriter(new SqliteDatabase(databasePath));
+		ExamBooklet booklet = writer.updateExamBookletPlanning(initial.getBooklet(),
+				initial.getBooklet().getQuestionFormat(), 1);
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
+			return null;
+		}).get();
+		Node root = primaryStage.getScene().getRoot();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
+			Node node = root.lookup("#corpus-dashboard-booklets");
+			if (!(node instanceof TableView<?> table) || table.getItems().size() != 1) {
+				return false;
+			}
+			if (!(table.getItems().getFirst() instanceof BookletCorpusStatus status)) {
+				return false;
+			}
+			return status.booklet().getId() == booklet.getId()
+					&& Integer.valueOf(1).equals(status.expectedTopLevelQuestionCount())
+					&& status.encounteredTopLevelQuestionCount() == 1;
+		}));
+		@SuppressWarnings("unchecked")
+		TableView<BookletCorpusStatus> booklets = lookupOnFx(robot, root, "#corpus-dashboard-booklets",
+				TableView.class);
+		robot.interact(() -> booklets.getSelectionModel().selectFirst());
+		Button capture = lookupOnFx(robot, root, "#corpus-dashboard-capture-questions", Button.class);
+		assertFalse(capture.isDisabled());
+		fireControl(robot, capture);
+
+		// This used to warn immediately at 1/1. The code has not been entered
+		// yet, so source-part versus new-top-level cannot be determined.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot,
+						() -> root.lookup("#capture-workspace") != null && examMetadataPane().getBooklet() != null
+								&& examMetadataPane().getBooklet().getId() == booklet.getId()
+								&& pdfWorkspace().getDisplayedDocument() == PdfWorkspacePane.DocumentMode.EXAM
+								&& !((ApplicationBusyOverlay) root).isBusy()));
+		assertFalse(nodePresentOnFx(robot, root, "#question-capture-count-confirmation"));
+		return booklet;
+	}
+
 	private DialogPane questionSaveErrorDialog(FxRobot robot) {
 		AtomicReference<DialogPane> result = new AtomicReference<>();
 		robot.interact(() -> {
@@ -2369,6 +3128,27 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 			}
 		});
 		return result.get();
+	}
+
+	private void stageDashboardQuestionRegion(FxRobot robot, String code) throws Exception {
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		robot.interact(() -> {
+			questionCode.setText(code);
+			marks.setText("1");
+		});
+
+		// A newly opened capture workspace restores the same authoritative
+		// Subject but needs a selected classification for the new part.
+		selectFirst(robot, "#curriculum-unit");
+		selectFirst(robot, "#curriculum-topic");
+		selectFirstFinalClassification(robot);
+
+		// PDF-region selection is intentionally geometric; ordinary
+		// control activation is performed through fireControl.
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-question-region");
+		assertTrue(questionCapturePane().hasAcceptedRegions());
 	}
 
 	private void stageQuestionForBusyTest(FxRobot robot, String code) throws Exception {

@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 21;
+	private static final int LATEST_SCHEMA_VERSION = 22;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -707,6 +707,13 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v20-to-v21.sql", 21);
 			return 21;
 		}
+		if (version == 21) {
+
+			// Legacy Paper identity is independent of the mutable booklet name.
+			// Existing booklets remain unlinked until deliberately classified.
+			executeMigration(connection, "/db/migration-v21-to-v22.sql", 22);
+			return 22;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -987,6 +994,12 @@ public final class SqliteDatabase {
 			// A version-21 database must retain every invalidation trigger.
 			// Missing triggers could silently preserve obsolete reviews.
 			BookletApplicabilityReviewInvalidationTriggers.verify(connection);
+		}
+		if (version >= 22) {
+
+			// Legacy Paper identity is optional but must be structurally unique
+			// within each authoritative Exam.
+			verifyVersion22LegacyPaperSchema(connection);
 		}
 	}
 
@@ -1546,6 +1559,31 @@ public final class SqliteDatabase {
 		}
 		verifyTableSchema(connection, "booklet_applicability_reviews", List.of(column("booklet_id", false, 1)),
 				List.of(foreignKey("booklet_id", "exam_booklets", "id")), List.of());
+	}
+
+	private void verifyVersion22LegacyPaperSchema(Connection connection) throws SQLException {
+		boolean found = false;
+		try (Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA table_info(exam_booklets)")) {
+			while (result.next()) {
+				if (!"legacy_paper_code".equals(result.getString("name"))) {
+					continue;
+				}
+				found = true;
+
+				// Ordinary and not-yet-linked historical booklets must
+				// remain valid with no legacy Paper identity.
+				if (result.getInt("notnull") != 0) {
+					throw new SQLException("exam_booklets.legacy_paper_code must be nullable");
+				}
+			}
+		}
+		if (!found) {
+			throw new SQLException("exam_booklets is missing required column legacy_paper_code");
+		}
+		if (!hasExactUniqueIndex(connection, "exam_booklets", List.of("exam_id", "legacy_paper_code"))) {
+			throw new SQLException("exam_booklets is missing exact unique key " + "(exam_id, legacy_paper_code)");
+		}
 	}
 
 	private record ForeignKeyColumn(int sequence, String fromColumn, String targetColumn) {

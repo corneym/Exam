@@ -11,10 +11,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.model.AnswerFile;
+import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamAssetExpectations;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.ExamCaptureState;
+import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
@@ -23,6 +25,43 @@ class SqliteExamImporterTest {
 
 	@TempDir
 	Path tempDirectory;
+
+	@Test
+	void atomicallyCreatesBookletWithLegacyPaperIdentity() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("atomic-legacy-booklet.db"));
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
+		String hash = "0123456789abcdef".repeat(4);
+		ExamBooklet mcq = importer.importExam(chemistry, "QCAA", 2020, "Sample Examination", "MCQ booklet",
+				"Chemistry/QCAA/2020/sample-mcq.pdf", ExamBookletQuestionFormat.MULTIPLE_CHOICE, 20, hash, "MCQ");
+		assertEquals("MCQ", writer.findLegacyPaperCodes(mcq.getExam()).get(mcq.getId()));
+
+		// Renaming the saved booklet cannot change its Paper identity.
+		writer.updateExamBookletMetadata(mcq, "Renamed Multiple Choice", ExamBookletQuestionFormat.MULTIPLE_CHOICE, 20);
+		assertEquals("MCQ", writer.findLegacyPaperCodes(mcq.getExam()).get(mcq.getId()));
+		String duplicatePath = "Chemistry/QCAA/2020/sample-other-mcq.pdf";
+
+		// The second booklet conflicts with the persisted MCQ link.
+		// Neither its new SourceDocument nor its booklet may commit.
+		assertThrows(IllegalArgumentException.class,
+				() -> importer.importExam(chemistry, "QCAA", 2020, "Sample Examination", "Other MCQ booklet",
+						duplicatePath, ExamBookletQuestionFormat.MULTIPLE_CHOICE, 20, "b".repeat(64), "MCQ"));
+		assertEquals(1, writer.findExamBooklets(mcq.getExam()).size());
+		assertNull(writer.findExamBookletBySourceDocumentPath(duplicatePath));
+
+		// A distinct Exam may have its own MCQ Paper.
+		ExamBooklet mock = importer.importExam(chemistry, "QCAA", 2020, "Mock Examination", "MCQ booklet",
+				"Chemistry/QCAA/2020/mock-mcq.pdf", ExamBookletQuestionFormat.MULTIPLE_CHOICE, 18, "c".repeat(64),
+				"MCQ");
+		assertEquals("MCQ", writer.findLegacyPaperCodes(mock.getExam()).get(mock.getId()));
+
+		// Ordinary NEAP creation has no legacy Paper identity.
+		ExamBooklet ordinary = importer.importExam(chemistry, "NEAP", 2025, "Topic Test 1", "Custom booklet",
+				"Chemistry/NEAP/2025/topic-test.pdf", ExamBookletQuestionFormat.MIXED, 12, "d".repeat(64), null);
+		assertEquals(0, writer.findLegacyPaperCodes(ordinary.getExam()).size());
+	}
 
 	@Test
 	void completeExamRejectsImportOfAnotherBooklet() throws Exception {
@@ -51,6 +90,29 @@ class SqliteExamImporterTest {
 		// proposed SourceDocument behind.
 		assertEquals(1, writer.findAllExamBooklets().size());
 		assertNull(writer.findExamBookletBySourceDocumentPath("Chemistry/QCAA/2025/paper2.pdf"));
+	}
+
+	@Test
+	void createsNewBookletWithExistingAnswerAndLegacyPaperInOneTransaction() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("booklet-answer-and-paper.db"));
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
+		Exam exam = writer.createExam(chemistry, "QCAA", 2020, "External assessment");
+		SqliteAnswerWriter answers = new SqliteAnswerWriter(database, writer);
+		AnswerFile markingGuide = answers.findOrCreateAnswerFile(exam, "Marking Guide",
+				"Chemistry/QCAA/2020/marking-guide.pdf");
+		ExamBooklet created = importer.importExam(chemistry, "QCAA", 2020, "External assessment", "Paper 1",
+				"Chemistry/QCAA/2020/paper-1.pdf", ExamBookletQuestionFormat.WRITTEN_RESPONSE, 7, "a".repeat(64), "1",
+				markingGuide);
+		ExamBooklet reloaded = writer.findExamBooklets(exam).getFirst();
+		assertEquals(created.getId(), reloaded.getId());
+		assertEquals(Integer.valueOf(7), reloaded.getExpectedQuestionCount());
+		assertEquals("1", writer.findLegacyPaperCodes(exam).get(created.getId()));
+		assertEquals(markingGuide.getId(), answers.findAnswerFile(reloaded).getId());
+		assertEquals("a".repeat(64), reloaded.getSourceDocument().getContentSha256());
+		assertEquals(1, writer.findExamBooklets(exam).size());
 	}
 
 	@Test
@@ -234,6 +296,45 @@ class SqliteExamImporterTest {
 		assertEquals(ExamBookletQuestionFormat.WRITTEN_RESPONSE, reloaded.getQuestionFormat());
 		assertEquals(Integer.valueOf(12), reloaded.getExpectedQuestionCount());
 		assertEquals(hash, reloaded.getSourceDocument().getContentSha256());
+	}
+
+	@Test
+	void rejectsAnswerFromAnotherExamWithoutCreatingBooklet() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("foreign-answer-assignment.db"));
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
+		Exam external = writer.createExam(chemistry, "QCAA", 2020, "External assessment");
+		Exam mock = writer.createExam(chemistry, "QCAA", 2020, "Mock Examination");
+		AnswerFile mockAnswers = new SqliteAnswerWriter(database, writer).findOrCreateAnswerFile(mock,
+				"Mock Marking Guide", "Chemistry/QCAA/2020/mock-answers.pdf");
+		String proposedPath = "Chemistry/QCAA/2020/external-paper.pdf";
+		assertThrows(IllegalArgumentException.class,
+				() -> importer.importExam(chemistry, "QCAA", 2020, "External assessment", "Paper 1", proposedPath,
+						ExamBookletQuestionFormat.WRITTEN_RESPONSE, 7, "c".repeat(64), "1", mockAnswers));
+		assertEquals(0, writer.findExamBooklets(external).size());
+		assertEquals(0, writer.findLegacyPaperCodes(external).size());
+		assertNull(writer.findExamBookletBySourceDocumentPath(proposedPath));
+	}
+
+	@Test
+	void rejectsUnpersistedAnswerFileAndRollsBackBookletAndPaper() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("stale-answer-assignment.db"));
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
+		Exam exam = writer.createExam(chemistry, "QCAA", 2020, "External assessment");
+		AnswerFile stale = new AnswerFile(999999L, exam, "Missing answer booklet",
+				new SourceDocument(999999L, "Chemistry/QCAA/2020/missing-answer.pdf"));
+		String proposedPath = "Chemistry/QCAA/2020/uncommitted-paper.pdf";
+		assertThrows(IllegalArgumentException.class,
+				() -> importer.importExam(chemistry, "QCAA", 2020, "External assessment", "Paper 1", proposedPath,
+						ExamBookletQuestionFormat.WRITTEN_RESPONSE, 7, "b".repeat(64), "1", stale));
+		assertEquals(0, writer.findExamBooklets(exam).size());
+		assertEquals(0, writer.findLegacyPaperCodes(exam).size());
+		assertNull(writer.findExamBookletBySourceDocumentPath(proposedPath));
 	}
 
 	@Test

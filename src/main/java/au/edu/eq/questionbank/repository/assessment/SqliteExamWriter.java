@@ -5,8 +5,10 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamAssetExpectations;
@@ -655,6 +657,212 @@ public final class SqliteExamWriter {
 	}
 
 	/**
+	 * Returns saved legacy Paper identities for one authoritative Exam.
+	 *
+	 * <p>
+	 * The map is keyed by persistent booklet ID. Ordinary booklets and historical
+	 * booklets not yet explicitly linked are omitted.
+	 *
+	 * @param exam persisted Exam
+	 * @return booklet-ID-to-Paper-code mapping, or an empty map when none has been
+	 *         linked
+	 * @throws SQLException             if the lookup fails
+	 * @throws NullPointerException     if exam is null
+	 * @throws IllegalArgumentException if the Exam does not exist for its stored
+	 *                                  Subject
+	 */
+	public Map<Long, String> findLegacyPaperCodes(Exam exam) throws SQLException {
+		if (exam == null) {
+			throw new NullPointerException("exam");
+		}
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT eb.id AS booklet_id,
+						       eb.legacy_paper_code
+						FROM exams e
+						LEFT JOIN exam_booklets eb
+						    ON eb.exam_id = e.id
+						WHERE e.id = ?
+						  AND e.subject_id = ?
+						ORDER BY eb.id
+						""")) {
+			statement.setLong(1, exam.getId());
+			statement.setLong(2, exam.getSubject().getId());
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalArgumentException("Exam does not exist for its stored Subject");
+				}
+				Map<Long, String> links = new LinkedHashMap<>();
+				do {
+					long bookletId = result.getLong("booklet_id");
+					if (result.wasNull()) {
+						continue;
+					}
+					String paperCode = result.getString("legacy_paper_code");
+
+					// NULL is authoritative: this booklet has not been
+					// linked to a legacy Paper.
+					if (paperCode != null) {
+						links.put(bookletId, paperCode);
+					}
+				} while (result.next());
+				return Map.copyOf(links);
+			}
+		}
+	}
+
+	/**
+	 * Finds or creates examinations without changing existing planning counts.
+	 *
+	 * @param subject       owning Subject
+	 * @param registrations examination identities to register
+	 * @return persisted examinations in first-occurrence order
+	 * @throws SQLException if registration fails
+	 */
+	public List<Exam> findOrCreateExams(Subject subject, List<ExamRegistration> registrations) throws SQLException {
+		return findOrCreateExams(subject, registrations, Map.of());
+	}
+
+	/**
+	 * Registers confirmed Exams and their legacy workbook-derived Question booklet
+	 * expectations in one transaction.
+	 *
+	 * <p>
+	 * Every supplied count represents the number of distinct Paper codes in the
+	 * workbook for that Exam. Existing Question and Answer booklet assets are never
+	 * created or replaced. Existing Answer-file expectations are preserved.
+	 *
+	 * @param subject                       authoritative owning Subject
+	 * @param registrations                 confirmed Exam identities
+	 * @param expectedQuestionBookletCounts required Paper count by Exam
+	 * @return persisted examinations in first-occurrence order
+	 * @throws SQLException             if persistence fails
+	 * @throws NullPointerException     if an argument or entry is null
+	 * @throws IllegalArgumentException if a count or registration is invalid
+	 * @throws IllegalStateException    if changing a count requires reactivating a
+	 *                                  COMPLETE Exam
+	 */
+	public List<Exam> findOrCreateExams(Subject subject, List<ExamRegistration> registrations,
+			Map<ExamRegistration, Integer> expectedQuestionBookletCounts) throws SQLException {
+		if (subject == null) {
+			throw new NullPointerException("subject");
+		}
+		if (registrations == null) {
+			throw new NullPointerException("registrations");
+		}
+		if (expectedQuestionBookletCounts == null) {
+			throw new NullPointerException("expectedQuestionBookletCounts");
+		}
+		for (ExamRegistration registration : registrations) {
+			if (registration == null) {
+				throw new NullPointerException("registration");
+			}
+		}
+		for (Map.Entry<ExamRegistration, Integer> entry : expectedQuestionBookletCounts.entrySet()) {
+			if (entry.getKey() == null || entry.getValue() == null) {
+				throw new NullPointerException("Legacy Exam expectations cannot contain null entries");
+			}
+			if (!registrations.contains(entry.getKey())) {
+				throw new IllegalArgumentException("An expectation refers to an unregistered Exam: " + entry.getKey());
+			}
+			if (entry.getValue() < 1) {
+				throw new IllegalArgumentException("Expected Question booklet count must be positive");
+			}
+		}
+		Map<ExamRegistration, Exam> resolved = new LinkedHashMap<>();
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				for (ExamRegistration registration : registrations) {
+
+					// Multiple workbook worksheets can refer to the same
+					// confirmed Exam. Register that identity only once.
+					if (resolved.containsKey(registration)) {
+						continue;
+					}
+					ExamProvider provider = findExamProviderByName(connection, registration.providerName());
+					if (provider == null) {
+						provider = insertExamProvider(connection, registration.providerName());
+					}
+					Exam exam = findExam(connection, subject, provider, registration.year(), registration.examName());
+					if (exam == null) {
+						List<String> caseInsensitiveMatches = findCaseInsensitiveLegacyExamMatches(connection, subject,
+								registration.year(), registration.providerName(), registration.examName());
+						if (!caseInsensitiveMatches.isEmpty()) {
+							throw new IllegalStateException("Existing Exam matches this legacy examination "
+									+ "ignoring capitalisation: " + String.join("; ", caseInsensitiveMatches)
+									+ ". Select the saved Exam in Resolve Legacy Examinations.");
+						}
+						exam = insertExam(connection, subject, provider, registration.year(), registration.examName());
+					} else {
+
+						// Do not alter planning counts for an existing captured/reviewed Exam.
+						// A later rejection also rolls back earlier registrations in this transaction.
+						LegacyExamImportEligibility.requireEligible(connection, exam.getId());
+					}
+					Integer requiredCount = expectedQuestionBookletCounts.get(registration);
+					if (requiredCount != null) {
+						Integer recordedCount;
+						String captureState;
+						try (PreparedStatement read = connection.prepareStatement("""
+								SELECT expected_question_booklet_count,
+								       capture_state
+								FROM exams
+								WHERE id = ?
+								  AND subject_id = ?
+								""")) {
+							read.setLong(1, exam.getId());
+							read.setLong(2, subject.getId());
+							try (ResultSet result = read.executeQuery()) {
+								if (!result.next()) {
+									throw new IllegalArgumentException(
+											"Confirmed Exam no longer exists: " + registration);
+								}
+								recordedCount = readNullableInteger(result, "expected_question_booklet_count");
+								captureState = result.getString("capture_state");
+							}
+						}
+
+						// The workbook is authoritative for this import.
+						// Avoid an unnecessary UPDATE when the persisted
+						// count is already correct.
+						if (!requiredCount.equals(recordedCount)) {
+							if ("COMPLETE".equals(captureState)) {
+								throw new IllegalStateException("Reactivate the Exam before updating "
+										+ "its legacy Question booklet count: " + registration);
+							}
+							try (PreparedStatement update = connection.prepareStatement("""
+									UPDATE exams
+									SET expected_question_booklet_count = ?
+									WHERE id = ?
+									  AND subject_id = ?
+									""")) {
+								update.setInt(1, requiredCount);
+								update.setLong(2, exam.getId());
+								update.setLong(3, subject.getId());
+								if (update.executeUpdate() != 1) {
+									throw new SQLException(
+											"Could not save the legacy booklet " + "expectation for " + registration);
+								}
+							}
+						}
+					}
+					resolved.put(registration, exam);
+				}
+				connection.commit();
+				return List.copyOf(resolved.values());
+			} catch (SQLException | RuntimeException exception) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					exception.addSuppressed(rollbackFailure);
+				}
+				throw exception;
+			}
+		}
+	}
+
+	/**
 	 * Finds every persisted source document whose recorded bytes have the supplied
 	 * SHA-256 identity.
 	 *
@@ -1031,6 +1239,30 @@ public final class SqliteExamWriter {
 		// Planning is a subset of the authoritative booklet-metadata correction path.
 		// Preserve the current booklet label while updating format and expected count.
 		return updateExamBookletMetadata(booklet, booklet.getName(), questionFormat, expectedQuestionCount);
+	}
+
+	/**
+	 * Persists a legacy Paper link in its own transaction.
+	 *
+	 * @param booklet   persisted booklet
+	 * @param paperCode MCQ, 1, 2, or null to unlink
+	 * @throws SQLException if persistence fails
+	 */
+	public void updateLegacyPaperCode(ExamBooklet booklet, String paperCode) throws SQLException {
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				updateLegacyPaperCode(connection, booklet, paperCode);
+				connection.commit();
+			} catch (SQLException | RuntimeException exception) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					exception.addSuppressed(rollbackFailure);
+				}
+				throw exception;
+			}
+		}
 	}
 
 	Exam findExam(Connection connection, Subject subject, ExamProvider provider, int year, String name)
@@ -1471,6 +1703,107 @@ public final class SqliteExamWriter {
 				questionFormat, expectedQuestionCount);
 	}
 
+	/**
+	 * Updates a saved booklet's legacy Paper identity inside the caller's
+	 * transaction without committing or closing that connection.
+	 *
+	 * @param connection caller-owned SQLite connection
+	 * @param booklet    authoritative persisted booklet
+	 * @param paperCode  MCQ, 1, 2, or null to unlink
+	 * @throws SQLException if persistence fails
+	 */
+	void updateLegacyPaperCode(Connection connection, ExamBooklet booklet, String paperCode) throws SQLException {
+		Objects.requireNonNull(connection, "connection");
+		Objects.requireNonNull(booklet, "booklet");
+		if (paperCode != null && !"MCQ".equals(paperCode) && !"1".equals(paperCode) && !"2".equals(paperCode)) {
+			throw new IllegalArgumentException("Unsupported legacy Paper code: " + paperCode);
+		}
+		requireExamActive(connection, booklet.getExam().getId());
+		String currentCode;
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT eb.legacy_paper_code
+				FROM exam_booklets eb
+				JOIN exams e ON e.id = eb.exam_id
+				WHERE eb.id = ?
+				  AND eb.exam_id = ?
+				  AND e.subject_id = ?
+				""")) {
+			statement.setLong(1, booklet.getId());
+			statement.setLong(2, booklet.getExam().getId());
+			statement.setLong(3, booklet.getExam().getSubject().getId());
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalArgumentException(
+							"Question booklet does not belong to its " + "recorded Exam: " + booklet.getId());
+				}
+				currentCode = result.getString("legacy_paper_code");
+			}
+		}
+		if (Objects.equals(currentCode, paperCode)) {
+
+			// An unchanged Paper identity needs no structural UPDATE.
+			return;
+		}
+		if (currentCode != null) {
+			try (PreparedStatement statement = connection.prepareStatement("""
+					SELECT
+					    EXISTS (
+					        SELECT 1
+					        FROM questions
+					        WHERE booklet_id = ?
+					    ) AS has_questions,
+					    EXISTS (
+					        SELECT 1
+					        FROM source_questions
+					        WHERE booklet_id = ?
+					    ) AS has_source_questions
+					""")) {
+				statement.setLong(1, booklet.getId());
+				statement.setLong(2, booklet.getId());
+				try (ResultSet result = statement.executeQuery()) {
+					if (result.next()
+							&& (result.getBoolean("has_questions") || result.getBoolean("has_source_questions"))) {
+						throw new IllegalStateException("Legacy Paper " + currentCode + " cannot be reassigned: "
+								+ "this booklet contains Question metadata.");
+					}
+				}
+			}
+		}
+		if (paperCode != null) {
+			try (PreparedStatement statement = connection.prepareStatement("""
+					SELECT id
+					FROM exam_booklets
+					WHERE exam_id = ?
+					  AND legacy_paper_code = ?
+					  AND id <> ?
+					""")) {
+				statement.setLong(1, booklet.getExam().getId());
+				statement.setString(2, paperCode);
+				statement.setLong(3, booklet.getId());
+				try (ResultSet result = statement.executeQuery()) {
+					if (result.next()) {
+						throw new IllegalArgumentException("Legacy Paper " + paperCode
+								+ " is already linked to booklet ID " + result.getLong("id") + " in this Exam.");
+					}
+				}
+			}
+		}
+		try (PreparedStatement statement = connection.prepareStatement("""
+				UPDATE exam_booklets
+				SET legacy_paper_code = ?
+				WHERE id = ?
+				  AND exam_id = ?
+				""")) {
+			statement.setString(1, paperCode);
+			statement.setLong(2, booklet.getId());
+			statement.setLong(3, booklet.getExam().getId());
+			if (statement.executeUpdate() != 1) {
+				throw new IllegalStateException(
+						"Legacy Paper link could not be saved for booklet ID " + booklet.getId());
+			}
+		}
+	}
+
 	private Exam correctExamMetadata(Connection connection, Exam exam, String providerName, int year, String name)
 			throws SQLException {
 
@@ -1541,6 +1874,33 @@ public final class SqliteExamWriter {
 			statement.setLong(2, providerId);
 			statement.executeUpdate();
 		}
+	}
+
+	private List<String> findCaseInsensitiveLegacyExamMatches(Connection connection, Subject subject, int year,
+			String providerName, String examName) throws SQLException {
+		List<String> matches = new ArrayList<>();
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT e.id, e.exam_name, p.provider_name
+				FROM exams e
+				JOIN exam_providers p ON p.id = e.provider_id
+				WHERE e.subject_id = ? AND e.exam_year = ?
+				ORDER BY e.id
+				""")) {
+			statement.setLong(1, subject.getId());
+			statement.setInt(2, year);
+			try (ResultSet result = statement.executeQuery()) {
+				while (result.next()) {
+					String storedProvider = result.getString("provider_name");
+					String storedName = result.getString("exam_name");
+					if (storedProvider.strip().equalsIgnoreCase(providerName.strip())
+							&& storedName.strip().equalsIgnoreCase(examName.strip())) {
+						matches.add("Exam ID %d: %s / %d / %s".formatted(result.getLong("id"), storedProvider, year,
+								storedName));
+					}
+				}
+			}
+		}
+		return List.copyOf(matches);
 	}
 
 	private Integer readNullableInteger(ResultSet result, String columnName) throws SQLException {
@@ -1637,6 +1997,35 @@ public final class SqliteExamWriter {
 		}
 		if (name == null || name.isBlank()) {
 			throw new IllegalArgumentException("name must not be blank");
+		}
+	}
+
+	/**
+	 * Identifies an examination to register or reuse.
+	 *
+	 * @param providerName examination provider
+	 * @param year         examination year
+	 * @param examName     examination name
+	 */
+	public record ExamRegistration(String providerName, int year, String examName) {
+
+		/**
+		 * Validates and normalises the examination identity.
+		 *
+		 * @throws IllegalArgumentException if a name is blank or year is not positive
+		 */
+		public ExamRegistration {
+			if (providerName == null || providerName.isBlank()) {
+				throw new IllegalArgumentException("Provider must not be blank");
+			}
+			if (year < 1) {
+				throw new IllegalArgumentException("Examination year must be positive");
+			}
+			if (examName == null || examName.isBlank()) {
+				throw new IllegalArgumentException("Examination name must not be blank");
+			}
+			providerName = providerName.strip();
+			examName = examName.strip();
 		}
 	}
 }
