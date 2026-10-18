@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CancellationException;
+import java.util.function.BiConsumer;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
@@ -112,6 +113,11 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	// so the application can clear the logical owner without creating a callback
 	// loop.
 	private Runnable selectionCancelledHandler = () -> {
+	};
+
+	// Reports synchronous render attempts for performance and regression
+	// diagnostics.
+	private BiConsumer<DocumentMode, Integer> pageRenderObserver = (_, _) -> {
 	};
 
 	/**
@@ -813,6 +819,10 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	/**
 	 * Displays a specific one-based page of an already opened document.
 	 *
+	 * <p>
+	 * A cross-document request renders only the final requested page rather than
+	 * first rendering the destination document's remembered page.
+	 *
 	 * @param documentMode document whose page should be displayed
 	 * @param pageNumber   one-based page number
 	 * @throws NullPointerException     if {@code documentMode} is {@code null}
@@ -835,16 +845,27 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 			throw new IllegalArgumentException(
 					"Page " + pageNumber + " is outside the document range 1-" + targetSession.getPageCount());
 		}
+		boolean changingDocument = displayedDocument != documentMode;
 
-		// Switch documents using the existing workspace lifecycle before selecting
-		// the requested page.
-		if (displayedDocument != documentMode) {
-			showDocument(documentMode);
-		}
-		if (currentPageNumber == pageNumber) {
+		// An already displayed page needs no additional rendering or callback.
+		if (!changingDocument && currentPageNumber == pageNumber) {
 			restorePageNumberField();
 			return;
 		}
+		if (changingDocument) {
+
+			// Preserve the document-switch generation guard. Any outstanding
+			// asynchronous load must not replace the requested page later.
+			documentRequest++;
+
+			// Save the departing Exam or Answer page without rendering the
+			// destination's previously remembered page.
+			rememberCurrentPageNumber();
+			displayedDocument = documentMode;
+		}
+
+		// Set the final target before rendering. showCurrentPage() retains
+		// selection, overlay, navigation and page-changed callback behaviour.
 		currentPageNumber = pageNumber;
 		showCurrentPage();
 	}
@@ -872,6 +893,15 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 		viewerCompletionButton.setText(buttonText);
 		viewerCompletionButton.setManaged(true);
 		viewerCompletionButton.setVisible(true);
+	}
+
+	/**
+	 * Observes synchronous page-render attempts for performance diagnostics.
+	 *
+	 * @param observer receives the document mode and one-based page number
+	 */
+	void setPageRenderObserver(BiConsumer<DocumentMode, Integer> observer) {
+		pageRenderObserver = Objects.requireNonNull(observer, "observer");
 	}
 
 	private void applyPageImage(Image image, PdfSession session) {
@@ -1060,6 +1090,7 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 
 	private void configureNavigation() {
 		previousButton.setDisable(true);
+		previousButton.setId("previous-pdf-page");
 		nextButton.setDisable(true);
 		nextButton.setId("next-pdf-page");
 		viewerCompletionButton.setId("finish-pdf-inspection");
@@ -1369,6 +1400,10 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 			clearSelection();
 		}
 		try {
+
+			// Count the actual PDFBox invocation, not a navigation request.
+			// This lets tests distinguish one render from two renders.
+			pageRenderObserver.accept(displayedDocument, currentPageNumber);
 			BufferedImage bufferedImage = displayedSession.renderPage(currentPageNumber, DISPLAY_DPI);
 			applyPageImage(SwingFXUtils.toFXImage(bufferedImage, null), displayedSession);
 		} catch (IOException e) {

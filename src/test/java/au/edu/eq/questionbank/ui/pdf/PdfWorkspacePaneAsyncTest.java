@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CountDownLatch;
@@ -36,6 +37,7 @@ import org.testfx.util.WaitForAsyncUtils;
 import javafx.event.ActionEvent;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.scene.image.ImageView;
@@ -108,6 +110,104 @@ class PdfWorkspacePaneAsyncTest {
 	}
 
 	@Test
+	void crossDocumentDirectPageRequestsRenderOnceAndPreserveRememberedPages(FxRobot robot) throws Exception {
+		Path examPath = createTextPdf("switch-exam.pdf", "Exam 1", "Exam 2", "Exam 3");
+		Path answerPath = createTextPdf("switch-answer.pdf", "Answer 1", "Answer 2", "Answer 3");
+		List<String> renders = new ArrayList<>();
+		List<Integer> publishedPages = new ArrayList<>();
+		TextField pageNumber = robot.lookup("#pdf-page-number").queryAs(TextField.class);
+		Label pageLabel = robot.lookup("#pdf-page-label").queryAs(Label.class);
+		Button previous = robot.lookup("#previous-pdf-page").queryAs(Button.class);
+		Button next = robot.lookup("#next-pdf-page").queryAs(Button.class);
+		robot.interact(() -> {
+			pane.openExamPdf(examPath);
+			pane.openAnswerPdf(answerPath);
+			pane.setPageRenderObserver((mode, page) -> renders.add(mode.name() + ":" + page));
+			pane.setPageChangedHandler(publishedPages::add);
+
+			// Destination remembers Exam page 1, but page 3 is requested.
+			pane.showPage(PdfWorkspacePane.DocumentMode.EXAM, 3);
+		});
+		assertEquals(List.of("EXAM:3"), renders);
+		assertEquals(List.of(3), publishedPages);
+		assertEquals(PdfWorkspacePane.DocumentMode.EXAM, pane.getDisplayedDocument());
+		assertEquals(3, pane.getCurrentPageNumber());
+		assertEquals("3", pageNumber.getText());
+		assertEquals("Page 3 of 3", pageLabel.getText());
+		assertFalse(previous.isDisabled());
+		assertTrue(next.isDisabled());
+		robot.interact(() -> pane.showPage(PdfWorkspacePane.DocumentMode.ANSWER, 2));
+		assertEquals(List.of("EXAM:3", "ANSWER:2"), renders);
+		assertEquals(List.of(3, 2), publishedPages);
+		assertEquals("Answer page 2 of 3", pageLabel.getText());
+		assertEquals("2", pageNumber.getText());
+		assertFalse(previous.isDisabled());
+		assertFalse(next.isDisabled());
+
+		// The previous Exam page remains remembered.
+		robot.interact(() -> pane.showPage(PdfWorkspacePane.DocumentMode.EXAM, 3));
+		assertEquals(List.of("EXAM:3", "ANSWER:2", "EXAM:3"), renders);
+		assertEquals(List.of(3, 2, 3), publishedPages);
+
+		// The previous Answer page remains remembered as well.
+		robot.interact(() -> pane.showPage(PdfWorkspacePane.DocumentMode.ANSWER, 2));
+		assertEquals(List.of("EXAM:3", "ANSWER:2", "EXAM:3", "ANSWER:2"), renders);
+		assertEquals(List.of(3, 2, 3, 2), publishedPages);
+
+		// Same-document, same-page requests must not render or publish.
+		robot.interact(() -> {
+			pageNumber.setText("99");
+			pane.showPage(PdfWorkspacePane.DocumentMode.ANSWER, 2);
+		});
+		assertEquals(4, renders.size());
+		assertEquals(4, publishedPages.size());
+		assertEquals("2", pageNumber.getText());
+
+		// The existing showDocument() API must still restore the
+		// remembered page using exactly one render.
+		robot.interact(() -> pane.showDocument(PdfWorkspacePane.DocumentMode.EXAM));
+		assertEquals(List.of("EXAM:3", "ANSWER:2", "EXAM:3", "ANSWER:2", "EXAM:3"), renders);
+		assertEquals(List.of(3, 2, 3, 2, 3), publishedPages);
+	}
+
+	@Test
+	void crossDocumentPageSwitchCancelsStaleAsyncAnswerLoad(FxRobot robot) throws Exception {
+		Path examPath = createPdf("stale-navigation-exam.pdf");
+		Path answerPath = createPdf("stale-navigation-answer.pdf");
+		Path replacementPath = createPdf("stale-navigation-replacement.pdf");
+		CountDownLatch completed = new CountDownLatch(1);
+		AtomicReference<Throwable> failure = new AtomicReference<>();
+		List<String> renders = new ArrayList<>();
+		robot.interact(() -> {
+			pane.openExamPdf(examPath);
+			pane.openAnswerPdf(answerPath);
+			pane.showDocument(PdfWorkspacePane.DocumentMode.EXAM);
+		});
+		var originalAnswerSession = pane.getAnswerPdfSession();
+		robot.interact(() -> {
+			pane.setPageRenderObserver((mode, page) -> renders.add(mode.name() + ":" + page));
+			pane.openAnswerPdfAsync(replacementPath, error -> {
+				failure.set(error);
+				completed.countDown();
+			});
+
+			// The already-open Answer PDF is authoritative for this
+			// immediate navigation request. The pending replacement
+			// must not overwrite it when its worker completes.
+			pane.showPage(PdfWorkspacePane.DocumentMode.ANSWER, 2);
+		});
+		assertTrue(completed.await(10, TimeUnit.SECONDS));
+		assertInstanceOf(CancellationException.class, failure.get());
+		assertSame(originalAnswerSession, pane.getAnswerPdfSession());
+		assertEquals(PdfWorkspacePane.DocumentMode.ANSWER, pane.getDisplayedDocument());
+		assertEquals(2, pane.getCurrentPageNumber());
+		assertEquals(List.of("ANSWER:2"), renders);
+
+		// The stale worker must have released its own file handle.
+		Files.delete(replacementPath);
+	}
+
+	@Test
 	void discardsAndClosesALoadWhenTheUserChangesDocument(FxRobot robot) throws Exception {
 		Path path = createPdf("stale.pdf");
 		CountDownLatch done = new CountDownLatch(1);
@@ -157,6 +257,35 @@ class PdfWorkspacePaneAsyncTest {
 	}
 
 	@Test
+	void focusedStoredRegionSurvivesCrossDocumentNavigation(FxRobot robot) throws Exception {
+		Path examPath = createTextPdf("region-exam.pdf", "Exam 1", "Exam 2", "Exam 3");
+		Path answerPath = createTextPdf("region-answer.pdf", "Answer 1", "Answer 2", "Answer 3");
+		List<String> renders = new ArrayList<>();
+		robot.interact(() -> {
+			pane.openExamPdf(examPath);
+			pane.openAnswerPdf(answerPath);
+			pane.setPageRenderObserver((mode, page) -> renders.add(mode.name() + ":" + page));
+			pane.focusStoredRegions(List.of(new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM, 3,
+					0.10, 0.20, 0.70, 0.30)));
+		});
+		assertEquals(List.of("EXAM:3"), renders);
+		assertTrue(robot.lookup(".pdf-stored-region-highlight").tryQuery().isPresent());
+		robot.interact(() -> pane.showPage(PdfWorkspacePane.DocumentMode.ANSWER, 2));
+		assertEquals(List.of("EXAM:3", "ANSWER:2"), renders);
+		assertTrue(robot.lookup(".pdf-stored-region-highlight").tryQuery().isEmpty());
+
+		// Returning to the saved region's page restores its overlay
+		// without first rendering the Exam's remembered page.
+		robot.interact(() -> pane.showPage(PdfWorkspacePane.DocumentMode.EXAM, 3));
+		assertEquals(List.of("EXAM:3", "ANSWER:2", "EXAM:3"), renders);
+		Rectangle highlight = robot.lookup(".pdf-stored-region-highlight").queryAs(Rectangle.class);
+		ImageView pageView = robot.lookup("#pdf-page-view").queryAs(ImageView.class);
+		assertEquals(pageView.getBoundsInLocal().getWidth() * 0.10, highlight.getX(), 1.0);
+		assertEquals(pageView.getBoundsInLocal().getHeight() * 0.20, highlight.getY(), 1.0);
+		assertEquals(pageView.getBoundsInLocal().getWidth() * 0.70, highlight.getWidth(), 1.0);
+	}
+
+	@Test
 	void focusesStoredRegionAndKeepsHighlightAligned(FxRobot robot) throws Exception {
 		Path path = createTallPdf("stored-region-focus.pdf");
 		robot.interact(() -> {
@@ -181,6 +310,28 @@ class PdfWorkspacePaneAsyncTest {
 		assertEquals(pageView.getBoundsInLocal().getWidth() * 0.80, highlight.getWidth(), 1.0);
 		assertTrue(scrollPane.getVvalue() > 0,
 				"A lower stored region should be brought towards the top of the viewport");
+	}
+
+	@Test
+	void invalidCrossDocumentRequestsLeaveDisplayedStateUnchanged(FxRobot robot) throws Exception {
+		Path examPath = createPdf("invalid-cross-document.pdf");
+		List<String> renders = new ArrayList<>();
+		List<Integer> publishedPages = new ArrayList<>();
+		robot.interact(() -> {
+			pane.openExamPdf(examPath);
+			pane.setPageRenderObserver((mode, page) -> renders.add(mode.name() + ":" + page));
+			pane.setPageChangedHandler(publishedPages::add);
+			assertThrows(NullPointerException.class, () -> pane.showPage(null, 1));
+			assertThrows(IllegalStateException.class, () -> pane.showPage(PdfWorkspacePane.DocumentMode.ANSWER, 1));
+			assertThrows(IllegalArgumentException.class, () -> pane.showPage(PdfWorkspacePane.DocumentMode.EXAM, 0));
+			assertThrows(IllegalArgumentException.class, () -> pane.showPage(PdfWorkspacePane.DocumentMode.EXAM, 99));
+		});
+		assertEquals(PdfWorkspacePane.DocumentMode.EXAM, pane.getDisplayedDocument());
+		assertEquals(1, pane.getCurrentPageNumber());
+		assertTrue(renders.isEmpty());
+		assertTrue(publishedPages.isEmpty());
+		TextField pageNumber = robot.lookup("#pdf-page-number").queryAs(TextField.class);
+		assertEquals("1", pageNumber.getText());
 	}
 
 	@Test
@@ -239,6 +390,44 @@ class PdfWorkspacePaneAsyncTest {
 		assertNotNull(pane.getExamPdfSession());
 		ImageView pageView = robot.lookup("#pdf-page-view").queryAs(ImageView.class);
 		assertNotNull(pageView.getImage());
+	}
+
+	@Test
+	void measuresLegacyAndOptimisedRenderCounts(FxRobot robot) throws Exception {
+		Path examPath = createTextPdf("benchmark-exam.pdf", "Exam 1", "Exam 2", "Exam 3");
+		Path answerPath = createTextPdf("benchmark-answer.pdf", "Answer 1", "Answer 2", "Answer 3");
+		List<String> renders = new ArrayList<>();
+		List<String> legacyRenders = new ArrayList<>();
+		List<String> optimisedRenders = new ArrayList<>();
+		long[] elapsedNanos = new long[2];
+		robot.interact(() -> {
+			pane.openExamPdf(examPath);
+			pane.openAnswerPdf(answerPath);
+			pane.setPageRenderObserver((mode, page) -> renders.add(mode.name() + ":" + page));
+
+			// Reproduce the former two-step navigation sequence.
+			long start = System.nanoTime();
+			pane.showDocument(PdfWorkspacePane.DocumentMode.EXAM);
+			pane.showPage(PdfWorkspacePane.DocumentMode.EXAM, 3);
+			elapsedNanos[0] = System.nanoTime() - start;
+			legacyRenders.addAll(renders);
+
+			// Leave Exam remembering page 2 and Answer displaying page 1.
+			pane.showPage(PdfWorkspacePane.DocumentMode.EXAM, 2);
+			pane.showDocument(PdfWorkspacePane.DocumentMode.ANSWER);
+			renders.clear();
+
+			// The replacement operation renders only the requested page 3.
+			start = System.nanoTime();
+			pane.showPage(PdfWorkspacePane.DocumentMode.EXAM, 3);
+			elapsedNanos[1] = System.nanoTime() - start;
+			optimisedRenders.addAll(renders);
+		});
+		assertEquals(List.of("EXAM:1", "EXAM:3"), legacyRenders);
+		assertEquals(List.of("EXAM:3"), optimisedRenders);
+		System.out.printf("PDF switching: legacy %d renders (%.2f ms), " + "optimised %d render (%.2f ms)%n",
+				legacyRenders.size(), elapsedNanos[0] / 1_000_000.0, optimisedRenders.size(),
+				elapsedNanos[1] / 1_000_000.0);
 	}
 
 	@Test
@@ -304,6 +493,36 @@ class PdfWorkspacePaneAsyncTest {
 		pane = new PdfWorkspacePane();
 		stage.setScene(new Scene(pane, 640, 480));
 		stage.show();
+	}
+
+	@Test
+	void viewerSwitchesRenderOnlyRequestedPagesAndRestoreReturnPage(FxRobot robot) throws Exception {
+		Path examPath = createTextPdf("viewer-switch-exam.pdf", "Exam 1", "Exam 2", "Exam 3");
+		Path viewerPath = createTextPdf("viewer-switch.pdf", "Viewer 1", "Viewer 2", "Viewer 3");
+		List<String> renders = new ArrayList<>();
+		List<Integer> publishedPages = new ArrayList<>();
+		robot.interact(() -> {
+			pane.openExamPdf(examPath);
+			pane.showPage(PdfWorkspacePane.DocumentMode.EXAM, 3);
+			pane.openViewerPdf(viewerPath);
+			pane.showViewerCompletionAction("Finish Inspection", () -> {
+			});
+			pane.setPageRenderObserver((mode, page) -> renders.add(mode.name() + ":" + page));
+			pane.setPageChangedHandler(publishedPages::add);
+			pane.showPage(PdfWorkspacePane.DocumentMode.EXAM, 2);
+			pane.showPage(PdfWorkspacePane.DocumentMode.VIEWER, 3);
+			pane.closeViewerPdf();
+		});
+		assertEquals(List.of("EXAM:2", "VIEWER:3", "EXAM:3"), renders);
+		assertEquals(List.of(2, 3, 3), publishedPages);
+		assertEquals(PdfWorkspacePane.DocumentMode.EXAM, pane.getDisplayedDocument());
+		assertEquals(3, pane.getCurrentPageNumber());
+		Label pageLabel = robot.lookup("#pdf-page-label").queryAs(Label.class);
+		Button completion = robot.lookup("#finish-pdf-inspection").queryAs(Button.class);
+		assertEquals("Page 3 of 3", pageLabel.getText());
+		assertFalse(completion.isVisible());
+		assertFalse(completion.isManaged());
+		assertThrows(IllegalStateException.class, () -> pane.showPage(PdfWorkspacePane.DocumentMode.VIEWER, 2));
 	}
 
 	private Path createPdf(String name) throws Exception {
