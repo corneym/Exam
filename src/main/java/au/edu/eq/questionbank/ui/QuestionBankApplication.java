@@ -71,6 +71,7 @@ import au.edu.eq.questionbank.repository.assessment.AnswerFileReassignmentServic
 import au.edu.eq.questionbank.repository.assessment.AnswerPdfReplacementService;
 import au.edu.eq.questionbank.repository.assessment.BookletApplicabilityReviewRepository;
 import au.edu.eq.questionbank.repository.assessment.ExamMetadataCorrectionService;
+import au.edu.eq.questionbank.repository.assessment.LegacyExamImportEligibility;
 import au.edu.eq.questionbank.repository.assessment.LegacyQuestionMetadataService;
 import au.edu.eq.questionbank.repository.assessment.LegacyQuestionMetadataUpdateResult;
 import au.edu.eq.questionbank.repository.assessment.LegacyQuestionSplitService;
@@ -2813,11 +2814,13 @@ public class QuestionBankApplication extends Application {
 			LegacyQuestionWorkbookReader reader = new LegacyQuestionWorkbookReader();
 			List<LegacyQuestionSheet> sheets = reader.read(sourceWorkbook);
 			SqliteExamWriter examWriter = new SqliteExamWriter(database);
+			LegacyExamImportEligibility eligibility = new LegacyExamImportEligibility(database);
 			List<LegacyExamMappingDialog.ExistingExamChoice> existing = new ArrayList<>();
 			for (Exam exam : examWriter.findExamsForSubject(subject)) {
 				ExamAssetExpectations counts = examWriter.findExamAssetExpectations(exam);
-				existing.add(new LegacyExamMappingDialog.ExistingExamChoice(exam,
-						counts.availableQuestionBookletCount(), counts.availableAnswerFileCount()));
+				existing.add(
+						new LegacyExamMappingDialog.ExistingExamChoice(exam, counts.availableQuestionBookletCount(),
+								counts.availableAnswerFileCount(), eligibility.rejectionReason(exam)));
 			}
 			LegacyExamMappingDialog mappingDialog = new LegacyExamMappingDialog(primaryStage, sheets, existing);
 			Optional<Map<LegacyExamKey, LegacyExamIdentity>> confirmed = mappingDialog.showAndWait();
@@ -2826,8 +2829,8 @@ public class QuestionBankApplication extends Application {
 				return;
 			}
 
-			// A selected saved Exam contributes its exact persisted spelling. The
-			// v22 missing-Paper-link preflight subsequently uses its original ID.
+			// A confirmed saved Exam contributes its exact spelling and identity.
+			// COMPLETE and developed Exams cannot pass the confirmation dialog.
 			Map<LegacyExamKey, LegacyExamIdentity> mappings = Map.copyOf(confirmed.get());
 			LegacyQuestionWorkbookStore workbookStore = new LegacyQuestionWorkbookStore(
 					new ManagedDataLayout(config.dataRoot()));

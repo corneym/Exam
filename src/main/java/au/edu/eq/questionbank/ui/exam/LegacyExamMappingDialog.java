@@ -188,9 +188,7 @@ public final class LegacyExamMappingDialog extends Dialog<Map<LegacyExamKey, Leg
 			return true;
 		}
 		ExistingExamChoice selected = selectedExistingExam(editor);
-		if (selected == null) {
-
-			// With multiple case-equivalent Exams, never choose arbitrarily.
+		if (selected == null || selected.importBlockReason() != null) {
 			return false;
 		}
 		boolean differentSpelling = !selected.exam().getName().equals(editor.examName().getText().strip())
@@ -220,11 +218,15 @@ public final class LegacyExamMappingDialog extends Dialog<Map<LegacyExamKey, Leg
 			editor.matchPanel().getChildren().add(editor.status());
 			return;
 		}
-		if (matches.size() == 1) {
+		boolean allBlocked = matches.stream().allMatch(choice -> choice.importBlockReason() != null);
+		if (allBlocked) {
+			editor.status().setText("Legacy import unavailable for the saved Exam" + (matches.size() == 1 ? "." : "s.")
+					+ " Existing captured or reviewed Questions will not be changed.");
+		} else if (matches.size() == 1) {
 			editor.status().setText("Matching saved Exam found. Reuse its existing record and PDF assets.");
 		} else {
 			editor.status().setText("Multiple saved Exams differ only in capitalisation. "
-					+ "Select exactly one existing Exam; no automatic merge will occur.");
+					+ "Select one eligible saved Exam; no automatic merge will occur.");
 		}
 		editor.matchPanel().getChildren().add(editor.status());
 		for (ExistingExamChoice choice : matches) {
@@ -237,11 +239,20 @@ public final class LegacyExamMappingDialog extends Dialog<Map<LegacyExamKey, Leg
 			option.setToggleGroup(editor.choices());
 			option.setUserData(choice);
 			editor.matchPanel().getChildren().add(option);
-			if (matches.size() == 1 || (previousId != null && previousId == exam.getId())) {
+			if (choice.importBlockReason() != null) {
+
+				// The user can see which saved Exam was found, and why importing
+				// into it would be unsafe, without being able to confirm it.
+				option.setDisable(true);
+				Label reason = new Label(choice.importBlockReason());
+				reason.setId("legacy-mapping-blocked-" + (editors.indexOf(editor) + 1) + "-" + exam.getId());
+				reason.setWrapText(true);
+				editor.matchPanel().getChildren().add(reason);
+			} else if (matches.size() == 1 || (previousId != null && previousId == exam.getId())) {
 				option.setSelected(true);
 			}
 		}
-		if (matches.size() == 1) {
+		if (matches.size() == 1 && matches.getFirst().importBlockReason() == null) {
 			Exam candidate = matches.getFirst().exam();
 			boolean differentSpelling = !candidate.getName().equals(name)
 					|| !candidate.getProvider().getName().equals(provider);
@@ -259,19 +270,44 @@ public final class LegacyExamMappingDialog extends Dialog<Map<LegacyExamKey, Leg
 	}
 
 	/**
-	 * Saved Exam and its read-only asset counts for legacy identity confirmation.
+	 * Saved Exam and read-only summary used at legacy identity confirmation.
 	 *
-	 * @param exam             persisted Exam
-	 * @param questionBooklets number of saved Question booklets
-	 * @param answerBooklets   number of saved Answer booklets
+	 * @param exam              persisted Exam
+	 * @param questionBooklets  saved Question booklet count
+	 * @param answerBooklets    saved Answer booklet count
+	 * @param importBlockReason rejection reason, or null if eligible
 	 */
-	public record ExistingExamChoice(Exam exam, int questionBooklets, int answerBooklets) {
+	public record ExistingExamChoice(Exam exam, int questionBooklets, int answerBooklets, String importBlockReason) {
 
+		/**
+		 * Validates the saved Exam and its asset counts.
+		 *
+		 * @param exam              persisted Exam
+		 * @param questionBooklets  number of saved Question booklets
+		 * @param answerBooklets    number of saved Answer booklets
+		 * @param importBlockReason reason legacy import is prohibited, or null when
+		 *                          eligible
+		 */
 		public ExistingExamChoice {
 			Objects.requireNonNull(exam, "exam");
 			if (questionBooklets < 0 || answerBooklets < 0) {
 				throw new IllegalArgumentException("Booklet counts cannot be negative");
 			}
+		}
+
+		/**
+		 * Creates an existing-Exam choice without an import eligibility restriction.
+		 *
+		 * <p>
+		 * Retains compatibility with callers that only supply the saved Exam and its
+		 * asset counts.
+		 *
+		 * @param exam             persisted Exam
+		 * @param questionBooklets number of saved Question booklets
+		 * @param answerBooklets   number of saved Answer booklets
+		 */
+		public ExistingExamChoice(Exam exam, int questionBooklets, int answerBooklets) {
+			this(exam, questionBooklets, answerBooklets, null);
 		}
 	}
 

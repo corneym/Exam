@@ -2269,6 +2269,15 @@ public final class ExamAssetsPane extends VBox {
 			this(exam, assetExpectations, booklets, answerFiles, Map.of());
 		}
 
+		/**
+		 * Validates the snapshot and creates immutable copies of its collections.
+		 *
+		 * @param exam              authoritative persisted Exam
+		 * @param assetExpectations persisted Exam asset expectations
+		 * @param booklets          saved Question booklet snapshots
+		 * @param answerFiles       saved Answer assets
+		 * @param legacyPaperCodes  saved legacy Paper identities by booklet ID
+		 */
 		public ExamSnapshot {
 			Objects.requireNonNull(exam, "exam");
 			Objects.requireNonNull(assetExpectations, "assetExpectations");

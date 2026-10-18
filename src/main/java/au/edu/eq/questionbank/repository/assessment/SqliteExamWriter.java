@@ -789,15 +789,16 @@ public final class SqliteExamWriter {
 						List<String> caseInsensitiveMatches = findCaseInsensitiveLegacyExamMatches(connection, subject,
 								registration.year(), registration.providerName(), registration.examName());
 						if (!caseInsensitiveMatches.isEmpty()) {
-
-							// The caller has not selected the exact saved Exam identity. Do not
-							// register a second Exam merely because its spelling or case differs.
-							// This guard also protects callers bypassing the confirmation dialog.
 							throw new IllegalStateException("Existing Exam matches this legacy examination "
 									+ "ignoring capitalisation: " + String.join("; ", caseInsensitiveMatches)
 									+ ". Select the saved Exam in Resolve Legacy Examinations.");
 						}
 						exam = insertExam(connection, subject, provider, registration.year(), registration.examName());
+					} else {
+
+						// Do not alter planning counts for an existing captured/reviewed Exam.
+						// A later rejection also rolls back earlier registrations in this transaction.
+						LegacyExamImportEligibility.requireEligible(connection, exam.getId());
 					}
 					Integer requiredCount = expectedQuestionBookletCounts.get(registration);
 					if (requiredCount != null) {

@@ -18,6 +18,7 @@ import java.util.Set;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SourceQuestionCodeParser;
+import au.edu.eq.questionbank.repository.assessment.LegacyExamImportEligibility;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 /**
@@ -859,21 +860,19 @@ public final class LegacyQuestionMetadataImporter {
 
 	private void requireBookletExamActive(Connection connection, long bookletId) throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
-				SELECT e.capture_state
-				FROM exam_booklets eb
-				JOIN exams e
-				    ON e.id = eb.exam_id
-				WHERE eb.id = ?
+				SELECT exam_id
+				FROM exam_booklets
+				WHERE id = ?
 				""")) {
 			statement.setLong(1, bookletId);
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
 					throw new IllegalArgumentException("Exam booklet does not exist: " + bookletId);
 				}
-				if ("COMPLETE".equals(result.getString("capture_state"))) {
-					throw new IllegalStateException(
-							"Exam must be reactivated before importing legacy Question structure");
-				}
+
+				// This check is inside the Question import transaction. Even
+				// non-UI callers cannot overwrite a developed Exam.
+				LegacyExamImportEligibility.requireEligible(connection, result.getLong("exam_id"));
 			}
 		}
 	}

@@ -85,6 +85,27 @@ class LegacyExamMappingDialogTest {
 	}
 
 	@Test
+	void developedExamShowsReasonAndCannotBeConfirmed(FxRobot robot) {
+		Exam completed = exam(101, "External assessment", ExamCaptureState.COMPLETE);
+		String reason = "This Exam is COMPLETE. Legacy metadata must not be reimported into a completed Exam.";
+		replaceDialog(robot, List.of(new LegacyExamMappingDialog.ExistingExamChoice(completed, 3, 1, reason)));
+		Button confirm = robot.lookup("#legacy-mapping-confirm").queryButton();
+		RadioButton option = robot.lookup("#legacy-mapping-existing-1-101").queryAs(RadioButton.class);
+		Label explanation = robot.lookup("#legacy-mapping-blocked-1-101").queryAs(Label.class);
+		Label status = robot.lookup("#legacy-mapping-status-1").queryAs(Label.class);
+		assertTrue(option.isDisabled());
+		assertFalse(option.isSelected());
+		assertTrue(confirm.isDisabled());
+		assertTrue(status.getText().contains("Legacy import unavailable"));
+		assertTrue(explanation.getText().contains("COMPLETE"));
+
+		// Exact spelling cannot bypass the saved Exam's eligibility.
+		TextField name = robot.lookup("#legacy-mapping-exam-1").queryAs(TextField.class);
+		robot.interact(() -> name.setText("External assessment"));
+		assertTrue(confirm.isDisabled());
+	}
+
+	@Test
 	void examinationIdentityCanBeCorrected(FxRobot robot) {
 		TextField examName = robot.lookup("#legacy-mapping-exam-2").queryAs(TextField.class);
 		Button confirm = robot.lookup("#legacy-mapping-confirm").queryButton();

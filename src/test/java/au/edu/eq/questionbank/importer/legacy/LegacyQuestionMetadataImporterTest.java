@@ -142,9 +142,6 @@ class LegacyQuestionMetadataImporterTest {
 		Fixture fixture = createFixture("complete-exam-import.db", false);
 		try (Connection connection = fixture.database().openConnection();
 				Statement statement = connection.createStatement()) {
-
-			// Legacy Question import creates Question and SourceQuestion structure, so a
-			// completed Exam must be deliberately reactivated first.
 			statement.executeUpdate("""
 					UPDATE exams
 					SET capture_state = 'COMPLETE'
@@ -153,12 +150,9 @@ class LegacyQuestionMetadataImporterTest {
 		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());
 		IllegalStateException exception = assertThrows(IllegalStateException.class,
 				() -> importer.importWorkbook(fixture.workbookPath(), "Chemistry", "2019"));
-		assertTrue(exception.getMessage().contains("reactivated"));
+		assertTrue(exception.getMessage().contains("COMPLETE"));
 		try (Connection connection = fixture.database().openConnection();
 				Statement statement = connection.createStatement()) {
-
-			// Rejection occurs transactionally before legacy import can leave any Question,
-			// Answer or multipart source identity behind.
 			assertEquals(0, countRows(statement, "questions"));
 			assertEquals(0, countRows(statement, "answers"));
 			assertEquals(0, countRows(statement, "source_questions"));
@@ -867,6 +861,35 @@ class LegacyQuestionMetadataImporterTest {
 				new LegacyExamIdentity("QCAA", "Mock Examination"), "MCQ booklet")));
 		assertTrue(missing.contains(new LegacyMappedBookletRequirement(new LegacyExamKey("QCAA", 2020),
 				new LegacyExamIdentity("QCAA", "Mock Examination"), "Paper 1")));
+	}
+
+	@Test
+	void mappedReimportWithApplicabilityReviewIsRejectedWithoutMutation() throws Exception {
+		Fixture fixture = createFixture("reviewed-mapped-import.db", false);
+		LegacyQuestionMetadataImporter importer = new LegacyQuestionMetadataImporter(fixture.database());
+		LegacyExamKey key = new LegacyExamKey("QCAA", 2020);
+		LegacyExamIdentity identity = new LegacyExamIdentity("QCAA", "External Assessment");
+		Map<LegacyExamKey, LegacyExamIdentity> mappings = Map.of(key, identity);
+
+		// The same ACTIVE Exam remains eligible for a first metadata-only import.
+		LegacyQuestionImportResult first = importer.importWorkbookMapped(fixture.workbookPath(), "Chemistry", "2019",
+				mappings);
+		assertEquals(2, first.insertedQuestions());
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
+			statement.executeUpdate("""
+					INSERT INTO booklet_applicability_reviews (booklet_id)
+					SELECT id FROM exam_booklets WHERE booklet_name = 'Paper 1'
+					""");
+		}
+		IllegalStateException exception = assertThrows(IllegalStateException.class,
+				() -> importer.importWorkbookMapped(fixture.workbookPath(), "Chemistry", "2019", mappings));
+		assertTrue(exception.getMessage().contains("applicability reviews"));
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
+			assertEquals(2, countRows(statement, "questions"));
+			assertEquals(1, countRows(statement, "booklet_applicability_reviews"));
+		}
 	}
 
 	@Test
