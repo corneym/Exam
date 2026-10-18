@@ -60,6 +60,7 @@ import au.edu.eq.questionbank.service.audit.ExamCorpusAuditService;
 import au.edu.eq.questionbank.service.audit.ExamCorpusStatus;
 import au.edu.eq.questionbank.service.audit.ExamLifecycleService;
 import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
+import au.edu.eq.questionbank.ui.audit.CorpusDashboardPane;
 import au.edu.eq.questionbank.ui.curriculum.CurriculumSelectorPane;
 import au.edu.eq.questionbank.ui.exam.ExamAssetsPane;
 import au.edu.eq.questionbank.ui.exam.ExamMetadataPane;
@@ -1303,14 +1304,10 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		ExamBooklet originalBooklet = examMetadataPane().getBooklet();
 		assertNotNull(originalBooklet);
 
-		// Exercise COMPLETE -> ACTIVE against an Exam that genuinely
-		// satisfies the modern completion requirements.
+		// Establish the normal completion eligibility requirements.
 		prepareCompletionEligibleBooklet(originalBooklet);
 		Platform.runLater(() -> {
 			try {
-
-				// First exercise the Dashboard-owned ACTIVE -> COMPLETE application
-				// transition.
 				invoke(application, "changeCorpusDashboardExamState",
 						new Class<?>[] { Exam.class, ExamCaptureState.class }, originalBooklet.getExam(),
 						ExamCaptureState.COMPLETE);
@@ -1320,19 +1317,30 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		});
 		waitForDialogShowing(robot, "Mark Exam Complete");
 		fireDialogButton(robot, "Mark Complete");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> examMetadataPane().getBooklet() != null
-				&& examMetadataPane().getBooklet().getExam().isComplete());
+		CorpusDashboardPane dashboard = field(application, "corpusDashboardPane", CorpusDashboardPane.class);
+		assertNotNull(dashboard);
+		HBox lifecycleProgress = field(dashboard, "examLifecycleProgressRow", HBox.class);
+
+		// The capture snapshot becomes COMPLETE before the background
+		// Dashboard refresh finishes. Wait for both the positive state
+		// transition and completion of the first lifecycle operation.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot, () -> examMetadataPane().getBooklet() != null
+						&& examMetadataPane().getBooklet().getExam().isComplete() && !lifecycleProgress.isVisible()));
 		Exam completedExam = examMetadataPane().getBooklet().getExam();
 		WaitForAsyncUtils.asyncFx(() -> {
 
-			// COMPLETE -> ACTIVE is deliberately reversible without a second modal
-			// confirmation.
+			// Reactivation must now be accepted because the preceding
+			// lifecycle operation has finished completely.
 			invoke(application, "changeCorpusDashboardExamState", new Class<?>[] { Exam.class, ExamCaptureState.class },
 					completedExam, ExamCaptureState.ACTIVE);
 			return null;
 		}).get();
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> examMetadataPane().getBooklet() != null
-				&& !examMetadataPane().getBooklet().getExam().isComplete());
+
+		// Verify the second positive transition and its completed refresh.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot, () -> examMetadataPane().getBooklet() != null
+						&& !examMetadataPane().getBooklet().getExam().isComplete() && !lifecycleProgress.isVisible()));
 		ExamBooklet activeBooklet = examMetadataPane().getBooklet();
 		assertNotNull(activeBooklet);
 		assertFalse(activeBooklet.getExam().isComplete());
@@ -1341,11 +1349,10 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 				.findExamBookletBySourceDocumentPath(originalBooklet.getSourceDocument().getRelativePath());
 		assertNotNull(reloaded);
 
-		// Reloading proves Reactivate persisted ACTIVE rather than changing only the
-		// current JavaFX domain object.
+		// Reactivation must be persisted, not merely reflected in the UI.
 		assertFalse(reloaded.getExam().isComplete());
 
-		// Structural editing must work again after explicit reactivation.
+		// Structural editing must be available again after reactivation.
 		ExamBooklet replanned = writer.updateExamBookletPlanning(reloaded, reloaded.getQuestionFormat(), 20);
 		assertEquals(Integer.valueOf(20), replanned.getExpectedQuestionCount());
 	}
