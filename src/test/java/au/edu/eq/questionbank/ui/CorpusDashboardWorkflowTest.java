@@ -6,16 +6,20 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.File;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiFunction;
 
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
@@ -55,6 +59,7 @@ import au.edu.eq.questionbank.service.audit.BookletCorpusStatus;
 import au.edu.eq.questionbank.service.audit.ExamCorpusStatus;
 import au.edu.eq.questionbank.service.legacy.LegacyQuestionWorkbookStore;
 import au.edu.eq.questionbank.ui.exam.ExamAssetsPane;
+import au.edu.eq.questionbank.ui.pdf.PdfFilePicker;
 import javafx.application.Platform;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
@@ -68,6 +73,7 @@ import javafx.scene.control.MenuBar;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.TableView;
 import javafx.scene.layout.VBox;
+import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 
 @Tag("ui")
@@ -898,6 +904,91 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(0, refreshed.assetExpectations().availableAnswerFileCount());
 		assertTrue(refreshed.bookletStatuses().isEmpty());
 		assertFalse(refreshed.isReadyForCompletion());
+	}
+
+	@Test
+	void legacyIntakeSeedsFirstBookletPdfChooserAndPreservesDirectoryHistory() throws Exception {
+		Path testRoot = databasePath.getParent();
+		Path previousDirectory = Files.createDirectories(testRoot.resolve("previous-pdfs"));
+		Path workbookDirectory = Files.createDirectories(testRoot.resolve("external-workbooks"));
+		Path pdfDirectory = Files.createDirectories(testRoot.resolve("selected-pdfs"));
+		Path nextWorkbookDirectory = Files.createDirectories(testRoot.resolve("next-workbooks"));
+		Path missingWorkbookDirectory = testRoot.resolve("missing-workbooks");
+		Path previousPdf = Files.createFile(previousDirectory.resolve("previous.pdf"));
+		Path answerPdf = Files.createFile(pdfDirectory.resolve("answers.pdf"));
+		Path questionPdf = Files.createFile(pdfDirectory.resolve("paper-1.pdf"));
+		Files.createFile(workbookDirectory.resolve("QCAA-2020-Mock.xlsx"));
+		Files.createFile(nextWorkbookDirectory.resolve("QCAA-2020-Sample.xlsx"));
+		List<Path> initialDirectories = new ArrayList<>();
+		AtomicInteger invocation = new AtomicInteger();
+
+		// Intercept the native chooser while retaining the real PdfFilePicker
+		// directory-history implementation.
+		var constructor = PdfFilePicker.class.getDeclaredConstructor(Path.class, BiFunction.class);
+		constructor.setAccessible(true);
+		PdfFilePicker picker = constructor.newInstance(pdfDataRoot,
+				(BiFunction<FileChooser, Stage, File>) (chooser, _) -> {
+					assertNull(chooser.getInitialFileName());
+					File initialDirectory = chooser.getInitialDirectory();
+					assertNotNull(initialDirectory);
+					initialDirectories.add(initialDirectory.toPath());
+					return switch (invocation.getAndIncrement()) {
+					case 0 -> previousPdf.toFile();
+					case 1 -> null;
+					case 2 -> answerPdf.toFile();
+					case 3 -> questionPdf.toFile();
+					case 4 -> null;
+					case 5 -> null;
+					default -> throw new AssertionError("Unexpected PDF chooser invocation");
+					};
+				});
+
+		// Establish a previous PDF folder, as would happen after ordinary
+		// Exam/Assets work earlier in the same application session.
+		assertEquals(previousPdf,
+				WaitForAsyncUtils.asyncFx(() -> picker.chooseAnyPdf(primaryStage, "Previous PDF")).get());
+
+		// Simulate a newly accepted external legacy workbook.
+		// Its folder must override older PDF history on the next selection.
+		WaitForAsyncUtils.asyncFx(() -> {
+			setField(application, "legacyQuestionSourceDirectory", workbookDirectory);
+			setField(application, "legacyQuestionPdfDirectorySeeded", Boolean.FALSE);
+			return null;
+		}).get();
+
+		// An Answer booklet is selected first. Cancellation must preserve
+		// the original workbook directory for the next attempt.
+		assertNull(WaitForAsyncUtils.asyncFx(() -> invoke(application, "chooseAnswerBookletSource",
+				new Class<?>[] { Stage.class, PdfFilePicker.class }, primaryStage, picker)).get());
+		assertEquals(answerPdf, WaitForAsyncUtils.asyncFx(() -> invoke(application, "chooseAnswerBookletSource",
+				new Class<?>[] { Stage.class, PdfFilePicker.class }, primaryStage, picker)).get());
+
+		// The first successful PDF establishes the directory used by
+		// subsequent Question booklet selection.
+		assertEquals(questionPdf, WaitForAsyncUtils.asyncFx(() -> invoke(application, "chooseQuestionBookletSource",
+				new Class<?>[] { Stage.class, PdfFilePicker.class }, primaryStage, picker)).get());
+
+		// A different legacy workbook begins another intake.
+		// Question-first selection must also use its original directory.
+		WaitForAsyncUtils.asyncFx(() -> {
+			setField(application, "legacyQuestionSourceDirectory", nextWorkbookDirectory);
+			setField(application, "legacyQuestionPdfDirectorySeeded", Boolean.FALSE);
+			return null;
+		}).get();
+		assertNull(WaitForAsyncUtils.asyncFx(() -> invoke(application, "chooseQuestionBookletSource",
+				new Class<?>[] { Stage.class, PdfFilePicker.class }, primaryStage, picker)).get());
+
+		// If the original workbook directory disappears, fall back to
+		// the configured PDF root rather than using an invalid folder.
+		WaitForAsyncUtils.asyncFx(() -> {
+			setField(application, "legacyQuestionSourceDirectory", missingWorkbookDirectory);
+			setField(application, "legacyQuestionPdfDirectorySeeded", Boolean.FALSE);
+			return null;
+		}).get();
+		assertNull(WaitForAsyncUtils.asyncFx(() -> invoke(application, "chooseQuestionBookletSource",
+				new Class<?>[] { Stage.class, PdfFilePicker.class }, primaryStage, picker)).get());
+		assertEquals(List.of(pdfDataRoot, workbookDirectory, workbookDirectory, pdfDirectory, nextWorkbookDirectory,
+				pdfDataRoot), initialDirectories);
 	}
 
 	@Test

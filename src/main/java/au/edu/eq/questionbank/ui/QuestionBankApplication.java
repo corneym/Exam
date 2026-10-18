@@ -1002,6 +1002,7 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private Path chooseAnswerBookletSource(Stage primaryStage, PdfFilePicker bookletPicker) {
+		seedLegacyBookletPdfDirectory(bookletPicker);
 		return bookletPicker.chooseAnyPdf(primaryStage, "Choose Answer booklet PDF");
 	}
 
@@ -1037,14 +1038,7 @@ public class QuestionBankApplication extends Application {
 	 * @return selected PDF, or {@code null} when cancelled
 	 */
 	private Path chooseQuestionBookletSource(Stage primaryStage, PdfFilePicker bookletPicker) {
-		if (pendingLegacyQuestionImport != null && !legacyQuestionPdfDirectorySeeded
-				&& legacyQuestionSourceDirectory != null) {
-
-			// Seed once for this legacy intake. Further PDF selections
-			// use the location remembered by PdfFilePicker.
-			bookletPicker.preferInitialDirectory(legacyQuestionSourceDirectory);
-			legacyQuestionPdfDirectorySeeded = true;
-		}
+		seedLegacyBookletPdfDirectory(bookletPicker);
 		return bookletPicker.chooseAnyPdf(primaryStage, "Choose Question booklet PDF");
 	}
 
@@ -4123,6 +4117,20 @@ public class QuestionBankApplication extends Application {
 			suffix++;
 		}
 		return destination;
+	}
+
+	private void seedLegacyBookletPdfDirectory(PdfFilePicker bookletPicker) {
+		if (legacyQuestionPdfDirectorySeeded || legacyQuestionSourceDirectory == null) {
+			return;
+		}
+
+		// The original workbook directory is retained throughout legacy intake.
+		// Whichever booklet type is selected first receives that directory.
+		bookletPicker.preferInitialDirectory(legacyQuestionSourceDirectory);
+		legacyQuestionPdfDirectorySeeded = true;
+
+		// Subsequent Question and Answer PDF selections use the shared
+		// PdfFilePicker's last successful selection directory.
 	}
 
 	/**
