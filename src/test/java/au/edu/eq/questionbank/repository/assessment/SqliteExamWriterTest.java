@@ -443,6 +443,43 @@ class SqliteExamWriterTest {
 	}
 
 	@Test
+	void legacyPaperWriterPreservesReviewsAndRejectedLinksRemainAtomic() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("reviewed-paper-writer.db"));
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		Exam exam = writer.createExam(chemistry, "QCAA", 2020, "Sample Examination");
+		ExamBooklet first = writer.insertExamBooklet(exam, writer.insertSourceDocument("Chemistry/2020/paper-one.pdf"),
+				"Paper 1", ExamBookletQuestionFormat.WRITTEN_RESPONSE);
+		ExamBooklet second = writer.insertExamBooklet(exam, writer.insertSourceDocument("Chemistry/2020/paper-two.pdf"),
+				"Paper 2", ExamBookletQuestionFormat.WRITTEN_RESPONSE);
+		SqliteBookletApplicabilityReviewRepository reviews = new SqliteBookletApplicabilityReviewRepository(database);
+		reviews.setReviewed(first.getId(), true);
+		reviews.setReviewed(second.getId(), true);
+
+		// Exercise the actual Exam/Assets persistence writer, not just raw UPDATE SQL.
+		writer.updateLegacyPaperCode(first, "1");
+		assertTrue(reviews.isReviewed(first.getId()));
+		assertTrue(reviews.isReviewed(second.getId()));
+		writer.updateLegacyPaperCode(first, "1"); // no-op save
+		writer.updateLegacyPaperCode(first, "2"); // corrected administrative code
+		writer.updateLegacyPaperCode(first, null); // unlink
+		assertTrue(reviews.isReviewed(first.getId()));
+		assertTrue(reviews.isReviewed(second.getId()));
+		writer.updateLegacyPaperCode(first, "1");
+		assertThrows(IllegalArgumentException.class, () -> writer.updateLegacyPaperCode(second, "1"));
+		assertEquals(Map.of(first.getId(), "1"), writer.findLegacyPaperCodes(exam));
+		assertTrue(reviews.isReviewed(first.getId()));
+		assertTrue(reviews.isReviewed(second.getId()));
+
+		// Changing genuine booklet metadata must still invalidate only that booklet.
+		writer.updateExamBookletMetadata(first, "Renamed Paper 1", ExamBookletQuestionFormat.WRITTEN_RESPONSE, 3);
+		assertFalse(reviews.isReviewed(first.getId()));
+		assertTrue(reviews.isReviewed(second.getId()));
+		assertEquals("1", writer.findLegacyPaperCodes(exam).get(first.getId()));
+	}
+
+	@Test
 	void persistsAndFindsDuplicateSourceDocumentHashes() throws Exception {
 		Path databasePath = tempDirectory.resolve("source-document-hashes.db");
 		SqliteDatabase database = new SqliteDatabase(databasePath);
@@ -859,5 +896,38 @@ class SqliteExamWriterTest {
 		assertEquals("Chemistry/2022/paper1.pdf", unchangedBooklet.getSourceDocument().getRelativePath());
 		assertFalse(writer.examProviderExists("QCAA"));
 		assertTrue(writer.examProviderExists("2022 QCAA"));
+	}
+
+	@Test
+	void updatingOnlyBookletNameThroughExamWriterPreservesReview() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("booklet-rename-review.db"));
+		database.initialiseSchema();
+		Subject chemistry = new SqliteCurriculumWriter(database).insertSubject("Chemistry");
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		Exam exam = writer.createExam(chemistry, "QCAA", 2025, "External Assessment");
+		SourceDocument source = writer.insertSourceDocument("Chemistry/QCAA/2025/paper1.pdf");
+		ExamBooklet booklet = writer.insertExamBooklet(exam, source, "Paper 1",
+				ExamBookletQuestionFormat.WRITTEN_RESPONSE, 2);
+		BookletApplicabilityReviewRepository reviews = new SqliteBookletApplicabilityReviewRepository(database);
+		reviews.setReviewed(booklet.getId(), true);
+		assertTrue(reviews.isReviewed(booklet.getId()));
+
+		// The writer updates name, format and expected count in one SQL
+		// statement, even when only the booklet name actually changes.
+		ExamBooklet renamed = writer.updateExamBookletMetadata(booklet, "Booklet A", booklet.getQuestionFormat(),
+				booklet.getExpectedQuestionCount());
+		assertEquals("Booklet A", renamed.getName());
+		assertTrue(reviews.isReviewed(booklet.getId()));
+
+		// Persistence must retain the name and original booklet identity.
+		ExamBooklet reopened = writer.findExamBooklets(exam).stream()
+				.filter(candidate -> candidate.getId() == booklet.getId()).findFirst().orElseThrow();
+		assertEquals("Booklet A", reopened.getName());
+		assertEquals(booklet.getId(), reopened.getId());
+		assertTrue(reviews.isReviewed(reopened.getId()));
+
+		// Changing a material planning attribute still invalidates review.
+		writer.updateExamBookletMetadata(reopened, reopened.getName(), reopened.getQuestionFormat(), 3);
+		assertFalse(reviews.isReviewed(booklet.getId()));
 	}
 }

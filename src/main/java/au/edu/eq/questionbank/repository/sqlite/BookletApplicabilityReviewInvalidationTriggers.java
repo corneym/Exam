@@ -16,6 +16,14 @@ import java.util.List;
  */
 final class BookletApplicabilityReviewInvalidationTriggers {
 
+	private static final String MATERIAL_BOOKLET_UPDATE_WHEN = """
+			OLD.exam_id IS NOT NEW.exam_id
+			OR OLD.source_document_id IS NOT NEW.source_document_id
+			OR OLD.question_format IS NOT NEW.question_format
+			OR OLD.answer_file_id IS NOT NEW.answer_file_id
+			OR OLD.pending_mcq_shared_context_id IS NOT NEW.pending_mcq_shared_context_id
+			OR OLD.expected_question_count IS NOT NEW.expected_question_count
+			""";
 	private static final List<Rule> RULES = List.of(new Rule("questions", "SELECT ${row}.booklet_id"),
 			new Rule("question_regions", """
 					SELECT q.booklet_id
@@ -124,6 +132,24 @@ final class BookletApplicabilityReviewInvalidationTriggers {
 	}
 
 	/**
+	 * Replaces only the overly broad booklet UPDATE trigger inside the caller's
+	 * schema migration transaction. All other invalidation rules are retained.
+	 *
+	 * @param connection caller-owned migration connection
+	 * @throws SQLException if the trigger cannot be replaced
+	 */
+	static void installVersion23BookletUpdateTrigger(Connection connection) throws SQLException {
+		Rule bookletRule = new Rule("exam_booklets", "SELECT ${row}.id");
+		try (Statement statement = connection.createStatement()) {
+			statement.executeUpdate("DROP TRIGGER " + triggerName("exam_booklets", "UPDATE"));
+		}
+
+		// The old trigger is dropped and the corrected trigger created in one
+		// outer migration transaction; failure restores the original definition.
+		installTrigger(connection, bookletRule, "UPDATE", MATERIAL_BOOKLET_UPDATE_WHEN);
+	}
+
+	/**
 	 * Rejects a version-21 database missing a required invalidation trigger.
 	 */
 	static void verify(Connection connection) throws SQLException {
@@ -149,7 +175,56 @@ final class BookletApplicabilityReviewInvalidationTriggers {
 		}
 	}
 
+	/**
+	 * Verifies that the booklet UPDATE trigger has v23's selective definition,
+	 * rather than merely existing under the expected trigger name.
+	 *
+	 * @param connection database connection to verify
+	 * @throws SQLException if the corrected trigger is missing or has changed
+	 */
+	static void verifyVersion23BookletUpdateTrigger(Connection connection) throws SQLException {
+		Rule bookletRule = new Rule("exam_booklets", "SELECT ${row}.id");
+		String expected = triggerSql(bookletRule, "UPDATE", MATERIAL_BOOKLET_UPDATE_WHEN);
+		String name = triggerName("exam_booklets", "UPDATE");
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT sql
+				FROM sqlite_master
+				WHERE type = 'trigger'
+				  AND name = ?
+				  AND tbl_name = 'exam_booklets'
+				""")) {
+			statement.setString(1, name);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next() || !normaliseSql(expected).equals(normaliseSql(result.getString("sql")))) {
+					throw new SQLException("Incorrect schema-v23 applicability-review trigger: " + name);
+				}
+			}
+		}
+	}
+
 	private static void installTrigger(Connection connection, Rule rule, String event) throws SQLException {
+		installTrigger(connection, rule, event, null);
+	}
+
+	private static void installTrigger(Connection connection, Rule rule, String event, String whenCondition)
+			throws SQLException {
+
+		// A complete CREATE TRIGGER cannot pass through the semicolon-splitting
+		// SQL script executor; execute it directly using the caller's connection.
+		try (Statement statement = connection.createStatement()) {
+			statement.executeUpdate(triggerSql(rule, event, whenCondition));
+		}
+	}
+
+	private static String normaliseSql(String sql) {
+		return sql.replaceAll("\\s+", " ").strip();
+	}
+
+	private static String triggerName(String table, String event) {
+		return "app_review_" + table + "_" + event.toLowerCase();
+	}
+
+	private static String triggerSql(Rule rule, String event, String whenCondition) {
 		String oldSelect = rule.bookletSelect().replace("${row}", "OLD");
 		String newSelect = rule.bookletSelect().replace("${row}", "NEW");
 		String affectedBooklets = switch (event) {
@@ -158,27 +233,17 @@ final class BookletApplicabilityReviewInvalidationTriggers {
 		case "UPDATE" -> oldSelect + "\nUNION\n" + newSelect;
 		default -> throw new IllegalArgumentException(event);
 		};
-		String sql = """
+		String whenClause = whenCondition == null ? "" : "WHEN " + whenCondition.strip() + "\n";
+		return """
 				CREATE TRIGGER %s
 				AFTER %s ON %s
-				BEGIN
+				%sBEGIN
 				    DELETE FROM booklet_applicability_reviews
 				    WHERE booklet_id IN (
 				        %s
 				    );
 				END
-				""".formatted(triggerName(rule.table(), event), event, rule.table(), affectedBooklets);
-
-		// Execute each complete CREATE TRIGGER statement directly.
-		// The general migration script executor splits on semicolons
-		// and cannot correctly execute trigger bodies.
-		try (Statement statement = connection.createStatement()) {
-			statement.executeUpdate(sql);
-		}
-	}
-
-	private static String triggerName(String table, String event) {
-		return "app_review_" + table + "_" + event.toLowerCase();
+				""".formatted(triggerName(rule.table(), event), event, rule.table(), whenClause, affectedBooklets);
 	}
 
 	private record Rule(String table, String bookletSelect) {

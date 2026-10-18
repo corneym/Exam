@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 22;
+	private static final int LATEST_SCHEMA_VERSION = 23;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -714,6 +714,15 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v21-to-v22.sql", 22);
 			return 22;
 		}
+		if (version == 22) {
+
+			// Administrative legacy Paper-link changes must not revoke a human
+			// applicability review. Leave the other material invalidation triggers
+			// intact, replacing this one within the same migration transaction.
+			BookletApplicabilityReviewInvalidationTriggers.installVersion23BookletUpdateTrigger(connection);
+			executeMigration(connection, "/db/migration-v22-to-v23.sql", 23);
+			return 23;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -1000,6 +1009,12 @@ public final class SqliteDatabase {
 			// Legacy Paper identity is optional but must be structurally unique
 			// within each authoritative Exam.
 			verifyVersion22LegacyPaperSchema(connection);
+		}
+		if (version >= 23) {
+
+			// The v21 name-presence check alone cannot detect an accidentally
+			// retained broad UPDATE trigger on an otherwise version-23 database.
+			BookletApplicabilityReviewInvalidationTriggers.verifyVersion23BookletUpdateTrigger(connection);
 		}
 	}
 
