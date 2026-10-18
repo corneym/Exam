@@ -56,18 +56,14 @@ import au.edu.eq.questionbank.service.audit.QuestionCorpusSummary;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusWorkItem;
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingCoverage;
 import au.edu.eq.questionbank.service.curriculum.CurriculumMappingLevelCoverage;
-import javafx.application.Platform;
 import javafx.css.PseudoClass;
 import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
-import javafx.scene.control.ButtonBar;
-import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
-import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.ScrollPane;
@@ -443,6 +439,30 @@ class CorpusDashboardPaneTest {
 
 	@Test
 	@SuppressWarnings("unchecked")
+	void captureQuestionsAtExpectedCountStartsCaptureWithoutPrematureWarning(FxRobot robot) {
+		AtomicReference<ExamBooklet> routedBooklet = new AtomicReference<>();
+		BookletCorpusStatus atExpectedCount = new BookletCorpusStatus(fixture.activePaper, true, null, 10, 10, 0,
+				new QuestionCorpusSummary(10, 10, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0),
+				EnumSet.noneOf(BookletCorpusFinding.class));
+		robot.interact(() -> pane.setNewQuestionCaptureHandler(routedBooklet::set));
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		Button captureQuestions = robot.lookup("#corpus-dashboard-capture-questions").queryButton();
+		robot.interact(() -> {
+			booklets.getItems().setAll(atExpectedCount);
+			booklets.getSelectionModel().select(atExpectedCount);
+		});
+		assertFalse(captureQuestions.isDisable());
+
+		// Expected-count confirmation now occurs after the proposed new Question
+		// code is known, not when entering the selected booklet.
+		robot.interact(captureQuestions::fire);
+		assertNotNull(routedBooklet.get());
+		assertEquals(fixture.activePaper.getId(), routedBooklet.get().getId());
+		assertTrue(robot.lookup("#corpus-dashboard-capture-count-confirmation").tryQuery().isEmpty());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
 	void captureQuestionsCompletesExistingQuestionWorkBeforeOfferingNewQuestion(FxRobot robot) {
 		AtomicReference<Question> generalCorrection = new AtomicReference<>();
 		AtomicReference<Question> bookletCorrection = new AtomicReference<>();
@@ -479,50 +499,6 @@ class CorpusDashboardPaneTest {
 		// Completing an existing Question must not warn about
 		// increasing the top-level Question count.
 		assertTrue(robot.lookup("#corpus-dashboard-capture-count-confirmation").tryQuery().isEmpty());
-	}
-
-	@Test
-	@SuppressWarnings("unchecked")
-	void captureQuestionsWarnsWhenExpectedCountAlreadyReached(FxRobot robot) throws TimeoutException {
-		AtomicReference<ExamBooklet> routedBooklet = new AtomicReference<>();
-		BookletCorpusStatus atExpectedCount = new BookletCorpusStatus(fixture.activePaper, true, null, 10, 10, 0,
-				new QuestionCorpusSummary(10, 10, 0, 0, 0, 0, 0), new McqExplanationCoverage(false, 0, 0),
-				EnumSet.noneOf(BookletCorpusFinding.class));
-		robot.interact(() -> pane.setNewQuestionCaptureHandler(routedBooklet::set));
-		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
-		Button captureQuestions = robot.lookup("#corpus-dashboard-capture-questions").queryButton();
-		robot.interact(() -> {
-
-			// Construct the exact live-data condition under test: ACTIVE booklet, PDF
-			// available, and encountered count equal to its expected count.
-			booklets.getItems().setAll(atExpectedCount);
-			booklets.getSelectionModel().select(atExpectedCount);
-		});
-		assertFalse(captureQuestions.isDisable());
-		Platform.runLater(captureQuestions::fire);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
-				() -> robot.lookup("#corpus-dashboard-capture-count-confirmation").tryQuery().isPresent());
-		DialogPane warning = robot.lookup("#corpus-dashboard-capture-count-confirmation").queryAs(DialogPane.class);
-		assertTrue(warning.getContentText().contains("10 expected top-level Questions"));
-		assertTrue(warning.getContentText().contains("10 have already been found"));
-		Node cancelNode = warning.lookupButton(ButtonType.CANCEL);
-		assertTrue(cancelNode instanceof Button);
-
-		// Cancelling the warning must not route into capture.
-		robot.interact(((Button) cancelNode)::fire);
-		assertNull(routedBooklet.get());
-		Platform.runLater(captureQuestions::fire);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
-				() -> robot.lookup("#corpus-dashboard-capture-count-confirmation").tryQuery().isPresent());
-		warning = robot.lookup("#corpus-dashboard-capture-count-confirmation").queryAs(DialogPane.class);
-		ButtonType proceedType = warning.getButtonTypes().stream()
-				.filter(type -> type.getButtonData() == ButtonBar.ButtonData.OK_DONE).findFirst().orElseThrow();
-		Node proceedNode = warning.lookupButton(proceedType);
-		assertTrue(proceedNode instanceof Button);
-
-		// Only an explicit second decision allows capture beyond the recorded count.
-		robot.interact(((Button) proceedNode)::fire);
-		assertEquals(fixture.activePaper.getId(), routedBooklet.get().getId());
 	}
 
 	@Test

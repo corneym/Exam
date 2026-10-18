@@ -38,6 +38,7 @@ import au.edu.eq.questionbank.importer.legacy.LegacyQuestionSheet;
 import au.edu.eq.questionbank.importer.legacy.LegacyQuestionWorkbookReader;
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.Exam;
+import au.edu.eq.questionbank.model.ExamAssetExpectations;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.ExamCaptureState;
@@ -2790,7 +2791,7 @@ public class QuestionBankApplication extends Application {
 		legacyQuestionImportDashboardOwned = dashboardOwned;
 		if (workingSubject == null) {
 			showAlert(Alert.AlertType.WARNING, "Legacy Question Import", "No Working Subject is selected.",
-					"Select a Working Subject before importing " + "legacy Question metadata.");
+					"Select a Working Subject before importing legacy Question metadata.");
 			cancelPendingLegacyQuestionImport();
 			return;
 		}
@@ -2807,25 +2808,26 @@ public class QuestionBankApplication extends Application {
 			}
 			SyllabusVersion syllabusVersion = dialog.getSelectedSyllabusVersion();
 			Path sourceWorkbook = dialog.getSelectedFile();
-
-			// Preserve the directory of the external workbook, not the
-			// managed copy retained for legacy-import provenance.
 			legacyQuestionSourceDirectory = sourceWorkbook.toAbsolutePath().normalize().getParent();
 			legacyQuestionPdfDirectorySeeded = false;
-
-			// Read the complete workbook before asking the user
-			// to confirm examination identity.
 			LegacyQuestionWorkbookReader reader = new LegacyQuestionWorkbookReader();
 			List<LegacyQuestionSheet> sheets = reader.read(sourceWorkbook);
-			LegacyExamMappingDialog mappingDialog = new LegacyExamMappingDialog(primaryStage, sheets);
+			SqliteExamWriter examWriter = new SqliteExamWriter(database);
+			List<LegacyExamMappingDialog.ExistingExamChoice> existing = new ArrayList<>();
+			for (Exam exam : examWriter.findExamsForSubject(subject)) {
+				ExamAssetExpectations counts = examWriter.findExamAssetExpectations(exam);
+				existing.add(new LegacyExamMappingDialog.ExistingExamChoice(exam,
+						counts.availableQuestionBookletCount(), counts.availableAnswerFileCount()));
+			}
+			LegacyExamMappingDialog mappingDialog = new LegacyExamMappingDialog(primaryStage, sheets, existing);
 			Optional<Map<LegacyExamKey, LegacyExamIdentity>> confirmed = mappingDialog.showAndWait();
 			if (confirmed.isEmpty()) {
 				cancelPendingLegacyQuestionImport();
 				return;
 			}
 
-			// Confirmation is frozen before retaining the
-			// managed provenance copy.
+			// A selected saved Exam contributes its exact persisted spelling. The
+			// v22 missing-Paper-link preflight subsequently uses its original ID.
 			Map<LegacyExamKey, LegacyExamIdentity> mappings = Map.copyOf(confirmed.get());
 			LegacyQuestionWorkbookStore workbookStore = new LegacyQuestionWorkbookStore(
 					new ManagedDataLayout(config.dataRoot()));
@@ -2838,6 +2840,10 @@ public class QuestionBankApplication extends Application {
 			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "Could not read or retain the Excel workbook.",
 					exception.getMessage());
 			cancelPendingLegacyQuestionImport();
+		} catch (SQLException exception) {
+			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "Could not load saved examinations.",
+					exception.getMessage());
+			cancelPendingLegacyQuestionImport();
 		} catch (IllegalArgumentException | IllegalStateException exception) {
 			showAlert(Alert.AlertType.ERROR, "Legacy Question Import", "The legacy Question import could not start.",
 					exception.getMessage());
@@ -2847,13 +2853,16 @@ public class QuestionBankApplication extends Application {
 
 	private ExamBooklet importQuestionBookletFromExamAssets(Exam exam, Path sourcePath, String name,
 			ExamBookletQuestionFormat questionFormat, Integer expectedQuestionCount, String legacyPaperCode,
-			ApplicationConfig config) throws IOException, SQLException {
+			AnswerFile answerFile, ApplicationConfig config) throws IOException, SQLException {
 		Objects.requireNonNull(exam, "exam");
 		Objects.requireNonNull(sourcePath, "sourcePath");
 		Objects.requireNonNull(questionFormat, "questionFormat");
 		Objects.requireNonNull(config, "config");
 		if (name == null || name.isBlank()) {
 			throw new IllegalArgumentException("Question booklet name must not be blank");
+		}
+		if (answerFile != null && answerFile.getExam().getId() != exam.getId()) {
+			throw new IllegalArgumentException("Selected Answer booklet belongs to another Exam");
 		}
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
 		SqliteExamWriter writer = new SqliteExamWriter(database);
@@ -2868,10 +2877,11 @@ public class QuestionBankApplication extends Application {
 		String relativePath = pdfStore.relativePath(storedPath);
 		SqliteExamImporter importer = new SqliteExamImporter(database, writer);
 
-		// The importer assigns the Paper code in the same transaction
-		// as booklet and SourceDocument creation.
+		// New booklet, optional legacy Paper identity and selected existing Answer
+		// assignment are persisted together, not as two independent Save actions.
 		return importer.importExam(exam.getSubject(), exam.getProvider().getName(), exam.getYear(), exam.getName(),
-				name.strip(), relativePath, questionFormat, expectedQuestionCount, storedHash, legacyPaperCode);
+				name.strip(), relativePath, questionFormat, expectedQuestionCount, storedHash, legacyPaperCode,
+				answerFile);
 	}
 
 	private void initialiseCapturePanes(Stage primaryStage, ApplicationConfig config, SqliteDatabase database,
@@ -3009,10 +3019,11 @@ public class QuestionBankApplication extends Application {
 				// view.
 				this::closePendingQuestionBookletSourceFromExamAssets,
 
-				// Save imports, hashes and persists the managed Question booklet.
-				(exam, sourcePath, name, questionFormat, expectedQuestionCount,
-						legacyPaperCode) -> importQuestionBookletFromExamAssets(exam, sourcePath, name, questionFormat,
-								expectedQuestionCount, legacyPaperCode, config));
+				// Save imports, hashes and persists the managed Question booklet,
+				// optional Answer link and optional legacy Paper link in one transaction.
+				(exam, sourcePath, name, questionFormat, expectedQuestionCount, legacyPaperCode,
+						answerFile) -> importQuestionBookletFromExamAssets(exam, sourcePath, name, questionFormat,
+								expectedQuestionCount, legacyPaperCode, answerFile, config));
 		workingSubjectExamAssetsSnapshotLoader = subject -> {
 			try {
 
@@ -5170,8 +5181,11 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 
-		// Dashboard home is the only application surface allowed to change or create
-		// the authoritative Subject.
+		// Dashboard Home owns the only editable Working Subject selector.
+		// Imported Question work may have locked Subject and syllabus together.
+		// Releasing that lock here restores editing only after navigation has
+		// returned to Dashboard; active capture retains its syllabus constraint.
+		curriculumSelectorPane.setSyllabusContextLocked(false);
 		curriculumSelectorPane.setSubjectEditingEnabled(true);
 		workspaceSubjectHost.getChildren().remove(workingSubjectContext);
 		corpusDashboardSubjectHost.getChildren().setAll(workingSubjectContext);

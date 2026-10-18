@@ -42,6 +42,47 @@ class LegacyExamRegistrationServiceTest {
 	Path tempDirectory;
 
 	@Test
+	void caseOnlyDuplicateInSecondWorksheetRollsBackWholeRegistration() throws Exception {
+		Fixture fixture = createFixture("case-insensitive-rollback.db");
+		SqliteExamWriter writer = new SqliteExamWriter(fixture.database());
+		Exam original = writer.createExam(fixture.subject(), "QCAA", 2020, "External assessment");
+		Path workbook = createWorkbook("case-collision-two-sheets.xlsx",
+				new String[][] { { "QCAA Mock", "4.1.2" }, { "QCAA", "4.1.2" } });
+		Map<LegacyExamKey, LegacyExamIdentity> mappings = Map.of(new LegacyExamKey("QCAA Mock", 2020),
+				new LegacyExamIdentity("QCAA", "Mock Examination"), new LegacyExamKey("QCAA", 2020),
+				new LegacyExamIdentity("QCAA", "External Assessment"));
+		assertThrows(IllegalStateException.class, () -> new LegacyExamRegistrationService(fixture.database())
+				.prepareExams(workbook, fixture.subject(), "2019", mappings));
+		List<Exam> surviving = writer.findExamsForSubject(fixture.subject());
+		assertEquals(1, surviving.size());
+		assertEquals(original.getId(), surviving.getFirst().getId());
+	}
+
+	@Test
+	void caseOnlyLegacyIdentityIsRejectedUntilSavedSpellingIsSelected() throws Exception {
+		Fixture fixture = createFixture("case-insensitive-existing.db");
+		SqliteExamWriter writer = new SqliteExamWriter(fixture.database());
+		Exam original = writer.createExam(fixture.subject(), "QCAA", 2020, "External assessment", 3, 1);
+		Path workbook = createWorkbook("qcaa-capitalisation.xlsx", new String[][] { { "QCAA", "4.1.2" } });
+		LegacyExamRegistrationService service = new LegacyExamRegistrationService(fixture.database());
+		IllegalStateException rejected = assertThrows(IllegalStateException.class, () -> service.prepareExams(workbook,
+				fixture.subject(), "2019", mapping("QCAA", "External Assessment")));
+		assertTrue(rejected.getMessage().contains("ignoring capitalisation"));
+		assertTrue(rejected.getMessage().contains("External assessment"));
+		assertEquals(1, writer.findExamsForSubject(fixture.subject()).size());
+		assertEquals(original.getId(), writer.findExamsForSubject(fixture.subject()).getFirst().getId());
+
+		// The mapping dialog must return the original spelling when the user
+		// elects to reuse the saved Exam. Registration then remains idempotent.
+		Exam reused = service.prepareExams(workbook, fixture.subject(), "2019", mapping("QCAA", "External assessment"))
+				.getFirst();
+		assertEquals(original.getId(), reused.getId());
+		assertEquals("External assessment", reused.getName());
+		assertEquals(1, writer.findExamsForSubject(fixture.subject()).size());
+		assertEquals(1, writer.findExamAssetExpectations(reused).expectedAnswerFileCount());
+	}
+
+	@Test
 	void failedMultiExamRegistrationRollsBackAllCreations() throws Exception {
 		Fixture fixture = createFixture("rollback.db");
 		Path workbook = createWorkbook("multiple-sheets.xlsx",

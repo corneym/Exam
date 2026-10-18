@@ -43,6 +43,7 @@ import au.edu.eq.questionbank.repository.assessment.LegacyQuestionSplitService.S
 import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SourceQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionCaptureService;
+import au.edu.eq.questionbank.service.audit.BookletCorpusAudit;
 import au.edu.eq.questionbank.ui.correction.LegacyQuestionSplitDialog;
 import au.edu.eq.questionbank.ui.correction.LegacyQuestionSplitDialog.SharedContextChoice;
 import au.edu.eq.questionbank.ui.curriculum.CurriculumSelectorPane;
@@ -57,6 +58,8 @@ import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBar;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
@@ -1833,6 +1836,55 @@ public final class QuestionCapturePane extends VBox {
 		cancelQuestionEditButton.setId("cancel-question-edit");
 		cancelQuestionEditButton.setVisible(false);
 		cancelQuestionEditButton.setManaged(false);
+	}
+
+	private boolean confirmNewTopLevelQuestionBeyondExpected() {
+
+		// Editing an existing record, resolving imported Question work and legacy
+		// splitting do not introduce an independent new top-level Question.
+		if (!newQuestionCaptureActive || editingQuestion != null || importedQuestion != null
+				|| legacySplitCaptureState != null) {
+			return true;
+		}
+		ExamBooklet booklet = bookletSupplier.get();
+		if (booklet == null || booklet.getExpectedQuestionCount() == null) {
+			return true;
+		}
+
+		// BookletCorpusAudit already owns the authoritative grouping rule:
+		// ordinary Questions count individually, while multipart records
+		// sharing a persisted SourceQuestion count once.
+		int found = BookletCorpusAudit.assess(booklet, questionSnapshot, null, true).encounteredTopLevelQuestionCount();
+		int expected = booklet.getExpectedQuestionCount();
+		if (found < expected) {
+			return true;
+		}
+		String proposedCode = questionCodeField.getText().trim();
+		String sourceCode = SourceQuestionCodeParser.derive(proposedCode);
+		if (sourceCode != null
+				&& questionSnapshot.stream().filter(question -> question.getBooklet().getId() == booklet.getId())
+						.filter(Question::hasSourceQuestion).anyMatch(
+								question -> sourceCode.equals(question.getSourceQuestion().getSourceQuestionCode()))) {
+
+			// For example, 9b and 9c share the top-level source Question already
+			// represented by saved 9a. Duplicate 9a is rejected separately.
+			return true;
+		}
+		ButtonType proceed = new ButtonType("Save New Question", ButtonBar.ButtonData.OK_DONE);
+		Alert confirmation = new Alert(Alert.AlertType.WARNING);
+		if (getScene() != null && getScene().getWindow() != null) {
+			confirmation.initOwner(getScene().getWindow());
+		}
+		confirmation.setTitle("Capture Questions");
+		confirmation.getDialogPane().setId("question-capture-count-confirmation");
+		confirmation.setHeaderText(found == expected ? "Expected top-level Question count already reached."
+				: "Top-level Question count already exceeds expectation.");
+		confirmation.setContentText("Question " + proposedCode + " introduces a new top-level Question in booklet "
+				+ booklet.getName() + ".\n\n" + "Expected top-level Questions: " + expected + ". Already encountered: "
+				+ found + ".\n\nCheck the source before saving. If the expected count is wrong, "
+				+ "correct it in Exam / Assets.");
+		confirmation.getButtonTypes().setAll(proceed, ButtonType.CANCEL);
+		return confirmation.showAndWait().orElse(ButtonType.CANCEL) == proceed;
 	}
 
 	private boolean continueSharedContextToNextMcq() {
@@ -3754,8 +3806,12 @@ public final class QuestionCapturePane extends VBox {
 			return;
 		}
 
-		// Booklet-format resolution now occurs when a known booklet is opened, so Save
-		// deals only with Question-level validation and persistence.
+		// Only ordinary new capture may add a previously unknown top-level
+		// Question. Decide once the code and content are valid, before Save
+		// starts any background persistence or busy overlay.
+		if (!confirmNewTopLevelQuestionBeyondExpected()) {
+			return;
+		}
 		saveQuestion();
 	}
 

@@ -786,6 +786,17 @@ public final class SqliteExamWriter {
 					}
 					Exam exam = findExam(connection, subject, provider, registration.year(), registration.examName());
 					if (exam == null) {
+						List<String> caseInsensitiveMatches = findCaseInsensitiveLegacyExamMatches(connection, subject,
+								registration.year(), registration.providerName(), registration.examName());
+						if (!caseInsensitiveMatches.isEmpty()) {
+
+							// The caller has not selected the exact saved Exam identity. Do not
+							// register a second Exam merely because its spelling or case differs.
+							// This guard also protects callers bypassing the confirmation dialog.
+							throw new IllegalStateException("Existing Exam matches this legacy examination "
+									+ "ignoring capitalisation: " + String.join("; ", caseInsensitiveMatches)
+									+ ". Select the saved Exam in Resolve Legacy Examinations.");
+						}
 						exam = insertExam(connection, subject, provider, registration.year(), registration.examName());
 					}
 					Integer requiredCount = expectedQuestionBookletCounts.get(registration);
@@ -1862,6 +1873,33 @@ public final class SqliteExamWriter {
 			statement.setLong(2, providerId);
 			statement.executeUpdate();
 		}
+	}
+
+	private List<String> findCaseInsensitiveLegacyExamMatches(Connection connection, Subject subject, int year,
+			String providerName, String examName) throws SQLException {
+		List<String> matches = new ArrayList<>();
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT e.id, e.exam_name, p.provider_name
+				FROM exams e
+				JOIN exam_providers p ON p.id = e.provider_id
+				WHERE e.subject_id = ? AND e.exam_year = ?
+				ORDER BY e.id
+				""")) {
+			statement.setLong(1, subject.getId());
+			statement.setInt(2, year);
+			try (ResultSet result = statement.executeQuery()) {
+				while (result.next()) {
+					String storedProvider = result.getString("provider_name");
+					String storedName = result.getString("exam_name");
+					if (storedProvider.strip().equalsIgnoreCase(providerName.strip())
+							&& storedName.strip().equalsIgnoreCase(examName.strip())) {
+						matches.add("Exam ID %d: %s / %d / %s".formatted(result.getLong("id"), storedProvider, year,
+								storedName));
+					}
+				}
+			}
+		}
+		return List.copyOf(matches);
 	}
 
 	private Integer readNullableInteger(ResultSet result, String columnName) throws SQLException {

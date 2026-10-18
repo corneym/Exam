@@ -42,10 +42,7 @@ import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
-import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
-import javafx.scene.control.ButtonBar;
-import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
@@ -988,19 +985,14 @@ public final class CorpusDashboardPane extends VBox {
 		Question existingQuestionWork = firstQuestionCaptureWorkQuestion(selected);
 		if (existingQuestionWork != null) {
 
-			// This action originates from a selected booklet.
-			// Complete its existing Question work without turning
-			// the queue into Subject-wide navigation.
+			// Booklet Capture Questions first resolves existing unfinished Question
+			// content within the selected source booklet.
 			bookletQuestionCorrectionHandler.accept(existingQuestionWork);
 			return;
 		}
 
-		// Preserve the existing expected-count warning for now.
-		// Moving this validation to the known Question code is a
-		// separate agreed correction, still outstanding under #179.
-		if (!confirmQuestionCaptureBeyondExpected(selected)) {
-			return;
-		}
+		// Do not warn before a Question code exists. Parts of an existing
+		// source Question do not increase its top-level count.
 		newQuestionCaptureHandler.accept(selected.booklet());
 	}
 
@@ -1552,41 +1544,6 @@ public final class CorpusDashboardPane extends VBox {
 		missingMcqExplanationButton.setId("corpus-dashboard-summary-missing-mcq-explanations");
 		missingMcqExplanationButton
 				.setTooltip(new Tooltip("Show answered MCQs still missing required explanation regions."));
-	}
-
-	private boolean confirmQuestionCaptureBeyondExpected(BookletCorpusStatus status) {
-		Integer expected = status.expectedTopLevelQuestionCount();
-		int found = status.encounteredTopLevelQuestionCount();
-
-		// An unknown expectation, or a genuine shortfall, requires no warning.
-		if (expected == null || found < expected.intValue()) {
-			return true;
-		}
-		ButtonType captureButton = new ButtonType("Capture Another Question", ButtonBar.ButtonData.OK_DONE);
-		Alert confirmation = new Alert(Alert.AlertType.WARNING);
-
-		// Keep this warning owned by the Dashboard when it is currently displayed.
-		if (getScene() != null && getScene().getWindow() != null) {
-			confirmation.initOwner(getScene().getWindow());
-		}
-		confirmation.setTitle("Capture Questions");
-		confirmation.getDialogPane().setId("corpus-dashboard-capture-count-confirmation");
-		if (found == expected.intValue()) {
-			confirmation.setHeaderText("Expected Question count already reached.");
-			confirmation.setContentText("This booklet records " + expected + " expected top-level Questions and "
-					+ found + " have already been found.\n\n"
-					+ "Capture another Question only if the source genuinely contains another Question. "
-					+ "If the expected count is wrong, correct it in Exam / Assets.");
-		} else {
-			confirmation.setHeaderText("Found Question count already exceeds the expectation.");
-			confirmation.setContentText("This booklet records " + expected + " expected top-level Questions, but "
-					+ found + " have already been found.\n\n" + "Check the booklet before capturing another Question. "
-					+ "If the expected count is wrong, correct it in Exam / Assets.");
-		}
-		confirmation.getButtonTypes().setAll(captureButton, ButtonType.CANCEL);
-
-		// Only the explicit Capture Another Question decision may continue.
-		return confirmation.showAndWait().orElse(ButtonType.CANCEL) == captureButton;
 	}
 
 	private TableCell<BookletCorpusStatus, Boolean> createApplicabilityReviewCell() {

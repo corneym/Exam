@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.poi.ss.usermodel.Row;
@@ -37,6 +38,7 @@ import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
@@ -65,6 +67,7 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.TableView;
+import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 
 @Tag("ui")
@@ -195,6 +198,35 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 				() -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
 		assertFalse(evaluateOnFx(robot, overlay::isBusy));
 		assertFalse(evaluateOnFx(robot, shield::isVisible));
+	}
+
+	@Test
+	void dashboardBookletCaptureReturnRestoresWorkingSubjectEditing(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = persistUnfinishedQuestionForSubjectUnlock(robot, "27");
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		Node root = primaryStage.getScene().getRoot();
+
+		// Enter through the real Dashboard rather than invoking the correction
+		// route reflectively. A persisted unfinished Question must be present.
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
+			Node node = root.lookup("#corpus-dashboard-booklets");
+			return node instanceof TableView<?> table && table.getItems().size() == 1;
+		}));
+		TableView<?> booklets = lookupOnFx(robot, root, "#corpus-dashboard-booklets", TableView.class);
+		robot.interact(() -> booklets.getSelectionModel().selectFirst());
+		Button capture = lookupOnFx(robot, root, "#corpus-dashboard-capture-questions", Button.class);
+		assertFalse(capture.isDisabled());
+		fireControl(robot, capture);
+
+		// The production booklet action routes to its already-persisted
+		// incomplete Question; active work must retain its Subject lock.
+		assertQuestionCorrectionLocksWorkingSubject(robot, question, subjects);
+		returnToDashboardAndSwitchWorkingSubject(robot, subjects);
 	}
 
 	@Test
@@ -621,6 +653,35 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void dashboardQuestionWorkReturnRestoresWorkingSubjectEditing(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question question = persistUnfinishedQuestionForSubjectUnlock(robot, "28");
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		Node root = primaryStage.getScene().getRoot();
+
+		// Build QUESTION WORK from the persisted corpus. Then select the real
+		// row and use its Complete Selected Question action.
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
+			Node node = root.lookup("#corpus-dashboard-question-work");
+			return node instanceof TableView<?> table && table.getItems().size() == 1;
+		}));
+		TableView<?> questionWork = lookupOnFx(robot, root, "#corpus-dashboard-question-work", TableView.class);
+		robot.interact(() -> questionWork.getSelectionModel().selectFirst());
+		Button complete = lookupOnFx(robot, root, "#corpus-dashboard-complete-question", Button.class);
+		assertFalse(complete.isDisabled());
+		fireControl(robot, complete);
+
+		// This is the second reported entry route. It must lock the Subject
+		// while correcting the selected Question and unlock it on return.
+		assertQuestionCorrectionLocksWorkingSubject(robot, question, subjects);
+		returnToDashboardAndSwitchWorkingSubject(robot, subjects);
+	}
+
+	@Test
 	@SuppressWarnings("unchecked")
 	void dashboardRetainsExamWithNoCapturedQuestionsAfterAssetsReturn(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1",
@@ -887,29 +948,33 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 				externalWorkbook);
 		assertEquals(layout.legacyImportDirectory("Chemistry", "2019").resolve("legacy-resume.xlsx"), managedWorkbook);
 
-		// The selected external file is deliberately removed before preflight. Any
-		// accidental dependency on the original selection will now fail this workflow.
+		// The original selected file is deleted before preflight. The managed
+		// workbook must be sufficient for the pending import to continue.
 		Files.delete(externalWorkbook);
 		assertFalse(Files.exists(externalWorkbook));
 		assertTrue(Files.isRegularFile(managedWorkbook));
-
-		// Mount the real structural workspace used by Dashboard-owned legacy preflight.
 		WaitForAsyncUtils.asyncFx(() -> {
 			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
 			return null;
 		}).get();
+		Node applicationRoot = primaryStage.getScene().getRoot();
 		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
-				() -> robot.lookup("#corpus-dashboard-exams").tryQuery().isPresent());
-		TableView<?> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+				() -> nodePresentOnFx(robot, applicationRoot, "#corpus-dashboard-exams"));
+		TableView<?> exams = lookupOnFx(robot, applicationRoot, "#corpus-dashboard-exams", TableView.class);
+
+		// Wait for the asynchronous Dashboard snapshot, not just the mounted table.
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> {
+			AtomicBoolean hasExams = new AtomicBoolean();
+			robot.interact(() -> hasExams.set(!exams.getItems().isEmpty()));
+			return hasExams.get();
+		});
 		robot.interact(() -> exams.getSelectionModel().selectFirst());
-		fireControl(robot, "#corpus-dashboard-manage-exam-assets");
+		Button manageAssets = lookupOnFx(robot, applicationRoot, "#corpus-dashboard-manage-exam-assets", Button.class);
+		fireControl(robot, manageAssets);
 		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
-				() -> robot.lookup("#exam-assets-workspace").tryQuery().isPresent());
+				() -> nodePresentOnFx(robot, applicationRoot, "#exam-assets-workspace"));
 		Class<?> pendingType = Class
 				.forName("au.edu.eq.questionbank.ui.QuestionBankApplication$PendingLegacyQuestionImport");
-
-		// The current pending-import record retains the confirmed
-		// worksheet/year-to-Exam mapping alongside the managed workbook.
 		var constructor = pendingType.getDeclaredConstructor(Subject.class, SyllabusVersion.class, Path.class,
 				Map.class);
 		constructor.setAccessible(true);
@@ -917,9 +982,8 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 				new LegacyExamIdentity("QCAA", "External Assessment"));
 		Object pending = constructor.newInstance(subject, historicalSyllabus, managedWorkbook, mappings);
 
-		// This synthetic continuation represents a Dashboard-launched intake.
-		// Production
-		// establishes this ownership before the initial workbook dialog is shown.
+		// Simulate a Dashboard-owned intake continued after the external file
+		// has disappeared; production established this ownership earlier.
 		setField(application, "legacyQuestionImportDashboardOwned", Boolean.TRUE);
 		WaitForAsyncUtils.asyncFx(() -> {
 			invoke(application, "continueLegacyQuestionImport",
@@ -928,21 +992,43 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 			return null;
 		}).get();
 
-		// QCAA 2020 Paper 1 is not present in this fixture, so the managed workbook
-		// must survive into the pending Exam/Assets preflight transaction.
+		// Batch 26A intentionally removed individual Paper requirement labels.
+		// Wait for the real fixed footer and its progress snapshot instead.
 		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
-				() -> robot.lookup("#exam-assets-legacy-import-requirement-0").tryQuery().isPresent());
+				() -> nodePresentOnFx(robot, applicationRoot, "#exam-assets-legacy-import-requirements")
+						&& nodePresentOnFx(robot, applicationRoot, "#exam-assets-legacy-import-progress"));
 		Object retainedPending = field(application, "pendingLegacyQuestionImport", Object.class);
 		assertNotNull(retainedPending);
 		var managedWorkbookAccessor = pendingType.getDeclaredMethod("managedWorkbookPath");
 		managedWorkbookAccessor.setAccessible(true);
 		assertEquals(managedWorkbook, managedWorkbookAccessor.invoke(retainedPending));
-		assertTrue(robot.lookup("#exam-assets-legacy-import-requirement-0").tryQuery().isPresent());
+		VBox footer = lookupOnFx(robot, applicationRoot, "#exam-assets-legacy-import-requirements", VBox.class);
+		Label instruction = lookupOnFx(robot, applicationRoot, "#exam-assets-legacy-import-instruction", Label.class);
+		Label progress = lookupOnFx(robot, applicationRoot, "#exam-assets-legacy-import-progress", Label.class);
+		Button recheck = lookupOnFx(robot, applicationRoot, "#exam-assets-legacy-import-recheck", Button.class);
+		Button cancel = lookupOnFx(robot, applicationRoot, "#exam-assets-legacy-import-cancel", Button.class);
+		robot.interact(() -> {
+			assertTrue(footer.isVisible());
+			assertTrue(footer.isManaged());
+			assertTrue(instruction.getText().contains("Link each required Paper"));
 
-		// Clean up through the real pending-import cancellation path.
-		fireControl(robot, "#exam-assets-legacy-import-cancel");
+			// This workbook requires Paper 1 of the registered 2020 Exam.
+			// Its PDF is not attached, so the import correctly remains pending.
+			assertTrue(progress.getText().contains("Expected Question booklets: 1"), progress.getText());
+			assertTrue(progress.getText().contains("Attached: 0 / 1"), progress.getText());
+			assertTrue(progress.getText().contains("Linked Papers: 0 / 1"), progress.getText());
+			assertNotNull(recheck);
+			assertNotNull(cancel);
+		});
+		assertFalse(nodePresentOnFx(robot, applicationRoot, "#exam-assets-legacy-import-requirement-0"),
+				"Removed per-Paper footer details must not reappear");
+
+		// Use the actual pending-import cancellation path and verify that the
+		// Dashboard is restored and the pending workbook state is discarded.
+		fireControl(robot, cancel);
 		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
-				() -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
+				() -> nodePresentOnFx(robot, applicationRoot, "#corpus-dashboard-home"));
+		assertNull(field(application, "pendingLegacyQuestionImport", Object.class));
 	}
 
 	@Test
@@ -954,6 +1040,24 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 	@Start
 	void start(Stage stage) throws Exception {
 		super.start(stage);
+	}
+
+	private void assertQuestionCorrectionLocksWorkingSubject(FxRobot robot, Question question,
+			ComboBox<Subject> subjects) throws TimeoutException {
+		Node root = primaryStage.getScene().getRoot();
+		ApplicationBusyOverlay overlay = (ApplicationBusyOverlay) root;
+		ComboBox<Question> imported = comboBox(robot, "#imported-question");
+
+		// The observable completion is the exact Question selected in the
+		// imported capture queue after the asynchronous PDF/corpus load.
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot,
+						() -> imported.getValue() != null && imported.getValue().getId() == question.getId()
+								&& root.lookup("#capture-workspace-mode") != null && !overlay.isBusy()));
+		assertTrue(evaluateOnFx(robot, subjects::isDisabled),
+				"Active imported Question correction must keep Working Subject locked");
+		assertFalse(evaluateOnFx(robot, subjects::isVisible),
+				"Working Subject editing must be hidden in the specialised capture workspace");
 	}
 
 	private Path createPendingLegacyWorkbook(Path path) throws Exception {
@@ -986,6 +1090,53 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 			}
 		}
 		return path;
+	}
+
+	private Question persistUnfinishedQuestionForSubjectUnlock(FxRobot robot, String code) throws Exception {
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		ComboBox<CurriculumNode> descriptors = comboBox(robot, "#curriculum-descriptor");
+		CurriculumNode classification = descriptors.getValue();
+		assertNotNull(classification);
+
+		// A saved, response-type-resolved Question without body regions is
+		// genuine QUESTION WORK, rather than a transient unsaved capture.
+		return new SqliteQuestionRepository(new SqliteDatabase(databasePath)).save(booklet, code, "", 1, List.of(),
+				classification, false, null, null, QuestionResponseType.WRITTEN_RESPONSE);
+	}
+
+	private void returnToDashboardAndSwitchWorkingSubject(FxRobot robot, ComboBox<Subject> subjects) throws Exception {
+		Node root = primaryStage.getScene().getRoot();
+		Button returnDashboard = lookupOnFx(robot, root, "#return-corpus-dashboard", Button.class);
+		assertTrue(returnDashboard.isVisible());
+		fireControl(robot, returnDashboard);
+
+		// Returning from capture must restore both visibility and enablement.
+		// Checking visibility alone would have missed the reported defect.
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot, () -> root.lookup("#corpus-dashboard-home") != null && subjects.isVisible()
+						&& subjects.isManaged() && !subjects.isDisabled()));
+		assertFalse(evaluateOnFx(robot, subjects::isDisabled));
+		Button addSubject = lookupOnFx(robot, root, "#add-subject", Button.class);
+		assertTrue(addSubject.isVisible());
+		assertTrue(addSubject.isManaged());
+
+		// A real Subject change, not just a visual assertion, confirms that the
+		// restored selector is usable after the previous Question-work lock.
+		Subject physics = subjects.getItems().stream().filter(subject -> "Physics".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		robot.interact(() -> subjects.getSelectionModel().select(physics));
+
+		// Physics has curriculum but no Exams in the shared fixture. Its empty
+		// Exam presentation proves the asynchronous Subject refresh completed.
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
+			Node emptyExamView = root.lookup("#corpus-dashboard-empty-exam-scroll");
+			return physics.equals(subjects.getValue()) && emptyExamView != null && emptyExamView.isVisible()
+					&& emptyExamView.isManaged();
+		}));
+		Subject selected = field(application, "workingSubject", Subject.class);
+		assertNotNull(selected);
+		assertEquals(physics.getId(), selected.getId());
+		assertFalse(evaluateOnFx(robot, subjects::isDisabled));
 	}
 
 	private void verifyPendingLegacyPaperBookletMapping(FxRobot robot, boolean ambiguous) throws Exception {

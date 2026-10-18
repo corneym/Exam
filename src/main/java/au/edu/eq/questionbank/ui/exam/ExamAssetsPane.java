@@ -2288,8 +2288,8 @@ public final class ExamAssetsPane extends VBox {
 	public interface QuestionBookletCreationHandler {
 
 		/**
-		 * Creates a Question booklet and, for legacy intake, links its workbook Paper
-		 * in the same persistence transaction.
+		 * Creates a Question booklet, optionally assigning a saved AnswerFile and, for
+		 * legacy intake, its workbook Paper identity in one transaction.
 		 *
 		 * @param exam                  owning Exam
 		 * @param sourcePath            selected source PDF
@@ -2297,12 +2297,14 @@ public final class ExamAssetsPane extends VBox {
 		 * @param questionFormat        explicit booklet Type
 		 * @param expectedQuestionCount top-level count, or null
 		 * @param legacyPaperCode       MCQ, 1, 2, or null for ordinary creation
+		 * @param answerFile            existing Answer booklet of this Exam, or null
 		 * @return persisted booklet
 		 * @throws IOException  if the PDF cannot be imported
 		 * @throws SQLException if persistence fails
 		 */
 		ExamBooklet create(Exam exam, Path sourcePath, String name, ExamBookletQuestionFormat questionFormat,
-				Integer expectedQuestionCount, String legacyPaperCode) throws IOException, SQLException;
+				Integer expectedQuestionCount, String legacyPaperCode, AnswerFile answerFile)
+				throws IOException, SQLException;
 	}
 
 	/**
@@ -2341,6 +2343,7 @@ public final class ExamAssetsPane extends VBox {
 		private final TextField expectedField = new TextField();
 		private final Button cancelButton = new Button("Cancel");
 		private final Button saveButton = new Button("Save");
+		private final ComboBox<AnswerAssignmentChoice> answerField = new ComboBox<>();
 
 		private PendingQuestionBookletEditor(Exam exam, Path sourcePath) {
 			this.exam = exam;
@@ -2361,23 +2364,14 @@ public final class ExamAssetsPane extends VBox {
 			nameField.setMaxWidth(Double.MAX_VALUE);
 			if (legacyImportPending) {
 
-				// A pending workbook permits only the required, still-unlinked
-				// Papers for the selected confirmed Exam.
+				// The confirmed workbook supplies only currently unlinked Papers.
 				List<String> available = remainingLegacyPaperNames(exam);
-
-				// Pending legacy creation offers only Papers not already linked.
 				nameField.setTooltip(new Tooltip("Choose a required workbook Paper not yet linked to another booklet. "
 						+ "Once saved, the booklet Name can be edited independently of its Paper link."));
 				nameField.setEditable(false);
 				nameField.getItems().setAll(available);
-				if (available.size() == 1) {
-					nameField.setValue(available.getFirst());
-				} else {
-					nameField.setValue(null);
-				}
+				nameField.setValue(available.size() == 1 ? available.getFirst() : null);
 			} else {
-
-				// Ordinary creation retains editable names and suggestions.
 				nameField.setEditable(true);
 				nameField.getItems().setAll(bookletNameSuggestions);
 				String defaultName = defaultQuestionBookletName(sourcePath);
@@ -2393,6 +2387,22 @@ public final class ExamAssetsPane extends VBox {
 			mcqButton.setUserData(ExamBookletQuestionFormat.MULTIPLE_CHOICE);
 			writtenButton.setUserData(ExamBookletQuestionFormat.WRITTEN_RESPONSE);
 			bothButton.setUserData(ExamBookletQuestionFormat.MIXED);
+			answerField.setId("exam-assets-new-question-answer");
+			answerField.setMaxWidth(Double.MAX_VALUE);
+			answerField.setTooltip(new Tooltip("Optionally link an existing Answer booklet from this Exam now. "
+					+ "Choose No Answer Booklet if none has been added yet."));
+			List<AnswerAssignmentChoice> answerChoices = new ArrayList<>();
+			answerChoices.add(new AnswerAssignmentChoice(null, NO_ANSWER_BOOKLET));
+			for (AnswerFile available : ExamAssetsPane.this.availableAnswerFiles) {
+
+				// This snapshot was loaded for the selected Exam; keep the identity check
+				// explicit so a stale UI snapshot cannot offer another Exam's Answer file.
+				if (available.getExam().getId() == exam.getId()) {
+					answerChoices.add(new AnswerAssignmentChoice(available, available.getName()));
+				}
+			}
+			answerField.getItems().setAll(answerChoices);
+			answerField.getSelectionModel().selectFirst();
 			expectedField.setId("exam-assets-new-question-expected");
 			expectedField.setPrefColumnCount(2);
 			expectedField.setMaxWidth(Region.USE_PREF_SIZE);
@@ -2419,14 +2429,15 @@ public final class ExamAssetsPane extends VBox {
 			metadata.setVgap(ROW_SPACING);
 			metadata.addRow(0, new Label("Name"), nameField);
 			metadata.addRow(1, new Label("Type"), formatControls);
-			metadata.addRow(2, new Label("Expected Questions"), expectedField);
+			metadata.addRow(2, new Label("Answer"), answerField);
+			metadata.addRow(3, new Label("Expected Questions"), expectedField);
 			GridPane.setHgrow(nameField, Priority.ALWAYS);
+			GridPane.setHgrow(answerField, Priority.ALWAYS);
 			Region actionSpacer = new Region();
 			HBox.setHgrow(actionSpacer, Priority.ALWAYS);
 			HBox actions = new HBox(SPACING, actionSpacer, cancelButton, saveButton);
 
-			// Expected count may remain blank until inspection establishes the
-			// authoritative top-level Question count.
+			// Expected count may remain blank until the source has been inspected.
 			VBox row = new VBox(ROW_SPACING, heading, sourceLabel, metadata, actions);
 			row.setId("exam-assets-new-question-booklet");
 			row.setPadding(SECTION_PADDING);
@@ -2479,11 +2490,11 @@ public final class ExamAssetsPane extends VBox {
 				String name = selectedBookletName();
 				String paperCode = legacyImportPending ? legacyPaperCode(name) : null;
 				ExamBooklet created = questionBookletCreationHandler.create(exam, sourcePath, name, selectedFormat(),
-						expectedQuestionCount(), paperCode);
+						expectedQuestionCount(), paperCode, selectedAnswerFile());
 				pendingQuestionBookletEditor = null;
 
-				// Reconstruct the saved booklet and its Paper identity
-				// from SQLite before changing the available choices.
+				// Reload the same transaction's booklet, legacy Paper and Answer link
+				// before rebuilding the saved editing row and entering inspection.
 				loadSelectedExamSafely(exam);
 				selectQuestionBooklet(created.getId());
 				questionBookletViewHandler.accept(created);
@@ -2493,9 +2504,16 @@ public final class ExamAssetsPane extends VBox {
 					message = exception.getClass().getSimpleName();
 				}
 
-				// An unsuccessful save retains the staged editor.
+				// Keep the pending editor and chosen Answer visible for correction.
 				showBookletError(message);
 			}
+		}
+
+		private AnswerFile selectedAnswerFile() {
+			AnswerAssignmentChoice selected = answerField.getValue();
+
+			// The deliberate No Answer Booklet option is represented by null.
+			return selected == null ? null : selected.answerFile();
 		}
 
 		private String selectedBookletName() {
