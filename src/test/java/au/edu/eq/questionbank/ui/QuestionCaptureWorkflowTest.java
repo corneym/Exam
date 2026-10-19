@@ -9,7 +9,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
-import java.sql.Statement;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -1107,69 +1106,82 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void multipartTypingAndReadinessAvoidWholeCorpusRetrieval(FxRobot robot) throws Exception {
+	void multipartTypingShowsConflictingContextAndRecoversAfterCorrection(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet booklet = examMetadataPane().getBooklet();
 		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
 				.getClassification();
 		SqliteDatabase database = new SqliteDatabase(databasePath);
-		SqliteQuestionRepository persisted = new SqliteQuestionRepository(database);
-		SourceQuestion source = new SqliteSourceQuestionRepository(database).save(booklet, "46");
-		SharedQuestionContext context = new SqliteSharedQuestionContextRepository(database).save(booklet,
-				"Question 46 shared context", List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.70, 0.15)));
-		Question firstPart = persisted.save(booklet, "46a", "", 2,
-				List.of(new QuestionRegion(booklet, 1, 0.10, 0.30, 0.70, 0.15)), classification, true, source, context,
+		SqliteQuestionRepository questions = new SqliteQuestionRepository(database);
+		SourceQuestion source = new SqliteSourceQuestionRepository(database).save(booklet, "73");
+		SqliteSharedQuestionContextRepository contexts = new SqliteSharedQuestionContextRepository(database);
+		SharedQuestionContext firstContext = contexts.save(booklet, "Question 73 shared context",
+				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.70, 0.15)));
+		SharedQuestionContext conflictingContext = contexts.save(booklet, "Conflicting Question 73 context",
+				List.of(new SharedQuestionContextRegion(1, 0.10, 0.40, 0.70, 0.15)));
+		Question first = questions.save(booklet, "73a", "", 2, List.of(), classification, true, source, firstContext,
 				QuestionResponseType.WRITTEN_RESPONSE);
-		QuestionCapturePane pane = questionCapturePane();
-		Path csv = Files.createTempDirectory("multipart-scoped-lookup-").resolve("performance.csv");
-		robot.interact(() -> pane.setPerformanceRecorder(new PerformanceRecorder(true, csv)));
+		Question second = questions.save(booklet, "73b", "", 2, List.of(), classification, true, source, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
 
-		// Fail immediately if typing or readiness tries to reconstruct
-		// the complete Question bank.
-		setField(pane, "questionRepository", new InMemoryQuestionRepository() {
-
-			@Override
-			public List<Question> findAll() {
-				throw new AssertionError(
-						"Multipart inference or readiness " + "requested the complete Question corpus");
-			}
-		});
-		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		// Deliberately introduce a persisted conflict that normal
+		// application capture must never create.
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection
+						.prepareStatement("UPDATE questions SET shared_context_id = ? WHERE id = ?")) {
+			statement.setLong(1, conflictingContext.getId());
+			statement.setLong(2, second.getId());
+			assertEquals(1, statement.executeUpdate());
+		}
+		TextField code = lookup(robot, "#question-code", TextField.class);
 		TextField marks = lookup(robot, "#question-marks", TextField.class);
-		Label contextStatus = lookup(robot, "#shared-context-status", Label.class);
+		Label status = lookup(robot, "#shared-context-status", Label.class);
 		Button save = lookup(robot, "#save-question", Button.class);
 
-		// Exercise the actual text listeners, not the private
-		// inference implementation.
+		// Exercise the real typing-time inference listener.
+		// The conflict must be presented rather than propagated
+		// as an uncaught JavaFX exception.
 		robot.interact(() -> {
-			questionCode.setText("46b");
+			code.setText("73c");
 			marks.setText("2");
 		});
-		assertTrue(contextStatus.isVisible());
-		assertTrue(contextStatus.getText().contains("Question 46"));
+		assertTrue(status.isVisible());
+		assertTrue(status.getText().contains("inconsistent shared context links"));
 
-		// Accept actual Question content to reach the save-readiness
-		// validation path, which previously could also call findAll().
+		// Completing the remaining Question details cannot make
+		// Save available while persisted context links conflict.
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-question-region");
-		assertFalse(save.isDisabled(), "Existing Shared Context should permit saving part b");
+		assertTrue(save.isDisabled());
 
-		// Typing and validation must not write to the database.
-		Question unchanged = persisted.findById(firstPart.getId()).orElseThrow();
-		assertEquals(source.getId(), unchanged.getSourceQuestion().getId());
-		assertEquals(context.getId(), unchanged.getSharedContext().getId());
-		assertEquals(1, persisted.findAll().size());
+		// Typing must not repair or rewrite the conflicting rows.
+		assertEquals(firstContext.getId(), questions.findById(first.getId()).orElseThrow().getSharedContext().getId());
+		assertEquals(conflictingContext.getId(),
+				questions.findById(second.getId()).orElseThrow().getSharedContext().getId());
 
-		// Verify the new scoped metric and the absence of the former
-		// whole-corpus measurement.
-		List<String[]> rows = Files.readAllLines(csv).stream().skip(1).map(line -> line.split(",", -1)).toList();
-		List<String[]> lookups = rows.stream().filter(row -> row[3].equals("capture.question.code.context.lookup"))
-				.toList();
-		assertFalse(lookups.isEmpty(), "No source-specific context lookup was recorded");
-		assertTrue(lookups.stream().allMatch(row -> "true".equals(row[5])));
-		assertTrue(lookups.stream().anyMatch(row -> "1".equals(row[6])));
-		assertTrue(rows.stream().noneMatch(row -> row[3].equals("capture.question.code.context.corpus")),
-				"Typing must not perform full-corpus context inference");
+		// Correct the inconsistent persisted relationship.
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection
+						.prepareStatement("UPDATE questions SET shared_context_id = ? WHERE id = ?")) {
+			statement.setLong(1, firstContext.getId());
+			statement.setLong(2, second.getId());
+			assertEquals(1, statement.executeUpdate());
+		}
+
+		// Re-entering the code is a fresh workflow evaluation.
+		// It must not retain the previous failed lookup result.
+		robot.interact(() -> {
+			code.setText("74");
+			code.setText("73c");
+		});
+		assertTrue(status.isVisible());
+		assertTrue(status.getText().contains("Question 73"));
+		assertFalse(status.getText().contains("inconsistent"));
+		assertFalse(save.isDisabled(), "Corrected Shared Context links should permit capture");
+
+		// The two existing Questions still retain their identities.
+		assertEquals(source.getId(), questions.findById(first.getId()).orElseThrow().getSourceQuestion().getId());
+		assertEquals(source.getId(), questions.findById(second.getId()).orElseThrow().getSourceQuestion().getId());
 	}
 
 	@Test
