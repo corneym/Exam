@@ -30,6 +30,7 @@ import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ImageQuestionContentPart;
 import au.edu.eq.questionbank.model.PdfQuestionContentPart;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
@@ -1103,6 +1104,72 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		}
 		assertEquals("true", region[5]);
 		assertEquals("1", region[6]);
+	}
+
+	@Test
+	void multipartTypingAndReadinessAvoidWholeCorpusRetrieval(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteQuestionRepository persisted = new SqliteQuestionRepository(database);
+		SourceQuestion source = new SqliteSourceQuestionRepository(database).save(booklet, "46");
+		SharedQuestionContext context = new SqliteSharedQuestionContextRepository(database).save(booklet,
+				"Question 46 shared context", List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.70, 0.15)));
+		Question firstPart = persisted.save(booklet, "46a", "", 2,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.30, 0.70, 0.15)), classification, true, source, context,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		QuestionCapturePane pane = questionCapturePane();
+		Path csv = Files.createTempDirectory("multipart-scoped-lookup-").resolve("performance.csv");
+		robot.interact(() -> pane.setPerformanceRecorder(new PerformanceRecorder(true, csv)));
+
+		// Fail immediately if typing or readiness tries to reconstruct
+		// the complete Question bank.
+		setField(pane, "questionRepository", new InMemoryQuestionRepository() {
+
+			@Override
+			public List<Question> findAll() {
+				throw new AssertionError(
+						"Multipart inference or readiness " + "requested the complete Question corpus");
+			}
+		});
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		Label contextStatus = lookup(robot, "#shared-context-status", Label.class);
+		Button save = lookup(robot, "#save-question", Button.class);
+
+		// Exercise the actual text listeners, not the private
+		// inference implementation.
+		robot.interact(() -> {
+			questionCode.setText("46b");
+			marks.setText("2");
+		});
+		assertTrue(contextStatus.isVisible());
+		assertTrue(contextStatus.getText().contains("Question 46"));
+
+		// Accept actual Question content to reach the save-readiness
+		// validation path, which previously could also call findAll().
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-question-region");
+		assertFalse(save.isDisabled(), "Existing Shared Context should permit saving part b");
+
+		// Typing and validation must not write to the database.
+		Question unchanged = persisted.findById(firstPart.getId()).orElseThrow();
+		assertEquals(source.getId(), unchanged.getSourceQuestion().getId());
+		assertEquals(context.getId(), unchanged.getSharedContext().getId());
+		assertEquals(1, persisted.findAll().size());
+
+		// Verify the new scoped metric and the absence of the former
+		// whole-corpus measurement.
+		List<String[]> rows = Files.readAllLines(csv).stream().skip(1).map(line -> line.split(",", -1)).toList();
+		List<String[]> lookups = rows.stream().filter(row -> row[3].equals("capture.question.code.context.lookup"))
+				.toList();
+		assertFalse(lookups.isEmpty(), "No source-specific context lookup was recorded");
+		assertTrue(lookups.stream().allMatch(row -> "true".equals(row[5])));
+		assertTrue(lookups.stream().anyMatch(row -> "1".equals(row[6])));
+		assertTrue(rows.stream().noneMatch(row -> row[3].equals("capture.question.code.context.corpus")),
+				"Typing must not perform full-corpus context inference");
 	}
 
 	@Test

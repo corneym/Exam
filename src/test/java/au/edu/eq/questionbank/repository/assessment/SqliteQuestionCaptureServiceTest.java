@@ -10,6 +10,7 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.nio.file.Path;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.util.List;
 
@@ -254,6 +255,95 @@ class SqliteQuestionCaptureServiceTest {
 		assertTrue(new SqliteSharedQuestionContextRepository(fixture.database()).findByBooklet(fixture.booklet())
 				.isEmpty());
 		assertTrue(service.findPendingMcqSharedContext(fixture.booklet()).isEmpty());
+	}
+
+	@Test
+	void findStoredSharedContextRejectsConflictingParts() throws Exception {
+		Fixture fixture = createFixture("scoped-context-conflict.db");
+		SqliteDatabase database = fixture.database();
+		SqliteQuestionRepository questions = new SqliteQuestionRepository(database);
+		SourceQuestion source = new SqliteSourceQuestionRepository(database).save(fixture.booklet(), "35");
+		SqliteSharedQuestionContextRepository contexts = new SqliteSharedQuestionContextRepository(database);
+		var firstContext = contexts.save(fixture.booklet(), "First context",
+				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.70, 0.15)));
+		var conflictingContext = contexts.save(fixture.booklet(), "Conflicting context",
+				List.of(new SharedQuestionContextRegion(1, 0.10, 0.35, 0.70, 0.15)));
+		Question first = questions.save(fixture.booklet(), "35a", "", 2, List.of(), fixture.classification(), true,
+				source, firstContext, QuestionResponseType.WRITTEN_RESPONSE);
+		Question second = questions.save(fixture.booklet(), "35b", "", 2, List.of(), fixture.classification(), true,
+				source, null, QuestionResponseType.WRITTEN_RESPONSE);
+
+		// Simulate inconsistent legacy persistence. Normal application
+		// capture must not be weakened to permit conflicting links.
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection
+						.prepareStatement("UPDATE questions SET shared_context_id = ? WHERE id = ?")) {
+			statement.setLong(1, conflictingContext.getId());
+			statement.setLong(2, second.getId());
+			assertEquals(1, statement.executeUpdate());
+		}
+		SqliteQuestionCaptureService service = new SqliteQuestionCaptureService(database);
+		IllegalStateException failure = assertThrows(IllegalStateException.class,
+				() -> service.findStoredSharedContext(source));
+		assertTrue(failure.getMessage().contains("inconsistent shared context links"));
+
+		// A read-only inference failure must not repair, replace or
+		// otherwise modify either persisted relationship.
+		Question reloadedFirst = questions.findById(first.getId()).orElseThrow();
+		Question reloadedSecond = questions.findById(second.getId()).orElseThrow();
+		assertEquals(firstContext.getId(), reloadedFirst.getSharedContext().getId());
+		assertEquals(conflictingContext.getId(), reloadedSecond.getSharedContext().getId());
+		assertEquals(source.getId(), reloadedFirst.getSourceQuestion().getId());
+		assertEquals(source.getId(), reloadedSecond.getSourceQuestion().getId());
+	}
+
+	@Test
+	void findStoredSharedContextUsesExactBookletAndFreshPersistence() throws Exception {
+		Fixture fixture = createFixture("scoped-context-freshness.db");
+		SqliteDatabase database = fixture.database();
+		SqliteQuestionRepository questions = new SqliteQuestionRepository(database);
+		SqliteSourceQuestionRepository sources = new SqliteSourceQuestionRepository(database);
+		SqliteSharedQuestionContextRepository contexts = new SqliteSharedQuestionContextRepository(database);
+		SqliteQuestionCaptureService service = new SqliteQuestionCaptureService(database);
+		SourceQuestion source = sources.save(fixture.booklet(), "24");
+		var firstContext = contexts.save(fixture.booklet(), "Question 24 context",
+				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.70, 0.15)));
+		Question firstPart = questions.save(fixture.booklet(), "24a", "", 2, List.of(), fixture.classification(), true,
+				source, firstContext, QuestionResponseType.WRITTEN_RESPONSE);
+		Question secondPart = questions.save(fixture.booklet(), "24b", "", 2, List.of(), fixture.classification(), true,
+				source, null, QuestionResponseType.WRITTEN_RESPONSE);
+
+		// A missing sibling link does not prevent another part's
+		// already-persisted Shared Context from being inherited.
+		assertEquals(firstContext.getId(), service.findStoredSharedContext(source).orElseThrow().getId());
+
+		// The same source code in another booklet is a different
+		// persistent source identity, even within the same Exam.
+		SqliteExamWriter exams = new SqliteExamWriter(database);
+		var otherDocument = exams.insertSourceDocument("Chemistry/2019/paper2.pdf");
+		ExamBooklet otherBooklet = exams.insertExamBooklet(fixture.booklet().getExam(), otherDocument, "Paper 2");
+		SourceQuestion otherSource = sources.save(otherBooklet, "24");
+		var otherContext = contexts.save(otherBooklet, "Paper 2 Question 24 context",
+				List.of(new SharedQuestionContextRegion(1, 0.10, 0.40, 0.70, 0.15)));
+		questions.save(otherBooklet, "24a", "", 2, List.of(), fixture.classification(), true, otherSource, otherContext,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		assertEquals(firstContext.getId(), service.findStoredSharedContext(source).orElseThrow().getId());
+		assertEquals(otherContext.getId(), service.findStoredSharedContext(otherSource).orElseThrow().getId());
+
+		// Simulate a persisted edit that removes the first part's
+		// context association. No other part currently has one.
+		questions.updateCaptureRelationships(firstPart.getId(), fixture.classification(), source, null);
+		assertTrue(service.findStoredSharedContext(source).isEmpty());
+
+		// A subsequent committed edit must be visible immediately.
+		// No cached corpus or cached previous context may be reused.
+		questions.updateCaptureRelationships(secondPart.getId(), fixture.classification(), source, firstContext);
+		assertEquals(firstContext.getId(), service.findStoredSharedContext(source).orElseThrow().getId());
+		assertEquals(otherContext.getId(), service.findStoredSharedContext(otherSource).orElseThrow().getId());
+
+		// Inference itself must not have modified source relationships.
+		assertEquals(source.getId(), questions.findById(firstPart.getId()).orElseThrow().getSourceQuestion().getId());
+		assertEquals(source.getId(), questions.findById(secondPart.getId()).orElseThrow().getSourceQuestion().getId());
 	}
 
 	@Test

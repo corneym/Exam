@@ -2254,7 +2254,11 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private SharedQuestionContext findSharedContextForSourceQuestion(SourceQuestion sourceQuestion) {
-		return findSharedContextForSourceQuestion(sourceQuestion, currentQuestions());
+
+		// Always retrieve the current persisted relationship.
+		// A source-specific query avoids whole-corpus reconstruction
+		// without risking an indefinitely cached Shared Context.
+		return questionCaptureService.findStoredSharedContext(sourceQuestion).orElse(null);
 	}
 
 	private SharedQuestionContext findSharedContextForSourceQuestion(SourceQuestion sourceQuestion,
@@ -3819,28 +3823,17 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private boolean showStoredSharedContext(String sourceCode, SourceQuestion sourceQuestion, long parentOperationId) {
-		List<Question> questions;
-		try (PerformanceOperation retrieval = performanceRecorder.start("capture.question.code.context.corpus",
+		SharedQuestionContext existingContext;
+		try (PerformanceOperation lookup = performanceRecorder.start("capture.question.code.context.lookup",
 				parentOperationId)) {
 			try {
 
-				// This is the existing full-corpus retrieval, preserved
-				// so its cost can be established independently.
-				questions = currentQuestions();
-				retrieval.resultCount(questions.size());
+				// Resolve only this persisted SourceQuestion.
+				// This replaces the former full-corpus retrieval and scan.
+				existingContext = findSharedContextForSourceQuestion(sourceQuestion);
+				lookup.resultCount(existingContext == null ? 0 : 1);
 			} catch (RuntimeException | Error failure) {
-				retrieval.failed();
-				throw failure;
-			}
-		}
-		SharedQuestionContext existingContext;
-		try (PerformanceOperation matching = performanceRecorder.start("capture.question.code.context.scan",
-				parentOperationId)) {
-			try {
-				existingContext = findSharedContextForSourceQuestion(sourceQuestion, questions);
-				matching.resultCount(existingContext == null ? 0 : 1);
-			} catch (RuntimeException | Error failure) {
-				matching.failed();
+				lookup.failed();
 				throw failure;
 			}
 		}
