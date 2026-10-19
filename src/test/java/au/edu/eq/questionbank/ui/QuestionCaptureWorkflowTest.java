@@ -4,8 +4,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.Statement;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -19,6 +23,7 @@ import org.testfx.api.FxRobot;
 import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
+import au.edu.eq.questionbank.diagnostics.FxPulseGapProbe;
 import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
@@ -26,9 +31,14 @@ import au.edu.eq.questionbank.model.ImageQuestionContentPart;
 import au.edu.eq.questionbank.model.PdfQuestionContentPart;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionResponseType;
+import au.edu.eq.questionbank.model.SharedQuestionContext;
+import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
+import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.repository.assessment.InMemoryQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
+import au.edu.eq.questionbank.repository.assessment.SqliteSharedQuestionContextRepository;
+import au.edu.eq.questionbank.repository.assessment.SqliteSourceQuestionRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.ui.capture.AnswerCapturePane;
 import au.edu.eq.questionbank.ui.capture.QuestionCapturePane;
@@ -38,7 +48,10 @@ import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import javafx.application.Platform;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBase;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.Menu;
@@ -625,6 +638,355 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, importedAction::isVisible);
 		assertEquals(chemistry, workingSubjectBox.getValue());
 		assertTrue(importedAction.isManaged());
+	}
+
+	@Test
+	void importedCaptureEntryRecordsRepairAndNoOpMeasurements(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+
+		// Persist an incomplete multipart Question without its derived
+		// SourceQuestion relationship.
+		Question incomplete = repository.save(booklet, "41a", "", 1, List.of(), classification, false, null, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		assertFalse(repository.findById(incomplete.getId()).orElseThrow().hasSourceQuestion());
+		QuestionCapturePane pane = questionCapturePane();
+		robot.interact(pane::refreshImportedQuestions);
+		Path csv = Files.createTempDirectory("imported-entry-performance-").resolve("performance.csv");
+		PerformanceRecorder recorder = new PerformanceRecorder(true, csv);
+		robot.interact(() -> pane.setPerformanceRecorder(recorder));
+
+		// First entry repairs the missing SourceQuestion relationship.
+		robot.interact(() -> showImportedQuestionCaptureForTest(pane));
+		Question repaired = repository.findById(incomplete.getId()).orElseThrow();
+		assertTrue(repaired.hasSourceQuestion());
+		assertEquals("41", repaired.getSourceQuestion().getSourceQuestionCode());
+		ComboBox<Question> queue = comboBox(robot, "#imported-question");
+		assertEquals(1, queue.getItems().size());
+		assertEquals(incomplete.getId(), queue.getItems().getFirst().getId());
+
+		// Re-enter without modifying persistence.
+		// Backfill and reconciliation must now be no-ops.
+		robot.interact(() -> showImportedQuestionCaptureForTest(pane));
+		Question repeated = repository.findById(incomplete.getId()).orElseThrow();
+		assertTrue(repeated.hasSourceQuestion());
+		assertEquals(repaired.getSourceQuestion().getId(), repeated.getSourceQuestion().getId());
+		assertTrue(Files.isRegularFile(csv));
+		List<String[]> rows = Files.readAllLines(csv).stream().skip(1).map(line -> line.split(",", -1)).toList();
+		List<String[]> entries = rows.stream().filter(row -> row[3].equals("capture.question.imported.entry")).toList();
+		assertEquals(2, entries.size());
+		for (int index = 0; index < entries.size(); index++) {
+			String[] entry = entries.get(index);
+			String entryId = entry[1];
+			assertEquals("true", entry[5]);
+			assertEquals("1", entry[6]);
+
+			// The three workflow phases remain mandatory.
+			// SQLite and JavaFX diagnostics are additional children.
+			for (String phase : List.of("capture.question.imported.backfill", "capture.question.imported.reconcile",
+					"capture.question.imported.refresh")) {
+				assertEquals(1,
+						rows.stream().filter(row -> row[2].equals(entryId)).filter(row -> row[3].equals(phase)).count(),
+						"Missing or duplicate phase: " + phase);
+			}
+			String[] backfill = rows.stream().filter(row -> row[2].equals(entryId))
+					.filter(row -> row[3].equals("capture.question.imported.backfill")).findFirst()
+					.orElseThrow(() -> new AssertionError("Missing backfill for entry " + entryId));
+			String[] corpus = rows.stream().filter(row -> row[2].equals(backfill[1]))
+					.filter(row -> row[3].equals("capture.question.imported.backfill.corpus")).findFirst()
+					.orElseThrow(() -> new AssertionError("Missing initial corpus read for entry " + entryId));
+			String[] links = rows.stream().filter(row -> row[2].equals(backfill[1]))
+					.filter(row -> row[3].equals("capture.question.imported.backfill.links")).findFirst()
+					.orElseThrow(() -> new AssertionError("Missing link measurement for entry " + entryId));
+			assertEquals("1", corpus[6]);
+
+			// First entry repairs one relationship; second repairs none.
+			assertEquals(index == 0 ? "1" : "0", links[6]);
+			List<String[]> reloads = rows.stream().filter(row -> row[2].equals(backfill[1]))
+					.filter(row -> row[3].equals("capture.question.imported.backfill.reload")).toList();
+			assertEquals(index == 0 ? 1 : 0, reloads.size());
+			if (index == 0) {
+				assertEquals("1", reloads.getFirst()[6]);
+			}
+			String[] reconciliation = rows.stream().filter(row -> row[2].equals(entryId))
+					.filter(row -> row[3].equals("capture.question.imported.reconcile")).findFirst()
+					.orElseThrow(() -> new AssertionError("Missing reconciliation for entry " + entryId));
+			String[] scan = rows.stream().filter(row -> row[2].equals(reconciliation[1]))
+					.filter(row -> row[3].equals("capture.question.imported.reconcile.scan")).findFirst()
+					.orElseThrow(() -> new AssertionError("Missing reconciliation scan for entry " + entryId));
+
+			// The fixture has no Shared Context group.
+			assertEquals("0", scan[6]);
+
+			// There must be no Shared Context update attempts.
+			assertTrue(rows.stream().noneMatch(
+					row -> row[3].equals("capture.question.imported.reconcile.apply") && row[2].equals(scan[1])));
+
+			// Optimised reconciliation does not reload the corpus.
+			assertTrue(rows.stream().noneMatch(row -> row[3].equals("capture.question.imported.reconcile.corpus")
+					&& row[2].equals(reconciliation[1])));
+			String[] refresh = rows.stream().filter(row -> row[2].equals(entryId))
+					.filter(row -> row[3].equals("capture.question.imported.refresh")).findFirst()
+					.orElseThrow(() -> new AssertionError("Missing queue refresh for entry " + entryId));
+			assertEquals("1", refresh[6]);
+
+			// No reconciliation writes occurred, so refresh must
+			// reuse the authoritative snapshot.
+			assertTrue(rows.stream().noneMatch(
+					row -> row[3].equals("capture.question.imported.refresh.corpus") && row[2].equals(refresh[1])));
+		}
+	}
+
+	@Test
+	void importedCaptureEntryRecordsSqlAndFxPulseCounts(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		Question incomplete = repository.save(booklet, "51a", "", 1, List.of(), classification, false, null, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		assertFalse(repository.findById(incomplete.getId()).orElseThrow().hasSourceQuestion());
+		QuestionCapturePane pane = questionCapturePane();
+		robot.interact(pane::refreshImportedQuestions);
+		Path csv = Files.createTempDirectory("imported-sql-fx-").resolve("performance.csv");
+		robot.interact(() -> pane.setPerformanceRecorder(new PerformanceRecorder(true, csv)));
+
+		// Establish an actual pulse baseline before entering the
+		// synchronous operation. This avoids relying on a sleep.
+		FxPulseGapProbe heartbeat = field(pane, "importedEntryPulseProbe", FxPulseGapProbe.class);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, heartbeat::hasObservedPulse);
+		ToggleButton action = lookup(robot, "#capture-mode-imported", ToggleButton.class);
+		assertTrue(action.isVisible());
+		fireControl(robot, action);
+		ComboBox<Question> queue = comboBox(robot, "#imported-question");
+		assertEquals(1, queue.getItems().size());
+		Question repaired = repository.findById(incomplete.getId()).orElseThrow();
+		assertTrue(repaired.hasSourceQuestion());
+		assertEquals("51", repaired.getSourceQuestion().getSourceQuestionCode());
+
+		// The pulse measurement is deliberately recorded after
+		// the entry method returns. Wait for that actual sample.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
+			if (!Files.isRegularFile(csv)) {
+				return false;
+			}
+			try {
+				return Files.readString(csv).contains("capture.question.imported.fx.pulse-gap-us");
+			} catch (IOException exception) {
+				return false;
+			}
+		});
+		List<String[]> rows = Files.readAllLines(csv).stream().skip(1).map(line -> line.split(",", -1)).toList();
+		String[] entry = rows.stream().filter(row -> row[3].equals("capture.question.imported.entry")).findFirst()
+				.orElseThrow();
+		assertEquals("true", entry[5]);
+		assertEquals("1", entry[6]);
+		String parentId = entry[1];
+		List<String[]> metrics = rows.stream().filter(row -> row[2].equals(parentId)).toList();
+		for (String name : List.of("connections", "executions", "questions", "rows", "open-us", "execute-us")) {
+			String operation = "capture.question.imported.sqlite." + name;
+			String[] metric = metrics.stream().filter(row -> row[3].equals(operation)).findFirst().orElseThrow();
+			assertEquals("true", metric[5]);
+			assertTrue(Long.parseLong(metric[6]) >= 0);
+		}
+		long connections = Long
+				.parseLong(metrics.stream().filter(row -> row[3].equals("capture.question.imported.sqlite.connections"))
+						.findFirst().orElseThrow()[6]);
+		long executions = Long
+				.parseLong(metrics.stream().filter(row -> row[3].equals("capture.question.imported.sqlite.executions"))
+						.findFirst().orElseThrow()[6]);
+		long reconstructed = Long
+				.parseLong(metrics.stream().filter(row -> row[3].equals("capture.question.imported.sqlite.questions"))
+						.findFirst().orElseThrow()[6]);
+
+		// Backfill, reconciliation and queue refresh each retrieve
+		// the one-Question corpus. Repair incurs additional SQL.
+		assertTrue(connections >= 3);
+		assertTrue(executions >= 3);
+		assertTrue(reconstructed >= 3);
+		String[] pulseGap = metrics.stream().filter(row -> row[3].equals("capture.question.imported.fx.pulse-gap-us"))
+				.findFirst().orElseThrow();
+		assertEquals("true", pulseGap[5]);
+		assertTrue(Long.parseLong(pulseGap[6]) > 0);
+	}
+
+	@Test
+	void importedCaptureFailedRepairClearsActiveQueue(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+
+		// Establish a valid, incomplete Question so imported capture
+		// can be entered successfully before the failure is introduced.
+		Question existing = repository.save(booklet, "80", "", 1, List.of(), classification, false, null, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		QuestionCapturePane pane = questionCapturePane();
+		robot.interact(pane::refreshImportedQuestions);
+		Path csv = Files.createTempDirectory("imported-repair-failure-").resolve("performance.csv");
+		robot.interact(() -> pane.setPerformanceRecorder(new PerformanceRecorder(true, csv)));
+		ToggleButton importedAction = lookup(robot, "#capture-mode-imported", ToggleButton.class);
+		Node importedControls = lookup(robot, "#legacy-question-capture", Node.class);
+		ComboBox<Question> importedQueue = comboBox(robot, "#imported-question");
+		fireControl(robot, importedAction);
+		assertTrue(importedControls.isVisible());
+		assertEquals(1, importedQueue.getItems().size());
+		assertEquals(existing.getId(), importedQueue.getItems().getFirst().getId());
+
+		// Introduce a repairable Shared Context relationship after
+		// the first queue snapshot was published.
+		SourceQuestion source = new SqliteSourceQuestionRepository(database).save(booklet, "91");
+		SharedQuestionContext context = new SqliteSharedQuestionContextRepository(database).save(booklet,
+				"Question 91 shared context", List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.70, 0.15)));
+		Question linked = repository.save(booklet, "91a", "", 1, List.of(), classification, true, source, context,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		Question missing = repository.save(booklet, "91b", "", 1, List.of(), classification, true, source, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+
+		// Inject a database failure into the relationship UPDATE.
+		// The trigger affects only the Question requiring repair.
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					CREATE TRIGGER reject_imported_context_update
+					BEFORE UPDATE OF shared_context_id ON questions
+					WHEN OLD.id = %d
+					     AND OLD.shared_context_id IS NULL
+					BEGIN
+					    SELECT RAISE(ABORT, 'Injected context repair failure');
+					END
+					""".formatted(missing.getId()));
+		}
+
+		// Re-enter while the previous queue is still active.
+		// This path must not leave that old queue accessible.
+		Platform.runLater(() -> showImportedQuestionCaptureForTest(pane));
+		waitForDialogShowing(robot, "Error");
+		DialogPane dialog = showingDialogPane(robot, "Error");
+		assertEquals("Shared context links are inconsistent.", dialog.getHeaderText());
+		ButtonBase ok = (ButtonBase) dialog.lookupButton(ButtonType.OK);
+		robot.interact(ok::fire);
+		waitForDialogHidden(robot, "Error");
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// The rejected SQLite transaction must not partially attach
+		// the missing Shared Context relationship.
+		Question storedMissing = repository.findById(missing.getId()).orElseThrow();
+		Question storedLinked = repository.findById(linked.getId()).orElseThrow();
+		assertFalse(storedMissing.hasSharedContext());
+		assertEquals(source.getId(), storedMissing.getSourceQuestion().getId());
+		assertEquals(context.getId(), storedLinked.getSharedContext().getId());
+
+		// The old queue must not remain active after a failed re-entry.
+		assertFalse(importedControls.isVisible());
+		assertFalse(importedControls.isManaged());
+		assertFalse(pane.canCaptureRegions());
+		assertTrue(importedQueue.getValue() == null);
+		assertTrue(importedAction.isVisible());
+
+		// Remove the injected failure so normal repair can resume.
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("DROP TRIGGER reject_imported_context_update");
+		}
+		fireControl(robot, importedAction);
+		Question repaired = repository.findById(missing.getId()).orElseThrow();
+		assertTrue(repaired.hasSharedContext());
+		assertEquals(context.getId(), repaired.getSharedContext().getId());
+		assertEquals(source.getId(), repaired.getSourceQuestion().getId());
+		assertTrue(importedControls.isVisible());
+		assertTrue(importedQueue.getItems().stream().anyMatch(question -> question.getId() == missing.getId()));
+
+		// Diagnostics must distinguish the failed entry from both
+		// successful entries.
+		List<String[]> entries = Files.readAllLines(csv).stream().skip(1).map(line -> line.split(",", -1))
+				.filter(row -> row[3].equals("capture.question.imported.entry")).toList();
+		assertEquals(3, entries.size());
+		assertEquals("true", entries.get(0)[5]);
+		assertEquals("false", entries.get(1)[5]);
+		assertEquals("true", entries.get(2)[5]);
+	}
+
+	@Test
+	void importedCaptureRejectsConflictingSharedContexts(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		SourceQuestion source = new SqliteSourceQuestionRepository(database).save(booklet, "71");
+		SqliteSharedQuestionContextRepository contexts = new SqliteSharedQuestionContextRepository(database);
+		SharedQuestionContext firstContext = contexts.save(booklet, "Question 71 shared context",
+				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.70, 0.15)));
+		SharedQuestionContext conflictingContext = contexts.save(booklet, "Conflicting Question 71 context",
+				List.of(new SharedQuestionContextRegion(1, 0.10, 0.30, 0.70, 0.15)));
+		Question first = repository.save(booklet, "71a", "", 1, List.of(), classification, true, source, firstContext,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		Question second = repository.save(booklet, "71b", "", 1, List.of(), classification, true, source, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+
+		// Simulate an inconsistent legacy relationship using SQL.
+		// Normal repository APIs must not be weakened to create it.
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection
+						.prepareStatement("UPDATE questions SET shared_context_id = ? WHERE id = ?")) {
+			statement.setLong(1, conflictingContext.getId());
+			statement.setLong(2, second.getId());
+			assertEquals(1, statement.executeUpdate());
+		}
+		QuestionCapturePane pane = questionCapturePane();
+		robot.interact(pane::refreshImportedQuestions);
+		ToggleButton importedAction = lookup(robot, "#capture-mode-imported", ToggleButton.class);
+		Node importedControls = lookup(robot, "#legacy-question-capture", Node.class);
+		assertTrue(importedAction.isVisible());
+
+		// The repair error produces a modal alert.
+		// Do not block robot.interact while that alert is showing.
+		fireControlLater(importedAction);
+		waitForDialogShowing(robot, "Error");
+		DialogPane dialog = showingDialogPane(robot, "Error");
+		assertEquals("Shared context links are inconsistent.", dialog.getHeaderText());
+		assertTrue(dialog.getContentText().contains("inconsistent shared context links"));
+		ButtonBase ok = (ButtonBase) dialog.lookupButton(ButtonType.OK);
+		robot.interact(ok::fire);
+		waitForDialogHidden(robot, "Error");
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// No conflicting relationship may be rewritten.
+		Question storedFirst = repository.findById(first.getId()).orElseThrow();
+		Question storedSecond = repository.findById(second.getId()).orElseThrow();
+		assertEquals(firstContext.getId(), storedFirst.getSharedContext().getId());
+		assertEquals(conflictingContext.getId(), storedSecond.getSharedContext().getId());
+		assertEquals(source.getId(), storedFirst.getSourceQuestion().getId());
+		assertEquals(source.getId(), storedSecond.getSourceQuestion().getId());
+
+		// A failed initial entry must not activate the capture queue.
+		assertFalse(importedControls.isVisible());
+		assertFalse(importedControls.isManaged());
+		assertFalse(pane.canCaptureRegions());
+
+		// Correct the deliberately inconsistent database fixture.
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection
+						.prepareStatement("UPDATE questions SET shared_context_id = NULL WHERE id = ?")) {
+			statement.setLong(1, second.getId());
+			assertEquals(1, statement.executeUpdate());
+		}
+
+		// Retrying must use freshly persisted Questions rather than
+		// the stale pre-error snapshot.
+		fireControl(robot, importedAction);
+		Question corrected = repository.findById(second.getId()).orElseThrow();
+		assertTrue(corrected.hasSharedContext());
+		assertEquals(firstContext.getId(), corrected.getSharedContext().getId());
+		assertEquals(source.getId(), corrected.getSourceQuestion().getId());
+		assertTrue(importedControls.isVisible());
+		assertTrue(importedControls.isManaged());
 	}
 
 	@Test
