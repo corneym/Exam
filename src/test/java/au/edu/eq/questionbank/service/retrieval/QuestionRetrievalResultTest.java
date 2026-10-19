@@ -17,11 +17,30 @@ import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
 
 class QuestionRetrievalResultTest {
+
+	@Test
+	void acceptsDistinctCurrentPlacementsAndPreservesProvenance() {
+		Fixture fixture = new Fixture();
+		Topic currentTopic = (Topic) fixture.currentDescriptor.getParent();
+		Subtopic currentSubtopic = new Subtopic(13, fixture.currentDescriptor.getSyllabusVersion(), currentTopic,
+				"1.1.2", "Current subtopic", 2);
+		List<CurriculumNode> placements = List.of(currentSubtopic, fixture.currentDescriptor);
+		QuestionRetrievalResult result = new QuestionRetrievalResult(fixture.question, placements);
+
+		// Distinct current placements are retained in supplied order.
+		assertEquals(placements, result.getCurrentApplicability());
+
+		// Derived applicability must never replace stored provenance.
+		assertSame(fixture.question, result.getQuestion());
+		assertSame(fixture.historicalDescriptor, result.getOriginalClassification());
+		assertSame(fixture.historicalDescriptor, fixture.question.getClassification());
+	}
 
 	@Test
 	void copiesCurrentApplicability() {
@@ -47,6 +66,36 @@ class QuestionRetrievalResultTest {
 	}
 
 	@Test
+	void rejectsCurrentNodeFromDifferentSubject() {
+		Fixture fixture = new Fixture();
+		Subject physics = new Subject(2, "Physics");
+		SyllabusVersion physicsVersion = new SyllabusVersion(3, physics, "2025", true);
+		Unit physicsUnit = new Unit(30, physicsVersion, "1", "Physics unit", 1);
+		Topic physicsTopic = new Topic(31, physicsVersion, physicsUnit, "1.1", "Physics topic", 1);
+		Descriptor physicsDescriptor = new Descriptor(32, physicsVersion, physicsTopic, "1.1.1", "Physics descriptor",
+				1);
+		assertThrows(IllegalArgumentException.class,
+				() -> new QuestionRetrievalResult(fixture.question, List.of(physicsDescriptor)));
+	}
+
+	@Test
+	void rejectsDuplicatePersistentNodeIds() {
+		Fixture fixture = new Fixture();
+		Topic currentTopic = (Topic) fixture.currentDescriptor.getParent();
+
+		// A separate Java object representing the same persisted node.
+		Descriptor reconstructedDescriptor = new Descriptor(fixture.currentDescriptor.getId(),
+				fixture.currentDescriptor.getSyllabusVersion(), currentTopic, "1.1.99", "Reconstructed descriptor", 2);
+		assertThrows(IllegalArgumentException.class, () -> new QuestionRetrievalResult(fixture.question,
+				List.of(fixture.currentDescriptor, fixture.currentDescriptor)));
+
+		// Deduplication is based on persistent identity, not
+		// reference equality.
+		assertThrows(IllegalArgumentException.class, () -> new QuestionRetrievalResult(fixture.question,
+				List.of(fixture.currentDescriptor, reconstructedDescriptor)));
+	}
+
+	@Test
 	void rejectsEmptyApplicability() {
 		Fixture fixture = new Fixture();
 		assertThrows(IllegalArgumentException.class, () -> new QuestionRetrievalResult(fixture.question, List.of()));
@@ -68,6 +117,17 @@ class QuestionRetrievalResultTest {
 		List<CurriculumNode> applicability = new ArrayList<CurriculumNode>();
 		applicability.add(null);
 		assertThrows(NullPointerException.class, () -> new QuestionRetrievalResult(fixture.question, applicability));
+	}
+
+	@Test
+	void rejectsTopicAndUnitAsCurrentPlacements() {
+		Fixture fixture = new Fixture();
+		CurriculumNode currentTopic = fixture.currentDescriptor.getParent();
+		CurriculumNode currentUnit = currentTopic.getParent();
+		assertThrows(IllegalArgumentException.class,
+				() -> new QuestionRetrievalResult(fixture.question, List.of(currentTopic)));
+		assertThrows(IllegalArgumentException.class,
+				() -> new QuestionRetrievalResult(fixture.question, List.of(currentUnit)));
 	}
 
 	private static final class Fixture {

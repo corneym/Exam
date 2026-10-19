@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.service.retrieval;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
 import java.nio.file.Path;
@@ -90,6 +91,174 @@ class QuestionRetrievalSqliteTest {
 		assertEquals(fixture.historicalDescriptorId(), historicalResult.getQuestion().getClassification().getId());
 		assertSame(historicalResult.getOriginalClassification(), historicalResult.getQuestion().getClassification());
 		assertEquals(reloaded.currentDescriptor().getId(), historicalResult.getCurrentApplicability().get(0).getId());
+	}
+
+	@Test
+	void overlappingQuestionCodesAcrossExamsAndSubjectsRemainIsolatedAfterReopen() throws Exception {
+		Fixture fixture = createFixture("overlapping-exam-identities.db");
+		SqliteDatabase database = new SqliteDatabase(fixture.databasePath());
+		database.initialiseSchema();
+		SqliteCurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
+		Subject chemistry = curriculumRepository.findAllSubjects().stream()
+				.filter(subject -> subject.getName().equals("Chemistry")).findFirst().orElseThrow();
+		SyllabusVersion chemistryVersion = curriculumRepository.findVersionById(fixture.currentVersionId())
+				.orElseThrow();
+		CurriculumNode chemistryDescriptor = curriculumRepository
+				.findByCode(chemistryVersion, fixture.currentDescriptorCode()).orElseThrow();
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, new SqliteExamWriter(database));
+		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
+
+		// The original fixture already has a Chemistry 2025 Q1.
+		// Create another Q1 in a distinct Exam for that same year.
+		ExamBooklet secondChemistryBooklet = examImporter.importExam(chemistry, "QCAA", 2025, "Internal Assessment",
+				"Paper 1", "Chemistry/2025/internal-paper1.pdf");
+		Question secondChemistryQuestion = questionRepository.save(secondChemistryBooklet, "Q1", "", 2, List.of(),
+				chemistryDescriptor, false);
+
+		// A different Subject uses the same syllabus codes, year
+		// and Question code, but entirely different persistent IDs.
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		Subject physics = curriculumWriter.insertSubject("Physics");
+		SyllabusVersion physicsVersion = curriculumWriter.insertSyllabusVersion(physics, "2025", true);
+		Unit physicsUnit = curriculumWriter.insertUnit(physicsVersion, "1", "Physics unit", 1);
+		Topic physicsTopic = curriculumWriter.insertTopic(physicsUnit, "1.1", "Physics topic", 1);
+		Descriptor physicsDescriptor = curriculumWriter.insertDescriptor(physicsTopic, "1.1.1", "Physics descriptor",
+				1);
+		ExamBooklet physicsBooklet = examImporter.importExam(physics, "QCAA", 2025, "External Assessment", "Paper 1",
+				"Physics/2025/paper1.pdf");
+		Question physicsQuestion = questionRepository.save(physicsBooklet, "Q1", "", 2, List.of(), physicsDescriptor,
+				false);
+
+		// Exercise retrieval through a newly opened SQLite-backed
+		// service rather than using the in-memory saved Questions.
+		ReloadedFixture reloaded = reloadFixture(fixture);
+		List<QuestionRetrievalResult> chemistryResults = reloaded.service().findQuestionsApplicableTo(chemistry);
+		List<QuestionRetrievalResult> physicsResults = reloaded.service().findQuestionsApplicableTo(physics);
+
+		// Two Chemistry Exams with the same Q1 remain distinct.
+		// The historical Questions also remain independently stored.
+		assertEquals(
+				List.of(fixture.currentSubtopicQuestionId(), fixture.currentDescriptorQuestionId(),
+						fixture.historicalSubtopicQuestionId(), fixture.historicalDescriptorQuestionId(),
+						secondChemistryQuestion.getId()),
+				chemistryResults.stream().map(result -> result.getQuestion().getId()).toList());
+		assertEquals(1, physicsResults.size());
+		assertEquals(physicsQuestion.getId(), physicsResults.getFirst().getQuestion().getId());
+		Question firstChemistryQ1 = chemistryResults.getFirst().getQuestion();
+		Question secondChemistryQ1 = chemistryResults.stream()
+				.filter(result -> result.getQuestion().getId() == secondChemistryQuestion.getId()).findFirst()
+				.orElseThrow().getQuestion();
+		assertEquals("Q1", firstChemistryQ1.getQuestionCode());
+		assertEquals("Q1", secondChemistryQ1.getQuestionCode());
+		assertNotEquals(firstChemistryQ1.getId(), secondChemistryQ1.getId());
+		assertNotEquals(firstChemistryQ1.getExam().getId(), secondChemistryQ1.getExam().getId());
+		assertEquals(2025, firstChemistryQ1.getExam().getYear());
+		assertEquals(2025, secondChemistryQ1.getExam().getYear());
+
+		// Descriptor search includes both applicable Chemistry Exams
+		// and the confirmed historical mapping, but never Physics.
+		List<QuestionRetrievalResult> descriptorResults = reloaded.service()
+				.findQuestionsApplicableTo(reloaded.currentDescriptor());
+		assertEquals(
+				List.of(fixture.currentDescriptorQuestionId(), fixture.historicalDescriptorQuestionId(),
+						secondChemistryQuestion.getId()),
+				descriptorResults.stream().map(result -> result.getQuestion().getId()).toList());
+
+		// Selected-Question retrieval agrees with broad retrieval.
+		assertEquals(List.of(reloaded.currentDescriptor()),
+				reloaded.service().findCurrentApplicabilityForQuestion(secondChemistryQ1, 0));
+		Question reopenedPhysicsQuestion = physicsResults.getFirst().getQuestion();
+		assertEquals("Q1", reopenedPhysicsQuestion.getQuestionCode());
+		assertEquals(List.of(physicsDescriptor),
+				reloaded.service().findCurrentApplicabilityForQuestion(reopenedPhysicsQuestion, 0));
+
+		// Historical provenance remains unchanged despite two
+		// current Descriptor placements and overlapping Exam codes.
+		QuestionRetrievalResult historicalResult = chemistryResults.stream()
+				.filter(result -> result.getQuestion().getId() == fixture.historicalDescriptorQuestionId()).findFirst()
+				.orElseThrow();
+		assertEquals(fixture.historicalDescriptorId(), historicalResult.getOriginalClassification().getId());
+		assertEquals(List.of(reloaded.currentDescriptor(), reloaded.secondCurrentDescriptor()),
+				historicalResult.getCurrentApplicability());
+	}
+
+	@Test
+	void partialMappingReviewEditPreservesUnaffectedApplicabilityAfterReopen() throws Exception {
+		Fixture fixture = createFixture("partial-mapping-edit.db");
+		ReloadedFixture initial = reloadFixture(fixture);
+		Subject chemistry = initial.currentDescriptor().getSyllabusVersion().getSubject();
+
+		// Initially, the historical Descriptor is confirmed
+		// against two distinct current Descriptors.
+		List<QuestionRetrievalResult> initialResults = initial.service().findQuestionsApplicableTo(chemistry);
+		assertEquals(4, initialResults.size());
+		QuestionRetrievalResult originalHistoricalResult = initialResults.stream()
+				.filter(result -> result.getQuestion().getId() == fixture.historicalDescriptorQuestionId()).findFirst()
+				.orElseThrow();
+		assertEquals(List.of(initial.currentDescriptor(), initial.secondCurrentDescriptor()),
+				originalHistoricalResult.getCurrentApplicability());
+		assertEquals(fixture.historicalDescriptorId(), originalHistoricalResult.getOriginalClassification().getId());
+
+		// Edit the persisted review: retain the first confirmed
+		// target and remove only the second target.
+		SqliteDatabase editDatabase = new SqliteDatabase(fixture.databasePath());
+		editDatabase.initialiseSchema();
+		SqliteCurriculumMappingReviewWriter reviewWriter = new SqliteCurriculumMappingReviewWriter(editDatabase);
+		reviewWriter.replaceMappings(originalHistoricalResult.getOriginalClassification(),
+				initial.currentDescriptor().getSyllabusVersion(), List.of(initial.currentDescriptor()));
+
+		// Reopen the database and reconstruct the service and
+		// curriculum rather than relying on cached objects.
+		ReloadedFixture reopened = reloadFixture(fixture);
+		List<QuestionRetrievalResult> updatedResults = reopened.service().findQuestionsApplicableTo(chemistry);
+
+		// The review edit must not remove unrelated Questions
+		// or change their persistent ordering.
+		assertEquals(
+				List.of(fixture.currentSubtopicQuestionId(), fixture.currentDescriptorQuestionId(),
+						fixture.historicalSubtopicQuestionId(), fixture.historicalDescriptorQuestionId()),
+				updatedResults.stream().map(result -> result.getQuestion().getId()).toList());
+		QuestionRetrievalResult updatedHistoricalResult = updatedResults.stream()
+				.filter(result -> result.getQuestion().getId() == fixture.historicalDescriptorQuestionId()).findFirst()
+				.orElseThrow();
+
+		// The remaining confirmed target is still applicable.
+		assertEquals(List.of(reopened.currentDescriptor()), updatedHistoricalResult.getCurrentApplicability());
+
+		// The removed target no longer retrieves this Question.
+		assertEquals(List.of(), reopened.service().findQuestionsApplicableTo(reopened.secondCurrentDescriptor()));
+
+		// The retained target still retrieves its direct-current
+		// Question and the historically mapped Question.
+		List<QuestionRetrievalResult> retainedTargetResults = reopened.service()
+				.findQuestionsApplicableTo(reopened.currentDescriptor());
+		assertEquals(List.of(fixture.currentDescriptorQuestionId(), fixture.historicalDescriptorQuestionId()),
+				retainedTargetResults.stream().map(result -> result.getQuestion().getId()).toList());
+
+		// The historical Subtopic has a separate confirmed mapping.
+		// Editing its sibling Descriptor must not affect it.
+		QuestionRetrievalResult historicalSubtopicResult = updatedResults.stream()
+				.filter(result -> result.getQuestion().getId() == fixture.historicalSubtopicQuestionId()).findFirst()
+				.orElseThrow();
+		assertEquals(List.of(reopened.currentSubtopic()), historicalSubtopicResult.getCurrentApplicability());
+
+		// Selected-Question retrieval must agree with the
+		// complete Subject retrieval after the review edit.
+		assertEquals(updatedHistoricalResult.getCurrentApplicability(),
+				reopened.service().findCurrentApplicabilityForQuestion(updatedHistoricalResult.getQuestion(), 0));
+
+		// A mapping-review change must never rewrite the original
+		// persisted historical classification.
+		assertEquals(fixture.historicalDescriptorId(), updatedHistoricalResult.getOriginalClassification().getId());
+		assertSame(updatedHistoricalResult.getOriginalClassification(),
+				updatedHistoricalResult.getQuestion().getClassification());
+
+		// The direct-current classification also remains intact.
+		QuestionRetrievalResult directResult = updatedResults.stream()
+				.filter(result -> result.getQuestion().getId() == fixture.currentDescriptorQuestionId()).findFirst()
+				.orElseThrow();
+		assertEquals(reopened.currentDescriptor().getId(), directResult.getOriginalClassification().getId());
+		assertEquals(List.of(reopened.currentDescriptor()), directResult.getCurrentApplicability());
 	}
 
 	@Test

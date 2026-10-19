@@ -5,11 +5,24 @@ import java.util.List;
 import au.edu.eq.questionbank.model.CurriculumNode;
 
 /**
- * Persistence boundary for curriculum-aware question retrieval.
+ * Persistence boundary for curriculum-aware Question retrieval.
  * <p>
- * Implementations find stored questions applicable to supplied current
- * curriculum nodes. Applicability may arise from direct current classification
- * or from confirmed historical curriculum mappings.
+ * Inputs identify current SUBTOPIC or DESCRIPTOR nodes. Unit and Topic search
+ * scopes must be expanded before reaching this boundary.
+ * <p>
+ * Applicability arises from direct current-syllabus classification or confirmed
+ * historical-to-current curriculum mappings. Suggested and unconfirmed mappings
+ * do not establish applicability. Each returned Question/current-node match
+ * must belong to the same Subject and satisfy the current-syllabus and
+ * classification-level invariants.
+ * <p>
+ * One Question may produce several matches, including matches from legitimate
+ * one-to-many historical mappings. Repeated Question/node pairs may occur at
+ * this boundary. Higher application layers are responsible for producing unique
+ * Question results and distinct current placements in deterministic order.
+ * <p>
+ * An unsuccessful search returns an empty list, never null. Retrieval does not
+ * alter the Question's original classification.
  */
 public interface QuestionRetrievalRepository {
 
