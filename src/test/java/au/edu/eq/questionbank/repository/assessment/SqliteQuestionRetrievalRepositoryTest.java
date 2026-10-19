@@ -28,6 +28,7 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumImporter;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumMappingReviewWriter;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumMappingWriter;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
@@ -70,6 +71,86 @@ class SqliteQuestionRetrievalRepositoryTest {
 		// Current applicability must not overwrite the historical
 		// classification of the selected Question.
 		assertEquals(fixture.confirmedSourceDescriptorId(), selectedMatch.getQuestion().getClassification().getId());
+	}
+
+	@Test
+	void mixedMappingReviewStatesRemainIsolatedAfterReopen() throws Exception {
+		Fixture fixture = createFixture("mixed-mapping-review-states.db");
+		SqliteDatabase database = new SqliteDatabase(fixture.databasePath());
+		database.initialiseSchema();
+		SqliteCurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
+		SyllabusVersion historicalVersion = curriculumRepository.findVersionById(fixture.historicalVersionId())
+				.orElseThrow();
+		SyllabusVersion currentVersion = curriculumRepository.findVersionById(fixture.currentVersionId()).orElseThrow();
+		Topic historicalTopic = (Topic) curriculumRepository.findByCode(historicalVersion, "1.1").orElseThrow();
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		Descriptor noMatchSource = curriculumWriter.insertDescriptor(historicalTopic, "1.1.4",
+				"No equivalent current descriptor", 4);
+		Descriptor unreviewedSource = curriculumWriter.insertDescriptor(historicalTopic, "1.1.5",
+				"Unreviewed historical descriptor", 5);
+		Subject chemistry = historicalVersion.getSubject();
+		SqliteExamImporter examImporter = new SqliteExamImporter(database, new SqliteExamWriter(database));
+		ExamBooklet historicalBooklet = examImporter.importExam(chemistry, "QCAA", 2019, "External Assessment",
+				"Paper 1", "Chemistry/2019/paper1.pdf");
+		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database);
+		Question noMatchQuestion = questionRepository.save(historicalBooklet, "Q5", "", 2, List.of(), noMatchSource,
+				false);
+		Question unreviewedQuestion = questionRepository.save(historicalBooklet, "Q6", "", 2, List.of(),
+				unreviewedSource, false);
+
+		// Record an explicit NO_MATCH decision for one source.
+		// Leave the other source completely unreviewed.
+		SqliteCurriculumMappingReviewWriter reviewWriter = new SqliteCurriculumMappingReviewWriter(database);
+		reviewWriter.confirmNoMatch(noMatchSource, currentVersion);
+
+		// Reopen SQLite before examining the persisted retrieval state.
+		SqliteDatabase reopenedDatabase = new SqliteDatabase(fixture.databasePath());
+		reopenedDatabase.initialiseSchema();
+		CurriculumNode currentDescriptor = reloadCurrentDescriptor(reopenedDatabase, fixture);
+		SqliteQuestionRepository reopenedRepository = new SqliteQuestionRepository(reopenedDatabase);
+		List<CurriculumNode> requestedNodes = List.of(currentDescriptor);
+		List<QuestionApplicabilityMatch> broadMatches = reopenedRepository.findApplicableToNodes(requestedNodes);
+
+		// Direct-current and confirmed historical Questions remain
+		// retrievable. Suggested, NO_MATCH and unreviewed Questions
+		// must not create false applicability.
+		assertEquals(
+				List.of(fixture.directQuestionId(), fixture.confirmedQuestionId(), fixture.secondConfirmedQuestionId()),
+				broadMatches.stream().map(match -> match.getQuestion().getId()).toList());
+		for (QuestionApplicabilityMatch match : broadMatches) {
+			assertEquals(currentDescriptor.getId(), match.getCurrentNode().getId());
+		}
+
+		// Selected retrieval must also exclude all three invalid
+		// historical applicability states without reconstructing
+		// unrelated Questions.
+		for (long questionId : List.of(fixture.suggestedQuestionId(), noMatchQuestion.getId(),
+				unreviewedQuestion.getId())) {
+			List<QuestionApplicabilityMatch> selectedMatches;
+			SqliteReadProbe.Snapshot measurements;
+			try (SqliteReadProbe probe = SqliteReadProbe.begin()) {
+				selectedMatches = reopenedRepository.findApplicableToNodesForQuestion(requestedNodes, questionId, 0);
+				measurements = probe.snapshot();
+			}
+			assertTrue(selectedMatches.isEmpty(), "Unexpected applicability for Question " + questionId);
+			assertEquals(0, measurements.questionsReconstructed(),
+					"Unexpected reconstruction for Question " + questionId);
+		}
+
+		// A confirmed historical Question remains selectively
+		// retrievable with its original classification.
+		List<QuestionApplicabilityMatch> confirmedMatches = reopenedRepository
+				.findApplicableToNodesForQuestion(requestedNodes, fixture.confirmedQuestionId(), 0);
+		assertEquals(1, confirmedMatches.size());
+		assertEquals(fixture.confirmedSourceDescriptorId(),
+				confirmedMatches.getFirst().getQuestion().getClassification().getId());
+
+		// Missing current applicability does not imply that the
+		// original historical Question or classification was deleted.
+		Question reloadedNoMatchQuestion = reopenedRepository.findById(noMatchQuestion.getId()).orElseThrow();
+		Question reloadedUnreviewedQuestion = reopenedRepository.findById(unreviewedQuestion.getId()).orElseThrow();
+		assertEquals(noMatchSource.getId(), reloadedNoMatchQuestion.getClassification().getId());
+		assertEquals(unreviewedSource.getId(), reloadedUnreviewedQuestion.getClassification().getId());
 	}
 
 	@Test
