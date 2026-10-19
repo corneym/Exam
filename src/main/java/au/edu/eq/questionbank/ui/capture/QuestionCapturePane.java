@@ -6,8 +6,10 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.BiFunction;
 import java.util.function.BooleanSupplier;
@@ -17,6 +19,7 @@ import java.util.function.LongConsumer;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
+import au.edu.eq.questionbank.diagnostics.FxPulseGapProbe;
 import au.edu.eq.questionbank.diagnostics.PerformanceOperation;
 import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.Exam;
@@ -43,6 +46,7 @@ import au.edu.eq.questionbank.repository.assessment.LegacyQuestionSplitService.S
 import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SourceQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionCaptureService;
+import au.edu.eq.questionbank.repository.sqlite.SqliteReadProbe;
 import au.edu.eq.questionbank.service.audit.BookletCorpusAudit;
 import au.edu.eq.questionbank.ui.correction.LegacyQuestionSplitDialog;
 import au.edu.eq.questionbank.ui.correction.LegacyQuestionSplitDialog.SharedContextChoice;
@@ -210,6 +214,7 @@ public final class QuestionCapturePane extends VBox {
 	private final Label importedQuestionQueueLabel = new Label("Question(s) awaiting capture");
 	private PerformanceRecorder performanceRecorder = new PerformanceRecorder(false, Path.of("performance.csv"));
 	private ExamBooklet importedQuestionBookletScope;
+	private FxPulseGapProbe importedEntryPulseProbe;
 
 	/**
 	 * Creates the question-capture workflow and its repository integration.
@@ -925,7 +930,19 @@ public final class QuestionCapturePane extends VBox {
 	 * @throws NullPointerException if the recorder is null
 	 */
 	public void setPerformanceRecorder(PerformanceRecorder performanceRecorder) {
-		this.performanceRecorder = Objects.requireNonNull(performanceRecorder, "performanceRecorder");
+		Objects.requireNonNull(performanceRecorder, "performanceRecorder");
+		if (importedEntryPulseProbe != null) {
+			importedEntryPulseProbe.stop();
+			importedEntryPulseProbe = null;
+		}
+		this.performanceRecorder = performanceRecorder;
+		if (performanceRecorder.isEnabled()) {
+
+			// JavaFX invokes this monitor only on actual animation pulses.
+			// Disabled diagnostics create no continuous observation work.
+			importedEntryPulseProbe = new FxPulseGapProbe(performanceRecorder);
+			importedEntryPulseProbe.start();
+		}
 	}
 
 	/**
@@ -1017,46 +1034,103 @@ public final class QuestionCapturePane extends VBox {
 			restoreCaptureModeToggle();
 			return;
 		}
+		try (PerformanceOperation entry = performanceRecorder.start("capture.question.imported.entry");
+				SqliteReadProbe sqlProbe = performanceRecorder.isEnabled() ? SqliteReadProbe.begin() : null) {
+			try {
+				newQuestionCaptureActive = false;
+				List<Question> questions;
+				try {
 
-		// Imported capture is independent of new-Question capture.
-		newQuestionCaptureActive = false;
-		try {
+					// Repair derived SourceQuestion relationships first.
+					// The returned snapshot reflects any successful repairs.
+					try (PerformanceOperation backfill = performanceRecorder.start("capture.question.imported.backfill",
+							entry.id())) {
+						try {
+							questions = backfillDerivedSourceQuestions(backfill.id());
+						} catch (RuntimeException | Error failure) {
+							backfill.failed();
+							throw failure;
+						}
+					}
 
-			// Repair derived source-question relationships before resolving any
-			// reusable Shared Context relationships.
-			backfillDerivedSourceQuestions();
-			reconcileKnownSharedContexts();
-		} catch (IllegalStateException exception) {
-			showAlert(Alert.AlertType.ERROR, "Shared context links are inconsistent.", exception.getMessage());
-			restoreCaptureModeToggle();
-			return;
-		}
-		if (!importedCaptureMode || editingQuestion != null) {
+					// Use the same authoritative snapshot for
+					// Shared Context reconciliation.
+					int updatedRelationships;
+					try (PerformanceOperation reconciliation = performanceRecorder
+							.start("capture.question.imported.reconcile", entry.id())) {
+						try {
+							updatedRelationships = reconcileKnownSharedContexts(questions, reconciliation.id());
+						} catch (RuntimeException | Error failure) {
+							reconciliation.failed();
+							throw failure;
+						}
+					}
+					if (!importedCaptureMode || editingQuestion != null) {
+						clearImportedCaptureCompletion();
+						questionEditCompletedHandler = () -> {
+						};
+						editingQuestion = null;
+						clearImportedQuestionSelection();
+						importedCaptureMode = true;
+					}
+					selectCaptureModeToggle(true);
+					try (PerformanceOperation refresh = performanceRecorder.start("capture.question.imported.refresh",
+							entry.id())) {
+						try {
+							if (updatedRelationships > 0) {
 
-			// Entering the ordinary imported queue abandons any earlier direct
-			// Dashboard correction callback. captureImportedQuestion(...) installs its
-			// callback only after this transition succeeds.
-			clearImportedCaptureCompletion();
-			questionEditCompletedHandler = () -> {
-			};
-			editingQuestion = null;
-			clearImportedQuestionSelection();
-			importedCaptureMode = true;
-		}
-		selectCaptureModeToggle(true);
+								// Reconciliation changed persisted links.
+								// Reload before publishing the authoritative queue.
+								try (PerformanceOperation corpus = performanceRecorder
+										.start("capture.question.imported.refresh.corpus", refresh.id())) {
+									try {
+										questions = questionRepository.findAll();
+										corpus.resultCount(questions.size());
+									} catch (RuntimeException | Error failure) {
+										corpus.failed();
+										throw failure;
+									}
+								}
+							}
+							refreshImportedQuestions(questions);
+							refresh.resultCount(questionSnapshot.size());
+						} catch (RuntimeException | Error failure) {
+							refresh.failed();
+							throw failure;
+						}
+					}
+					entry.resultCount(importedQuestionBox.getItems().size());
+					if (importedQuestionBox.getItems().isEmpty()) {
+						return;
+					}
+					setLegacyCaptureControlsVisible(true);
+					if (importedQuestion == null) {
+						showImportedQueueMode();
+					}
+				} catch (IllegalStateException exception) {
+					entry.failed();
 
-		// Relationship reconciliation can itself change which Questions still need
-		// work. Refresh before exposing the selector.
-		refreshImportedQuestions();
-		if (importedQuestionBox.getItems().isEmpty()) {
+					// Never retain an active imported queue after a failed
+					// reconciliation. The earlier snapshot may now be stale.
+					rejectImportedCaptureEntry();
+					showAlert(Alert.AlertType.ERROR, "Shared context links are inconsistent.", exception.getMessage());
+					return;
+				}
+			} catch (RuntimeException | Error failure) {
+				entry.failed();
 
-			// refreshImportedQuestions() has already hidden the unavailable action and
-			// returned an active imported workflow to idle.
-			return;
-		}
-		setLegacyCaptureControlsVisible(true);
-		if (importedQuestion == null) {
-			showImportedQueueMode();
+				// A failure during queue publication must also leave the
+				// workspace unable to edit from a stale imported snapshot.
+				rejectImportedCaptureEntry();
+				throw failure;
+			} finally {
+				if (sqlProbe != null) {
+					recordImportedEntrySql(entry.id(), sqlProbe.snapshot());
+				}
+				if (importedEntryPulseProbe != null) {
+					importedEntryPulseProbe.recordEntryCompletion(entry.id());
+				}
+			}
 		}
 	}
 
@@ -1347,20 +1421,62 @@ public final class QuestionCapturePane extends VBox {
 		updateMarksFieldForResponseType();
 	}
 
-	private void backfillDerivedSourceQuestions() {
-		for (Question question : questionRepository.findAll()) {
-			if (question.hasSourceQuestion()) {
-				continue;
+	private List<Question> backfillDerivedSourceQuestions(long parentOperationId) {
+		List<Question> questions;
+		try (PerformanceOperation corpus = performanceRecorder.start("capture.question.imported.backfill.corpus",
+				parentOperationId)) {
+			try {
+				questions = questionRepository.findAll();
+				corpus.resultCount(questions.size());
+			} catch (RuntimeException | Error failure) {
+				corpus.failed();
+				throw failure;
 			}
-			String sourceCode = SourceQuestionCodeParser.derive(question.getQuestionCode());
-			if (sourceCode == null) {
-				continue;
+		}
+		int repaired = 0;
+		try (PerformanceOperation links = performanceRecorder.start("capture.question.imported.backfill.links",
+				parentOperationId)) {
+			try {
+				for (Question question : questions) {
+					if (question.hasSourceQuestion()) {
+						continue;
+					}
+					String sourceCode = SourceQuestionCodeParser.derive(question.getQuestionCode());
+					if (sourceCode == null) {
+						continue;
+					}
+					ExamBooklet booklet = question.getBooklet();
+					SourceQuestion sourceQuestion = sourceQuestionRepository.findByBookletAndCode(booklet, sourceCode)
+							.orElseGet(() -> sourceQuestionRepository.save(booklet, sourceCode));
+					questionRepository.updateCaptureRelationships(question.getId(), question.getClassification(),
+							sourceQuestion, question.getSharedContext());
+					repaired++;
+				}
+				links.resultCount(repaired);
+			} catch (RuntimeException | Error failure) {
+				links.failed();
+				throw failure;
 			}
-			ExamBooklet booklet = question.getBooklet();
-			SourceQuestion sourceQuestion = sourceQuestionRepository.findByBookletAndCode(booklet, sourceCode)
-					.orElseGet(() -> sourceQuestionRepository.save(booklet, sourceCode));
-			questionRepository.updateCaptureRelationships(question.getId(), question.getClassification(),
-					sourceQuestion, question.getSharedContext());
+		}
+		if (repaired == 0) {
+
+			// No persisted relationship changed. The original
+			// authoritative snapshot remains valid.
+			return questions;
+		}
+		try (PerformanceOperation reload = performanceRecorder.start("capture.question.imported.backfill.reload",
+				parentOperationId)) {
+			try {
+
+				// Return the newly persisted SourceQuestion identities.
+				// Reconciliation must never use the pre-repair objects.
+				List<Question> refreshed = questionRepository.findAll();
+				reload.resultCount(refreshed.size());
+				return refreshed;
+			} catch (RuntimeException | Error failure) {
+				reload.failed();
+				throw failure;
+			}
 		}
 	}
 
@@ -2573,6 +2689,41 @@ public final class QuestionCapturePane extends VBox {
 		refreshSaveButtonState();
 	}
 
+	private boolean needsSharedContextReconciliation(SourceQuestion sourceQuestion, SharedQuestionContext sharedContext,
+			List<Question> questions) {
+		long sourceId = sourceQuestion.getId();
+		long bookletId = sourceQuestion.getBooklet().getId();
+		boolean missingRelationship = false;
+		if (sharedContext.getBooklet().getId() != bookletId) {
+			throw new IllegalStateException("Shared context belongs to another booklet");
+		}
+		for (Question question : questions) {
+			if (!question.hasSourceQuestion() || question.getSourceQuestion().getId() != sourceId) {
+				continue;
+			}
+
+			// Preserve booklet identity checks before deciding whether
+			// a database relationship update can be skipped.
+			if (question.getBooklet().getId() != bookletId
+					|| question.getSourceQuestion().getBooklet().getId() != bookletId) {
+				throw new IllegalStateException(
+						"Question " + question.getId() + " is linked to a source question " + "from another booklet");
+			}
+			if (!question.hasSharedContext()) {
+				missingRelationship = true;
+				continue;
+			}
+			if (question.getSharedContext().getId() != sharedContext.getId()) {
+				throw new IllegalStateException("Source question " + sourceQuestion.getSourceQuestionCode()
+						+ " has inconsistent shared context links");
+			}
+			if (question.getSharedContext().getBooklet().getId() != bookletId) {
+				throw new IllegalStateException("Shared context belongs to another booklet");
+			}
+		}
+		return missingRelationship;
+	}
+
 	private String newMcqSharedContextLabel() {
 
 		// The label is internal persistence metadata. Teachers should not need to name
@@ -2775,29 +2926,75 @@ public final class QuestionCapturePane extends VBox {
 		}
 	}
 
-	private void reconcileKnownSharedContexts() {
+	private int reconcileKnownSharedContexts(List<Question> questions, long parentOperationId) {
+		Objects.requireNonNull(questions, "questions");
+		Set<Long> processedSourceQuestionIds = new HashSet<>();
+		int updatedRelationships = 0;
+		try (PerformanceOperation scan = performanceRecorder.start("capture.question.imported.reconcile.scan",
+				parentOperationId)) {
+			try {
+				for (Question question : questions) {
+					if (!question.hasSourceQuestion() || !question.hasSharedContext()) {
+						continue;
+					}
+					SourceQuestion sourceQuestion = question.getSourceQuestion();
+					if (!processedSourceQuestionIds.add(sourceQuestion.getId())) {
+						continue;
+					}
 
-		// Load one consistent Question snapshot for the complete reconciliation pass.
-		// Reusing it avoids re-reading the entire corpus for every source question.
-		List<Question> questions = currentQuestions();
-		List<Long> processedSourceQuestionIds = new ArrayList<>();
-		for (Question question : questions) {
-			if (!question.hasSourceQuestion() || !question.hasSharedContext()) {
-				continue;
-			}
-			SourceQuestion sourceQuestion = question.getSourceQuestion();
-			if (processedSourceQuestionIds.contains(sourceQuestion.getId())) {
-				continue;
-			}
+					// Detect conflicting sibling contexts using the
+					// authoritative snapshot before attempting a repair.
+					SharedQuestionContext sharedContext = findSharedContextForSourceQuestion(sourceQuestion, questions);
+					if (sharedContext == null) {
+						continue;
+					}
+					boolean needsRepair = needsSharedContextReconciliation(sourceQuestion, sharedContext, questions);
+					if (!needsRepair) {
 
-			// Search the already-loaded snapshot rather than calling currentQuestions()
-			// again for each distinct source question.
-			SharedQuestionContext sharedContext = findSharedContextForSourceQuestion(sourceQuestion, questions);
-			if (sharedContext != null) {
-				questionRepository.applySharedContextToSourceQuestion(sourceQuestion, sharedContext);
+						// All sibling Questions already refer to the
+						// same context. No transaction is necessary.
+						continue;
+					}
+					try (PerformanceOperation apply = performanceRecorder
+							.start("capture.question.imported.reconcile.apply", scan.id())) {
+						try {
+							int updated = questionRepository.applySharedContextToSourceQuestion(sourceQuestion,
+									sharedContext);
+							updatedRelationships += updated;
+							apply.resultCount(updated);
+						} catch (RuntimeException | Error failure) {
+							apply.failed();
+							throw failure;
+						}
+					}
+				}
+				scan.resultCount(processedSourceQuestionIds.size());
+				return updatedRelationships;
+			} catch (RuntimeException | Error failure) {
+				scan.failed();
+				throw failure;
 			}
-			processedSourceQuestionIds.add(sourceQuestion.getId());
 		}
+	}
+
+	private void recordImportedEntryMetric(String operation, long parentOperationId, long value) {
+		try (PerformanceOperation measurement = performanceRecorder.start(operation, parentOperationId)) {
+			measurement.resultCount(value);
+		}
+	}
+
+	private void recordImportedEntrySql(long parentOperationId, SqliteReadProbe.Snapshot snapshot) {
+		recordImportedEntryMetric("capture.question.imported.sqlite.connections", parentOperationId,
+				snapshot.connectionsOpened());
+		recordImportedEntryMetric("capture.question.imported.sqlite.executions", parentOperationId,
+				snapshot.executions());
+		recordImportedEntryMetric("capture.question.imported.sqlite.questions", parentOperationId,
+				snapshot.questionsReconstructed());
+		recordImportedEntryMetric("capture.question.imported.sqlite.rows", parentOperationId, snapshot.rowsRead());
+		recordImportedEntryMetric("capture.question.imported.sqlite.open-us", parentOperationId,
+				snapshot.connectionOpenNanos() / 1_000);
+		recordImportedEntryMetric("capture.question.imported.sqlite.execute-us", parentOperationId,
+				snapshot.executionNanos() / 1_000);
 	}
 
 	private void refreshImportedQuestions(List<Question> questions) {
@@ -3013,6 +3210,39 @@ public final class QuestionCapturePane extends VBox {
 		if (started) {
 			showSharedContextRequiredStatus("Shared context required — capture it as the first region.");
 		}
+	}
+
+	private void rejectImportedCaptureEntry() {
+		if (!importedCaptureMode) {
+
+			// A first-entry failure has not activated imported capture.
+			// Preserve any existing non-imported workflow selection.
+			restoreCaptureModeToggle();
+			return;
+		}
+
+		// A failure during re-entry invalidates the currently exposed
+		// imported queue. It must not remain editable or selected.
+		clearImportedCaptureCompletion();
+		questionEditCompletedHandler = () -> {
+		};
+		editingQuestion = null;
+		importedCaptureMode = false;
+		importedQuestion = null;
+		refreshingImportedQuestions = true;
+		try {
+			importedQuestionBox.setValue(null);
+		} finally {
+			refreshingImportedQuestions = false;
+		}
+		resetQuestionEntry();
+		clearSaveStatus();
+		showCaptureIdleMode();
+
+		// Retain the previously known pending-work availability only
+		// for displaying the entry action. The complete authoritative
+		// queue is rebuilt when the user retries.
+		updateImportedCaptureAvailability(!importedQuestionBox.getItems().isEmpty());
 	}
 
 	private void removeContentPart(int contentIndex) {
