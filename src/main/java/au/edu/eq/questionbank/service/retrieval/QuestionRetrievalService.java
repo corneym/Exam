@@ -15,12 +15,24 @@ import au.edu.eq.questionbank.repository.assessment.QuestionApplicabilityMatch;
 import au.edu.eq.questionbank.repository.assessment.QuestionRetrievalRepository;
 
 /**
- * Application-facing service for finding questions applicable to current
+ * Application-facing service for retrieving Questions applicable to the current
  * curriculum.
  * <p>
- * Retrieval does not change a question's original classification. Unit and
- * topic nodes are search scopes only. They are expanded to the subtopic and
- * descriptor nodes that can actually classify questions.
+ * Unit and Topic selections are search scopes, not applicability placements.
+ * They expand to current SUBTOPIC and DESCRIPTOR nodes.
+ * <p>
+ * Repository matches are aggregated into one result per persistent Question ID.
+ * Each result contains distinct current placements in ascending persistent-node
+ * ID order. Question results are also ordered by ascending persistent Question
+ * ID.
+ * <p>
+ * Duplicate repository matches are permitted and consolidated. Null repository
+ * results, null matches, unrequested placements and incorrect selected-Question
+ * identities are rejected.
+ * <p>
+ * Current applicability is derived independently of the Question's
+ * authoritative original classification. Retrieval never modifies that
+ * classification or persists derived placements.
  */
 public final class QuestionRetrievalService {
 

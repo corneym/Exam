@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
@@ -169,6 +170,41 @@ class QuestionRetrievalServiceTest {
 	}
 
 	@Test
+	void rejectsNullMatchReturnedByRepository() {
+		Fixture fixture = new Fixture();
+		List<QuestionApplicabilityMatch> matches = new ArrayList<>();
+		matches.add(null);
+		QuestionRetrievalRepository repository = _ -> matches;
+		QuestionRetrievalService service = fixture.createService(repository);
+		IllegalStateException failure = assertThrows(IllegalStateException.class,
+				() -> service.findQuestionsApplicableTo(fixture.currentDescriptor));
+		assertEquals("Question retrieval repository returned a null match", failure.getMessage());
+	}
+
+	@Test
+	void rejectsNullRepositoryResultForSelectedQuestion() {
+		Fixture fixture = new Fixture();
+		QuestionRetrievalRepository repository = new QuestionRetrievalRepository() {
+
+			@Override
+			public List<QuestionApplicabilityMatch> findApplicableToNodes(List<CurriculumNode> currentNodes) {
+				throw new AssertionError("Selected retrieval must not call broad retrieval");
+			}
+
+			@Override
+			public List<QuestionApplicabilityMatch> findApplicableToNodesForQuestion(List<CurriculumNode> currentNodes,
+					long questionId, long parentOperationId) {
+				assertEquals(fixture.firstQuestion.getId(), questionId);
+				return null;
+			}
+		};
+		QuestionRetrievalService service = fixture.createService(repository);
+		IllegalStateException failure = assertThrows(IllegalStateException.class,
+				() -> service.findCurrentApplicabilityForQuestion(fixture.firstQuestion, 0));
+		assertEquals("Question retrieval repository returned null", failure.getMessage());
+	}
+
+	@Test
 	void rejectsRepositoryMatchForUnrequestedNode() {
 		Fixture fixture = new Fixture();
 		QuestionRetrievalRepository repository = _ -> List
@@ -183,6 +219,40 @@ class QuestionRetrievalServiceTest {
 		QuestionRetrievalRepository repository = _ -> null;
 		QuestionRetrievalService service = fixture.createService(repository);
 		assertThrows(IllegalStateException.class, () -> service.findQuestionsApplicableTo(fixture.currentDescriptor));
+	}
+
+	@Test
+	void rejectsUnrequestedNodeForSelectedQuestion() {
+		Fixture fixture = new Fixture();
+
+		// This is a valid current Descriptor, but it is deliberately
+		// absent from the curriculum repository's search expansion.
+		Descriptor unrequestedDescriptor = new Descriptor(99, fixture.currentVersion, fixture.currentSubtopic,
+				"1.1.1.99", "Unrequested descriptor", 99);
+		QuestionRetrievalRepository repository = new QuestionRetrievalRepository() {
+
+			@Override
+			public List<QuestionApplicabilityMatch> findApplicableToNodes(List<CurriculumNode> currentNodes) {
+				throw new AssertionError("Selected retrieval must not call broad retrieval");
+			}
+
+			@Override
+			public List<QuestionApplicabilityMatch> findApplicableToNodesForQuestion(List<CurriculumNode> currentNodes,
+					long questionId, long parentOperationId) {
+				assertEquals(fixture.firstQuestion.getId(), questionId);
+
+				// The repository incorrectly returns a placement
+				// outside the requested current-node set.
+				return List.of(new QuestionApplicabilityMatch(fixture.firstQuestion, unrequestedDescriptor));
+			}
+		};
+		QuestionRetrievalService service = fixture.createService(repository);
+		IllegalStateException failure = assertThrows(IllegalStateException.class,
+				() -> service.findCurrentApplicabilityForQuestion(fixture.firstQuestion, 0));
+		assertEquals("Question retrieval repository returned an unrequested current node", failure.getMessage());
+
+		// Even malformed repository output must not change provenance.
+		assertSame(fixture.historicalDescriptor, fixture.firstQuestion.getClassification());
 	}
 
 	@Test

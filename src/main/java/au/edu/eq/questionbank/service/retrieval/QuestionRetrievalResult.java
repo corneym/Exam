@@ -1,7 +1,10 @@
 package au.edu.eq.questionbank.service.retrieval;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
+import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Question;
 
@@ -18,14 +21,22 @@ public final class QuestionRetrievalResult {
 	private final List<CurriculumNode> currentApplicability;
 
 	/**
-	 * Creates a retrieval result.
+	 * Creates a retrieval result containing distinct current-syllabus applicability
+	 * placements for one stored Question.
+	 * <p>
+	 * Every placement must belong to the Question's Subject and must be a current
+	 * SUBTOPIC or DESCRIPTOR. Each persistent curriculum node may occur only once.
+	 * The supplied placement order is preserved.
+	 * <p>
+	 * Applicability is a derived retrieval snapshot. The Question's authoritative
+	 * original classification is never modified.
 	 *
-	 * @param question             the stored question
-	 * @param currentApplicability the current nodes that caused the question to
-	 *                             match this search
-	 * @throws NullPointerException     if either argument or a list element is
-	 *                                  {@code null}
-	 * @throws IllegalArgumentException if no current applicability is supplied
+	 * @param question             the stored Question
+	 * @param currentApplicability the distinct current placements that caused the
+	 *                             Question to match
+	 * @throws NullPointerException     if either argument or a list element is null
+	 * @throws IllegalArgumentException if the list is empty, a placement is
+	 *                                  invalid, or a node ID is repeated
 	 */
 	public QuestionRetrievalResult(Question question, List<CurriculumNode> currentApplicability) {
 		if (question == null) {
@@ -37,6 +48,7 @@ public final class QuestionRetrievalResult {
 		if (currentApplicability.isEmpty()) {
 			throw new IllegalArgumentException("currentApplicability must not be empty");
 		}
+		Set<Long> nodeIds = new HashSet<>();
 		for (CurriculumNode currentNode : currentApplicability) {
 			if (currentNode == null) {
 				throw new NullPointerException("currentApplicability contains null");
@@ -44,11 +56,25 @@ public final class QuestionRetrievalResult {
 			if (!currentNode.getSyllabusVersion().isCurrent()) {
 				throw new IllegalArgumentException("currentApplicability must contain only current nodes");
 			}
+			CurriculumLevel level = currentNode.getLevel();
+			if (level != CurriculumLevel.SUBTOPIC && level != CurriculumLevel.DESCRIPTOR) {
+				throw new IllegalArgumentException(
+						"currentApplicability must contain only " + "SUBTOPIC or DESCRIPTOR nodes");
+			}
+			if (!question.getExam().getSubject().equals(currentNode.getSyllabusVersion().getSubject())) {
+				throw new IllegalArgumentException("currentApplicability must belong to " + "the Question's Subject");
+			}
+
+			// Persistent node identity, not object identity,
+			// determines whether a placement is duplicated.
+			if (!nodeIds.add(currentNode.getId())) {
+				throw new IllegalArgumentException("Duplicate current applicability node ID: " + currentNode.getId());
+			}
 		}
 		this.question = question;
 
-		// Keep the search's applicability snapshot separate from the question's stored
-		// classification.
+		// Retain the caller's validated order without exposing
+		// a mutable list or changing the original classification.
 		this.currentApplicability = List.copyOf(currentApplicability);
 	}
 

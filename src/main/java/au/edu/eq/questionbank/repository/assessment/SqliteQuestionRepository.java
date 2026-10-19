@@ -41,8 +41,25 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.repository.sqlite.SqliteReadProbe;
 
 /**
- * SQLite-backed question repository that reconstructs complete question,
- * region, exam, curriculum, and answer state from persistent records.
+ * SQLite-backed Question repository that reconstructs complete Question,
+ * region, Exam, curriculum and Answer state from persistent records.
+ * <p>
+ * Curriculum-aware retrieval validates non-null, non-empty lists of current
+ * SUBTOPIC or DESCRIPTOR nodes. Repeated requested node IDs are consolidated
+ * before constructing the parameterised SQL query.
+ * <p>
+ * SQL restricts applicability to the Question's Subject and the target's
+ * current syllabus. It recognises direct current classifications and confirmed
+ * historical mappings, excluding unconfirmed or suggested mappings.
+ * <p>
+ * Broad and selected-Question retrieval share the same applicability semantics.
+ * The selected-Question path constrains the Question ID in SQL before
+ * reconstructing stored Questions, avoiding reconstruction of unrelated
+ * Questions.
+ * <p>
+ * Reconstructed applicability matches retain the stored Question's
+ * authoritative original classification. Retrieval does not persist derived
+ * current placements.
  */
 public final class SqliteQuestionRepository implements QuestionRepository, QuestionRetrievalRepository {
 

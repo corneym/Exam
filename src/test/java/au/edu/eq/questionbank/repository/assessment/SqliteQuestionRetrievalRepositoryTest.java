@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.util.ArrayList;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
@@ -37,6 +38,39 @@ class SqliteQuestionRetrievalRepositoryTest {
 
 	@TempDir
 	Path tempDirectory;
+
+	@Test
+	void duplicateRequestedNodesProduceUniqueMatches() throws Exception {
+		Fixture fixture = createFixture("duplicate-requested-nodes.db");
+		SqliteDatabase reopenedDatabase = new SqliteDatabase(fixture.databasePath());
+		reopenedDatabase.initialiseSchema();
+		CurriculumNode currentDescriptor = reloadCurrentDescriptor(reopenedDatabase, fixture);
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(reopenedDatabase);
+
+		// Repeating the same requested node must not multiply
+		// persisted applicability matches.
+		List<CurriculumNode> duplicateNodes = List.of(currentDescriptor, currentDescriptor, currentDescriptor);
+		List<QuestionApplicabilityMatch> broadMatches = repository.findApplicableToNodes(duplicateNodes);
+		assertEquals(
+				List.of(fixture.directQuestionId(), fixture.confirmedQuestionId(), fixture.secondConfirmedQuestionId()),
+				broadMatches.stream().map(match -> match.getQuestion().getId()).toList());
+
+		// Each Question has one match for this current Descriptor.
+		assertEquals(List.of(currentDescriptor.getId(), currentDescriptor.getId(), currentDescriptor.getId()),
+				broadMatches.stream().map(match -> match.getCurrentNode().getId()).toList());
+
+		// The selective SQL path must apply the same normalisation.
+		List<QuestionApplicabilityMatch> selectedMatches = repository.findApplicableToNodesForQuestion(duplicateNodes,
+				fixture.confirmedQuestionId(), 0);
+		assertEquals(1, selectedMatches.size());
+		QuestionApplicabilityMatch selectedMatch = selectedMatches.getFirst();
+		assertEquals(fixture.confirmedQuestionId(), selectedMatch.getQuestion().getId());
+		assertEquals(currentDescriptor.getId(), selectedMatch.getCurrentNode().getId());
+
+		// Current applicability must not overwrite the historical
+		// classification of the selected Question.
+		assertEquals(fixture.confirmedSourceDescriptorId(), selectedMatch.getQuestion().getClassification().getId());
+	}
 
 	@Test
 	void noLongerCurrentTargetDoesNotCreateRetrievalMatches() throws Exception {
@@ -110,11 +144,34 @@ class SqliteQuestionRetrievalRepositoryTest {
 				.findByCode(historicalVersion, fixture.confirmedSourceDescriptorCode()).orElseThrow();
 		CurriculumNode currentUnit = curriculumRepository.findByCode(currentVersion, "1").orElseThrow();
 		QuestionRetrievalRepository repository = new SqliteQuestionRepository(reopenedDatabase);
+
+		// Broad retrieval rejects malformed input before SQL execution.
 		assertThrows(NullPointerException.class, () -> repository.findApplicableToNodes(null));
 		assertThrows(IllegalArgumentException.class, () -> repository.findApplicableToNodes(List.of()));
 		assertThrows(IllegalArgumentException.class,
 				() -> repository.findApplicableToNodes(List.of(historicalDescriptor)));
 		assertThrows(IllegalArgumentException.class, () -> repository.findApplicableToNodes(List.of(currentUnit)));
+		List<CurriculumNode> nodesWithNull = new ArrayList<>();
+		nodesWithNull.add(currentDescriptor);
+		nodesWithNull.add(null);
+		assertThrows(NullPointerException.class, () -> repository.findApplicableToNodes(nodesWithNull));
+
+		// Selected-Question retrieval shares the same node-validation
+		// boundary and must not bypass it.
+		long selectedQuestionId = fixture.confirmedQuestionId();
+		assertThrows(NullPointerException.class,
+				() -> repository.findApplicableToNodesForQuestion(null, selectedQuestionId, 0));
+		assertThrows(NullPointerException.class,
+				() -> repository.findApplicableToNodesForQuestion(nodesWithNull, selectedQuestionId, 0));
+		assertThrows(IllegalArgumentException.class,
+				() -> repository.findApplicableToNodesForQuestion(List.of(), selectedQuestionId, 0));
+		assertThrows(IllegalArgumentException.class, () -> repository
+				.findApplicableToNodesForQuestion(List.of(historicalDescriptor), selectedQuestionId, 0));
+		assertThrows(IllegalArgumentException.class,
+				() -> repository.findApplicableToNodesForQuestion(List.of(currentUnit), selectedQuestionId, 0));
+
+		// A suggested mapping must not be treated as confirmed
+		// applicability when the input is valid.
 		assertEquals(0, repository.findApplicableToNodes(List.of(currentDescriptor)).stream()
 				.filter(match -> match.getQuestion().getId() == fixture.suggestedQuestionId()).count());
 	}
