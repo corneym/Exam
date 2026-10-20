@@ -150,6 +150,7 @@ public final class QuestionCapturePane extends VBox {
 	// Shared Context and response-type state.
 	private SharedQuestionContext inheritedMcqSharedContext;
 	private boolean mcqContinuationSelected;
+	private int sharedContextOriginalContentIndex;
 
 	// Independent MCQs use one persisted booklet-level continuation rather than
 	// SourceQuestion multipart identity.
@@ -2475,13 +2476,29 @@ public final class QuestionCapturePane extends VBox {
 
 	private void handleMultipartSharedContextOptionChanged(boolean selected) {
 
-		// Multipart Written Response uses SourceQuestion semantics and must not retain
-		// transient independent-MCQ continuation state.
+		// Multipart Written Response uses SourceQuestion semantics.
+		// It must not retain independent-MCQ continuation state.
 		mcqContinuationSelected = false;
 		inheritedMcqSharedContext = null;
 		String sourceCode = SourceQuestionCodeParser.derive(questionCodeField.getText());
 		if (!selected) {
-			sharedContextCapturePane.cancelAutomaticContext();
+			if (sharedContextCapturePane.hasPendingAutomaticRegion() && !sharedContextCapturePane.isCaptureMode()) {
+
+				// Transfer the accepted context back into ordinary Question
+				// content rather than discarding its captured geometry.
+				QuestionRegion region = sharedContextCapturePane.takePendingAutomaticRegion();
+				int insertionIndex = Math.min(sharedContextOriginalContentIndex, pendingContentParts.size());
+				pendingContentParts.add(insertionIndex, new PdfQuestionContentPart(region));
+				refreshRegionPreviews();
+				setRegionCountLabel(pendingContentParts.size());
+				showQuestionPendingStatus();
+			} else {
+
+				// Preserve the existing behaviour for a context whose
+				// first PDF selection has not yet been accepted.
+				sharedContextCapturePane.cancelAutomaticContext();
+				refreshSharedContextPreview();
+			}
 			hideSharedContextStatus();
 			updateQuestionCodeLock();
 			return;
@@ -2491,10 +2508,35 @@ public final class QuestionCapturePane extends VBox {
 			return;
 		}
 		String label = "Question " + sourceCode + " context";
+
+		// The first accepted PDF region may already belong to the
+		// Question body. Move only that region, preserving the relative
+		// order and source of every remaining content part.
+		for (int index = 0; index < pendingContentParts.size(); index++) {
+			QuestionContentPart part = pendingContentParts.get(index);
+			if (!(part instanceof PdfQuestionContentPart pdfPart)) {
+				continue;
+			}
+			sharedContextCapturePane.stageAcceptedQuestionRegion(label, pdfPart.region());
+
+			// Remove the ordinary-content reference only after the
+			// Shared Context staging operation has succeeded.
+			pendingContentParts.remove(index);
+			sharedContextOriginalContentIndex = index;
+			refreshRegionPreviews();
+			setRegionCountLabel(pendingContentParts.size());
+			showQuestionPendingStatus();
+			updateQuestionCodeLock();
+			return;
+		}
+
+		// No accepted PDF region exists. Retain the established workflow
+		// for transferring an unaccepted selection or capturing a new one.
 		if (!beginAutomaticSharedContextCapture(label)) {
 			setSharedContextCheckBoxSelected(false);
 			return;
 		}
+		sharedContextOriginalContentIndex = 0;
 		updateQuestionCodeLock();
 	}
 
@@ -3379,11 +3421,12 @@ public final class QuestionCapturePane extends VBox {
 
 	private void resetQuestionSharedContextState() {
 
-		// No transient Shared Context or MCQ-continuation choice carries into the next
-		// Question.
+		// No transient Shared Context or MCQ continuation choice
+		// carries into the next Question.
 		mcqSharedContextCaptureActive = false;
 		mcqContinuationSelected = false;
 		inheritedMcqSharedContext = null;
+		sharedContextOriginalContentIndex = 0;
 		sharedContextCapturePane.clearForQuestion();
 		hideSharedContextControls();
 	}
