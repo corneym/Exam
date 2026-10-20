@@ -461,6 +461,82 @@ public final class SharedContextCapturePane extends VBox {
 		existingContextField.setValue(matching);
 	}
 
+	/**
+	 * Reclassifies an already accepted Question PDF region as an unsaved automatic
+	 * Shared Context region.
+	 *
+	 * The source geometry is retained without clearing the PDF workspace selection
+	 * or starting a new region capture.
+	 *
+	 * @param label          label for the pending Shared Context
+	 * @param acceptedRegion existing accepted Question region
+	 */
+	void stageAcceptedQuestionRegion(String label, QuestionRegion acceptedRegion) {
+		if (label == null || label.isBlank()) {
+			throw new IllegalArgumentException("label must not be blank");
+		}
+		Objects.requireNonNull(acceptedRegion, "acceptedRegion");
+
+		ExamBooklet booklet = bookletSupplier.get();
+		if (booklet == null || acceptedRegion.booklet().getId() != booklet.getId()) {
+			throw new IllegalArgumentException("Accepted region must belong to the active booklet");
+		}
+		if (hasUnsavedContextCapture() || currentSelection != null) {
+			throw new IllegalStateException("Another Shared Context capture is already pending");
+		}
+
+		// Stage the accepted region directly. It is not an unaccepted
+		// PDF selection, so neither the selection-clear callback nor
+		// the normal capture-mode transition should run.
+		SharedQuestionContextRegion contextRegion = new SharedQuestionContextRegion(acceptedRegion.pageNumber(),
+				acceptedRegion.x(), acceptedRegion.y(), acceptedRegion.width(), acceptedRegion.height());
+
+		existingContextField.getSelectionModel().clearSelection();
+		contextLabelField.setText(label);
+		pendingRegions.add(contextRegion);
+
+		refreshRegionPreviews();
+		statusLabel.setText("1 shared context region(s) accepted");
+	}
+
+	/**
+	 * Removes the single accepted automatic Shared Context region from transient
+	 * capture and returns it as a Question region.
+	 *
+	 * Does not clear the PDF workspace selection or alter any persisted Shared
+	 * Context.
+	 *
+	 * @return the accepted region with its original source geometry
+	 * @throws IllegalStateException if no single accepted automatic region is
+	 *                               available
+	 */
+	QuestionRegion takePendingAutomaticRegion() {
+		if (captureMode || currentSelection != null || pendingRegions.size() != 1 || editingContext != null
+				|| correctionSaveHandler != null) {
+			throw new IllegalStateException("No single accepted automatic Shared Context region");
+		}
+
+		ExamBooklet booklet = bookletSupplier.get();
+		if (booklet == null) {
+			throw new IllegalStateException("No active booklet");
+		}
+
+		SharedQuestionContextRegion region = pendingRegions.getFirst();
+
+		// Preserve the original proportional PDF geometry and source.
+		QuestionRegion questionRegion = new QuestionRegion(booklet, region.pageNumber(), region.x(), region.y(),
+				region.width(), region.height());
+
+		// Only the accepted automatic context is relinquished.
+		// Clearing an unrelated workspace selection is unnecessary.
+		pendingRegions.clear();
+		contextLabelField.clear();
+		refreshRegionPreviews();
+		statusLabel.setText("No shared context selected");
+
+		return questionRegion;
+	}
+
 	private void addCurrentRegion() {
 		if (currentSelection == null) {
 			return;
