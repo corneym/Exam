@@ -1,4 +1,3 @@
-
 package au.edu.eq.questionbank;
 
 import org.junit.platform.suite.api.IncludeClassNamePatterns;
