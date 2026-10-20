@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -151,6 +152,8 @@ public final class QuestionCapturePane extends VBox {
 	private SharedQuestionContext inheritedMcqSharedContext;
 	private boolean mcqContinuationSelected;
 	private int sharedContextOriginalContentIndex;
+	private final IdentityHashMap<QuestionContentPart, ContentPreview> contentPreviewNodes = new IdentityHashMap<>();
+	private PdfSession contentPreviewSession;
 
 	// Independent MCQs use one persisted booklet-level continuation rather than
 	// SourceQuestion multipart identity.
@@ -184,6 +187,7 @@ public final class QuestionCapturePane extends VBox {
 	private final CheckBox firstRegionSharedContextCheckBox = new CheckBox("First region is shared context");
 	private final Label sharedContextStatusLabel = new Label();
 	private final VBox sharedContextControlsBox = new VBox(COMPACT_SPACING);
+	private VBox sharedContextPreviewNode;
 
 	// Pending PDF selection and accepted mixed Question-content controls.
 	private final Button addRegionButton = new Button("Add Region");
@@ -203,6 +207,7 @@ public final class QuestionCapturePane extends VBox {
 	private List<Question> questionSnapshot = List.of();
 	private Consumer<Boolean> questionSaveBusyHandler = _ -> {
 	};
+	private List<SharedQuestionContextRegion> sharedContextPreviewRegions = List.of();
 
 	// This list is the authoritative transient assembly order for the Question
 	// body.
@@ -217,6 +222,7 @@ public final class QuestionCapturePane extends VBox {
 	private PerformanceRecorder performanceRecorder = new PerformanceRecorder(false, Path.of("performance.csv"));
 	private ExamBooklet importedQuestionBookletScope;
 	private FxPulseGapProbe importedEntryPulseProbe;
+	private PdfSession sharedContextPreviewSession;
 
 	/**
 	 * Creates the question-capture workflow and its repository integration.
@@ -1197,52 +1203,59 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private void addContentPreview(QuestionContentPart part, int contentIndex) {
-		ImageView imageView;
-		String description;
-		if (part instanceof PdfQuestionContentPart pdfPart) {
-			QuestionRegion region = pdfPart.region();
-			try {
-				BufferedImage image = questionExtractor.extractRegion(examPdfSessionSupplier.get(), region);
-				imageView = new ImageView(SwingFXUtils.toFXImage(image, null));
-			} catch (IOException exception) {
-				throw new RuntimeException("Unable to preview PDF Question content", exception);
+		ContentPreview preview = contentPreviewNodes.get(part);
+		if (preview == null) {
+			ImageView imageView;
+			if (part instanceof PdfQuestionContentPart pdfPart) {
+				try {
+					BufferedImage image = extractQuestionPreviewRegion(pdfPart.region());
+					imageView = new ImageView(SwingFXUtils.toFXImage(image, null));
+				} catch (IOException exception) {
+					throw new RuntimeException("Unable to preview PDF Question content", exception);
+				}
+			} else if (part instanceof ImageQuestionContentPart imagePart) {
+				Image image = new Image(new ByteArrayInputStream(imagePart.pngBytes()));
+				if (image.isError()) {
+					throw new IllegalStateException("Unable to preview stored Question image", image.getException());
+				}
+				imageView = new ImageView(image);
+			} else {
+				throw new IllegalStateException("Unsupported Question content part: " + part.getClass().getName());
 			}
-			description = String.format("Part %d — PDF page %d", contentIndex + 1, region.pageNumber());
-		} else if (part instanceof ImageQuestionContentPart imagePart) {
-			Image image = new Image(new ByteArrayInputStream(imagePart.pngBytes()));
-			if (image.isError()) {
-				throw new IllegalStateException("Unable to preview stored Question image", image.getException());
-			}
-			imageView = new ImageView(image);
-			description = String.format("Part %d — Pasted image", contentIndex + 1);
-		} else {
-			throw new IllegalStateException("Unsupported Question content part: " + part.getClass().getName());
+			imageView.setPreserveRatio(true);
+			imageView.fitWidthProperty()
+					.bind(Bindings.createDoubleBinding(
+							() -> Math.max(0.0, regionsScrollPane.getWidth() - REGION_PREVIEW_HORIZONTAL_INSET),
+							regionsScrollPane.widthProperty()));
+			imageView.setSmooth(true);
+			Label label = new Label();
+			Button moveUpButton = new Button("Up");
+			Button moveDownButton = new Button("Down");
+			Button removeButton = new Button("Remove");
+			HBox header = new HBox(SECTION_SPACING, label, moveUpButton, moveDownButton, removeButton);
+			VBox container = new VBox(REGION_PREVIEW_ITEM_SPACING, header, imageView);
+			preview = new ContentPreview(container, label, moveUpButton, moveDownButton, removeButton);
+			contentPreviewNodes.put(part, preview);
 		}
-		imageView.setPreserveRatio(true);
 
-		// Keep the current stable width behaviour; scrollbar appearance must not start
-		// a resize loop.
-		imageView.fitWidthProperty()
-				.bind(Bindings.createDoubleBinding(
-						() -> Math.max(0.0, regionsScrollPane.getWidth() - REGION_PREVIEW_HORIZONTAL_INSET),
-						regionsScrollPane.widthProperty()));
-		imageView.setSmooth(true);
-		Label label = new Label(description);
-		Button moveUpButton = new Button("Up");
-		moveUpButton.setId("question-content-move-up-" + contentIndex);
-		moveUpButton.setDisable(contentIndex == 0);
-		moveUpButton.setOnAction(_ -> moveContentPart(contentIndex, -1));
-		Button moveDownButton = new Button("Down");
-		moveDownButton.setId("question-content-move-down-" + contentIndex);
-		moveDownButton.setDisable(contentIndex == pendingContentParts.size() - 1);
-		moveDownButton.setOnAction(_ -> moveContentPart(contentIndex, 1));
-		Button removeButton = new Button("Remove");
-		removeButton.setId("question-content-remove-" + contentIndex);
-		removeButton.setOnAction(_ -> removeContentPart(contentIndex));
-		HBox header = new HBox(SECTION_SPACING, label, moveUpButton, moveDownButton, removeButton);
-		VBox preview = new VBox(REGION_PREVIEW_ITEM_SPACING, header, imageView);
-		preview.setId("question-content-part-" + contentIndex);
-		regionPreviewBox.getChildren().add(preview);
+		// The rendered content remains unchanged when parts move.
+		// Only its presentation index and associated actions change.
+		if (part instanceof PdfQuestionContentPart pdfPart) {
+			preview.label()
+					.setText(String.format("Part %d — PDF page %d", contentIndex + 1, pdfPart.region().pageNumber()));
+		} else {
+			preview.label().setText(String.format("Part %d — Pasted image", contentIndex + 1));
+		}
+		preview.container().setId("question-content-part-" + contentIndex);
+		preview.moveUp().setId("question-content-move-up-" + contentIndex);
+		preview.moveUp().setDisable(contentIndex == 0);
+		preview.moveUp().setOnAction(_ -> moveContentPart(contentIndex, -1));
+		preview.moveDown().setId("question-content-move-down-" + contentIndex);
+		preview.moveDown().setDisable(contentIndex == pendingContentParts.size() - 1);
+		preview.moveDown().setOnAction(_ -> moveContentPart(contentIndex, 1));
+		preview.remove().setId("question-content-remove-" + contentIndex);
+		preview.remove().setOnAction(_ -> removeContentPart(contentIndex));
+		regionPreviewBox.getChildren().add(preview.container());
 	}
 
 	private void addCurrentRegion() {
@@ -1543,6 +1556,35 @@ public final class QuestionCapturePane extends VBox {
 		sharedContextCapturePane.setManaged(false);
 		getChildren().addAll(createSectionLabel("Question"), createCaptureModeControls(), legacyCaptureBox,
 				questionWorkBox, sharedContextCapturePane);
+	}
+
+	private VBox cachedSharedContextPreview(List<SharedQuestionContextRegion> regions) {
+		if (regions.isEmpty()) {
+
+			// A deselected or cancelled context must release its image
+			// and must never reappear in the next Question.
+			sharedContextPreviewNode = null;
+			sharedContextPreviewRegions = List.of();
+			sharedContextPreviewSession = null;
+			return null;
+		}
+		PdfSession session = examPdfSessionSupplier.get();
+
+		// Region records describe immutable source geometry.
+		// Equal regions from the same session can reuse the preview
+		// even when a repository lookup supplies a new List instance.
+		if (sharedContextPreviewNode != null && sharedContextPreviewSession == session
+				&& sharedContextPreviewRegions.equals(regions)) {
+			return sharedContextPreviewNode;
+		}
+
+		// A changed source, region set or PDF session requires fresh
+		// extraction. Do not retain images from the previous source.
+		VBox preview = createSharedContextPreview(regions);
+		sharedContextPreviewNode = preview;
+		sharedContextPreviewRegions = List.copyOf(regions);
+		sharedContextPreviewSession = session;
+		return preview;
 	}
 
 	private void cancelLegacyQuestionSplit() {
@@ -1982,6 +2024,25 @@ public final class QuestionCapturePane extends VBox {
 		cancelQuestionEditButton.setManaged(false);
 	}
 
+	private boolean confirmDuplicateClipboardImage() {
+		Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+		if (getScene() != null && getScene().getWindow() != null) {
+			confirmation.initOwner(getScene().getWindow());
+		}
+		confirmation.setTitle("Duplicate clipboard image");
+		confirmation.setHeaderText("This image has already been added to this Question.");
+		confirmation.setContentText("Add it again?");
+
+		// JavaFX normally defaults YES-type buttons. Explicitly make NO the
+		// default so Enter or window dismissal never adds a duplicate.
+		confirmation.getButtonTypes().setAll(ButtonType.NO, ButtonType.YES);
+		Button noButton = (Button) confirmation.getDialogPane().lookupButton(ButtonType.NO);
+		Button yesButton = (Button) confirmation.getDialogPane().lookupButton(ButtonType.YES);
+		yesButton.setDefaultButton(false);
+		noButton.setDefaultButton(true);
+		return confirmation.showAndWait().orElse(ButtonType.NO) == ButtonType.YES;
+	}
+
 	private boolean confirmNewTopLevelQuestionBeyondExpected() {
 
 		// Editing an existing record, resolving imported Question work and legacy
@@ -2168,7 +2229,7 @@ public final class QuestionCapturePane extends VBox {
 		for (int regionIndex = 0; regionIndex < regions.size(); regionIndex++) {
 			SharedQuestionContextRegion region = regions.get(regionIndex);
 			try {
-				BufferedImage image = questionExtractor.extractRegion(examPdfSessionSupplier.get(), region);
+				BufferedImage image = extractSharedContextPreviewRegion(region);
 				ImageView imageView = new ImageView(SwingFXUtils.toFXImage(image, null));
 				imageView.setId("question-shared-context-image-" + regionIndex);
 				imageView.setPreserveRatio(true);
@@ -2224,6 +2285,38 @@ public final class QuestionCapturePane extends VBox {
 			return derivedSourceCode == null;
 		}
 		return editingQuestion.getSourceQuestion().getSourceQuestionCode().equals(derivedSourceCode);
+	}
+
+	private BufferedImage extractQuestionPreviewRegion(QuestionRegion region) throws IOException {
+		try (PerformanceOperation extraction = performanceRecorder.start("capture.question.region.extract")) {
+			try {
+
+				// A fresh crop includes a real PDF page render. Cached preview
+				// nodes never enter this method on reorder or unchanged refresh.
+				BufferedImage image = questionExtractor.extractRegion(examPdfSessionSupplier.get(), region);
+				extraction.resultCount((long) image.getWidth() * image.getHeight());
+				return image;
+			} catch (IOException | RuntimeException | Error failure) {
+				extraction.failed();
+				throw failure;
+			}
+		}
+	}
+
+	private BufferedImage extractSharedContextPreviewRegion(SharedQuestionContextRegion region) throws IOException {
+		try (PerformanceOperation extraction = performanceRecorder.start("capture.question.shared-context.extract")) {
+			try {
+
+				// The same source geometry and PdfSession are reused by
+				// cachedSharedContextPreview() without another extraction.
+				BufferedImage image = questionExtractor.extractRegion(examPdfSessionSupplier.get(), region);
+				extraction.resultCount((long) image.getWidth() * image.getHeight());
+				return image;
+			} catch (IOException | RuntimeException | Error failure) {
+				extraction.failed();
+				throw failure;
+			}
+		}
 	}
 
 	private Question findDuplicateQuestion(String questionCode) {
@@ -2877,10 +2970,18 @@ public final class QuestionCapturePane extends VBox {
 						"Copy or snip an image, then click Add From Clipboard again.");
 				return;
 			}
+			ImageQuestionContentPart imagePart = new ImageQuestionContentPart(pngBytes);
+
+			// The model's value equality compares PNG data, not array identity.
+			// Only current accepted content is examined, so a new Question does
+			// not inherit a duplicate restriction from an earlier Question.
+			if (pendingContentParts.contains(imagePart) && !confirmDuplicateClipboardImage()) {
+				return;
+			}
 
 			// Insert at the end of the current assembly. Move controls can subsequently
 			// place the image anywhere within the Question body.
-			pendingContentParts.add(new ImageQuestionContentPart(pngBytes));
+			pendingContentParts.add(imagePart);
 			refreshRegionPreviews();
 			setRegionCountLabel(pendingContentParts.size());
 			showQuestionPendingStatus();
@@ -3244,13 +3345,29 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private void refreshRegionPreviews() {
+		PdfSession currentSession = examPdfSessionSupplier.get();
+
+		// Ordinary content previews are valid only for the PDF session
+		// against which their regions were originally extracted.
+		if (currentSession != contentPreviewSession) {
+			contentPreviewNodes.clear();
+			contentPreviewSession = currentSession;
+		}
+
+		// Release ordinary previews that are no longer part of the
+		// current Question's authoritative content sequence.
+		contentPreviewNodes.keySet()
+				.removeIf(cachedPart -> pendingContentParts.stream().noneMatch(part -> part == cachedPart));
+
+		// Detach existing nodes before attaching them in their new
+		// presentation order. Unchanged images are not extracted again.
 		regionPreviewBox.getChildren().clear();
 		List<SharedQuestionContextRegion> sharedContextRegions = currentSharedContextRegions();
-		if (!sharedContextRegions.isEmpty()) {
+		VBox sharedPreview = cachedSharedContextPreview(sharedContextRegions);
+		if (sharedPreview != null) {
 
-			// Shared Context is reference material for the assembled Question and is
-			// always displayed before the editable Question-specific content parts.
-			regionPreviewBox.getChildren().add(createSharedContextPreview(sharedContextRegions));
+			// Shared Context always precedes the editable Question body.
+			regionPreviewBox.getChildren().add(sharedPreview);
 		}
 		for (int index = 0; index < pendingContentParts.size(); index++) {
 			addContentPreview(pendingContentParts.get(index), index);
@@ -3296,14 +3413,16 @@ public final class QuestionCapturePane extends VBox {
 
 	private void refreshSharedContextPreview() {
 
-		// Replace only the reference-material presentation. Ordinary Question content
-		// retains its authoritative transient ordering and move/remove controls.
+		// Only the Shared Context presentation is affected here.
+		// Leave ordinary content previews and their controls intact.
 		regionPreviewBox.getChildren().removeIf(node -> "question-shared-context-preview".equals(node.getId()));
 		List<SharedQuestionContextRegion> sharedContextRegions = currentSharedContextRegions();
-		if (!sharedContextRegions.isEmpty()) {
+		VBox sharedPreview = cachedSharedContextPreview(sharedContextRegions);
+		if (sharedPreview != null) {
 
-			// Shared Context always appears before Question-specific content.
-			regionPreviewBox.getChildren().addFirst(createSharedContextPreview(sharedContextRegions));
+			// Reattach the existing node when regions and source are
+			// unchanged. A new source or region list creates a new node.
+			regionPreviewBox.getChildren().addFirst(sharedPreview);
 		}
 		updateRegionsScrollPane();
 	}
@@ -4178,6 +4297,9 @@ public final class QuestionCapturePane extends VBox {
 		boolean unresolved = request.existingQuestion() != null
 				&& request.existingQuestion().isSharedContextUnresolved();
 		return sharedContextValidationError(sourceCode, source, unresolved, contextAvailable);
+	}
+
+	private record ContentPreview(VBox container, Label label, Button moveUp, Button moveDown, Button remove) {
 	}
 
 	private static final class LegacySplitCaptureState {
