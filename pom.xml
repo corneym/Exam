@@ -231,8 +231,9 @@
 			<id>headless-ui-tests</id>
 
 			<properties>
-				<test.suite>
-					**/FastUITests.java,**/WorkflowCaptureTests.java,**/WorkflowStateEditingTests.java,**/WorkflowApplicationTests.java</test.suite>
+				
+<test.suite>**/FastUITests.java,**/FastUISearchTests.java,**/FastUIDashboardTests.java,**/WorkflowCaptureTests.java,**/WorkflowCaptureQuestionTests.java,**/WorkflowStateEditingTests.java,**/WorkflowStateEditingSelectionTests.java,**/WorkflowApplicationTests.java,**/WorkflowApplicationLayoutTests.java,**/WorkflowApplicationCurriculumTests.java</test.suite>
+
 				<headless.test.jvm.args>
 					-Xmx4g
 					--add-exports javafx.graphics/com.sun.glass.ui=ALL-UNNAMED
