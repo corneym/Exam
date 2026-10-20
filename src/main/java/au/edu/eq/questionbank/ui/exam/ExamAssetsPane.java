@@ -795,12 +795,13 @@ public final class ExamAssetsPane extends VBox {
 
 	private void beginExamDetailsEdit() {
 		Exam selectedExam = examBox.getValue();
-		if (selectedExam == null) {
+		if (selectedExam == null || selectedExam.isComplete()) {
 			return;
 		}
 
-		// Reassert the persisted values directly into the editable ComboBox editors.
-		// This prevents suggestion-list state from clearing metadata when Edit begins.
+		// Reassert the persisted values directly into the editable
+		// ComboBox editors. This prevents suggestion-list state
+		// from clearing metadata when Edit begins.
 		providerField.setValue(selectedExam.getProvider().getName());
 		providerField.getEditor().setText(selectedExam.getProvider().getName());
 		yearField.setValue(selectedExam.getYear());
@@ -808,8 +809,8 @@ public final class ExamAssetsPane extends VBox {
 		assessmentField.getEditor().setText(selectedExam.getName());
 		if (selectedExamAssetExpectations != null) {
 
-			// Exam-level expected asset counts belong to this same authoritative Exam
-			// snapshot, not to individual Question-booklet editors.
+			// Exam-level expected asset counts belong to this
+			// authoritative Exam snapshot.
 			expectedQuestionBookletsField
 					.setText(formatExpectedAssetCount(selectedExamAssetExpectations.expectedQuestionBookletCount()));
 			expectedAnswerBookletsField
@@ -1296,9 +1297,6 @@ public final class ExamAssetsPane extends VBox {
 			answerFileDeleteHandler.accept(answerFile);
 		});
 		answerFileDeleteButtons.add(deleteButton);
-
-		// The bold Answer Booklet title replaces the redundant filename
-		// row. View and Delete remain fully accessible on the right.
 		HBox.setHgrow(heading, Priority.ALWAYS);
 		HBox headingRow = new HBox(SPACING, heading, viewButton, deleteButton);
 		headingRow.setId("exam-assets-answer-heading-row-" + answerFile.getId());
@@ -1306,8 +1304,10 @@ public final class ExamAssetsPane extends VBox {
 		explanations.setId("exam-assets-answer-explanations-" + answerFile.getId());
 		explanations.setSelected(answerFile.hasAnswerExplanations());
 
-		// Explanation metadata remains editable independently of
-		// structural Answer Booklet transactions.
+		// Changing this flag can create new MCQ explanation
+		// requirements. COMPLETE Exams must retain their
+		// reviewed metadata until explicitly reactivated.
+		explanations.setDisable(answerFile.getExam().isComplete());
 		explanations.setOnAction(_ -> updateAnswerFileExplanationMetadata(answerFile, explanations));
 		VBox row = new VBox(ROW_SPACING, headingRow, explanations);
 		row.setId("exam-assets-answer-file-" + answerFile.getId());
@@ -1960,36 +1960,42 @@ public final class ExamAssetsPane extends VBox {
 	private void setExamDetailsEditing(boolean editing) {
 		editingExamDetails = editing;
 
-		// Identity metadata remains visible at all times and becomes mutable only after
-		// the explicit Edit action.
+		// Identity metadata remains visible at all times and
+		// becomes mutable only after the explicit Edit action.
 		providerField.setDisable(!editing);
 		yearField.setDisable(!editing);
 		assessmentField.setDisable(!editing);
 		Exam selectedExam = examBox.getValue();
 		boolean planningEditable = editing && selectedExam != null && !selectedExam.isComplete();
 
-		// Expected asset counts are structural metadata, so COMPLETE Exams expose them
-		// read-only until the Exam is explicitly reactivated.
+		// Expected asset counts are structural metadata.
+		// COMPLETE Exams expose them read-only until reactivated.
 		expectedQuestionBookletsField.setDisable(!planningEditable);
 		expectedAnswerBookletsField.setDisable(!planningEditable);
-		editExamButton.setDisable(editing || selectedExam == null);
 
-		// Cancel remains available throughout an edit. Save requires an actual change.
+		// A COMPLETE Exam may be inspected, but its structural
+		// metadata cannot be edited until it is marked ACTIVE.
+		editExamButton.setDisable(editing || selectedExam == null || selectedExam.isComplete());
+
+		// Cancel remains available throughout an edit.
+		// Save requires an actual change.
 		cancelButton.setDisable(!editing);
 		updateExamDetailsSaveState();
 
-		// Do not allow another Exam to be selected while unsaved metadata is staged.
+		// Do not allow another Exam to be selected while
+		// unsaved metadata is staged.
 		examBox.setDisable(editing);
 
-		// Exam Details and booklet structural edits are mutually exclusive
-		// transactions.
+		// Exam Details and booklet structural edits are
+		// mutually exclusive transactions.
 		refreshQuestionBookletActionStates();
 
-		// Capture transition must not silently discard a staged Exam Details edit.
+		// Capture transition must not silently discard
+		// a staged Exam Details edit.
 		updateUseSelectedBookletState();
 
-		// Exam Details, Question-booklet creation and Answer-booklet creation are
-		// mutually exclusive transactions.
+		// Exam Details, Question-booklet creation and
+		// Answer-booklet creation are mutually exclusive.
 		updateQuestionBookletAddState();
 		updateAnswerBookletAddState();
 	}
@@ -2101,19 +2107,24 @@ public final class ExamAssetsPane extends VBox {
 
 	private void updateAnswerFileExplanationMetadata(AnswerFile answerFile, CheckBox explanations) {
 		boolean persistedValue = answerFile.hasAnswerExplanations();
+
+		// The disabled checkbox is the presentation restriction.
+		// Repeat the lifecycle guard here to prevent a stale or
+		// programmatically invoked action from changing a
+		// COMPLETE Exam's reviewed explanation requirements.
+		if (answerFile.getExam().isComplete()) {
+			explanations.setSelected(persistedValue);
+			return;
+		}
 		boolean requestedValue = explanations.isSelected();
 		if (requestedValue == persistedValue) {
-
-			// No persistence work is required when the control already represents the
-			// AnswerFile value from which this row was constructed.
 			return;
 		}
 		try {
 			answerWriter.setContainsAnswerExplanations(answerFile, requestedValue);
 		} catch (SQLException | IllegalArgumentException exception) {
 
-			// A failed write must restore the checkbox to the authoritative value rather
-			// than leave unsaved metadata presented as though it were current.
+			// A failed write restores the authoritative value.
 			explanations.setSelected(persistedValue);
 			showAnswerFileError("Answer explanation metadata could not be saved.", exception.getMessage());
 		}
@@ -2156,11 +2167,17 @@ public final class ExamAssetsPane extends VBox {
 
 	private void updateUseSelectedBookletState() {
 		boolean transactionActive = structuralTransactionActive();
+		Toggle selectedToggle = questionBookletSelectionGroup.getSelectedToggle();
 
-		// Capture activation cannot abandon an unfinished import or
-		// a staged Exam/booklet transaction.
-		useSelectedBookletButton
-				.setDisable(transactionActive || questionBookletSelectionGroup.getSelectedToggle() == null);
+		// A persisted booklet can be selected for inspection
+		// regardless of Exam lifecycle state. Capture activation
+		// is permitted only when its Exam is ACTIVE.
+		boolean captureAvailable = selectedToggle != null && selectedToggle.getUserData() instanceof ExamBooklet booklet
+				&& !booklet.getExam().isComplete();
+
+		// Capture must also wait for any staged structural
+		// transaction to finish.
+		useSelectedBookletButton.setDisable(transactionActive || !captureAvailable);
 
 		// Pending legacy import may coexist with ordinary booklet
 		// metadata editing, but Recheck must wait for Save or Cancel.
@@ -2179,8 +2196,15 @@ public final class ExamAssetsPane extends VBox {
 			throw new IllegalStateException("Selected Question booklet has no persisted ExamBooklet");
 		}
 
-		// Application code owns the actual PDF/capture transition. This pane only
-		// publishes which authoritative booklet the user selected.
+		// A COMPLETE Exam may be inspected but cannot be
+		// activated for ordinary Question capture. Repeat the
+		// restriction here so a stale or programmatic action
+		// cannot bypass the disabled button.
+		if (booklet.getExam().isComplete() || structuralTransactionActive()) {
+			return;
+		}
+
+		// Application code owns the actual PDF/capture transition.
 		captureBookletHandler.accept(booklet);
 	}
 

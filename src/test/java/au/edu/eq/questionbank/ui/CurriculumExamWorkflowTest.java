@@ -30,6 +30,7 @@ import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ManagedDataLayout;
+import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Descriptor;
@@ -67,9 +68,11 @@ import au.edu.eq.questionbank.ui.exam.ExamMetadataPane;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import javafx.application.Platform;
+import javafx.event.ActionEvent;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
@@ -432,6 +435,240 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertNull(field(application, "workingSubject", Subject.class));
 		assertNull(field(questionCapturePane(), "workingSubject", Subject.class));
 		assertNull(field(answerCapturePane(), "workingSubject", Subject.class));
+	}
+
+	@Test
+	void completeExamAnswerExplanationMetadataIsReadOnlyUntilReactivation(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		Exam exam = booklet.getExam();
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		AnswerFile answerFile = answerWriter.findOrCreateAnswerFile(booklet, "Marking guide",
+				"Chemistry/2024/marking-guide.pdf");
+		assertFalse(answerFile.hasAnswerExplanations());
+
+		// Establish a historical COMPLETE Exam with an
+		// existing Answer booklet.
+		persistHistoricalCompleteState(database, exam);
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "showExamAssetsMode", new Class<?>[0]);
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitForFxEvents();
+		CheckBox explanations = lookup(robot, "#exam-assets-answer-explanations-" + answerFile.getId(), CheckBox.class);
+		Button view = lookup(robot, "#exam-assets-answer-view-" + answerFile.getId(), Button.class);
+
+		// Inspection remains possible, but explanation
+		// metadata cannot be modified.
+		assertFalse(view.isDisabled());
+		assertTrue(explanations.isDisabled());
+		assertFalse(explanations.isSelected());
+
+		// Bypass the disabled presentation control deliberately
+		// to exercise the persistence-action guard.
+		robot.interact(() -> {
+			explanations.setSelected(true);
+			explanations.getOnAction().handle(new ActionEvent(explanations, explanations));
+		});
+
+		// The UI must restore the original recorded state.
+		assertFalse(explanations.isSelected());
+
+		// Most importantly, the persisted Answer metadata
+		// must remain unchanged.
+		AnswerFile unchanged = answerWriter.findAnswerFiles(exam).stream()
+				.filter(file -> file.getId() == answerFile.getId()).findFirst().orElseThrow();
+		assertFalse(unchanged.hasAnswerExplanations());
+
+		// Reactivation must restore normal metadata editing.
+		examWriter.setExamCaptureState(exam, ExamCaptureState.ACTIVE);
+		ExamAssetsPane assets = field(application, "examAssetsPane", ExamAssetsPane.class);
+		robot.interact(() -> {
+			try {
+				assets.refresh(exam.getSubject());
+			} catch (SQLException exception) {
+				throw new RuntimeException(exception);
+			}
+		});
+		CheckBox activeExplanations = lookup(robot, "#exam-assets-answer-explanations-" + answerFile.getId(),
+				CheckBox.class);
+		assertFalse(activeExplanations.isDisabled());
+		assertFalse(activeExplanations.isSelected());
+
+		// The same action must now work on an ACTIVE Exam.
+		robot.interact(activeExplanations::fire);
+		AnswerFile updated = answerWriter.findAnswerFiles(exam).stream()
+				.filter(file -> file.getId() == answerFile.getId()).findFirst().orElseThrow();
+		assertTrue(updated.hasAnswerExplanations());
+	}
+
+	@Test
+	void completeExamBookletCanBeViewedButNotActivatedForCapture(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		assertNotNull(booklet);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+
+		// Establish a persisted COMPLETE Exam.
+		persistHistoricalCompleteState(database, booklet.getExam());
+
+		// Open the authoritative Exam/Assets workflow with
+		// the completed Exam and its booklet selected.
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "showExamAssetsMode", new Class<?>[] { Exam.class, ExamBooklet.class, Runnable.class },
+					booklet.getExam(), booklet, (Runnable) () -> {
+					});
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitForFxEvents();
+		ExamAssetsPane assets = field(application, "examAssetsPane", ExamAssetsPane.class);
+		RadioButton selection = lookup(robot, "#exam-assets-question-select-" + booklet.getId(), RadioButton.class);
+		Button useSelected = lookup(robot, "#exam-assets-use-selected-booklet", Button.class);
+		Button view = lookup(robot, "#exam-assets-question-view-" + booklet.getId(), Button.class);
+		assertTrue(selection.isSelected());
+
+		// COMPLETE prevents capture activation but does not
+		// prevent selecting or viewing the source booklet.
+		assertTrue(useSelected.isDisabled());
+		assertFalse(view.isDisabled());
+		robot.interact(view::fire);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot,
+				() -> pdfWorkspace().getDisplayedDocument() == PdfWorkspacePane.DocumentMode.VIEWER));
+		assertNotNull(lookup(robot, "#exam-assets-workspace", Node.class));
+
+		// Bypass the disabled button deliberately to verify
+		// the handler itself also refuses capture activation.
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(assets, "useSelectedQuestionBookletForCapture", new Class<?>[0]);
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(PdfWorkspacePane.DocumentMode.VIEWER, pdfWorkspace().getDisplayedDocument());
+		assertNotNull(lookup(robot, "#exam-assets-workspace", Node.class));
+
+		// Reactivating the Exam restores normal capture access.
+		examWriter.setExamCaptureState(booklet.getExam(), ExamCaptureState.ACTIVE);
+		WaitForAsyncUtils.asyncFx(() -> {
+			assets.showForCorrection(booklet.getExam().getSubject(), booklet.getExam().getId(), booklet.getId());
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitForFxEvents();
+		Button reactivatedUseSelected = lookup(robot, "#exam-assets-use-selected-booklet", Button.class);
+		assertFalse(reactivatedUseSelected.isDisabled());
+		assertFalse(view.isDisabled());
+	}
+
+	@Test
+	void completeExamRemainsAccessibleAndStructuralEditingIsLocked(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Exam originalExam = examMetadataPane().getBooklet().getExam();
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+
+		// Establish a persisted COMPLETE Exam without relying on
+		// corpus-completion eligibility. It is the only Exam.
+		persistHistoricalCompleteState(database, originalExam);
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
+			return null;
+		}).get();
+		Node dashboardRoot = primaryStage.getScene().getRoot();
+
+		// Dashboard publication is asynchronous. Wait until the
+		// persisted COMPLETE Exam is displayed and selected,
+		// and the management action exists in the scene graph.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
+			Node tableNode = dashboardRoot.lookup("#corpus-dashboard-exams");
+			if (!(tableNode instanceof TableView<?> table) || table.getItems().size() != 1) {
+				return false;
+			}
+			if (!(table.getItems().getFirst() instanceof ExamCorpusStatus status)) {
+				return false;
+			}
+			return status.exam().isComplete() && table.getSelectionModel().getSelectedItem() == status
+					&& dashboardRoot.lookup("#corpus-dashboard-manage-exam-assets") instanceof Button;
+		}));
+
+		// This action may be outside the visible ScrollPane
+		// viewport. Resolve it on the JavaFX thread.
+		Button manage = lookupOnFx(robot, dashboardRoot, "#corpus-dashboard-manage-exam-assets", Button.class);
+
+		// COMPLETE must not disable navigation to Exam/Assets.
+		assertFalse(manage.isDisabled());
+
+		// Activate the actual application control without
+		// depending on mouse position or visibility.
+		robot.interact(manage::fire);
+
+		// Wait for the resulting workspace to be mounted.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> nodePresentOnFx(robot, dashboardRoot, "#exam-assets-workspace"));
+		ComboBox<Exam> exams = comboBox(robot, "#exam-assets-exam");
+		Button edit = lookup(robot, "#exam-assets-edit", Button.class);
+		Button addQuestion = lookup(robot, "#exam-assets-add-question-booklet", Button.class);
+		Button addAnswer = lookup(robot, "#exam-assets-add-answer-booklet", Button.class);
+		Button addNew = lookup(robot, "#exam-assets-add-new-exam", Button.class);
+		assertEquals(originalExam.getId(), exams.getValue().getId());
+		assertTrue(exams.getValue().isComplete());
+
+		// The COMPLETE Exam remains inspectable, but all
+		// three structural modification actions are disabled.
+		assertTrue(edit.isDisabled());
+		assertTrue(addQuestion.isDisabled());
+		assertTrue(addAnswer.isDisabled());
+
+		// New Exam creation must remain available even when
+		// every previously persisted Exam is COMPLETE.
+		assertFalse(addNew.isDisabled());
+		robot.interact(addNew::fire);
+		ComboBox<String> provider = comboBox(robot, "#exam-assets-provider");
+		ComboBox<Integer> year = comboBox(robot, "#exam-assets-year");
+		ComboBox<String> assessment = comboBox(robot, "#exam-assets-assessment");
+		TextField expectedQuestions = lookup(robot, "#exam-assets-expected-question-booklets", TextField.class);
+		TextField expectedAnswers = lookup(robot, "#exam-assets-expected-answer-booklets", TextField.class);
+		Button saveNew = lookup(robot, "#exam-assets-new-exam-save", Button.class);
+		robot.interact(() -> {
+			provider.getEditor().setText("Sprint 22 Provider");
+			year.setValue(year.getItems().getFirst());
+			assessment.getEditor().setText("Sprint 22 Assessment");
+			expectedQuestions.setText("1");
+			expectedAnswers.setText("0");
+		});
+		assertFalse(saveNew.isDisabled());
+		robot.interact(saveNew::fire);
+
+		// Successful creation must return to the persisted
+		// Exam selector with the new ACTIVE Exam selected.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> exams.getItems().size() == 2 && exams.getValue() != null
+				&& exams.getValue().getId() != originalExam.getId());
+		Exam activeExam = exams.getValue();
+		assertFalse(activeExam.isComplete());
+		assertFalse(edit.isDisabled());
+		assertFalse(addQuestion.isDisabled());
+		assertFalse(addAnswer.isDisabled());
+
+		// Switching back to the original COMPLETE Exam must
+		// immediately restore the structural restrictions.
+		Exam completedExam = exams.getItems().stream().filter(exam -> exam.getId() == originalExam.getId()).findFirst()
+				.orElseThrow();
+		robot.interact(() -> exams.getSelectionModel().select(completedExam));
+		assertTrue(edit.isDisabled());
+		assertTrue(addQuestion.isDisabled());
+		assertTrue(addAnswer.isDisabled());
+
+		// Switching to an ACTIVE Exam must restore all
+		// normally available structural actions.
+		robot.interact(() -> exams.getSelectionModel().select(activeExam));
+		assertFalse(edit.isDisabled());
+		assertFalse(addQuestion.isDisabled());
+		assertFalse(addAnswer.isDisabled());
+
+		// Confirm the new Exam was actually persisted.
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		assertTrue(writer.findExamsForSubject(originalExam.getSubject()).stream()
+				.anyMatch(exam -> exam.getId() == activeExam.getId() && !exam.isComplete()));
 	}
 
 	@Test
