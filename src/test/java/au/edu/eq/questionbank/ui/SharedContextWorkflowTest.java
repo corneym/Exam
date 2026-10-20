@@ -63,6 +63,92 @@ import javafx.stage.Stage;
 class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 	@Test
+	void acceptedFirstQuestionRegionTogglesWithoutLosingLaterRegionsAndSavesContext(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		CheckBox sharedContext = lookup(robot, "#first-region-shared-context", CheckBox.class);
+		Label count = lookup(robot, "#question-region-count", Label.class);
+		Button save = lookup(robot, "#save-question", Button.class);
+		VBox previewBox = field(questionCapturePane(), "regionPreviewBox", VBox.class);
+		robot.interact(() -> {
+			questionCode.setText("41a");
+			marks.setText("2");
+		});
+
+		// Capture three different source rectangles in A, B, C order.
+		double[][] positions = { { 0.10, 0.10 }, { 0.35, 0.15 }, { 0.60, 0.20 } };
+		for (double[] position : positions) {
+			robot.interact(() -> questionCapturePane().acceptSelection(new PdfWorkspacePane.RegionSelection(
+					PdfWorkspacePane.DocumentMode.EXAM, 1, position[0], position[1], 0.20, 0.15)));
+			fireControl(robot, "#add-question-region");
+		}
+		assertEquals("Content parts: 3", count.getText());
+		assertEquals(3, previewBox.getChildren().size());
+		assertFalse(sharedContext.isSelected());
+
+		// A becomes Shared Context. B and C remain ordinary content.
+		fireControl(robot, sharedContext);
+		assertTrue(sharedContext.isSelected());
+		assertEquals("Content parts: 2", count.getText());
+		assertEquals(3, previewBox.getChildren().size());
+		assertEquals("question-shared-context-preview", previewBox.getChildren().get(0).getId());
+		assertEquals("question-content-part-0", previewBox.getChildren().get(1).getId());
+		assertEquals("question-content-part-1", previewBox.getChildren().get(2).getId());
+		assertEquals(List.of(0.35, 0.60), pendingQuestionRegionsForTest().stream().map(QuestionRegion::x).toList());
+
+		// Unticking restores A as the first Question region.
+		fireControl(robot, sharedContext);
+		assertFalse(sharedContext.isSelected());
+		assertEquals("Content parts: 3", count.getText());
+		assertEquals(3, previewBox.getChildren().size());
+		assertEquals(List.of(0.10, 0.35, 0.60),
+				pendingQuestionRegionsForTest().stream().map(QuestionRegion::x).toList());
+
+		// Repeat both transitions. Neither may duplicate or lose A.
+		for (int repetition = 0; repetition < 3; repetition++) {
+			fireControl(robot, sharedContext);
+			assertTrue(sharedContext.isSelected());
+			assertEquals("Content parts: 2", count.getText());
+			assertEquals(List.of(0.35, 0.60), pendingQuestionRegionsForTest().stream().map(QuestionRegion::x).toList());
+			fireControl(robot, sharedContext);
+			assertFalse(sharedContext.isSelected());
+			assertEquals("Content parts: 3", count.getText());
+			assertEquals(List.of(0.10, 0.35, 0.60),
+					pendingQuestionRegionsForTest().stream().map(QuestionRegion::x).toList());
+		}
+
+		// Persist with A finally classified as Shared Context.
+		fireControl(robot, sharedContext);
+		assertEquals("Content parts: 2", count.getText());
+		assertFalse(save.isDisabled());
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		fireControl(robot, save);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findAll().stream().anyMatch(q -> "41a".equals(q.getQuestionCode())));
+		Question restored = repository.findAll().stream().filter(q -> "41a".equals(q.getQuestionCode())).findFirst()
+				.orElseThrow();
+		assertTrue(restored.hasSharedContext());
+		assertEquals(SharedContextStatus.PRESENT, restored.getSourceQuestion().getSharedContextStatus());
+		assertEquals(1, restored.getSharedContext().getRegions().size());
+		SharedQuestionContextRegion savedA = restored.getSharedContext().getRegions().getFirst();
+		assertEquals(1, savedA.pageNumber());
+		assertEquals(0.10, savedA.x());
+		assertEquals(0.10, savedA.y());
+		assertEquals(0.20, savedA.width());
+		assertEquals(0.15, savedA.height());
+
+		// B and C retain their original geometry and order.
+		assertEquals(2, restored.getRegions().size());
+		assertEquals(List.of(0.35, 0.60), restored.getRegions().stream().map(QuestionRegion::x).toList());
+		assertEquals(List.of(0.15, 0.20), restored.getRegions().stream().map(QuestionRegion::y).toList());
+		assertTrue(restored.getRegions().stream()
+				.allMatch(region -> region.booklet().getId() == restored.getBooklet().getId()));
+		assertEquals(1, new SqliteSharedQuestionContextRepository(new SqliteDatabase(databasePath))
+				.findByBooklet(restored.getBooklet()).size());
+	}
+
+	@Test
 	void acceptedQuestionContentShowsSharedContextBeforeQuestionParts(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
@@ -107,6 +193,71 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// the Question pane is the stable layout invariant.
 		assertTrue(acceptedBounds.getMaxY() <= questionBounds.getMaxY() + 0.5,
 				"Accepted Question content must remain inside the Question pane");
+	}
+
+	@Test
+	void acceptedSharedContextTogglesBackToFirstQuestionRegionAndSavesWithoutContext(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		CheckBox sharedContext = lookup(robot, "#first-region-shared-context", CheckBox.class);
+		Label count = lookup(robot, "#question-region-count", Label.class);
+		Button save = lookup(robot, "#save-question", Button.class);
+		VBox previewBox = field(questionCapturePane(), "regionPreviewBox", VBox.class);
+		robot.interact(() -> {
+			questionCode.setText("42a");
+			marks.setText("2");
+		});
+
+		// Select Shared Context before capturing region A.
+		fireControl(robot, sharedContext);
+		assertTrue(sharedContext.isSelected());
+		robot.interact(() -> questionCapturePane().acceptSharedContextSelection(
+				new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM, 1, 0.10, 0.10, 0.20, 0.15)));
+		fireControl(robot, "#add-question-region");
+		assertEquals("Content parts: 0", count.getText());
+		assertEquals("question-shared-context-preview", previewBox.getChildren().getFirst().getId());
+		assertTrue(save.isDisabled());
+
+		// Capture subsequent Question regions B and C.
+		double[][] positions = { { 0.35, 0.15 }, { 0.60, 0.20 } };
+		for (double[] position : positions) {
+			robot.interact(() -> questionCapturePane().acceptSelection(new PdfWorkspacePane.RegionSelection(
+					PdfWorkspacePane.DocumentMode.EXAM, 1, position[0], position[1], 0.20, 0.15)));
+			fireControl(robot, "#add-question-region");
+		}
+		assertEquals("Content parts: 2", count.getText());
+		assertEquals(3, previewBox.getChildren().size());
+
+		// Removing Shared Context must restore A before B and C.
+		fireControl(robot, sharedContext);
+		assertFalse(sharedContext.isSelected());
+		assertEquals("Content parts: 3", count.getText());
+		assertEquals(3, previewBox.getChildren().size());
+		assertEquals(List.of(0.10, 0.35, 0.60),
+				pendingQuestionRegionsForTest().stream().map(QuestionRegion::x).toList());
+		for (int index = 0; index < 3; index++) {
+			assertEquals("question-content-part-" + index, previewBox.getChildren().get(index).getId());
+		}
+		assertFalse(save.isDisabled());
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		fireControl(robot, save);
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findAll().stream().anyMatch(q -> "42a".equals(q.getQuestionCode())));
+		Question restored = repository.findAll().stream().filter(q -> "42a".equals(q.getQuestionCode())).findFirst()
+				.orElseThrow();
+		assertTrue(restored.hasSourceQuestion());
+		assertFalse(restored.hasSharedContext());
+		assertEquals(SharedContextStatus.NONE, restored.getSourceQuestion().getSharedContextStatus());
+		assertEquals(3, restored.getRegions().size());
+		assertEquals(List.of(0.10, 0.35, 0.60), restored.getRegions().stream().map(QuestionRegion::x).toList());
+		assertEquals(List.of(0.10, 0.15, 0.20), restored.getRegions().stream().map(QuestionRegion::y).toList());
+		assertTrue(restored.getRegions().stream()
+				.allMatch(region -> region.booklet().getId() == restored.getBooklet().getId()));
+
+		// No abandoned Shared Context must have reached persistence.
+		assertTrue(new SqliteSharedQuestionContextRepository(new SqliteDatabase(databasePath))
+				.findByBooklet(restored.getBooklet()).isEmpty());
 	}
 
 	@Test
@@ -1489,6 +1640,11 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Button save = lookup(robot, "#save-shared-context", Button.class);
 		assertTrue(save.isVisible());
 		assertEquals("Save and Link Context", save.getText());
+	}
+
+	@SuppressWarnings("unchecked")
+	private List<QuestionRegion> pendingQuestionRegionsForTest() throws Exception {
+		return (List<QuestionRegion>) invoke(questionCapturePane(), "pendingQuestionRegions", new Class<?>[0]);
 	}
 
 	private Question searchResultQuestion(Object result) {
