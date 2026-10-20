@@ -36,6 +36,7 @@ import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteReadProbe;
 
 class SqliteQuestionCaptureServiceTest {
 
@@ -45,9 +46,7 @@ class SqliteQuestionCaptureServiceTest {
 	@Test
 	void changedStoredStateIsDetectedByScopedLookup() throws Exception {
 		Fixture fixture = createFixture("scoped-state-change.db");
-
 		SqliteQuestionCaptureService service = new SqliteQuestionCaptureService(fixture.database());
-
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(fixture.database());
 
 		// The Question code is initially available.
@@ -69,7 +68,6 @@ class SqliteQuestionCaptureServiceTest {
 		// Excluding an unrelated identity cannot conceal
 		// the newly persisted duplicate.
 		assertTrue(service.hasConflictingQuestionCode(fixture.booklet(), "Q17", inserted.getId() + 1));
-
 		assertEquals(1, repository.findAll().size());
 	}
 
@@ -95,11 +93,8 @@ class SqliteQuestionCaptureServiceTest {
 
 	@Test
 	void concurrentInsertAfterValidationCannotDuplicateQuestionCode() throws Exception {
-
 		Fixture fixture = createFixture("concurrent-code-conflict.db");
-
 		SqliteQuestionCaptureService service = new SqliteQuestionCaptureService(fixture.database());
-
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(fixture.database());
 
 		// The first operation checks that the code is free.
@@ -121,7 +116,6 @@ class SqliteQuestionCaptureServiceTest {
 		// The unsuccessful transaction must neither replace
 		// the winning Question nor create another Question.
 		List<Question> persisted = repository.findAll();
-
 		assertEquals(1, persisted.size());
 		assertEquals(winner.getId(), persisted.getFirst().getId());
 		assertEquals("Q18", persisted.getFirst().getQuestionCode());
@@ -609,37 +603,23 @@ class SqliteQuestionCaptureServiceTest {
 
 	@Test
 	void scopedDuplicateCodeLookupExcludesOnlySelectedQuestion() throws Exception {
-
 		Fixture fixture = createFixture("scoped-code-edit.db");
-
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(fixture.database());
-
 		SqliteQuestionCaptureService service = new SqliteQuestionCaptureService(fixture.database());
-
 		Question first = repository.save(fixture.booklet(), "Q1", "", 1, List.of(), fixture.classification(), false);
-
 		Question second = repository.save(fixture.booklet(), "Q2", "", 1, List.of(), fixture.classification(), false);
-
 		assertFalse(service.hasConflictingQuestionCode(fixture.booklet(), "Q1", first.getId()));
-
 		assertTrue(service.hasConflictingQuestionCode(fixture.booklet(), "Q2", first.getId()));
-
 		assertTrue(service.hasConflictingQuestionCode(fixture.booklet(), "Q1", second.getId()));
-
 		assertFalse(service.hasConflictingQuestionCode(fixture.booklet(), "Q2", second.getId()));
 	}
 
 	@Test
 	void scopedDuplicateCodeLookupReadsCurrentStoredState() throws Exception {
-
 		Fixture fixture = createFixture("scoped-code-check.db");
-
 		SqliteQuestionCaptureService service = new SqliteQuestionCaptureService(fixture.database());
-
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(fixture.database());
-
 		assertFalse(service.hasConflictingQuestionCode(fixture.booklet(), "Q7", null));
-
 		Question saved = repository.save(fixture.booklet(), "Q7", "", 1, List.of(), fixture.classification(), false);
 
 		// The query must observe persistence performed after the
@@ -648,24 +628,55 @@ class SqliteQuestionCaptureServiceTest {
 
 		// An edit may retain its own code.
 		assertFalse(service.hasConflictingQuestionCode(fixture.booklet(), "Q7", saved.getId()));
-
 		assertFalse(service.hasConflictingQuestionCode(fixture.booklet(), "Q8", null));
 	}
 
 	@Test
 	void scopedDuplicateCodeLookupRejectsInvalidArguments() throws Exception {
-
 		Fixture fixture = createFixture("scoped-code-arguments.db");
-
 		SqliteQuestionCaptureService service = new SqliteQuestionCaptureService(fixture.database());
-
 		assertThrows(NullPointerException.class, () -> service.hasConflictingQuestionCode(null, "Q1", null));
-
 		assertThrows(NullPointerException.class,
 				() -> service.hasConflictingQuestionCode(fixture.booklet(), null, null));
-
 		assertThrows(IllegalArgumentException.class,
 				() -> service.hasConflictingQuestionCode(fixture.booklet(), " ", null));
+	}
+
+	@Test
+	void sqliteProbeCountsScopedValidationPersistenceAndRefresh() throws Exception {
+		Fixture fixture = createFixture("save-sql-measurements.db");
+		SqliteQuestionCaptureService service = new SqliteQuestionCaptureService(fixture.database());
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(fixture.database());
+		SqliteReadProbe.Snapshot validation;
+		try (SqliteReadProbe probe = SqliteReadProbe.begin()) {
+			assertFalse(service.hasConflictingQuestionCode(fixture.booklet(), "Q91", null));
+			validation = probe.snapshot();
+		}
+		assertEquals(1, validation.connectionsOpened());
+		assertTrue(validation.executions() > 0);
+		assertEquals(0, validation.questionsReconstructed());
+		Question saved;
+		SqliteReadProbe.Snapshot persistence;
+		try (SqliteReadProbe probe = SqliteReadProbe.begin()) {
+			saved = service.save(SqliteQuestionCaptureService.Request.withContent(
+					SqliteQuestionCaptureService.Operation.NEW, fixture.booklet(), null, "Q91", 2,
+					List.of(new PdfQuestionContentPart(new QuestionRegion(fixture.booklet(), 1, 0.1, 0.1, 0.6, 0.2))),
+					fixture.classification(), QuestionResponseType.WRITTEN_RESPONSE, null, null, false));
+			persistence = probe.snapshot();
+		}
+		assertTrue(saved.getId() > 0);
+		assertEquals(1, persistence.connectionsOpened());
+		assertTrue(persistence.executions() > 0);
+		SqliteReadProbe.Snapshot refresh;
+		try (SqliteReadProbe probe = SqliteReadProbe.begin()) {
+			List<Question> questions = repository.findAll();
+			assertEquals(1, questions.size());
+			assertEquals(saved.getId(), questions.getFirst().getId());
+			refresh = probe.snapshot();
+		}
+		assertEquals(1, refresh.connectionsOpened());
+		assertTrue(refresh.executions() > 0);
+		assertEquals(1, refresh.questionsReconstructed());
 	}
 
 	private Fixture createFixture(String databaseName) throws Exception {

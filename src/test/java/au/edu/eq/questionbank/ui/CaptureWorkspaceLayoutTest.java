@@ -2504,44 +2504,74 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void questionSaveFailureClearsOverlayBeforeErrorDialog(FxRobot robot) throws Exception {
+	void questionSaveRefreshFailureClearsOverlayBeforeWarningDialog(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		stageQuestionForBusyTest(robot, "FAIL-119");
 		CountDownLatch readStarted = new CountDownLatch(1);
 		CountDownLatch releaseRead = new CountDownLatch(1);
-		installControlledQuestionRead(readStarted, releaseRead, true);
+		AtomicInteger reads = installControlledQuestionRead(readStarted, releaseRead, true);
 		ApplicationBusyOverlay overlay = (ApplicationBusyOverlay) primaryStage.getScene().getRoot();
 		Node shield = overlay.lookup("#workspace-busy-overlay");
 		Button save = lookup(robot, "#save-question", Button.class);
 		try {
 			fireControl(robot, save);
+
+			// The only full-corpus read now occurs after commit.
 			assertTrue(readStarted.await(5, TimeUnit.SECONDS));
 			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> evaluateOnFx(robot, shield::isVisible));
 			assertTrue(evaluateOnFx(robot, overlay::isBusy));
 		} finally {
 			releaseRead.countDown();
 		}
-
-		// The background repository read now fails. Wait for the
-		// actual error dialog rather than a transient busy flag.
-		AtomicReference<DialogPane> error = new AtomicReference<>();
+		AtomicReference<DialogPane> warning = new AtomicReference<>();
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
-			error.set(questionSaveErrorDialog(robot));
-			return error.get() != null;
+			robot.interact(() -> {
+				for (Window window : Window.getWindows()) {
+					if (!window.isShowing() || window.getScene() == null) {
+						continue;
+					}
+					Node root = window.getScene().getRoot();
+					DialogPane dialog = root instanceof DialogPane pane ? pane
+							: root.lookup(".dialog-pane") instanceof DialogPane pane ? pane : null;
+					if (dialog != null
+							&& "Question saved; lists could not be fully refreshed.".equals(dialog.getHeaderText())) {
+						warning.set(dialog);
+						break;
+					}
+				}
+			});
+			return warning.get() != null;
 		});
-		assertEquals("Question could not be saved.", error.get().getHeaderText());
 
-		// Controls must be restored before the modal dialog appears.
+		// The overlay must be dismissed before the warning appears.
 		assertFalse(evaluateOnFx(robot, overlay::isBusy));
 		assertFalse(evaluateOnFx(robot, shield::isVisible));
 		assertFalse(evaluateOnFx(robot, questionCapturePane()::isDisabled));
 		assertFalse(evaluateOnFx(robot, questionCapturePane()::isSaveInProgress));
-		Button ok = (Button) error.get().lookupButton(ButtonType.OK);
-		robot.interact(ok::fire);
+		assertEquals(1, reads.get());
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
-		assertFalse(repository.findAll().stream().anyMatch(q -> "FAIL-119".equals(q.getQuestionCode())));
+		List<Question> savedQuestions = repository.findAll().stream()
+				.filter(question -> "FAIL-119".equals(question.getQuestionCode())).toList();
+
+		// The Question committed before the injected refresh failure.
+		assertEquals(1, savedQuestions.size());
+		long savedId = savedQuestions.getFirst().getId();
+		String warningText = warning.get().getContentText();
+		assertTrue(warningText.contains("ID " + savedId));
+		assertTrue(warningText.contains("Do not save it again"));
+		Button ok = (Button) warning.get().lookupButton(ButtonType.OK);
+		robot.interact(ok::fire);
+		WaitForAsyncUtils.waitForFxEvents();
+		Label status = lookup(robot, "#question-save-status", Label.class);
+		assertTrue(status.getText().contains("Saved FAIL-119"));
+		assertTrue(status.getText().contains("list refresh failed"));
+
+		// Normal successful-save cleanup must have occurred despite
+		// the failed post-commit refresh.
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
-		assertEquals("FAIL-119", questionCode.getText());
+		assertEquals("", questionCode.getText());
+		assertEquals(1, repository.findAll().stream().filter(question -> "FAIL-119".equals(question.getQuestionCode()))
+				.count());
 	}
 
 	@Test
@@ -2559,14 +2589,14 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 			fireControl(robot, save);
 			assertTrue(readStarted.await(5, TimeUnit.SECONDS));
 
-			// Saving must protect the application before the
-			// delayed visual spinner has appeared.
+			// Logical busy protection starts before the delayed
+			// visual overlay becomes visible.
 			assertTrue(evaluateOnFx(robot, overlay::isBusy));
 			assertTrue(evaluateOnFx(robot, save::isDisabled));
 			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> evaluateOnFx(robot, shield::isVisible));
 			assertEquals("Saving Question...", message.getText());
 
-			// An attempted second activation cannot initiate another save.
+			// A second activation cannot start another save.
 			robot.interact(save::fire);
 			assertEquals(1, reads.get());
 		} finally {
@@ -2574,11 +2604,15 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		}
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> repository.findAll().stream().anyMatch(q -> "BUSY-119".equals(q.getQuestionCode()))
+				() -> repository.findAll().stream().anyMatch(question -> "BUSY-119".equals(question.getQuestionCode()))
 						&& evaluateOnFx(robot, () -> !overlay.isBusy()));
-		long savedCount = repository.findAll().stream().filter(q -> "BUSY-119".equals(q.getQuestionCode())).count();
+		long savedCount = repository.findAll().stream()
+				.filter(question -> "BUSY-119".equals(question.getQuestionCode())).count();
 		assertEquals(1L, savedCount);
-		assertEquals(2, reads.get());
+
+		// Issue #149 removed the pre-save full-corpus read.
+		// The sole intercepted read is the post-save refresh.
+		assertEquals(1, reads.get());
 		assertFalse(evaluateOnFx(robot, shield::isVisible));
 		assertFalse(evaluateOnFx(robot, questionCapturePane()::isSaveInProgress));
 		assertFalse(evaluateOnFx(robot, questionCapturePane()::isDisabled));

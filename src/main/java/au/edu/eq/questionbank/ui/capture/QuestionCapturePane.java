@@ -1684,101 +1684,79 @@ public final class QuestionCapturePane extends VBox {
 
 	private void completeQuestionSave(QuestionSaveResult result, boolean editing, boolean imported,
 			int previousImportedIndex, boolean hadStoredContent) {
-
 		completionQuestions = result.questions();
 		Runnable completedHandler = null;
-
 		try {
 			if (result.validationError() != null) {
 				saveStatusLabel.setText("Question not saved — check question details");
-
 				finishQuestionSaveBusy();
-
 				showAlert(Alert.AlertType.WARNING, "Question could not be saved.", result.validationError());
-
 				return;
 			}
 
-			// A non-null Question means the persistence service returned
-			// successfully after committing the transaction.
+			// A non-null Question means persistence returned after commit.
 			Question question = result.question();
-
 			try {
 				questionsChangedHandler.accept(result.questions());
-
 				if (editing) {
 					completedHandler = finishQuestionEditState();
 				} else {
 					if (imported) {
 						completedHandler = takeImportedCaptureCompletion(question);
 					}
-
 					resetAfterQuestionSave(previousImportedIndex);
 				}
-
 				String action = "Saved";
-
 				if (editing) {
 					action = "Updated";
 				} else if (imported) {
 					action = hadStoredContent ? "Resolved" : "Captured";
 				}
-
 				showSavedQuestionStatus(action, question);
+				if (result.refreshFailure() != null) {
+					saveStatusLabel.setText("Saved " + question.getQuestionCode() + " — list refresh failed");
+					finishQuestionSaveBusy();
+					showAlert(Alert.AlertType.WARNING, "Question saved; lists could not be fully refreshed.",
+							"Question " + question.getQuestionCode() + " was saved with ID " + question.getId()
+									+ ".\n\n" + "Do not save it again. "
+									+ "Reopen capture to reload the question lists.");
+				}
 
+				// Preserve the established callback contract:
+				// completion handlers run only after the save
+				// transition and busy overlay have finished.
+				finishQuestionSaveBusy();
+				completionQuestions = null;
+				if (completedHandler != null) {
+					completedHandler.run();
+				}
 			} catch (RuntimeException publicationFailure) {
 
-				// The Question has already committed. Prevent the
-				// original capture from being submitted a second time.
-				// The existing queues cannot be trusted after a
-				// partially completed publication.
+				// SQLite persistence has already committed.
+				// Disable the existing capture so it cannot be
+				// submitted again after partial UI publication.
 				newQuestionCaptureActive = false;
 				importedCaptureMode = false;
 				editingQuestion = null;
 				importedQuestion = null;
-
 				questionWorkBox.setDisable(true);
 				saveQuestionButton.setDisable(true);
 				cancelQuestionEditButton.setDisable(true);
-
 				saveStatusLabel.setText("Saved " + question.getQuestionCode() + " (ID " + question.getId()
 						+ ") — workspace refresh failed");
-
-				// Dismiss the shared busy overlay before displaying
-				// the modal warning.
 				finishQuestionSaveBusy();
-
 				showAlert(Alert.AlertType.WARNING, "Question saved; workspace refresh failed.",
 						"Question " + question.getQuestionCode() + " was saved successfully with ID " + question.getId()
 								+ ".\n\n" + "The capture workspace could not be " + "fully updated.\n"
 								+ "Do not save this Question again.\n" + "Return to the Dashboard and reopen "
 								+ "capture to reload the stored Questions.");
-
-				return;
 			}
-
-			if (result.refreshFailure() != null) {
-				saveStatusLabel.setText("Saved " + question.getQuestionCode() + " — list refresh failed");
-
-				// Persistence committed even though the subsequent
-				// corpus retrieval failed. Do not offer a save retry.
-				finishQuestionSaveBusy();
-
-				showAlert(Alert.AlertType.WARNING, "Question saved; lists could not be fully refreshed.",
-						"Question " + question.getQuestionCode() + " was saved with ID " + question.getId() + ".\n\n"
-								+ "Do not save it again. " + "Reopen capture to reload the question lists.");
-			}
-
 		} finally {
 			try {
 				finishQuestionSaveBusy();
 			} finally {
 				completionQuestions = null;
 			}
-		}
-
-		if (completedHandler != null) {
-			completedHandler.run();
 		}
 	}
 
@@ -2152,7 +2130,6 @@ public final class QuestionCapturePane extends VBox {
 		// The worker uses this only for validation rejection and
 		// post-commit refresh recovery, never for stored-state validation.
 		List<Question> fallbackSnapshot = List.copyOf(beforeSaveSnapshot);
-
 		return new CaptureBackgroundTask<>(() -> persistQuestionCapture(request, fallbackSnapshot, parentOperationId));
 	}
 
@@ -2737,6 +2714,29 @@ public final class QuestionCapturePane extends VBox {
 		measureQuestionCodePhase(name, parentOperationId, _ -> action.run());
 	}
 
+	private <T> T measureQuestionSaveSql(String phase, Supplier<T> action) {
+		Objects.requireNonNull(phase, "phase");
+		Objects.requireNonNull(action, "action");
+		if (!Boolean.getBoolean("eqb.performance.sql.enabled")) {
+			return action.get();
+		}
+		SqliteReadProbe probe = SqliteReadProbe.begin();
+		try (probe) {
+			return action.get();
+		} finally {
+			SqliteReadProbe.Snapshot snapshot = probe.snapshot();
+
+			// Report JDBC executions rather than assuming each execute
+			// corresponds to exactly one SQL statement.
+			System.out.printf(
+					"QUESTION_SAVE_SQL phase=%s connections=%d " + "executions=%d rows=%d questions=%d "
+							+ "connection_ms=%.3f sql_ms=%.3f%n",
+					phase, snapshot.connectionsOpened(), snapshot.executions(), snapshot.rowsRead(),
+					snapshot.questionsReconstructed(), snapshot.connectionOpenNanos() / 1_000_000.0,
+					snapshot.executionNanos() / 1_000_000.0);
+		}
+	}
+
 	private void moveContentPart(int contentIndex, int offset) {
 		int targetIndex = contentIndex + offset;
 		if (contentIndex < 0 || contentIndex >= pendingContentParts.size() || targetIndex < 0
@@ -2922,49 +2922,37 @@ public final class QuestionCapturePane extends VBox {
 	// the complete Question corpus once after a successful commit.
 	private QuestionSaveResult persistQuestionCapture(SqliteQuestionCaptureService.Request request,
 			List<Question> beforeSaveSnapshot, long parentOperationId) {
-
 		String validationError;
-
 		try (PerformanceOperation validationOperation = performanceRecorder.start("capture.question.save.validate",
 				parentOperationId)) {
-			try {
-				// Retain the existing diagnostic name for comparison
-				// with the pre-optimisation full-corpus read.
-				// This phase now performs only scoped authoritative queries.
-				try (PerformanceOperation readOperation = performanceRecorder.start("capture.question.save.read-before",
-						validationOperation.id())) {
-					try {
-						validationError = validateStoredQuestion(request);
+			try (PerformanceOperation readOperation = performanceRecorder.start("capture.question.save.read-before",
+					validationOperation.id())) {
+				try {
+					validationError = measureQuestionSaveSql("validate", () -> validateStoredQuestion(request));
 
-						// No complete Questions are reconstructed here.
-						readOperation.resultCount(0);
-					} catch (RuntimeException | Error failure) {
-						readOperation.failed();
-						throw failure;
-					}
-				}
-
-				if (validationError != null) {
+					// No full Question reconstruction is required
+					// for scoped pre-save validation.
+					readOperation.resultCount(0);
+				} catch (RuntimeException | Error failure) {
+					readOperation.failed();
 					validationOperation.failed();
-				} else {
-					validationOperation.resultCount(1);
+					throw failure;
 				}
-			} catch (RuntimeException | Error failure) {
+			}
+			if (validationError != null) {
 				validationOperation.failed();
-				throw failure;
+			} else {
+				validationOperation.resultCount(1);
 			}
 		}
-
 		if (validationError != null) {
 			return new QuestionSaveResult(null, beforeSaveSnapshot, validationError, null);
 		}
-
 		Question saved;
-
 		try (PerformanceOperation persistenceOperation = performanceRecorder.start("capture.question.save.persist",
 				parentOperationId)) {
 			try {
-				saved = questionCaptureService.save(request);
+				saved = measureQuestionSaveSql("persist", () -> questionCaptureService.save(request));
 				persistenceOperation.resultCount(1);
 			} catch (RuntimeException | Error failure) {
 				persistenceOperation.failed();
@@ -2972,28 +2960,22 @@ public final class QuestionCapturePane extends VBox {
 			}
 		}
 
-		// The transaction has committed if save() returned successfully.
-		// A subsequent refresh failure must not become a save failure.
+		// A successful return from save() establishes that
+		// the transaction committed.
 		try (PerformanceOperation refreshOperation = performanceRecorder.start("capture.question.save.refresh",
 				parentOperationId)) {
 			try {
-				List<Question> refreshed = questionRepository.findAll();
+				List<Question> refreshed = measureQuestionSaveSql("refresh", questionRepository::findAll);
 				refreshOperation.resultCount(refreshed.size());
-
 				return new QuestionSaveResult(saved, refreshed, null, null);
-
 			} catch (RuntimeException refreshFailure) {
 				refreshOperation.failed();
 
-				// The pre-existing UI snapshot is only a recovery fallback.
-				// Replace this Question by its committed identity; the UI
-				// must warn that unrelated queue entries may be stale.
+				// The transaction already committed. A failed refresh
+				// must not be presented as an unsuccessful save.
 				List<Question> fallback = new ArrayList<>(beforeSaveSnapshot);
-
 				fallback.removeIf(question -> question.getId() == saved.getId());
-
 				fallback.add(saved);
-
 				return new QuestionSaveResult(saved, List.copyOf(fallback), null, refreshFailure);
 			}
 		}
@@ -3435,19 +3417,15 @@ public final class QuestionCapturePane extends VBox {
 
 	private void saveQuestion() {
 		Integer marks = QuestionCaptureValidator.parsePositiveMarks(marksField.getText());
-
 		if (marks == null) {
 			showAlert(Alert.AlertType.WARNING, "Question is incomplete.", "Marks must be a positive whole number.");
 			return;
 		}
-
 		int previousImportedIndex = -1;
 		boolean hadStoredContent = false;
 		Question existingQuestion = null;
-
 		boolean editing = editingQuestion != null;
 		boolean imported = importedQuestion != null;
-
 		if (editing) {
 			existingQuestion = editingQuestion;
 		} else if (imported) {
@@ -3455,7 +3433,6 @@ public final class QuestionCapturePane extends VBox {
 			previousImportedIndex = selectedImportedQuestionIndex();
 			hadStoredContent = !importedQuestion.getContentParts().isEmpty();
 		}
-
 		SqliteQuestionCaptureService.Request request = SqliteQuestionCaptureService.Request.withContent(
 				captureOperation(), bookletSupplier.get(), existingQuestion, questionCodeField.getText().trim(), marks,
 				List.copyOf(pendingContentParts), curriculumSelectionModel.getClassification(), selectedResponseType(),
@@ -3465,44 +3442,32 @@ public final class QuestionCapturePane extends VBox {
 		// This snapshot belongs to the FX thread. It is used only if
 		// the worker cannot publish a new authoritative corpus.
 		List<Question> beforeSaveSnapshot = List.copyOf(questionSnapshot);
-
 		int savedPreviousImportedIndex = previousImportedIndex;
 		boolean savedHadStoredContent = hadStoredContent;
-
 		PerformanceOperation operation = performanceRecorder.start("capture.question.save");
-
 		try {
 			beginQuestionSaveBusy();
-
 			saveStatusLabel.setText("Saving " + request.questionCode() + "...");
-
 			Task<QuestionSaveResult> saveTask = createQuestionSaveTask(request, beforeSaveSnapshot, operation.id());
-
 			saveTask.setOnSucceeded(_ -> {
 				try {
 					QuestionSaveResult result = saveTask.getValue();
-
 					if (result.validationError() != null) {
 						operation.failed();
 					}
-
 					try (PerformanceOperation publication = performanceRecorder.start("capture.question.save.publish",
 							operation.id())) {
 						try {
 							completeQuestionSave(result, editing, imported, savedPreviousImportedIndex,
 									savedHadStoredContent);
-
 							publication.resultCount(result.question() == null ? 0 : 1);
-
 						} catch (RuntimeException | Error failure) {
 							publication.failed();
 							operation.failed();
 							throw failure;
 						}
 					}
-
 					operation.resultCount(result.question() == null ? 0 : 1);
-
 				} catch (RuntimeException | Error failure) {
 					operation.failed();
 					throw failure;
@@ -3514,24 +3479,19 @@ public final class QuestionCapturePane extends VBox {
 					}
 				}
 			});
-
 			saveTask.setOnFailed(_ -> {
 				operation.failed();
-
 				try {
 					saveStatusLabel.setText("Save failed — current question retained");
 					finishQuestionSaveBusy();
 				} finally {
 					operation.close();
 				}
-
 				showAlert(Alert.AlertType.ERROR, "Question could not be saved.", "The question was not saved. "
 						+ "Your current question details and " + "accepted content have been retained.");
 			});
-
 			saveTask.setOnCancelled(_ -> {
 				operation.failed();
-
 				try {
 					saveStatusLabel.setText("Save cancelled — current question retained");
 					finishQuestionSaveBusy();
@@ -3539,21 +3499,16 @@ public final class QuestionCapturePane extends VBox {
 					operation.close();
 				}
 			});
-
 			Thread saveThread = new Thread(saveTask, "question-save");
-
 			saveThread.setDaemon(true);
 			saveThread.start();
-
 		} catch (RuntimeException | Error failure) {
 			operation.failed();
-
 			try {
 				finishQuestionSaveBusy();
 			} finally {
 				operation.close();
 			}
-
 			throw failure;
 		}
 	}
@@ -4159,21 +4114,15 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private String validateStoredQuestion(SqliteQuestionCaptureService.Request request) {
-
 		if (request.operation() != SqliteQuestionCaptureService.Operation.IMPORTED) {
-
 			Long excludedQuestionId = request.existingQuestion() == null ? null : request.existingQuestion().getId();
-
 			boolean duplicate = questionCaptureService.hasConflictingQuestionCode(request.booklet(),
 					request.questionCode(), excludedQuestionId);
-
 			if (duplicate) {
 				return "Question " + request.questionCode() + " already exists for this booklet.";
 			}
 		}
-
 		String sourceCode = SourceQuestionCodeParser.derive(request.questionCode());
-
 		SourceQuestion source = sourceCode == null ? null
 				: sourceQuestionRepository.findByBookletAndCode(request.booklet(), sourceCode).orElse(null);
 
@@ -4181,13 +4130,10 @@ public final class QuestionCapturePane extends VBox {
 		// introduced by #140. It rejects inconsistent sibling
 		// Shared Context links without reading unrelated Questions.
 		SharedQuestionContext storedContext = source == null ? null : findSharedContextForSourceQuestion(source);
-
 		boolean contextAvailable = request.selectedSharedContext() != null || request.pendingSharedContext() != null
 				|| storedContext != null;
-
 		boolean unresolved = request.existingQuestion() != null
 				&& request.existingQuestion().isSharedContextUnresolved();
-
 		return sharedContextValidationError(sourceCode, source, unresolved, contextAvailable);
 	}
 

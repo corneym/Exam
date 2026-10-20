@@ -164,14 +164,11 @@ public final class SqliteQuestionCaptureService {
 	 * @throws IllegalStateException    if the database query fails
 	 */
 	public boolean hasConflictingQuestionCode(ExamBooklet booklet, String questionCode, Long excludedQuestionId) {
-
 		Objects.requireNonNull(booklet, "booklet");
 		Objects.requireNonNull(questionCode, "questionCode");
-
 		if (questionCode.isBlank()) {
 			throw new IllegalArgumentException("Question code must not be blank");
 		}
-
 		String sql = """
 				SELECT 1
 				FROM questions
@@ -180,13 +177,10 @@ public final class SqliteQuestionCaptureService {
 				  AND (? IS NULL OR id <> ?)
 				LIMIT 1
 				""";
-
 		try (Connection connection = database.openConnection();
 				PreparedStatement statement = connection.prepareStatement(sql)) {
-
 			statement.setLong(1, booklet.getId());
 			statement.setString(2, questionCode);
-
 			if (excludedQuestionId == null) {
 				statement.setNull(3, Types.BIGINT);
 				statement.setNull(4, Types.BIGINT);
@@ -194,11 +188,9 @@ public final class SqliteQuestionCaptureService {
 				statement.setLong(3, excludedQuestionId);
 				statement.setLong(4, excludedQuestionId);
 			}
-
 			try (ResultSet result = statement.executeQuery()) {
 				return result.next();
 			}
-
 		} catch (SQLException failure) {
 			throw new IllegalStateException("Could not check stored Question code", failure);
 		}

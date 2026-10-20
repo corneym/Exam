@@ -250,107 +250,126 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void committedQuestionIsNotReportedAsUnsavedWhenPublicationFails(FxRobot robot) throws Exception {
-
+	void committedQuestionIsNotReportedAsUnsavedWhenEditCompletionFails(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
+		Question original = captureQuestion(robot, "72");
+		QuestionCapturePane pane = questionCapturePane();
+		SqliteQuestionRepository stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		AtomicInteger completionAttempts = new AtomicInteger();
+		boolean[] editStarted = { false };
 
-		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		// The edit-completion callback executes only after the
+		// Question edit has been committed and published.
+		robot.interact(() -> editStarted[0] = pane.editQuestion(original, () -> {
+			completionAttempts.incrementAndGet();
+			throw new IllegalStateException("Injected edit-completion failure");
+		}));
+		assertTrue(editStarted[0]);
 
+		// Change persisted content to establish that an update,
+		// rather than a second insert, took place.
 		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		robot.interact(() -> marks.setText("3"));
+		fireControl(robot, "#save-question");
 
+		// A committed edit with a failed completion callback must
+		// show the committed-save warning, not an unsaved error.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("Question saved; workspace refresh failed.").tryQuery().isPresent());
+		Question persisted = stored.findById(original.getId()).orElseThrow();
+		assertEquals(original.getId(), persisted.getId());
+		assertEquals("72", persisted.getQuestionCode());
+		assertEquals(3, persisted.getMarks());
+		assertEquals(1, stored.findAll().size());
+		assertEquals(1, completionAttempts.get());
+		fireDialogButton(robot, "OK");
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> !pane.isSaveInProgress());
+		Label status = lookup(robot, "#question-save-status", Label.class);
+		assertTrue(status.getText().contains("Saved 72"));
+		assertTrue(status.getText().contains("ID " + original.getId()));
+		assertTrue(status.getText().contains("workspace refresh failed"));
+		Button save = lookup(robot, "#save-question", Button.class);
+		assertTrue(save.isDisabled());
+
+		// The failed completion handler must not be invoked
+		// again and the committed Question must not be resaved.
+		fireControl(robot, save);
+		assertEquals(1, stored.findAll().size());
+		assertEquals(1, completionAttempts.get());
+		assertEquals(3, stored.findById(original.getId()).orElseThrow().getMarks());
+	}
+
+	@Test
+	void committedQuestionIsNotReportedAsUnsavedWhenPublicationFails(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
 		robot.interact(() -> {
 			questionCode.setText("71");
 			marks.setText("1");
 		});
-
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-question-region");
-
 		QuestionCapturePane pane = questionCapturePane();
-
 		SqliteQuestionRepository stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
-
 		AtomicInteger publicationAttempts = new AtomicInteger();
 
 		// Inject a failure at the real post-commit publication
 		// boundary, not during validation or SQLite persistence.
-		setField(pane, "questionsChangedHandler", (java.util.function.Consumer<List<Question>>) questions -> {
+		setField(pane, "questionsChangedHandler", (java.util.function.Consumer<List<Question>>) _ -> {
 			publicationAttempts.incrementAndGet();
 			throw new IllegalStateException("Injected UI publication failure");
 		});
-
 		fireControl(robot, "#save-question");
 
 		// This warning proves that the worker reported a committed
 		// Question and that the publication recovery path executed.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("Question saved; workspace refresh failed.").tryQuery().isPresent());
-
 		List<Question> persisted = stored.findAll();
-
 		assertEquals(1, persisted.size());
 		assertEquals("71", persisted.getFirst().getQuestionCode());
 		assertEquals(1, persisted.getFirst().getRegions().size());
-
 		long savedId = persisted.getFirst().getId();
-
 		assertEquals(1, publicationAttempts.get());
-
 		fireDialogButton(robot, "OK");
-
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> !pane.isSaveInProgress());
-
 		Label status = lookup(robot, "#question-save-status", Label.class);
-
 		assertTrue(status.getText().contains("Saved 71"));
 		assertTrue(status.getText().contains("ID " + savedId));
 		assertTrue(status.getText().contains("workspace refresh failed"));
-
 		Button save = lookup(robot, "#save-question", Button.class);
-
 		assertTrue(save.isDisabled());
 
 		// Attempting to fire Save cannot insert a duplicate or
 		// repeat persistence after the committed-save warning.
 		fireControl(robot, save);
-
 		assertEquals(1, stored.findAll().size());
 		assertEquals(1, publicationAttempts.get());
 	}
 
 	@Test
 	void committedQuestionIsNotReportedAsUnsavedWhenRefreshFails(FxRobot robot) throws Exception {
-
 		prepareExamAndClassification(robot);
-
 		robot.interact(() -> {
 			lookup(robot, "#question-code", TextField.class).setText("29");
 			lookup(robot, "#question-marks", TextField.class).setText("1");
 		});
-
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-question-region");
-
 		QuestionCapturePane pane = field(application, "questionCapturePane", QuestionCapturePane.class);
-
 		AtomicInteger reads = new AtomicInteger();
-
 		SqliteQuestionRepository stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
-
 		setField(pane, "questionRepository", new InMemoryQuestionRepository() {
 
 			@Override
 			public List<Question> findAll() {
 				assertFalse(Platform.isFxApplicationThread());
-
 				reads.incrementAndGet();
-
 				throw new IllegalStateException("Simulated refresh failure after commit");
 			}
 		});
-
 		fireControl(robot, "#save-question");
-
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("Question saved; lists could not be fully refreshed.").tryQuery().isPresent());
 
@@ -358,15 +377,10 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// after the transaction committed.
 		assertEquals(1, reads.get());
 		assertEquals(1, stored.findAll().size());
-
 		fireDialogButton(robot, "OK");
-
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> !pane.isSaveInProgress());
-
 		assertEquals("", lookup(robot, "#question-code", TextField.class).getText());
-
 		assertTrue(lookup(robot, "#question-save-status", Label.class).getText().contains("list refresh failed"));
-
 		assertEquals(1, unansweredQuestions(robot).getItems().size());
 	}
 
@@ -594,65 +608,47 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 	@Test
 	void importedCaptureAdvancesUsingTheBackgroundSnapshot(FxRobot robot) throws Exception {
-
 		prepareExamAndClassification(robot);
-
 		ExamBooklet booklet = field(application, "examMetadataPane", ExamMetadataPane.class).getBooklet();
-
 		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
 				.getClassification();
-
 		SqliteQuestionRepository stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
-
 		Question first = stored.save(booklet, "41", "", 1, List.of(), classification, false, null, null,
 				QuestionResponseType.WRITTEN_RESPONSE);
-
 		Question second = stored.save(booklet, "42", "", 1, List.of(), classification, false, null, null,
 				QuestionResponseType.WRITTEN_RESPONSE);
-
 		QuestionCapturePane pane = field(application, "questionCapturePane", QuestionCapturePane.class);
 
 		// Enter imported capture through the production workflow.
 		robot.interact(() -> showImportedQuestionCaptureForTest(pane));
-
 		ComboBox<Question> imported = comboBox(robot, "#imported-question");
-
 		robot.interact(() -> imported.getSelectionModel().selectFirst());
-
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-question-region");
-
 		AtomicInteger reads = new AtomicInteger();
-
 		setField(pane, "questionRepository", new InMemoryQuestionRepository() {
 
 			@Override
 			public List<Question> findAll() {
 				assertFalse(Platform.isFxApplicationThread(), "Post-save refresh must run off the FX thread");
-
 				reads.incrementAndGet();
 				return stored.findAll();
 			}
 		});
-
 		fireControl(robot, "#save-question");
 
 		// The saved Question must leave the capture queue and
 		// Question 42 must become the active imported Question.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> imported.getValue() != null && imported.getValue().getId() == second.getId());
-
 		WaitForAsyncUtils.waitForFxEvents();
-
 		assertEquals(second.getId(), imported.getValue().getId());
 		assertEquals(1, imported.getItems().size());
-
 		assertEquals(1, stored.findById(first.getId()).orElseThrow().getRegions().size());
 
 		// Batch 02 eliminates the pre-save full-corpus read.
 		// One authoritative post-save refresh remains.
 		assertEquals(1, reads.get(), "Imported capture save must perform exactly " + "one full-corpus refresh");
-
 		assertEquals(2, unansweredQuestions(robot).getItems().size());
 	}
 
@@ -1409,101 +1405,70 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 	@Test
 	void questionSaveKeepsFxThreadResponsiveDuringValidationAndRefresh(FxRobot robot) throws Exception {
-
 		prepareExamAndClassification(robot);
-
 		robot.interact(() -> {
 			lookup(robot, "#question-code", TextField.class).setText("24a");
 			lookup(robot, "#question-marks", TextField.class).setText("2");
 		});
-
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-question-region");
-
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-question-region");
-
 		QuestionCapturePane pane = field(application, "questionCapturePane", QuestionCapturePane.class);
-
 		CountDownLatch entered = new CountDownLatch(1);
 		CountDownLatch release = new CountDownLatch(1);
 		AtomicInteger reads = new AtomicInteger();
-
 		SqliteQuestionRepository stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
-
 		setField(pane, "questionRepository", new InMemoryQuestionRepository() {
 
 			@Override
 			public List<Question> findAll() {
 				assertFalse(Platform.isFxApplicationThread(), "Question-bank reads must not block the FX thread");
-
 				assertEquals(1, reads.incrementAndGet(), "Save must perform exactly one full-corpus refresh");
-
 				entered.countDown();
-
 				try {
 					assertTrue(release.await(10, TimeUnit.SECONDS));
 				} catch (InterruptedException e) {
 					Thread.currentThread().interrupt();
 					throw new IllegalStateException(e);
 				}
-
 				return stored.findAll();
 			}
 		});
-
 		try {
 			fireControl(robot, "#save-question");
-
 			assertTrue(entered.await(5, TimeUnit.SECONDS), "Post-save refresh must begin");
 
 			// The worker is deliberately blocked during its only
 			// full-corpus read. JavaFX must remain responsive.
 			CountDownLatch pulse = new CountDownLatch(1);
 			Platform.runLater(pulse::countDown);
-
 			assertTrue(pulse.await(2, TimeUnit.SECONDS), "FX events must run while repository I/O waits");
-
 			ApplicationBusyOverlay overlay = (ApplicationBusyOverlay) primaryStage.getScene().getRoot();
-
 			PdfWorkspacePane workspace = field(application, "pdfWorkspace", PdfWorkspacePane.class);
-
 			Button nextPage = lookup(robot, "#next-pdf-page", Button.class);
-
 			AtomicInteger pageBefore = new AtomicInteger();
-
 			robot.interact(() -> pageBefore.set(workspace.getCurrentPageNumber()));
-
 			assertTrue(evaluateOnFx(robot, overlay::isBusy));
 			assertTrue(evaluateOnFx(robot, nextPage::isDisabled));
 
 			// Programmatic activation must not bypass the
 			// application's shared busy state.
 			fireControl(robot, nextPage);
-
 			assertTrue(evaluateOnFx(robot, () -> workspace.getCurrentPageNumber() == pageBefore.get()),
 					"PDF navigation must remain blocked during Question save");
-
 			release.countDown();
-
 			WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 					() -> stored.findAll().stream().anyMatch(question -> "24a".equals(question.getQuestionCode())));
-
 			WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 					() -> !pane.isSaveInProgress() && unansweredQuestions(robot).getItems().size() == 1);
-
 			WaitForAsyncUtils.waitForFxEvents();
-
 			Question saved = stored.findAll().getFirst();
-
 			assertEquals("24a", saved.getQuestionCode());
 			assertEquals(2, saved.getRegions().size());
 			assertEquals(1, saved.getRegions().getFirst().pageNumber());
-
 			assertEquals(1, unansweredQuestions(robot).getItems().size());
-
 			assertEquals(1, reads.get());
-
 		} finally {
 			release.countDown();
 		}
