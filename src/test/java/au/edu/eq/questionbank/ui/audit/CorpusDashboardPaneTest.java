@@ -1330,39 +1330,88 @@ class CorpusDashboardPaneTest {
 
 	@Test
 	@SuppressWarnings("unchecked")
-	void manageExamAssetsRequiresSelectedActiveExam(FxRobot robot) {
+	void manageExamAssetsRequiresSelectedExam(FxRobot robot) {
 		AtomicReference<Exam> routedExam = new AtomicReference<>();
 		AtomicReference<ExamBooklet> routedBooklet = new AtomicReference<>();
+
 		robot.interact(() -> pane.setExamAssetsHandler((exam, booklet) -> {
 			routedExam.set(exam);
 			routedBooklet.set(booklet);
 		}));
+
 		Button manageAssets = robot.lookup("#corpus-dashboard-manage-exam-assets").queryButton();
+
 		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
 
-		// The initially selected Exam is COMPLETE. Structural Exam/asset management
-		// remains locked until the user deliberately marks that Exam ACTIVE again.
-		assertTrue(manageAssets.isDisable());
-		robot.interact(manageAssets::fire);
-		assertNull(routedExam.get());
-		assertNull(routedBooklet.get());
-		robot.interact(() -> pane.replaceData(List.of(fixture.activeExamStatus), List.of()));
+		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
 
-		// An ACTIVE Exam remains manageable regardless of whether its audit currently
-		// reports structural findings.
+		// The initially selected Exam is COMPLETE.
+		// Exam / Assets must remain accessible for inspection
+		// and for adding a new Exam.
+		assertEquals(fixture.completeExam.getId(), exams.getSelectionModel().getSelectedItem().exam().getId());
+
 		assertFalse(manageAssets.isDisable());
+
 		robot.interact(manageAssets::fire);
-		assertEquals(fixture.activeExam.getId(), routedExam.get().getId());
+
+		assertNotNull(routedExam.get());
+		assertEquals(fixture.completeExam.getId(), routedExam.get().getId());
 		assertNull(routedBooklet.get());
+
+		// A selected booklet belonging to the COMPLETE Exam
+		// must also be passed through for read-only inspection.
 		routedExam.set(null);
 		routedBooklet.set(null);
+
+		robot.interact(() -> booklets.getSelectionModel().select(fixture.paper1Status));
+
+		assertFalse(manageAssets.isDisable());
+
+		robot.interact(manageAssets::fire);
+
+		assertEquals(fixture.completeExam.getId(), routedExam.get().getId());
+
+		assertEquals(fixture.paper1.getId(), routedBooklet.get().getId());
+
+		// Replace the COMPLETE Exam with an ACTIVE Exam.
+		// Normal management access must remain available.
+		routedExam.set(null);
+		routedBooklet.set(null);
+
+		robot.interact(() -> pane.replaceData(List.of(fixture.activeExamStatus), List.of()));
+
+		assertFalse(manageAssets.isDisable());
+
+		robot.interact(manageAssets::fire);
+
+		assertEquals(fixture.activeExam.getId(), routedExam.get().getId());
+		assertNull(routedBooklet.get());
+
+		// Explicit booklet selection must still be preserved
+		// when routing the ACTIVE Exam into Exam / Assets.
+		routedExam.set(null);
+		routedBooklet.set(null);
+
 		robot.interact(() -> booklets.getSelectionModel().select(fixture.activePaperStatus));
 
-		// Explicit booklet selection is preserved when routing the ACTIVE Exam into the
-		// existing Exam / Assets workspace.
 		robot.interact(manageAssets::fire);
+
 		assertEquals(fixture.activeExam.getId(), routedExam.get().getId());
+
 		assertEquals(fixture.activePaper.getId(), routedBooklet.get().getId());
+
+		// With no selected Exam there is no management target.
+		routedExam.set(null);
+		routedBooklet.set(null);
+
+		robot.interact(() -> exams.getSelectionModel().clearSelection());
+
+		assertTrue(manageAssets.isDisable());
+
+		robot.interact(manageAssets::fire);
+
+		assertNull(routedExam.get());
+		assertNull(routedBooklet.get());
 	}
 
 	@Test
