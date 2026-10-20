@@ -454,6 +454,130 @@ class PdfWorkspacePaneAsyncTest {
 	}
 
 	@Test
+	void pdfStoredRegionGeometrySurvivesViewportResizes(FxRobot robot) throws Exception {
+		Path path = createTallPdf("resizable-region.pdf");
+		ScrollPane scrollPane = robot.lookup("#pdf-page-scroll").queryAs(ScrollPane.class);
+		ImageView pageView = robot.lookup("#pdf-page-view").queryAs(ImageView.class);
+		List<String> renders = new ArrayList<>();
+		robot.interact(() -> {
+			pane.setPageRenderObserver((mode, page) -> renders.add(mode.name() + ":" + page));
+			pane.openExamPdf(path);
+			pane.focusStoredRegions(List.of(new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM, 1,
+					0.10, 0.25, 0.75, 0.20)));
+		});
+		Rectangle highlight = robot.lookup(".pdf-stored-region-highlight").queryAs(Rectangle.class);
+
+		// Exercise the internal viewport only. Do not enlarge the
+		// native Monocle Stage beyond its initial 640x480 buffer.
+		int[][] viewportSizes = { { 500, 350 }, { 340, 300 }, { 280, 190 }, { 490, 320 } };
+		for (int[] size : viewportSizes) {
+			robot.interact(() -> {
+				scrollPane.setMinWidth(0);
+				scrollPane.setMaxWidth(size[0]);
+				scrollPane.setMaxHeight(size[1]);
+			});
+			WaitForAsyncUtils.waitForFxEvents();
+			robot.interact(() -> {
+				pane.applyCss();
+				pane.layout();
+				double pageWidth = pageView.getBoundsInLocal().getWidth();
+				double pageHeight = pageView.getBoundsInLocal().getHeight();
+				assertTrue(pageWidth > 0);
+				assertTrue(pageHeight > 0);
+
+				// The source PDF is 300x900.
+				assertEquals(pageWidth * 3.0, pageHeight, 1.5);
+				assertEquals(scrollPane.getViewportBounds().getWidth(), pageWidth, 1.5);
+
+				// The stored region remains aligned with the PDF
+				// image as the available viewport width changes.
+				assertEquals(pageWidth * 0.10, highlight.getX(), 1.5);
+				assertEquals(pageHeight * 0.25, highlight.getY(), 1.5);
+				assertEquals(pageWidth * 0.75, highlight.getWidth(), 1.5);
+				assertEquals(pageHeight * 0.20, highlight.getHeight(), 1.5);
+			});
+		}
+
+		// Resizing the viewport and recalculating stored overlays
+		// must not reconstruct the displayed PDF page.
+		assertEquals(List.of("EXAM:1"), renders);
+	}
+
+	@Test
+	void pdfViewportRemainsStableAcrossScrollbarThresholds(FxRobot robot) throws Exception {
+		Path path = createTextPdf("scrollbar-boundary.pdf", "Page one");
+		ScrollPane scrollPane = robot.lookup("#pdf-page-scroll").queryAs(ScrollPane.class);
+		ImageView pageView = robot.lookup("#pdf-page-view").queryAs(ImageView.class);
+		List<String> renders = new ArrayList<>();
+		robot.interact(() -> {
+			pane.setPageRenderObserver((mode, page) -> renders.add(mode.name() + ":" + page));
+			pane.openExamPdf(path);
+		});
+		assertEquals(ScrollPane.ScrollBarPolicy.ALWAYS, scrollPane.getVbarPolicy());
+		assertEquals(ScrollPane.ScrollBarPolicy.NEVER, scrollPane.getHbarPolicy());
+
+		// Keep the native Stage at its original 640x480 size.
+		// Monocle may retain a framebuffer of that size, even when
+		// JavaFX permits the Stage to grow beyond it.
+		//
+		// Constrain the internal ScrollPane instead, exercising
+		// different PDF viewport widths and overflow thresholds.
+		int[][] viewportSizes = { { 320, 350 }, { 320, 220 }, { 320, 310 }, { 500, 350 }, { 500, 220 }, { 320, 350 } };
+		boolean sawFittingPage = false;
+		boolean sawOverflowingPage = false;
+		for (int[] size : viewportSizes) {
+			robot.interact(() -> {
+				scrollPane.setMinWidth(0);
+				scrollPane.setMaxWidth(size[0]);
+				scrollPane.setMaxHeight(size[1]);
+			});
+			WaitForAsyncUtils.waitForFxEvents();
+			double[] settled = new double[4];
+			robot.interact(() -> {
+				pane.applyCss();
+				pane.layout();
+				settled[0] = scrollPane.getViewportBounds().getWidth();
+				settled[1] = scrollPane.getViewportBounds().getHeight();
+				settled[2] = pageView.getBoundsInLocal().getWidth();
+				settled[3] = pageView.getBoundsInLocal().getHeight();
+			});
+			assertTrue(settled[0] > 0);
+			assertTrue(settled[1] > 0);
+			assertTrue(settled[0] <= size[0] + 1.0);
+			assertTrue(settled[1] <= size[1] + 1.0);
+
+			// The source page is square. It must fit horizontally
+			// without distortion, regardless of vertical overflow.
+			assertEquals(settled[0], settled[2], 1.5);
+			assertEquals(settled[2], settled[3], 1.5);
+			if (settled[3] <= settled[1]) {
+				sawFittingPage = true;
+			} else {
+				sawOverflowingPage = true;
+			}
+
+			// Additional layout passes must not alternate between
+			// different viewport sizes at the scrollbar boundary.
+			for (int pass = 0; pass < 5; pass++) {
+				WaitForAsyncUtils.waitForFxEvents();
+				robot.interact(() -> {
+					pane.applyCss();
+					pane.layout();
+					assertEquals(settled[0], scrollPane.getViewportBounds().getWidth(), 0.75);
+					assertEquals(settled[1], scrollPane.getViewportBounds().getHeight(), 0.75);
+					assertEquals(settled[2], pageView.getBoundsInLocal().getWidth(), 0.75);
+					assertEquals(settled[3], pageView.getBoundsInLocal().getHeight(), 0.75);
+				});
+			}
+		}
+		assertTrue(sawFittingPage, "At least one viewport must fit the entire PDF page");
+		assertTrue(sawOverflowingPage, "At least one viewport must require vertical scrolling");
+
+		// Layout changes must not trigger a new PDFBox render.
+		assertEquals(List.of("EXAM:1"), renders);
+	}
+
+	@Test
 	void rejectsInvalidDirectPageNumbers(FxRobot robot) throws Exception {
 		Path path = createPdf("invalid-page-jump.pdf");
 		robot.interact(() -> pane.openViewerPdf(path));

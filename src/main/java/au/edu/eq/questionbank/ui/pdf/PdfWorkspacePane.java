@@ -1180,6 +1180,18 @@ public final class PdfWorkspacePane extends VBox implements AutoCloseable {
 	private ScrollPane createScrollPane() {
 		ScrollPane scrollPane = new ScrollPane(pagePane);
 		scrollPane.setId("pdf-page-scroll");
+
+		// The PDF page is fitted to the available viewport width.
+		// Keep the vertical scrollbar width reserved, even when the
+		// page currently fits vertically. Otherwise, scrollbar
+		// appearance can change the fitted page width and height,
+		// repeatedly reversing the overflow decision.
+		scrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.ALWAYS);
+
+		// Horizontal scrolling is unnecessary while the PDF page
+		// is fitted to the viewport width. Prevent a horizontal
+		// scrollbar from changing the vertical viewport height.
+		scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
 		scrollPane.setFitToWidth(true);
 		scrollPane.setFitToHeight(false);
 		scrollPane.setMinHeight(0);
