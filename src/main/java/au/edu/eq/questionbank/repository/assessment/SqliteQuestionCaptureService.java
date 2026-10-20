@@ -114,6 +114,37 @@ public final class SqliteQuestionCaptureService {
 	}
 
 	/**
+	 * Finds the persisted Shared Context belonging to a SourceQuestion.
+	 *
+	 * Queries only Questions linked to the supplied persistent source identity.
+	 * Conflicting context links, cross-booklet relationships and missing referenced
+	 * contexts are rejected rather than silently ignored.
+	 *
+	 * This is a read-only lookup. It neither repairs relationships nor changes the
+	 * Question capture state.
+	 *
+	 * @param sourceQuestion persisted SourceQuestion identity
+	 * @return its Shared Context, or empty when no linked context exists
+	 * @throws NullPointerException  if sourceQuestion is null
+	 * @throws IllegalStateException if persistence fails or relationships are
+	 *                               inconsistent
+	 */
+	public Optional<SharedQuestionContext> findStoredSharedContext(SourceQuestion sourceQuestion) {
+		if (sourceQuestion == null) {
+			throw new NullPointerException("sourceQuestion");
+		}
+		try (Connection connection = database.openConnection()) {
+
+			// Use the existing source-ID-scoped query and the same
+			// booklet and conflict checks as transactional capture.
+			SharedQuestionContext context = findSharedContextForSourceQuestion(connection, sourceQuestion);
+			return Optional.ofNullable(context);
+		} catch (SQLException failure) {
+			throw new IllegalStateException("Could not read SourceQuestion Shared Context", failure);
+		}
+	}
+
+	/**
 	 * Persists capture metadata, source identity and shared context in one
 	 * transaction.
 	 *

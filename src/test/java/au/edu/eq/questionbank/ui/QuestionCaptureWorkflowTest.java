@@ -1106,6 +1106,85 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void multipartTypingShowsConflictingContextAndRecoversAfterCorrection(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteQuestionRepository questions = new SqliteQuestionRepository(database);
+		SourceQuestion source = new SqliteSourceQuestionRepository(database).save(booklet, "73");
+		SqliteSharedQuestionContextRepository contexts = new SqliteSharedQuestionContextRepository(database);
+		SharedQuestionContext firstContext = contexts.save(booklet, "Question 73 shared context",
+				List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.70, 0.15)));
+		SharedQuestionContext conflictingContext = contexts.save(booklet, "Conflicting Question 73 context",
+				List.of(new SharedQuestionContextRegion(1, 0.10, 0.40, 0.70, 0.15)));
+		Question first = questions.save(booklet, "73a", "", 2, List.of(), classification, true, source, firstContext,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		Question second = questions.save(booklet, "73b", "", 2, List.of(), classification, true, source, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+
+		// Deliberately introduce a persisted conflict that normal
+		// application capture must never create.
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection
+						.prepareStatement("UPDATE questions SET shared_context_id = ? WHERE id = ?")) {
+			statement.setLong(1, conflictingContext.getId());
+			statement.setLong(2, second.getId());
+			assertEquals(1, statement.executeUpdate());
+		}
+		TextField code = lookup(robot, "#question-code", TextField.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		Label status = lookup(robot, "#shared-context-status", Label.class);
+		Button save = lookup(robot, "#save-question", Button.class);
+
+		// Exercise the real typing-time inference listener.
+		// The conflict must be presented rather than propagated
+		// as an uncaught JavaFX exception.
+		robot.interact(() -> {
+			code.setText("73c");
+			marks.setText("2");
+		});
+		assertTrue(status.isVisible());
+		assertTrue(status.getText().contains("inconsistent shared context links"));
+
+		// Completing the remaining Question details cannot make
+		// Save available while persisted context links conflict.
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-question-region");
+		assertTrue(save.isDisabled());
+
+		// Typing must not repair or rewrite the conflicting rows.
+		assertEquals(firstContext.getId(), questions.findById(first.getId()).orElseThrow().getSharedContext().getId());
+		assertEquals(conflictingContext.getId(),
+				questions.findById(second.getId()).orElseThrow().getSharedContext().getId());
+
+		// Correct the inconsistent persisted relationship.
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection
+						.prepareStatement("UPDATE questions SET shared_context_id = ? WHERE id = ?")) {
+			statement.setLong(1, firstContext.getId());
+			statement.setLong(2, second.getId());
+			assertEquals(1, statement.executeUpdate());
+		}
+
+		// Re-entering the code is a fresh workflow evaluation.
+		// It must not retain the previous failed lookup result.
+		robot.interact(() -> {
+			code.setText("74");
+			code.setText("73c");
+		});
+		assertTrue(status.isVisible());
+		assertTrue(status.getText().contains("Question 73"));
+		assertFalse(status.getText().contains("inconsistent"));
+		assertFalse(save.isDisabled(), "Corrected Shared Context links should permit capture");
+
+		// The two existing Questions still retain their identities.
+		assertEquals(source.getId(), questions.findById(first.getId()).orElseThrow().getSourceQuestion().getId());
+		assertEquals(source.getId(), questions.findById(second.getId()).orElseThrow().getSourceQuestion().getId());
+	}
+
+	@Test
 	void pastedImageCanBeOrderedWithPdfRegionAndSavedAsMixedQuestion(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);

@@ -136,6 +136,7 @@ public final class QuestionCapturePane extends VBox {
 	private Question importedQuestion;
 	private LegacySplitCaptureState legacySplitCaptureState;
 	private boolean loadingQuestionEdit;
+	private String sharedContextLookupError;
 
 	// New-Question capture is deliberately inactive until the user starts it.
 	private boolean newQuestionCaptureActive;
@@ -2254,7 +2255,11 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private SharedQuestionContext findSharedContextForSourceQuestion(SourceQuestion sourceQuestion) {
-		return findSharedContextForSourceQuestion(sourceQuestion, currentQuestions());
+
+		// Always retrieve the current persisted relationship.
+		// A source-specific query avoids whole-corpus reconstruction
+		// without risking an indefinitely cached Shared Context.
+		return questionCaptureService.findStoredSharedContext(sourceQuestion).orElse(null);
 	}
 
 	private SharedQuestionContext findSharedContextForSourceQuestion(SourceQuestion sourceQuestion,
@@ -2284,6 +2289,12 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private String findSharedContextValidationError() {
+
+		// A failed authoritative lookup must prevent Save, even
+		// when a previously selected context still exists in memory.
+		if (sharedContextLookupError != null) {
+			return sharedContextLookupError;
+		}
 		if (sharedContextCapturePane.isCaptureMode()) {
 			return "Capture the shared context region and click Add Context before saving the question.";
 		}
@@ -3164,15 +3175,17 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private void refreshSharedContextControls(long parentOperationId) {
+
+		// Every refresh re-evaluates the authoritative relationship.
+		// An error from a previous Question code must not persist
+		// after the user changes code or the stored data is corrected.
+		sharedContextLookupError = null;
 		if (isNewIndependentMcqCapture()) {
 			refreshIndependentMcqSharedContextControls();
 		} else {
 			clearIndependentMcqSharedContextState();
 			refreshMultipartSharedContextControls(parentOperationId);
 		}
-
-		// The reference preview is part of automatic inference,
-		// but is measured separately from repository lookup.
 		try (PerformanceOperation preview = performanceRecorder.start("capture.question.code.context.preview",
 				parentOperationId)) {
 			try {
@@ -3819,28 +3832,29 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private boolean showStoredSharedContext(String sourceCode, SourceQuestion sourceQuestion, long parentOperationId) {
-		List<Question> questions;
-		try (PerformanceOperation retrieval = performanceRecorder.start("capture.question.code.context.corpus",
-				parentOperationId)) {
-			try {
-
-				// This is the existing full-corpus retrieval, preserved
-				// so its cost can be established independently.
-				questions = currentQuestions();
-				retrieval.resultCount(questions.size());
-			} catch (RuntimeException | Error failure) {
-				retrieval.failed();
-				throw failure;
-			}
-		}
 		SharedQuestionContext existingContext;
-		try (PerformanceOperation matching = performanceRecorder.start("capture.question.code.context.scan",
+		try (PerformanceOperation lookup = performanceRecorder.start("capture.question.code.context.lookup",
 				parentOperationId)) {
 			try {
-				existingContext = findSharedContextForSourceQuestion(sourceQuestion, questions);
-				matching.resultCount(existingContext == null ? 0 : 1);
+				existingContext = findSharedContextForSourceQuestion(sourceQuestion);
+				lookup.resultCount(existingContext == null ? 0 : 1);
+			} catch (IllegalStateException failure) {
+				lookup.failed();
+
+				// A conflicting or unreadable persisted relationship is
+				// not a normal "context not found" condition.
+				// Display the error without interrupting every keystroke
+				// with a modal dialog.
+				sharedContextLookupError = "Shared Context for Question " + sourceCode + " cannot be resolved: "
+						+ failure.getMessage();
+
+				// Never retain a context inherited from an earlier code.
+				sharedContextCapturePane.selectContext(null);
+				hideSharedContextControls();
+				showSharedContextRequiredStatus(sharedContextLookupError);
+				return true;
 			} catch (RuntimeException | Error failure) {
-				matching.failed();
+				lookup.failed();
 				throw failure;
 			}
 		}
