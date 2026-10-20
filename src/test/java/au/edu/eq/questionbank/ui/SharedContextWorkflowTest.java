@@ -2,15 +2,26 @@ package au.edu.eq.questionbank.ui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.Statement;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.testfx.api.FxRobot;
@@ -18,6 +29,7 @@ import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ApplicationConfig;
+import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
@@ -37,6 +49,7 @@ import au.edu.eq.questionbank.repository.assessment.SqliteSharedQuestionContextR
 import au.edu.eq.questionbank.repository.assessment.SqliteSourceQuestionRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusWorkItem;
+import au.edu.eq.questionbank.ui.capture.QuestionCapturePane;
 import au.edu.eq.questionbank.ui.correction.LegacyQuestionSplitDialog;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
@@ -1198,6 +1211,91 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void replacingExamPdfInvalidatesBothAcceptedPreviewCaches(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		QuestionCapturePane pane = questionCapturePane();
+		TextField code = lookup(robot, "#question-code", TextField.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		CheckBox sharedContext = lookup(robot, "#first-region-shared-context", CheckBox.class);
+		VBox previews = field(pane, "regionPreviewBox", VBox.class);
+		Path csv = Files.createTempDirectory("question-preview-source-").resolve("performance.csv");
+		robot.interact(() -> {
+			code.setText("87a");
+			marks.setText("2");
+			pane.setPerformanceRecorder(new PerformanceRecorder(true, csv));
+		});
+		fireControl(robot, sharedContext);
+		robot.interact(() -> pane.acceptSharedContextSelection(
+				new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM, 1, 0.10, 0.10, 0.20, 0.15)));
+		fireControl(robot, "#add-question-region");
+		robot.interact(() -> pane.acceptSelection(
+				new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM, 1, 0.40, 0.20, 0.20, 0.15)));
+		fireControl(robot, "#add-question-region");
+		assertEquals(2, previews.getChildren().size());
+		assertEquals(1L, countSuccessfulSharedPreviewExtracts(csv, "capture.question.shared-context.extract"));
+		assertEquals(1L, countSuccessfulSharedPreviewExtracts(csv, "capture.question.region.extract"));
+		Node originalContext = previews.getChildren().get(0);
+		Node originalContent = previews.getChildren().get(1);
+		ImageView originalContextImage = (ImageView) originalContext.lookup("#question-shared-context-image-0");
+		ImageView originalContentImage = (ImageView) ((VBox) originalContent).getChildren().get(1);
+		double originalContextWidth = originalContextImage.getImage().getWidth();
+		double originalContentWidth = originalContentImage.getImage().getWidth();
+
+		// A different page size makes use of stale source imagery observable.
+		// Keep two pages so the replacement remains a valid Exam PDF fixture.
+		Path replacement = Files.createTempFile("replacement-exam-preview-", ".pdf");
+		try (PDDocument document = new PDDocument()) {
+			document.addPage(new PDPage(new PDRectangle(300, 900)));
+			document.addPage(new PDPage(new PDRectangle(300, 900)));
+			document.save(replacement.toFile());
+		}
+
+		// Deliberately replace only the PDF workspace session, keeping the pending
+		// region geometry unchanged to exercise the cache's session-identity guard.
+		// Normal application replacement also clears pending Question capture.
+		robot.interact(() -> pdfWorkspace().openExamPdf(replacement));
+
+		// First exercise the Shared Context-only refresh path.
+		WaitForAsyncUtils.asyncFx(() -> invoke(pane, "refreshSharedContextPreview", new Class<?>[0])).get();
+		assertEquals(2L, countSuccessfulSharedPreviewExtracts(csv, "capture.question.shared-context.extract"));
+		assertEquals(1L, countSuccessfulSharedPreviewExtracts(csv, "capture.question.region.extract"));
+		Node replacedContext = previews.getChildren().getFirst();
+		assertNotSame(originalContext, replacedContext);
+
+		// Then exercise the full refresh path. The already refreshed Shared Context
+		// remains reusable; the old ordinary-content cache must be invalidated.
+		WaitForAsyncUtils.asyncFx(() -> invoke(pane, "refreshRegionPreviews", new Class<?>[0])).get();
+		assertEquals(2, previews.getChildren().size());
+		Node replacedContent = previews.getChildren().get(1);
+		ImageView replacedContextImage = (ImageView) previews.getChildren().getFirst()
+				.lookup("#question-shared-context-image-0");
+		ImageView replacedContentImage = (ImageView) ((VBox) replacedContent).getChildren().get(1);
+		assertSame(replacedContext, previews.getChildren().getFirst());
+		assertNotSame(originalContent, replacedContent);
+		assertNotSame(originalContextImage.getImage(), replacedContextImage.getImage());
+		assertNotSame(originalContentImage.getImage(), replacedContentImage.getImage());
+		assertNotEquals(originalContextWidth, replacedContextImage.getImage().getWidth(),
+				"Shared Context must use the replacement PDF's page dimensions");
+		assertNotEquals(originalContentWidth, replacedContentImage.getImage().getWidth(),
+				"Ordinary Question content must use the replacement PDF's page dimensions");
+		assertEquals(2L, countSuccessfulSharedPreviewExtracts(csv, "capture.question.shared-context.extract"));
+		assertEquals(2L, countSuccessfulSharedPreviewExtracts(csv, "capture.question.region.extract"));
+
+		// Repeat both refreshes. Neither may extract again for this session.
+		WaitForAsyncUtils.asyncFx(() -> invoke(pane, "refreshSharedContextPreview", new Class<?>[0])).get();
+		WaitForAsyncUtils.asyncFx(() -> invoke(pane, "refreshRegionPreviews", new Class<?>[0])).get();
+		assertEquals(2L, countSuccessfulSharedPreviewExtracts(csv, "capture.question.shared-context.extract"));
+		assertEquals(2L, countSuccessfulSharedPreviewExtracts(csv, "capture.question.region.extract"));
+
+		// Application source replacement discards unsaved Question content; check
+		// that the same public clear API releases both internal preview caches.
+		robot.interact(pane::clearForNewPdf);
+		assertTrue(previews.getChildren().isEmpty());
+		assertNull(field(pane, "sharedContextPreviewNode", VBox.class));
+		assertTrue(field(pane, "contentPreviewNodes", IdentityHashMap.class).isEmpty());
+	}
+
+	@Test
 	void retroactiveSharedContextReuseFromSearch(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet booklet = examMetadataPane().getBooklet();
@@ -1524,6 +1622,65 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void sharedContextCropIsReusedWhileQuestionGrowsAcrossPages(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		QuestionCapturePane pane = questionCapturePane();
+		TextField code = lookup(robot, "#question-code", TextField.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		CheckBox sharedContext = lookup(robot, "#first-region-shared-context", CheckBox.class);
+		VBox previews = field(pane, "regionPreviewBox", VBox.class);
+		Path csv = Files.createTempDirectory("question-shared-preview-count-").resolve("performance.csv");
+		robot.interact(() -> {
+			code.setText("86a");
+			marks.setText("2");
+			pane.setPerformanceRecorder(new PerformanceRecorder(true, csv));
+		});
+
+		// Accept one Shared Context region before any ordinary Question regions.
+		fireControl(robot, sharedContext);
+		robot.interact(() -> pane.acceptSharedContextSelection(
+				new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM, 1, 0.10, 0.10, 0.20, 0.15)));
+		fireControl(robot, "#add-question-region");
+		assertEquals(1L, countSuccessfulSharedPreviewExtracts(csv, "capture.question.shared-context.extract"));
+		assertEquals(0L, countSuccessfulSharedPreviewExtracts(csv, "capture.question.region.extract"));
+		assertEquals(1, previews.getChildren().size());
+		Node retainedContext = previews.getChildren().getFirst();
+		ImageView retainedImage = (ImageView) retainedContext.lookup("#question-shared-context-image-0");
+		assertNotNull(retainedImage);
+		assertNotNull(retainedImage.getImage());
+		for (int index = 0; index < 8; index++) {
+			int page = index % 2 + 1;
+			double x = 0.04 + index * 0.10;
+
+			// Both pages are exercised using the existing two-page fixture.
+			robot.interact(() -> pdfWorkspace().showPage(PdfWorkspacePane.DocumentMode.EXAM, page));
+			robot.interact(
+					() -> pane.acceptSelection(new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM,
+							page, x, 0.12, 0.08, 0.18)));
+			fireControl(robot, "#add-question-region");
+			int accepted = index + 1;
+			assertSame(retainedContext, previews.getChildren().getFirst(),
+					"Ordinary content must not rebuild the preceding Shared Context");
+			assertSame(retainedImage, previews.getChildren().getFirst().lookup("#question-shared-context-image-0"));
+			assertEquals(accepted + 1, previews.getChildren().size());
+			if (accepted == 1 || accepted == 2 || accepted == 4 || accepted == 8) {
+				assertEquals(accepted, countSuccessfulSharedPreviewExtracts(csv, "capture.question.region.extract"));
+				assertEquals(1L, countSuccessfulSharedPreviewExtracts(csv, "capture.question.shared-context.extract"),
+						"Unchanged Shared Context must not be cropped again");
+			}
+		}
+
+		// Both a presentation-only refresh and reorder/remove must retain the crop.
+		WaitForAsyncUtils.asyncFx(() -> invoke(pane, "refreshSharedContextPreview", new Class<?>[0])).get();
+		fireControl(robot, "#question-content-move-up-7");
+		fireControl(robot, "#question-content-remove-3");
+		assertSame(retainedContext, previews.getChildren().getFirst());
+		assertEquals(8L, countSuccessfulSharedPreviewExtracts(csv, "capture.question.region.extract"));
+		assertEquals(1L, countSuccessfulSharedPreviewExtracts(csv, "capture.question.shared-context.extract"));
+		assertEquals(8, previews.getChildren().size());
+	}
+
+	@Test
 	void sharedSharedContextCanBeRecapturedFromSearch(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet booklet = examMetadataPane().getBooklet();
@@ -1619,6 +1776,92 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 	@Start
 	void start(Stage stage) throws Exception {
 		super.start(stage);
+	}
+
+	void unchangedSharedContextPreviewSurvivesContentChangesAndReleasesOnToggle(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		CheckBox sharedContext = lookup(robot, "#first-region-shared-context", CheckBox.class);
+		VBox previewBox = field(questionCapturePane(), "regionPreviewBox", VBox.class);
+		robot.interact(() -> {
+			questionCode.setText("61a");
+			marks.setText("2");
+		});
+
+		// Capture region A directly as Shared Context.
+		fireControl(robot, sharedContext);
+		robot.interact(() -> questionCapturePane().acceptSharedContextSelection(
+				new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM, 1, 0.10, 0.10, 0.20, 0.15)));
+		fireControl(robot, "#add-question-region");
+		assertEquals(1, previewBox.getChildren().size());
+		Node originalContextPreview = previewBox.getChildren().getFirst();
+		assertEquals("question-shared-context-preview", originalContextPreview.getId());
+		ImageView originalContextImage = (ImageView) originalContextPreview.lookup("#question-shared-context-image-0");
+		assertNotNull(originalContextImage);
+		assertNotNull(originalContextImage.getImage());
+
+		// Add ordinary Question regions B and C. Neither addition
+		// changes the Shared Context image.
+		double[][] positions = { { 0.35, 0.15 }, { 0.60, 0.20 } };
+		for (int index = 0; index < positions.length; index++) {
+			double[] position = positions[index];
+			robot.interact(() -> questionCapturePane().acceptSelection(new PdfWorkspacePane.RegionSelection(
+					PdfWorkspacePane.DocumentMode.EXAM, 1, position[0], position[1], 0.20, 0.15)));
+			fireControl(robot, "#add-question-region");
+			assertSame(originalContextPreview, previewBox.getChildren().getFirst(),
+					"Accepting ordinary content must retain Shared Context");
+			assertSame(originalContextImage,
+					previewBox.getChildren().getFirst().lookup("#question-shared-context-image-0"));
+			assertEquals(index + 2, previewBox.getChildren().size());
+		}
+		assertEquals("Content parts: 2", lookup(robot, "#question-region-count", Label.class).getText());
+
+		// A Question-code change is not a neutral preview refresh: it
+		// re-evaluates the Shared Context relationship and selection.
+		// Exercise the separate Shared Context-only refresh path while
+		// leaving the staged context and source PDF unchanged.
+		WaitForAsyncUtils.asyncFx(() -> invoke(questionCapturePane(), "refreshSharedContextPreview", new Class<?>[0]))
+				.get();
+		assertSame(originalContextPreview, previewBox.getChildren().getFirst(),
+				"Unchanged Shared Context must survive its own refresh");
+		assertSame(originalContextImage,
+				previewBox.getChildren().getFirst().lookup("#question-shared-context-image-0"));
+
+		// Reclassify A as ordinary content. The old Shared Context
+		// node and cached image must be discarded.
+		fireControl(robot, sharedContext);
+		assertFalse(sharedContext.isSelected());
+		assertEquals(3, previewBox.getChildren().size());
+		assertFalse(previewBox.getChildren().contains(originalContextPreview));
+		assertNull(field(questionCapturePane(), "sharedContextPreviewNode", VBox.class));
+
+		// Selecting Shared Context again creates a fresh preview
+		// for A, while retaining the other Question regions.
+		fireControl(robot, sharedContext);
+		assertTrue(sharedContext.isSelected());
+		assertEquals(3, previewBox.getChildren().size());
+		Node replacementContextPreview = previewBox.getChildren().getFirst();
+		assertEquals("question-shared-context-preview", replacementContextPreview.getId());
+		assertNotSame(originalContextPreview, replacementContextPreview,
+				"A discarded Shared Context must not retain its old node");
+		assertEquals("Content parts: 2", lookup(robot, "#question-region-count", Label.class).getText());
+
+		// Clearing the active PDF invalidates the complete transient
+		// capture, including the cached Shared Context preview.
+		robot.interact(questionCapturePane()::clearForNewPdf);
+		assertTrue(previewBox.getChildren().isEmpty());
+		assertNull(field(questionCapturePane(), "sharedContextPreviewNode", VBox.class));
+		assertFalse(questionCapturePane().hasAcceptedRegions());
+	}
+
+	private long countSuccessfulSharedPreviewExtracts(Path csv, String operation) throws IOException {
+		if (Files.notExists(csv)) {
+			return 0L;
+		}
+		return Files.readAllLines(csv).stream().skip(1).map(line -> line.split(",", -1))
+				.filter(columns -> columns.length == 7).filter(columns -> operation.equals(columns[3]))
+				.filter(columns -> "true".equals(columns[5])).count();
 	}
 
 	private void openMissingSharedContextCaptureFromSearch(FxRobot robot, long questionId) throws Exception {

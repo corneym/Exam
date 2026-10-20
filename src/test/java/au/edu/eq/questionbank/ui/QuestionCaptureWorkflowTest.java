@@ -2,15 +2,19 @@ package au.edu.eq.questionbank.ui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -45,8 +49,10 @@ import au.edu.eq.questionbank.ui.capture.QuestionCapturePane;
 import au.edu.eq.questionbank.ui.exam.ExamMetadataPane;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
+import javafx.animation.AnimationTimer;
 import javafx.application.Platform;
 import javafx.scene.Node;
+import javafx.scene.Parent;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBase;
 import javafx.scene.control.ButtonType;
@@ -72,6 +78,28 @@ import javafx.stage.Stage;
 @Tag("ui")
 @Tag("workflow-ui")
 class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
+
+	private static long previewImageBytes(Node node) {
+		if (node instanceof ImageView view && view.getImage() != null) {
+
+			// Approximate decoded RGBA pixel storage, not total native or
+			// JVM allocation. The actual backing format may differ.
+			return Math.round(view.getImage().getWidth()) * Math.round(view.getImage().getHeight()) * 4L;
+		}
+		if (node instanceof Parent parent) {
+			long total = 0L;
+			for (Node child : parent.getChildrenUnmodifiable()) {
+				total += previewImageBytes(child);
+			}
+			return total;
+		}
+		return 0L;
+	}
+
+	private static long usedHeapBytes() {
+		Runtime runtime = Runtime.getRuntime();
+		return runtime.totalMemory() - runtime.freeMemory();
+	}
 
 	@Test
 	void acceptedQuestionRegionBlocksWorkingSubjectChange(FxRobot robot) throws Exception {
@@ -218,6 +246,42 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 			// Leave the shared test clipboard in a deterministic non-image state.
 			questionCapturePane().refreshClipboardImageAvailability();
 		});
+	}
+
+	@Test
+	void addingClipboardImageDoesNotReextractExistingPdfRegion(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Path csv = Files.createTempDirectory("question-preview-mixed-").resolve("performance.csv");
+		QuestionCapturePane pane = questionCapturePane();
+		robot.interact(() -> pane.setPerformanceRecorder(new PerformanceRecorder(true, csv)));
+		robot.interact(() -> pane.acceptSelection(
+				new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM, 1, 0.10, 0.10, 0.25, 0.20)));
+		fireControl(robot, "#add-question-region");
+		assertEquals(1L, countSuccessfulPreviewExtracts(csv, "capture.question.region.extract"));
+		robot.interact(() -> {
+			WritableImage image = new WritableImage(40, 20);
+			for (int y = 0; y < 20; y++) {
+				for (int x = 0; x < 40; x++) {
+					image.getPixelWriter().setColor(x, y, Color.ORANGE);
+				}
+			}
+			ClipboardContent clipboardContent = new ClipboardContent();
+			clipboardContent.putImage(image);
+			Clipboard.getSystemClipboard().setContent(clipboardContent);
+			pane.refreshClipboardImageAvailability();
+		});
+		fireControl(robot, "#paste-question-image");
+		assertEquals(2, field(pane, "regionPreviewBox", VBox.class).getChildren().size());
+		assertEquals(1L, countSuccessfulPreviewExtracts(csv, "capture.question.region.extract"),
+				"Adding PNG content must not extract unchanged PDF content");
+		fireControl(robot, "#question-content-move-up-1");
+		assertEquals(1L, countSuccessfulPreviewExtracts(csv, "capture.question.region.extract"),
+				"Reordering mixed content must not re-extract PDF content");
+
+		// Remove the pasted image; the retained PDF preview remains unchanged.
+		fireControl(robot, "#question-content-remove-0");
+		assertEquals(1L, countSuccessfulPreviewExtracts(csv, "capture.question.region.extract"));
+		assertEquals("Content parts: 1", lookup(robot, "#question-region-count", Label.class).getText());
 	}
 
 	@Test
@@ -498,6 +562,82 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Question stored = repository.findById(incomplete.getId()).orElseThrow();
 		assertFalse(stored.getContentParts().isEmpty());
 		assertEquals(1, completed.get());
+	}
+
+	@Test
+	void duplicateClipboardImageRequiresConfirmationAndCanBeAddedAfterRemoval(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Label count = lookup(robot, "#question-region-count", Label.class);
+		Button addFromClipboard = lookup(robot, "#paste-question-image", Button.class);
+		VBox previews = field(questionCapturePane(), "regionPreviewBox", VBox.class);
+
+		// Use the same real JavaFX clipboard route as Windows Snipping Tool.
+		robot.interact(() -> {
+			WritableImage image = new WritableImage(40, 20);
+			for (int y = 0; y < 20; y++) {
+				for (int x = 0; x < 40; x++) {
+					image.getPixelWriter().setColor(x, y, Color.ORANGE);
+				}
+			}
+			ClipboardContent content = new ClipboardContent();
+			content.putImage(image);
+			Clipboard.getSystemClipboard().setContent(content);
+			questionCapturePane().refreshClipboardImageAvailability();
+		});
+		assertFalse(addFromClipboard.isDisabled());
+
+		// The first addition is not a duplicate and must not open a dialog.
+		fireControl(robot, addFromClipboard);
+		assertEquals("Content parts: 1", count.getText());
+		assertEquals(1, previews.getChildren().size());
+		Node originalPreview = previews.getChildren().getFirst();
+
+		// A second insertion requests explicit consent. Declining must not
+		// change the content list or discard the clipboard image.
+		fireControlLater(addFromClipboard);
+		waitForDialogShowing(robot, "Duplicate clipboard image");
+		DialogPane declineDialog = showingDialogPane(robot, "Duplicate clipboard image");
+		assertEquals("This image has already been added to this Question.", declineDialog.getHeaderText());
+		assertEquals("Add it again?", declineDialog.getContentText());
+		Node decline = declineDialog.lookupButton(ButtonType.NO);
+		assertTrue(decline instanceof ButtonBase);
+		robot.interact(((ButtonBase) decline)::fire);
+		waitForDialogHidden(robot, "Duplicate clipboard image");
+		assertEquals("Content parts: 1", count.getText());
+		assertEquals(1, previews.getChildren().size());
+		assertSame(originalPreview, previews.getChildren().getFirst());
+		assertTrue(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
+
+		// The user may intentionally accept an exact duplicate.
+		fireControlLater(addFromClipboard);
+		waitForDialogShowing(robot, "Duplicate clipboard image");
+		DialogPane acceptDialog = showingDialogPane(robot, "Duplicate clipboard image");
+		Node accept = acceptDialog.lookupButton(ButtonType.YES);
+		assertTrue(accept instanceof ButtonBase);
+		robot.interact(((ButtonBase) accept)::fire);
+		waitForDialogHidden(robot, "Duplicate clipboard image");
+		assertEquals("Content parts: 2", count.getText());
+		assertEquals(2, previews.getChildren().size());
+		assertTrue(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
+
+		// Removal releases both accepted instances. The same clipboard image
+		// can then be added without confirmation because no duplicate remains.
+		fireControl(robot, "#question-content-remove-1");
+		fireControl(robot, "#question-content-remove-0");
+		assertEquals("Content parts: 0", count.getText());
+		assertTrue(previews.getChildren().isEmpty());
+		fireControl(robot, addFromClipboard);
+		assertEquals("Content parts: 1", count.getText());
+		assertEquals(1, previews.getChildren().size());
+
+		// Leave the shared test clipboard in the same deterministic non-image
+		// state as the existing clipboard workflow tests.
+		robot.interact(() -> {
+			ClipboardContent content = new ClipboardContent();
+			content.putString("Clipboard duplicate confirmation test completed");
+			Clipboard.getSystemClipboard().setContent(content);
+			questionCapturePane().refreshClipboardImageAvailability();
+		});
 	}
 
 	@Test
@@ -1093,6 +1233,96 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void measuresAcceptedPreviewPerformance(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Path diagnostics = Files.createTempDirectory("issue-141-preview-").resolve("performance.csv");
+		QuestionCapturePane pane = questionCapturePane();
+		PerformanceRecorder recorder = new PerformanceRecorder(true, diagnostics);
+		Button addRegion = lookup(robot, "#add-question-region", Button.class);
+		VBox previews = field(pane, "regionPreviewBox", VBox.class);
+
+		// This test measures the accepted-content refresh path, not PDF-page
+		// navigation. Use the same real control action as the UI workflow.
+		robot.interact(() -> pane.setPerformanceRecorder(recorder));
+		PulseGapSampler pulses = new PulseGapSampler();
+		robot.interact(pulses::start);
+		WaitForAsyncUtils.waitForFxEvents();
+		long heapBefore = usedHeapBytes();
+		long[] actionNanos = new long[8];
+		int[] pageNumbers = new int[8];
+		try {
+			for (int i = 0; i < 8; i++) {
+				final int index = i;
+				final int page = i < 4 ? 1 : 2;
+				pageNumbers[i] = page;
+				robot.interact(() -> {
+					if (index == 0 || index == 4) {
+
+						// Display the source page before timing Add Region.
+						pdfWorkspace().showPage(PdfWorkspacePane.DocumentMode.EXAM, page);
+					}
+					pane.acceptSelection(new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM, page,
+							0.05 + (index % 4) * 0.22, 0.08, 0.18, 0.15));
+					long started = System.nanoTime();
+					addRegion.fire();
+					actionNanos[index] = System.nanoTime() - started;
+				});
+				WaitForAsyncUtils.waitForFxEvents();
+			}
+		} finally {
+			robot.interact(pulses::stop);
+		}
+		long[] imageBytes = new long[1];
+		robot.interact(() -> imageBytes[0] = previewImageBytes(previews));
+		long heapAfter = usedHeapBytes();
+		assertEquals("Content parts: 8", lookup(robot, "#question-region-count", Label.class).getText());
+		assertTrue(Files.isRegularFile(diagnostics), "Opt-in performance diagnostics must be written");
+		List<String[]> rows = Files.readAllLines(diagnostics).stream().skip(1).map(line -> line.split(",", -1))
+				.toList();
+		List<String[]> previewsMeasured = rows.stream().filter(row -> row.length >= 7)
+				.filter(row -> "capture.question.region.preview".equals(row[3])).toList();
+		List<String[]> extractsMeasured = rows.stream().filter(row -> row.length >= 7)
+				.filter(row -> "capture.question.region.extract".equals(row[3])).toList();
+		assertEquals(8, previewsMeasured.size(), "Exactly one timed accepted-content refresh per region");
+		assertEquals(8, extractsMeasured.size(), "Each new PDF region is extracted once; unchanged regions are reused");
+		assertTrue(previewsMeasured.stream().allMatch(row -> "true".equals(row[5])));
+		assertTrue(extractsMeasured.stream().allMatch(row -> "true".equals(row[5])));
+		long uncachedReferenceCrops = 8L * 9L / 2L;
+		Path report = Path.of("target", "performance", "issue-141-preview-summary.csv");
+		Files.createDirectories(report.toAbsolutePath().getParent());
+		StringBuilder summary = new StringBuilder();
+		summary.append("step,page,action_ms,preview_ms,optimised_extracts_to_step,")
+				.append("uncached_reference_extracts_to_step,").append("estimated_retained_image_mib,heap_change_mib,")
+				.append("max_observed_fx_pulse_gap_ms\n");
+		double cumulativeActionMs = 0.0;
+		double cumulativePreviewMs = 0.0;
+		double maximumPreviewMs = 0.0;
+		for (int i = 0; i < 8; i++) {
+			double actionMs = actionNanos[i] / 1_000_000.0;
+			double previewMs = Double.parseDouble(previewsMeasured.get(i)[4]);
+			cumulativeActionMs += actionMs;
+			cumulativePreviewMs += previewMs;
+			maximumPreviewMs = Math.max(maximumPreviewMs, previewMs);
+
+			// The 1+2+...+n reference is a crop-count reconstruction
+			// of the pre-optimisation loop, not measured old-code timing.
+			long referenceCount = (long) (i + 1) * (i + 2) / 2;
+			summary.append(String.format(Locale.ROOT, "%d,%d,%.3f,%.3f,%d,%d,%.3f,%.3f,%.3f%n", i + 1, pageNumbers[i],
+					actionMs, previewMs, i + 1, referenceCount, imageBytes[0] / 1_048_576.0,
+					(heapAfter - heapBefore) / 1_048_576.0, pulses.maxGapMillis()));
+		}
+		Files.writeString(report, summary.toString(), StandardCharsets.UTF_8);
+		System.out.printf(Locale.ROOT,
+				"ISSUE_141_PREVIEW_REPORT %s%n" + "  optimised_crops=8 uncached_reference_crops=%d%n"
+						+ "  preview_total_ms=%.3f preview_max_ms=%.3f%n" + "  fx_add_action_total_ms=%.3f%n"
+						+ "  max_observed_fx_pulse_gap_ms=%.3f%n" + "  estimated_retained_image_mib=%.3f "
+						+ "approx_heap_delta_mib=%.3f%n",
+				report.toAbsolutePath(), uncachedReferenceCrops, cumulativePreviewMs, maximumPreviewMs,
+				cumulativeActionMs, pulses.maxGapMillis(), imageBytes[0] / 1_048_576.0,
+				(heapAfter - heapBefore) / 1_048_576.0);
+	}
+
+	@Test
 	void mouseSelectingImportedQuestionMayActivateSubjectWithoutRebuildingOpenPopup(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet booklet = examMetadataPane().getBooklet();
@@ -1342,6 +1572,16 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(reloaded.getContentParts().get(0) instanceof ImageQuestionContentPart);
 		assertTrue(reloaded.getContentParts().get(1) instanceof PdfQuestionContentPart);
 		assertEquals(1, reloaded.getRegions().size());
+	}
+
+	@Test
+	void pdfRegionPreviewExtractionsGrowLinearlyAcrossTwoPages(FxRobot robot) throws Exception {
+		verifyLinearPdfPreviewExtractionCounts(robot, true);
+	}
+
+	@Test
+	void pdfRegionPreviewExtractionsGrowLinearlyOnOnePage(FxRobot robot) throws Exception {
+		verifyLinearPdfPreviewExtractionCounts(robot, false);
 	}
 
 	@Test
@@ -1688,6 +1928,53 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void unchangedAcceptedPdfPreviewsKeepNodesAcrossAppendReorderAndRemoval(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		QuestionCapturePane capturePane = questionCapturePane();
+		VBox previews = field(capturePane, "regionPreviewBox", VBox.class);
+		List<Node> acceptedPreviews = new ArrayList<>();
+
+		// Accept four distinct PDF regions. Previously accepted
+		// preview nodes must survive each subsequent addition.
+		for (int index = 0; index < 4; index++) {
+			int regionIndex = index;
+			robot.interact(() -> capturePane.acceptSelection(new PdfWorkspacePane.RegionSelection(
+					PdfWorkspacePane.DocumentMode.EXAM, 1, 0.10 + regionIndex * 0.15, 0.10, 0.30, 0.20)));
+			fireControl(robot, "#add-question-region");
+			assertEquals(index + 1, previews.getChildren().size());
+			for (int earlier = 0; earlier < index; earlier++) {
+				assertSame(acceptedPreviews.get(earlier), previews.getChildren().get(earlier),
+						"Adding another region must reuse its predecessors");
+			}
+			acceptedPreviews.add(previews.getChildren().get(index));
+		}
+		assertEquals("Content parts: 4", lookup(robot, "#question-region-count", Label.class).getText());
+
+		// Reordering must move existing preview nodes and update
+		// their control indices without recreating their images.
+		fireControl(robot, "#question-content-move-up-3");
+		assertSame(acceptedPreviews.get(0), previews.getChildren().get(0));
+		assertSame(acceptedPreviews.get(1), previews.getChildren().get(1));
+		assertSame(acceptedPreviews.get(3), previews.getChildren().get(2));
+		assertSame(acceptedPreviews.get(2), previews.getChildren().get(3));
+
+		// Remove the original second part. All remaining previews
+		// retain their identity and correct ordering.
+		fireControl(robot, "#question-content-remove-1");
+		assertEquals(3, previews.getChildren().size());
+		assertSame(acceptedPreviews.get(0), previews.getChildren().get(0));
+		assertSame(acceptedPreviews.get(3), previews.getChildren().get(1));
+		assertSame(acceptedPreviews.get(2), previews.getChildren().get(2));
+		assertEquals("Content parts: 3", lookup(robot, "#question-region-count", Label.class).getText());
+
+		// Replacing the active source must clear the retained
+		// Question preview presentation and its transient content.
+		robot.interact(capturePane::clearForNewPdf);
+		assertTrue(previews.getChildren().isEmpty());
+		assertFalse(capturePane.hasAcceptedRegions());
+	}
+
+	@Test
 	void workingSubjectChangesWhenNoCaptureWorkIsPending(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		@SuppressWarnings("unchecked")
@@ -1708,5 +1995,76 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(physics, model.getSubject());
 		assertEquals(null, model.getClassification());
 		assertEquals("", lookup(robot, "#curriculum-code", TextField.class).getText());
+	}
+
+	private long countSuccessfulPreviewExtracts(Path csv, String operation) throws IOException {
+		if (Files.notExists(csv)) {
+			return 0L;
+		}
+		return Files.readAllLines(csv).stream().skip(1).map(line -> line.split(",", -1))
+				.filter(columns -> columns.length == 7).filter(columns -> operation.equals(columns[3]))
+				.filter(columns -> "true".equals(columns[5])).count();
+	}
+
+	private void verifyLinearPdfPreviewExtractionCounts(FxRobot robot, boolean twoPages) throws Exception {
+		prepareExamAndClassification(robot);
+		Path csv = Files.createTempDirectory("question-preview-count-").resolve("performance.csv");
+		QuestionCapturePane pane = questionCapturePane();
+		robot.interact(() -> pane.setPerformanceRecorder(new PerformanceRecorder(true, csv)));
+		for (int index = 0; index < 8; index++) {
+			int page = twoPages && index % 2 == 1 ? 2 : 1;
+			double x = 0.04 + index * 0.10;
+
+			// Exercise genuine navigation and PDF-page switching in the
+			// two-page case; the selected rectangle belongs to that page.
+			if (twoPages) {
+				robot.interact(() -> pdfWorkspace().showPage(PdfWorkspacePane.DocumentMode.EXAM, page));
+			}
+			robot.interact(
+					() -> pane.acceptSelection(new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM,
+							page, x, 0.12, 0.08, 0.18)));
+			fireControl(robot, "#add-question-region");
+
+			// Check 1, 2, 4 and 8 accepted parts. Old behaviour would
+			// have extracted 1, 3, 10 and 36 times respectively.
+			int accepted = index + 1;
+			if (accepted == 1 || accepted == 2 || accepted == 4 || accepted == 8) {
+				assertEquals(accepted, countSuccessfulPreviewExtracts(csv, "capture.question.region.extract"),
+						"Exactly one new PDF crop is permitted per accepted region");
+			}
+		}
+		assertEquals("Content parts: 8", lookup(robot, "#question-region-count", Label.class).getText());
+
+		// These presentation-only operations must never repeat PDF extraction.
+		fireControl(robot, "#question-content-move-up-7");
+		assertEquals(8L, countSuccessfulPreviewExtracts(csv, "capture.question.region.extract"));
+		fireControl(robot, "#question-content-remove-3");
+		assertEquals(7, field(pane, "regionPreviewBox", VBox.class).getChildren().size());
+		assertEquals(8L, countSuccessfulPreviewExtracts(csv, "capture.question.region.extract"));
+
+		// The second recording category does not participate in an ordinary
+		// Question-body-only sequence.
+		assertEquals(0L, countSuccessfulPreviewExtracts(csv, "capture.question.shared-context.extract"));
+	}
+
+	private static final class PulseGapSampler extends AnimationTimer {
+
+		private volatile long maxGapNanos;
+		private long previousPulseNanos;
+
+		@Override
+		public void handle(long now) {
+			if (previousPulseNanos != 0L) {
+				maxGapNanos = Math.max(maxGapNanos, now - previousPulseNanos);
+			}
+			previousPulseNanos = now;
+		}
+
+		private double maxGapMillis() {
+
+			// Zero means no paired pulse observations were obtained; it
+			// must not be interpreted as a zero-latency UI.
+			return maxGapNanos / 1_000_000.0;
+		}
 	}
 }
