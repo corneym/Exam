@@ -231,14 +231,11 @@ class SharedContextCapturePaneTest {
 	void stagingAcceptedQuestionRegionPreservesGeometryWithoutSelectionTransferOrPersistence(FxRobot robot) {
 		QuestionRegion original = new QuestionRegion(booklet, 1, 0.1, 0.2, 0.5, 0.3);
 		SharedQuestionContextRegion expected = new SharedQuestionContextRegion(1, 0.1, 0.2, 0.5, 0.3);
-
 		robot.interact(() -> {
 			pane.stageAcceptedQuestionRegion("Question 24 context", original);
-
 			assertFalse(pane.isCaptureMode());
 			assertFalse(pane.hasCurrentSelection());
 			assertTrue(pane.hasPendingAutomaticRegion());
-
 			assertEquals("Question 24 context", pane.getPendingAutomaticContextLabel());
 			assertEquals(List.of(expected), pane.getPendingAutomaticContextRegions());
 
@@ -251,7 +248,6 @@ class SharedContextCapturePaneTest {
 			assertThrows(IllegalStateException.class,
 					() -> pane.stageAcceptedQuestionRegion("Duplicate context", original));
 			assertEquals(List.of(expected), pane.getPendingAutomaticContextRegions());
-
 			pane.cancelAutomaticContext();
 			assertFalse(pane.hasPendingAutomaticRegion());
 
@@ -296,14 +292,10 @@ class SharedContextCapturePaneTest {
 
 	@Test
 	void takingAcceptedAutomaticRegionRestoresOriginalGeometry(FxRobot robot) {
-
 		QuestionRegion original = new QuestionRegion(booklet, 1, 0.15, 0.20, 0.45, 0.30);
-
 		robot.interact(() -> {
 			pane.stageAcceptedQuestionRegion("Question 24 context", original);
-
 			QuestionRegion restored = pane.takePendingAutomaticRegion();
-
 			assertEquals(original, restored);
 			assertFalse(pane.hasPendingAutomaticRegion());
 			assertFalse(pane.isCaptureMode());
@@ -312,16 +304,13 @@ class SharedContextCapturePaneTest {
 			// Releasing an accepted region must not clear the PDF
 			// workspace selection or persist a Shared Context.
 			assertEquals(0, selectionClearCount.get());
-
 			assertThrows(IllegalStateException.class, pane::takePendingAutomaticRegion);
 
 			// The original source remains eligible for another toggle.
 			pane.stageAcceptedQuestionRegion("Question 24 context", restored);
-
 			assertEquals(List.of(new SharedQuestionContextRegion(1, 0.15, 0.20, 0.45, 0.30)),
 					pane.getPendingAutomaticContextRegions());
 		});
-
 		assertEquals(0, repository.saveCount());
 	}
 

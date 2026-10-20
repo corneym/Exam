@@ -476,7 +476,6 @@ public final class SharedContextCapturePane extends VBox {
 			throw new IllegalArgumentException("label must not be blank");
 		}
 		Objects.requireNonNull(acceptedRegion, "acceptedRegion");
-
 		ExamBooklet booklet = bookletSupplier.get();
 		if (booklet == null || acceptedRegion.booklet().getId() != booklet.getId()) {
 			throw new IllegalArgumentException("Accepted region must belong to the active booklet");
@@ -490,11 +489,9 @@ public final class SharedContextCapturePane extends VBox {
 		// the normal capture-mode transition should run.
 		SharedQuestionContextRegion contextRegion = new SharedQuestionContextRegion(acceptedRegion.pageNumber(),
 				acceptedRegion.x(), acceptedRegion.y(), acceptedRegion.width(), acceptedRegion.height());
-
 		existingContextField.getSelectionModel().clearSelection();
 		contextLabelField.setText(label);
 		pendingRegions.add(contextRegion);
-
 		refreshRegionPreviews();
 		statusLabel.setText("1 shared context region(s) accepted");
 	}
@@ -515,12 +512,10 @@ public final class SharedContextCapturePane extends VBox {
 				|| correctionSaveHandler != null) {
 			throw new IllegalStateException("No single accepted automatic Shared Context region");
 		}
-
 		ExamBooklet booklet = bookletSupplier.get();
 		if (booklet == null) {
 			throw new IllegalStateException("No active booklet");
 		}
-
 		SharedQuestionContextRegion region = pendingRegions.getFirst();
 
 		// Preserve the original proportional PDF geometry and source.
@@ -533,7 +528,6 @@ public final class SharedContextCapturePane extends VBox {
 		contextLabelField.clear();
 		refreshRegionPreviews();
 		statusLabel.setText("No shared context selected");
-
 		return questionRegion;
 	}
 

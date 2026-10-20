@@ -2480,25 +2480,18 @@ public final class QuestionCapturePane extends VBox {
 		// It must not retain independent-MCQ continuation state.
 		mcqContinuationSelected = false;
 		inheritedMcqSharedContext = null;
-
 		String sourceCode = SourceQuestionCodeParser.derive(questionCodeField.getText());
-
 		if (!selected) {
-
 			if (sharedContextCapturePane.hasPendingAutomaticRegion() && !sharedContextCapturePane.isCaptureMode()) {
 
 				// Transfer the accepted context back into ordinary Question
 				// content rather than discarding its captured geometry.
 				QuestionRegion region = sharedContextCapturePane.takePendingAutomaticRegion();
-
 				int insertionIndex = Math.min(sharedContextOriginalContentIndex, pendingContentParts.size());
-
 				pendingContentParts.add(insertionIndex, new PdfQuestionContentPart(region));
-
 				refreshRegionPreviews();
 				setRegionCountLabel(pendingContentParts.size());
 				showQuestionPendingStatus();
-
 			} else {
 
 				// Preserve the existing behaviour for a context whose
@@ -2506,17 +2499,14 @@ public final class QuestionCapturePane extends VBox {
 				sharedContextCapturePane.cancelAutomaticContext();
 				refreshSharedContextPreview();
 			}
-
 			hideSharedContextStatus();
 			updateQuestionCodeLock();
 			return;
 		}
-
 		if (sourceCode == null) {
 			setSharedContextCheckBoxSelected(false);
 			return;
 		}
-
 		String label = "Question " + sourceCode + " context";
 
 		// The first accepted PDF region may already belong to the
@@ -2524,18 +2514,15 @@ public final class QuestionCapturePane extends VBox {
 		// order and source of every remaining content part.
 		for (int index = 0; index < pendingContentParts.size(); index++) {
 			QuestionContentPart part = pendingContentParts.get(index);
-
 			if (!(part instanceof PdfQuestionContentPart pdfPart)) {
 				continue;
 			}
-
 			sharedContextCapturePane.stageAcceptedQuestionRegion(label, pdfPart.region());
 
 			// Remove the ordinary-content reference only after the
 			// Shared Context staging operation has succeeded.
 			pendingContentParts.remove(index);
 			sharedContextOriginalContentIndex = index;
-
 			refreshRegionPreviews();
 			setRegionCountLabel(pendingContentParts.size());
 			showQuestionPendingStatus();
@@ -2549,7 +2536,6 @@ public final class QuestionCapturePane extends VBox {
 			setSharedContextCheckBoxSelected(false);
 			return;
 		}
-
 		sharedContextOriginalContentIndex = 0;
 		updateQuestionCodeLock();
 	}
@@ -3441,7 +3427,6 @@ public final class QuestionCapturePane extends VBox {
 		mcqContinuationSelected = false;
 		inheritedMcqSharedContext = null;
 		sharedContextOriginalContentIndex = 0;
-
 		sharedContextCapturePane.clearForQuestion();
 		hideSharedContextControls();
 	}
