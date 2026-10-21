@@ -1589,6 +1589,55 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void pendingMultipartStatusTracksQuestionCodeEdits(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		captureQuestion(robot, "24a");
+		TextField code = lookup(robot, "#question-code", TextField.class);
+		Label pendingStatus = lookup(robot, "#question-save-status", Label.class);
+		Label duplicateStatus = lookup(robot, "#question-code-status", Label.class);
+		Label regionCount = lookup(robot, "#question-region-count", Label.class);
+
+		// The current unsaved multipart Question has one accepted
+		// body part. Its pending status must identify that Question.
+		robot.interact(() -> code.setText("24f"));
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-question-region");
+		assertEquals("Pending 24f — 1 content part(s) accepted", pendingStatus.getText());
+		assertFalse(duplicateStatus.isVisible());
+
+		// Changing to another uncaptured multipart Question must
+		// update the existing status without losing accepted content.
+		robot.interact(() -> code.setText("24g"));
+		assertEquals("Pending 24g — 1 content part(s) accepted", pendingStatus.getText());
+		assertFalse(duplicateStatus.isVisible());
+
+		// The persisted Question is a duplicate. Its red warning
+		// must appear, while the obsolete green pending status clears.
+		robot.interact(() -> code.setText("24a"));
+		assertTrue(duplicateStatus.isVisible());
+		assertEquals("Question 24a has already been captured in this booklet.", duplicateStatus.getText());
+		assertEquals("", pendingStatus.getText());
+		assertEquals("Content parts: 1", regionCount.getText());
+
+		// Incremental backspacing must never restore an obsolete
+		// pending number or leave the previous duplicate warning.
+		robot.interact(() -> code.setText("24"));
+		assertFalse(duplicateStatus.isVisible());
+		assertFalse(pendingStatus.getText().contains("24a"));
+		assertFalse(pendingStatus.getText().contains("24g"));
+		robot.interact(() -> code.setText("2"));
+		assertFalse(duplicateStatus.isVisible());
+		assertFalse(pendingStatus.getText().contains("24"));
+		robot.interact(() -> code.setText(""));
+		assertFalse(duplicateStatus.isVisible());
+		assertEquals("", pendingStatus.getText());
+
+		// The accepted part is retained throughout the edits.
+		assertEquals("Content parts: 1", regionCount.getText());
+		assertTrue(questionCapturePane().hasAcceptedRegions());
+	}
+
+	@Test
 	void pendingQuestionSelectionBlocksWorkingSubjectChange(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		@SuppressWarnings("unchecked")

@@ -2663,6 +2663,10 @@ public final class QuestionCapturePane extends VBox {
 				});
 				measureQuestionCodePhase("capture.question.code.duplicate", operation.id(),
 						() -> refreshQuestionCodeStatus(newCode));
+
+				// Keep an existing pending-capture message consistent
+				// with the current candidate Question number.
+				refreshPendingQuestionCodeStatus(newCode);
 				measureQuestionCodePhase("capture.question.code.controls", operation.id(),
 						this::refreshSaveButtonState);
 
@@ -3297,6 +3301,30 @@ public final class QuestionCapturePane extends VBox {
 		}
 		boolean required = importedQuestion != null && importedQuestion.isSharedContextUnresolved();
 		showSharedContextOption(sourceCode, required);
+	}
+
+	private void refreshPendingQuestionCodeStatus(String newCode) {
+		String currentStatus = saveStatusLabel.getText();
+		boolean pendingMessage = currentStatus.startsWith("Pending ") || currentStatus.startsWith("Question pending");
+
+		// Do not overwrite save outcomes, PDF-selection instructions,
+		// editing messages or Shared Context workflow messages.
+		if (!pendingMessage && !currentStatus.isBlank()) {
+			return;
+		}
+		String code = newCode == null ? "" : newCode.trim();
+		if (code.isEmpty() || questionCodeStatusLabel.isVisible()) {
+			if (pendingMessage) {
+				saveStatusLabel.setText("");
+			}
+			return;
+		}
+
+		// Restore pending status after a duplicate or empty candidate
+		// is corrected, provided this is active new-Question capture.
+		if (pendingMessage || (currentStatus.isBlank() && newQuestionCaptureActive && !pendingContentParts.isEmpty())) {
+			showQuestionPendingStatus();
+		}
 	}
 
 	private void refreshQuestionCodeStatus(String questionCode) {
