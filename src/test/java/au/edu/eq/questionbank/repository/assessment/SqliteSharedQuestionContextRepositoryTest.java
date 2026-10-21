@@ -158,6 +158,51 @@ class SqliteSharedQuestionContextRepositoryTest {
 	}
 
 	@Test
+	void pdfOnlySaveAndReplacementMaintainVersion24ContentOrder() throws Exception {
+		RepositoryFixture fixture = createFixture("pdf-v24-order.db");
+		SqliteDatabase database = fixture.database();
+
+		SharedQuestionContextRegion first = new SharedQuestionContextRegion(1, 0.10, 0.10, 0.60, 0.20);
+		SharedQuestionContextRegion second = new SharedQuestionContextRegion(2, 0.10, 0.20, 0.60, 0.20);
+
+		SharedQuestionContext saved = fixture.repository().save(fixture.firstBooklet(), "Original context",
+				List.of(first, second));
+
+		assertEquals(2, rowCount(database, "shared_question_context_regions"));
+		assertEquals(2, rowCount(database, "shared_question_context_content_parts"));
+
+		SharedQuestionContextRegion replacement = new SharedQuestionContextRegion(3, 0.15, 0.25, 0.50, 0.30);
+
+		SharedQuestionContext replaced = fixture.repository().replace(saved, "Corrected context", List.of(replacement));
+
+		assertEquals(saved.getId(), replaced.getId());
+		assertEquals(1, rowCount(database, "shared_question_context_regions"));
+		assertEquals(1, rowCount(database, "shared_question_context_content_parts"));
+
+		SharedQuestionContext reloaded = fixture.repository().findByBooklet(fixture.firstBooklet()).getFirst();
+
+		assertEquals("Corrected context", reloaded.getLabel());
+		assertEquals(List.of(replacement), reloaded.getRegions());
+
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT content_order, content_type, region_order
+						FROM shared_question_context_content_parts
+						WHERE shared_context_id = ?
+						""")) {
+			statement.setLong(1, saved.getId());
+
+			try (ResultSet result = statement.executeQuery()) {
+				assertTrue(result.next());
+				assertEquals(0, result.getInt("content_order"));
+				assertEquals("PDF_REGION", result.getString("content_type"));
+				assertEquals(0, result.getInt("region_order"));
+				assertFalse(result.next());
+			}
+		}
+	}
+
+	@Test
 	void rejectsInvalidArguments() throws Exception {
 		RepositoryFixture fixture = createFixture("invalid-shared-context.db");
 		SqliteSharedQuestionContextRepository repository = fixture.repository();

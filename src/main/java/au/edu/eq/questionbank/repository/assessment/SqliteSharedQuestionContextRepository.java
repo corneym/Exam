@@ -100,13 +100,14 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 				throw new NullPointerException("regions contains null");
 			}
 		}
+
 		ExamBooklet booklet = context.getBooklet();
+
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
-
-				// Update the existing row rather than creating a new context so every
-				// Question already linked by shared_context_id remains linked.
+				// Retain context identity so existing Question relationships
+				// continue referencing this context after correction.
 				try (PreparedStatement statement = connection.prepareStatement("""
 						UPDATE shared_question_contexts
 						SET context_label = ?
@@ -116,13 +117,24 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 					statement.setString(1, label);
 					statement.setLong(2, context.getId());
 					statement.setLong(3, booklet.getId());
+
 					if (statement.executeUpdate() != 1) {
 						throw new IllegalArgumentException("Shared context does not exist for booklet");
 					}
 				}
 
-				// Region rows belong entirely to the shared context, so replacement
-				// removes the old ordered set before storing the corrected set.
+				// Remove references before deleting their source records.
+				// All changes are rolled back together if an insert fails.
+				deleteContentParts(connection, context.getId());
+
+				try (PreparedStatement statement = connection.prepareStatement("""
+						DELETE FROM shared_question_context_images
+						WHERE shared_context_id = ?
+						""")) {
+					statement.setLong(1, context.getId());
+					statement.executeUpdate();
+				}
+
 				try (PreparedStatement statement = connection.prepareStatement("""
 						DELETE FROM shared_question_context_regions
 						WHERE shared_context_id = ?
@@ -130,20 +142,24 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 					statement.setLong(1, context.getId());
 					statement.executeUpdate();
 				}
+
 				insertRegions(connection, context.getId(), regions);
+				insertPdfContentOrder(connection, context.getId(), regions.size());
+
 				SharedQuestionContext replaced = new SharedQuestionContext(context.getId(), booklet, label, regions);
+
 				connection.commit();
 				return replaced;
-			} catch (SQLException | RuntimeException e) {
+			} catch (SQLException | RuntimeException exception) {
 				try {
 					connection.rollback();
 				} catch (SQLException rollbackFailure) {
-					e.addSuppressed(rollbackFailure);
+					exception.addSuppressed(rollbackFailure);
 				}
-				throw e;
+				throw exception;
 			}
-		} catch (SQLException e) {
-			throw new IllegalStateException("Could not replace shared question context", e);
+		} catch (SQLException exception) {
+			throw new IllegalStateException("Could not replace shared question context", exception);
 		}
 	}
 
@@ -184,6 +200,7 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 		if (connection == null) {
 			throw new NullPointerException("connection");
 		}
+
 		try (PreparedStatement statement = connection.prepareStatement("""
 				SELECT 1
 				FROM questions
@@ -197,6 +214,19 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 				}
 			}
 		}
+
+		// Release mixed-content references before deleting the records
+		// to which they refer. The caller owns the transaction.
+		deleteContentParts(connection, contextId);
+
+		try (PreparedStatement statement = connection.prepareStatement("""
+				DELETE FROM shared_question_context_images
+				WHERE shared_context_id = ?
+				""")) {
+			statement.setLong(1, contextId);
+			statement.executeUpdate();
+		}
+
 		try (PreparedStatement statement = connection.prepareStatement("""
 				DELETE FROM shared_question_context_regions
 				WHERE shared_context_id = ?
@@ -204,6 +234,7 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 			statement.setLong(1, contextId);
 			statement.executeUpdate();
 		}
+
 		try (PreparedStatement statement = connection.prepareStatement("""
 				DELETE FROM shared_question_contexts
 				WHERE id = ?
@@ -263,9 +294,25 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 				throw new NullPointerException("regions contains null");
 			}
 		}
+
 		long contextId = insertContext(connection, booklet, label);
+
+		// Both the source regions and their presentation-order references
+		// belong to the caller's transaction.
 		insertRegions(connection, contextId, regions);
+		insertPdfContentOrder(connection, contextId, regions.size());
+
 		return new SharedQuestionContext(contextId, booklet, label, regions);
+	}
+
+	private void deleteContentParts(Connection connection, long contextId) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				DELETE FROM shared_question_context_content_parts
+				WHERE shared_context_id = ?
+				""")) {
+			statement.setLong(1, contextId);
+			statement.executeUpdate();
+		}
 	}
 
 	private List<SharedQuestionContextRegion> findRegions(Connection connection, long contextId) throws SQLException {
@@ -306,6 +353,28 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 					throw new SQLException("Shared question context insert did not return an id");
 				}
 				return result.getLong("id");
+			}
+		}
+	}
+
+	private void insertPdfContentOrder(Connection connection, long contextId, int regionCount) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				INSERT INTO shared_question_context_content_parts
+				    (shared_context_id,
+				     content_order,
+				     content_type,
+				     region_order,
+				     image_order)
+				VALUES (?, ?, 'PDF_REGION', ?, NULL)
+				""")) {
+
+			// The PDF-only compatibility path uses identical source and
+			// presentation positions, matching pre-v24 semantics.
+			for (int index = 0; index < regionCount; index++) {
+				statement.setLong(1, contextId);
+				statement.setInt(2, index);
+				statement.setInt(3, index);
+				statement.executeUpdate();
 			}
 		}
 	}
