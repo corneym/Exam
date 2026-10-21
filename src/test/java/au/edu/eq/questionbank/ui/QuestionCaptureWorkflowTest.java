@@ -44,6 +44,7 @@ import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteSharedQuestionContextRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteSourceQuestionRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.curriculum.DescriptorLookupService.DescriptorMatch;
 import au.edu.eq.questionbank.ui.capture.AnswerCapturePane;
 import au.edu.eq.questionbank.ui.capture.QuestionCapturePane;
 import au.edu.eq.questionbank.ui.exam.ExamMetadataPane;
@@ -60,6 +61,7 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
+import javafx.scene.control.ListView;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.RadioButton;
@@ -70,6 +72,8 @@ import javafx.scene.image.ImageView;
 import javafx.scene.image.WritableImage;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
@@ -1858,6 +1862,44 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void successfulQuestionSaveClearsStaleDescriptorSearchAndPersistsClassification(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		TextField search = lookup(robot, "#curriculum-descriptor-search", TextField.class);
+		ListView<DescriptorMatch> results = listView(robot, "#curriculum-descriptor-search-results");
+		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
+
+		// Choose the actual Descriptor through Search descriptors first.
+		CurriculumNode initial = model.getClassification();
+		robot.interact(() -> search.setText(initial.getCode()));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> results.getItems().stream().anyMatch(match -> initial.equals(match.descriptor())));
+		robot.interact(() -> {
+			int index = -1;
+			for (int i = 0; i < results.getItems().size(); i++) {
+				if (initial.equals(results.getItems().get(i).descriptor())) {
+					index = i;
+					break;
+				}
+			}
+			results.getSelectionModel().select(index);
+			results.fireEvent(new KeyEvent(KeyEvent.KEY_PRESSED, "", "", KeyCode.ENTER, false, false, false, false));
+		});
+		assertEquals("", search.getText());
+		CurriculumNode selected = model.getClassification();
+		assertEquals(initial, selected);
+
+		// Simulate a later unused search: it must not survive a successful Save.
+		robot.interact(() -> search.setText("stale keywords"));
+		assertEquals("stale keywords", search.getText());
+		Question saved = captureQuestion(robot, "191");
+		assertEquals("", search.getText());
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		Question persisted = repository.findById(saved.getId()).orElseThrow();
+		assertEquals(selected, saved.getClassification());
+		assertEquals(selected, persisted.getClassification());
+	}
+
+	@Test
 	void tallAcceptedRegionsExpandWithoutAdditionalInteraction(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		QuestionCapturePane capture = questionCapturePane();
@@ -1972,6 +2014,37 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.interact(capturePane::clearForNewPdf);
 		assertTrue(previews.getChildren().isEmpty());
 		assertFalse(capturePane.hasAcceptedRegions());
+	}
+
+	@Test
+	void unsuccessfulQuestionSaveLeavesDescriptorSearchIntact(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		TextField search = lookup(robot, "#curriculum-descriptor-search", TextField.class);
+		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
+		CurriculumNode original = model.getClassification();
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		robot.interact(() -> {
+			search.setText("retain my keywords");
+			marks.clear();
+		});
+
+		// Invoke the actual Save validation boundary. The button is deliberately
+		// disabled for invalid metadata, so this tests its defensive validation path.
+		Platform.runLater(() -> {
+			try {
+				invoke(questionCapturePane(), "saveQuestion", new Class<?>[0]);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> robot.lookup("Question is incomplete.").tryQuery().isPresent());
+		assertEquals("retain my keywords", search.getText());
+		assertEquals(original, model.getClassification());
+		fireDialogButton(robot, "OK");
+		assertEquals("retain my keywords", search.getText());
+		assertEquals(original, model.getClassification());
+		assertTrue(new SqliteQuestionRepository(new SqliteDatabase(databasePath)).findAll().isEmpty());
 	}
 
 	@Test

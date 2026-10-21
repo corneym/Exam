@@ -226,6 +226,17 @@ public class CurriculumSelectorPane extends VBox {
 	}
 
 	/**
+	 * Clears the optional Descriptor keyword lookup without changing the current
+	 * classification, Code, syllabus, or hierarchy selections.
+	 * <p>
+	 * The existing lookup-text listener dismisses results and invalidates any
+	 * outstanding asynchronous search when the text changes.
+	 */
+	public void clearDescriptorSearch() {
+		descriptorLookupText.clear();
+	}
+
+	/**
 	 * Detaches the Classification section so the application can place it inside
 	 * the larger capture-workspace container while Working Subject remains
 	 * application-level context.
@@ -521,7 +532,6 @@ public class CurriculumSelectorPane extends VBox {
 
 	private void applyNodePath(CurriculumNode node) {
 		ClassificationPath path = classificationPath(node);
-
 		applyUnitAndTopic(path);
 		applyFinalClassification(path);
 
@@ -915,6 +925,12 @@ public class CurriculumSelectorPane extends VBox {
 				refreshingCode = false;
 			}
 			refreshSelectedClassificationProperty();
+
+			// A Subtopic may be a valid stored classification, but only a
+			// Descriptor completes the lookup workflow for this issue.
+			if (exactMatch.getLevel() == CurriculumLevel.DESCRIPTOR) {
+				clearDescriptorSearch();
+			}
 			return;
 		}
 		CurriculumNode current = deepestSelectedNode();
@@ -944,6 +960,12 @@ public class CurriculumSelectorPane extends VBox {
 			try {
 				model.selectDescriptor(descriptorBox.getValue());
 				syncCodeFromSelection();
+
+				// Only an actual selected Descriptor is the terminal hierarchy
+				// choice. Clearing a selection must not erase lookup keywords.
+				if (descriptorBox.getValue() != null) {
+					clearDescriptorSearch();
+				}
 				operation.resultCount(descriptorBox.getValue() == null ? 0 : 1);
 			} catch (RuntimeException | Error failure) {
 				operation.failed();
@@ -1392,7 +1414,6 @@ public class CurriculumSelectorPane extends VBox {
 	}
 
 	private <T> void selectAvailableValue(ComboBox<T> box, T selectedValue) {
-
 		if (selectedValue != null) {
 			for (T item : box.getItems()) {
 				if (item.equals(selectedValue)) {

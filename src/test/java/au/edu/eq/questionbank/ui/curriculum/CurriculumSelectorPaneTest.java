@@ -203,6 +203,43 @@ public class CurriculumSelectorPaneTest {
 	}
 
 	@Test
+	public void completingDescriptorCodeClearsSearchForBothHierarchies(FxRobot robot) {
+		TextField search = robot.lookup("#curriculum-descriptor-search").queryAs(TextField.class);
+		TextField code = robot.lookup("#curriculum-code").queryAs(TextField.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Topic> topics = robot.lookup("#curriculum-topic").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Descriptor> descriptors = robot.lookup("#curriculum-descriptor").queryAs(ComboBox.class);
+		robot.interact(() -> {
+			search.setText("descriptor");
+			code.setText("3.1.1");
+		});
+		assertEquals("descriptor", search.getText(), "Subtopic is not the terminal Descriptor");
+		assertEquals(subtopic311, model.getClassification());
+		robot.interact(() -> code.setText("3.1.1.1"));
+		assertEquals("", search.getText());
+		assertEquals(topic31, topics.getValue());
+		assertEquals(descriptor3111, descriptors.getValue());
+		assertEquals(descriptor3111, model.getClassification());
+		assertEquals(descriptor3111, pane.selectedClassificationProperty().get());
+
+		// In the three-level syllabus shape, Descriptor sits directly below Topic.
+		robot.interact(() -> {
+			search.setText("descriptor");
+			code.setText("3.2");
+		});
+		assertEquals("descriptor", search.getText(), "Topic selection must retain lookup text");
+		assertNull(model.getClassification());
+		robot.interact(() -> code.setText("3.2.1"));
+		assertEquals("", search.getText());
+		assertEquals(topic32, topics.getValue());
+		assertEquals(descriptor321, descriptors.getValue());
+		assertNull(model.getSubtopic());
+		assertEquals(descriptor321, model.getClassification());
+		assertEquals(descriptor321, pane.selectedClassificationProperty().get());
+	}
+
+	@Test
 	public void descriptorLookupFollowsClassificationDisable(FxRobot robot) {
 		TextField search = robot.lookup("#curriculum-descriptor-search").queryAs(TextField.class);
 		robot.interact(() -> pane.setClassificationControlsDisabled(true));
@@ -249,34 +286,24 @@ public class CurriculumSelectorPaneTest {
 
 	@Test
 	public void descriptorLookupPopulatesTopicAndReplacesPreviousHierarchy(FxRobot robot) throws Exception {
-
 		TextField search = robot.lookup("#curriculum-descriptor-search").queryAs(TextField.class);
-
 		TextField code = robot.lookup("#curriculum-code").queryAs(TextField.class);
-
 		ListView<DescriptorMatch> results = robot.lookup("#curriculum-descriptor-search-results").queryListView();
-
 		@SuppressWarnings("unchecked")
 		ComboBox<SyllabusVersion> syllabuses = robot.lookup("#curriculum-syllabus").queryAs(ComboBox.class);
-
 		@SuppressWarnings("unchecked")
 		ComboBox<Unit> units = robot.lookup("#curriculum-unit").queryAs(ComboBox.class);
-
 		@SuppressWarnings("unchecked")
 		ComboBox<Topic> topics = robot.lookup("#curriculum-topic").queryAs(ComboBox.class);
-
 		@SuppressWarnings("unchecked")
 		ComboBox<Subtopic> subtopics = robot.lookup("#curriculum-subtopic").queryAs(ComboBox.class);
-
 		@SuppressWarnings("unchecked")
 		ComboBox<Descriptor> descriptors = robot.lookup("#curriculum-descriptor").queryAs(ComboBox.class);
 
 		// First select a descriptor beneath a Subtopic using lookup.
 		robot.interact(() -> search.setText("3.1.1.1"));
-
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
 				&& results.getItems().getFirst().descriptor().equals(descriptor3111));
-
 		robot.interact(() -> {
 			results.getSelectionModel().selectFirst();
 			results.fireEvent(new KeyEvent(KeyEvent.KEY_PRESSED, "", "", KeyCode.ENTER, false, false, false, false));
@@ -288,10 +315,8 @@ public class CurriculumSelectorPaneTest {
 		assertEquals(topic31, topics.getValue());
 		assertEquals(subtopic311, subtopics.getValue());
 		assertEquals(descriptor3111, descriptors.getValue());
-
 		assertEquals(topic31, topics.getSelectionModel().getSelectedItem());
 		assertTrue(topics.getItems().contains(topic31));
-
 		assertEquals("3.1.1.1", code.getText());
 		assertEquals("", search.getText());
 
@@ -299,7 +324,6 @@ public class CurriculumSelectorPaneTest {
 		assertEquals(unit3, topic31.getParent());
 		assertEquals(topic31, subtopic311.getParent());
 		assertEquals(subtopic311, descriptor3111.getParent());
-
 		assertEquals(topic31, model.getTopic());
 		assertEquals(descriptor3111, model.getClassification());
 		assertEquals(descriptor3111, pane.selectedClassificationProperty().get());
@@ -308,10 +332,8 @@ public class CurriculumSelectorPaneTest {
 		// This one belongs directly to Topic 3.2.
 		robot.interact(() -> code.setText("3"));
 		robot.interact(() -> search.setText("3.2.1"));
-
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
 				&& results.getItems().getFirst().descriptor().equals(descriptor321));
-
 		robot.interact(() -> {
 			results.getSelectionModel().selectFirst();
 			results.fireEvent(new KeyEvent(KeyEvent.KEY_PRESSED, "", "", KeyCode.ENTER, false, false, false, false));
@@ -324,18 +346,14 @@ public class CurriculumSelectorPaneTest {
 		assertEquals(topic32, topics.getValue());
 		assertNull(subtopics.getValue());
 		assertEquals(descriptor321, descriptors.getValue());
-
 		assertEquals(topic32, topics.getSelectionModel().getSelectedItem());
 		assertTrue(topics.getItems().contains(topic32));
 		assertFalse(subtopics.isVisible());
-
 		assertEquals("3.2.1", code.getText());
 		assertEquals("", search.getText());
-
 		assertEquals(unit3, topic32.getParent());
 		assertEquals(topic32, descriptor321.getParent());
 		assertEquals(syllabus2025, descriptor321.getSyllabusVersion());
-
 		assertEquals(topic32, model.getTopic());
 		assertNull(model.getSubtopic());
 		assertEquals(descriptor321, model.getClassification());
@@ -458,6 +476,42 @@ public class CurriculumSelectorPaneTest {
 	}
 
 	@Test
+	public void dropdownDescriptorSelectionClearsSearchButIntermediateLevelsDoNot(FxRobot robot) {
+		TextField search = robot.lookup("#curriculum-descriptor-search").queryAs(TextField.class);
+		TextField code = robot.lookup("#curriculum-code").queryAs(TextField.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Unit> units = robot.lookup("#curriculum-unit").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Topic> topics = robot.lookup("#curriculum-topic").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Subtopic> subtopics = robot.lookup("#curriculum-subtopic").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Descriptor> descriptors = robot.lookup("#curriculum-descriptor").queryAs(ComboBox.class);
+		robot.interact(() -> search.setText("descriptor"));
+		robot.interact(() -> units.getSelectionModel().select(unit3));
+		assertEquals("descriptor", search.getText());
+		robot.interact(() -> topics.getSelectionModel().select(topic31));
+		assertEquals("descriptor", search.getText());
+		robot.interact(() -> subtopics.getSelectionModel().select(subtopic311));
+		assertEquals("descriptor", search.getText());
+		assertEquals(subtopic311, model.getClassification());
+		robot.interact(() -> descriptors.getSelectionModel().select(descriptor3111));
+		assertEquals("", search.getText());
+		assertEquals("3.1.1.1", code.getText());
+		assertEquals(descriptor3111, model.getClassification());
+		assertEquals(descriptor3111, pane.selectedClassificationProperty().get());
+		robot.interact(() -> search.setText("descriptor"));
+		robot.interact(() -> topics.getSelectionModel().select(topic32));
+		assertEquals("descriptor", search.getText(), "Changing Topic is only a partial selection");
+		assertNull(model.getSubtopic());
+		robot.interact(() -> descriptors.getSelectionModel().select(descriptor321));
+		assertEquals("", search.getText());
+		assertEquals("3.2.1", code.getText());
+		assertEquals(descriptor321, model.getClassification());
+		assertEquals(descriptor321, pane.selectedClassificationProperty().get());
+	}
+
+	@Test
 	public void dropdownSelectionsSynchroniseCodeAndClassification(FxRobot robot) {
 		@SuppressWarnings("unchecked")
 		ComboBox<Unit> units = robot.lookup("#curriculum-unit").queryAs(ComboBox.class);
@@ -489,6 +543,23 @@ public class CurriculumSelectorPaneTest {
 		assertEquals(subtopic311, model.getSubtopic());
 		assertNull(model.getDescriptor());
 		assertEquals(subtopic311, pane.selectedClassificationProperty().get());
+	}
+
+	@Test
+	public void explicitLookupClearPreservesSelectedClassification(FxRobot robot) {
+		TextField search = robot.lookup("#curriculum-descriptor-search").queryAs(TextField.class);
+		TextField code = robot.lookup("#curriculum-code").queryAs(TextField.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Descriptor> descriptors = robot.lookup("#curriculum-descriptor").queryAs(ComboBox.class);
+		robot.interact(() -> pane.selectClassificationPath(descriptor3111));
+		robot.interact(() -> search.setText("different keywords"));
+		assertEquals("different keywords", search.getText());
+		robot.interact(pane::clearDescriptorSearch);
+		assertEquals("", search.getText());
+		assertEquals("3.1.1.1", code.getText());
+		assertEquals(descriptor3111, descriptors.getValue());
+		assertEquals(descriptor3111, model.getClassification());
+		assertEquals(descriptor3111, pane.selectedClassificationProperty().get());
 	}
 
 	@Test
@@ -540,21 +611,16 @@ public class CurriculumSelectorPaneTest {
 
 	@Test
 	public void refreshingSubjectsDoesNotClearAcceptedSubject(FxRobot robot) {
-
 		@SuppressWarnings("unchecked")
 		ComboBox<Subject> subjects = robot.lookup("#curriculum-subject").queryAs(ComboBox.class);
-
 		@SuppressWarnings("unchecked")
 		ComboBox<SyllabusVersion> syllabuses = robot.lookup("#curriculum-syllabus").queryAs(ComboBox.class);
-
 		robot.interact(() -> syllabuses.getSelectionModel().select(syllabus2019));
-
 		assertEquals(syllabus2019, syllabuses.getValue());
 		assertEquals(syllabus2019, model.getSyllabusVersion());
-
 		AtomicInteger unexpectedSubjectChanges = new AtomicInteger();
-
 		robot.interact(() -> {
+
 			// The application listens to this same property.
 			// A temporary null would initiate an unwanted Subject refresh.
 			subjects.valueProperty().addListener((_, _, selectedSubject) -> {
@@ -562,10 +628,8 @@ public class CurriculumSelectorPaneTest {
 					unexpectedSubjectChanges.incrementAndGet();
 				}
 			});
-
 			pane.refreshSubjects();
 		});
-
 		assertEquals(0, unexpectedSubjectChanges.get());
 		assertEquals(chemistry, subjects.getValue());
 		assertEquals(chemistry, model.getSubject());
