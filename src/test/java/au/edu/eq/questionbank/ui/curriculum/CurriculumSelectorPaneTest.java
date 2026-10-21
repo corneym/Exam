@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Tag;
@@ -535,6 +536,41 @@ public class CurriculumSelectorPaneTest {
 		assertEquals("3.1.1.1", codeField.getText());
 		robot.write(".");
 		assertEquals("3.1.1.1", codeField.getText());
+	}
+
+	@Test
+	public void refreshingSubjectsDoesNotClearAcceptedSubject(FxRobot robot) {
+
+		@SuppressWarnings("unchecked")
+		ComboBox<Subject> subjects = robot.lookup("#curriculum-subject").queryAs(ComboBox.class);
+
+		@SuppressWarnings("unchecked")
+		ComboBox<SyllabusVersion> syllabuses = robot.lookup("#curriculum-syllabus").queryAs(ComboBox.class);
+
+		robot.interact(() -> syllabuses.getSelectionModel().select(syllabus2019));
+
+		assertEquals(syllabus2019, syllabuses.getValue());
+		assertEquals(syllabus2019, model.getSyllabusVersion());
+
+		AtomicInteger unexpectedSubjectChanges = new AtomicInteger();
+
+		robot.interact(() -> {
+			// The application listens to this same property.
+			// A temporary null would initiate an unwanted Subject refresh.
+			subjects.valueProperty().addListener((_, _, selectedSubject) -> {
+				if (!chemistry.equals(selectedSubject)) {
+					unexpectedSubjectChanges.incrementAndGet();
+				}
+			});
+
+			pane.refreshSubjects();
+		});
+
+		assertEquals(0, unexpectedSubjectChanges.get());
+		assertEquals(chemistry, subjects.getValue());
+		assertEquals(chemistry, model.getSubject());
+		assertEquals(syllabus2019, syllabuses.getValue());
+		assertEquals(syllabus2019, model.getSyllabusVersion());
 	}
 
 	@Test
