@@ -26,6 +26,7 @@ import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.SharedContextContentPart;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
@@ -350,10 +351,35 @@ class SharedContextCapturePaneTest {
 		}
 
 		@Override
+		public SharedQuestionContext replaceContentParts(SharedQuestionContext context, String label,
+				List<? extends SharedContextContentPart> contentParts) {
+			for (int i = 0; i < contexts.size(); i++) {
+				SharedQuestionContext existing = contexts.get(i);
+				if (existing.getId() == context.getId()) {
+					SharedQuestionContext replacement = SharedQuestionContext.fromContentParts(existing.getId(),
+							existing.getBooklet(), label, contentParts);
+					contexts.set(i, replacement);
+					return replacement;
+				}
+			}
+			throw new IllegalArgumentException("Shared context does not exist");
+		}
+
+		@Override
 		public SharedQuestionContext save(ExamBooklet booklet, String label,
 				List<SharedQuestionContextRegion> regions) {
 			saveCount++;
 			SharedQuestionContext context = new SharedQuestionContext(saveCount, booklet, label, regions);
+			contexts.add(context);
+			return context;
+		}
+
+		@Override
+		public SharedQuestionContext saveContentParts(ExamBooklet booklet, String label,
+				List<? extends SharedContextContentPart> contentParts) {
+			saveCount++;
+			SharedQuestionContext context = SharedQuestionContext.fromContentParts(saveCount, booklet, label,
+					contentParts);
 			contexts.add(context);
 			return context;
 		}
