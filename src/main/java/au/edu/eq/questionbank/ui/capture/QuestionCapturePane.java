@@ -77,6 +77,7 @@ import javafx.scene.control.ToggleGroup;
 import javafx.scene.control.Tooltip;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.scene.input.Clipboard;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
@@ -1659,6 +1660,21 @@ public final class QuestionCapturePane extends VBox {
 		});
 	}
 
+	private void clearClipboardAfterAcceptedImage() {
+		try {
+
+			// The clipboard image is already part of the accepted
+			// Question content. Remove its source to prevent accidental
+			// reuse through a subsequent paste operation.
+			Clipboard.getSystemClipboard().clear();
+		} catch (RuntimeException exception) {
+
+			// Failure to clear the operating-system clipboard must not
+			// undo an accepted image or interrupt Question capture.
+			saveStatusLabel.setText("Image accepted, but the clipboard could not be cleared.");
+		}
+	}
+
 	private void clearImportedCaptureCompletion() {
 		importedCaptureCompletionQuestionId = -1L;
 		importedCaptureCompletedHandler = () -> {
@@ -2027,25 +2043,6 @@ public final class QuestionCapturePane extends VBox {
 		cancelQuestionEditButton.setId("cancel-question-edit");
 		cancelQuestionEditButton.setVisible(false);
 		cancelQuestionEditButton.setManaged(false);
-	}
-
-	private boolean confirmDuplicateClipboardImage() {
-		Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
-		if (getScene() != null && getScene().getWindow() != null) {
-			confirmation.initOwner(getScene().getWindow());
-		}
-		confirmation.setTitle("Duplicate clipboard image");
-		confirmation.setHeaderText("This image has already been added to this Question.");
-		confirmation.setContentText("Add it again?");
-
-		// JavaFX normally defaults YES-type buttons. Explicitly make NO the
-		// default so Enter or window dismissal never adds a duplicate.
-		confirmation.getButtonTypes().setAll(ButtonType.NO, ButtonType.YES);
-		Button noButton = (Button) confirmation.getDialogPane().lookupButton(ButtonType.NO);
-		Button yesButton = (Button) confirmation.getDialogPane().lookupButton(ButtonType.YES);
-		yesButton.setDefaultButton(false);
-		noButton.setDefaultButton(true);
-		return confirmation.showAndWait().orElse(ButtonType.NO) == ButtonType.YES;
 	}
 
 	private boolean confirmNewTopLevelQuestionBeyondExpected() {
@@ -2956,9 +2953,7 @@ public final class QuestionCapturePane extends VBox {
 		}
 		if (legacySplitCaptureState != null) {
 
-			// Legacy split persistence intentionally remains PDF-region-only. Clipboard
-			// images stay outside this workflow until mixed split capture is explicitly
-			// implemented.
+			// Legacy split persistence intentionally remains PDF-region-only.
 			showAlert(Alert.AlertType.INFORMATION, "Clipboard images are unavailable during legacy split capture.",
 					"Complete this legacy split using PDF regions.");
 			return;
@@ -2972,29 +2967,25 @@ public final class QuestionCapturePane extends VBox {
 		try {
 			byte[] pngBytes = clipboardImageReader.readPng().orElse(null);
 			if (pngBytes == null) {
-
-				// Keep the recovery instruction consistent with the visible Question-content
-				// action name.
 				showAlert(Alert.AlertType.INFORMATION, "No image on clipboard.",
 						"Copy or snip an image, then click Add From Clipboard again.");
 				return;
 			}
 			ImageQuestionContentPart imagePart = new ImageQuestionContentPart(pngBytes);
 
-			// The model's value equality compares PNG data, not array identity.
-			// Only current accepted content is examined, so a new Question does
-			// not inherit a duplicate restriction from an earlier Question.
-			if (pendingContentParts.contains(imagePart) && !confirmDuplicateClipboardImage()) {
+			// Recopying an identical image cannot bypass duplicate detection.
+			// Rejected images leave the clipboard unchanged.
+			if (pendingContentParts.contains(imagePart)) {
 				return;
 			}
 
-			// Insert at the end of the current assembly. Move controls can subsequently
-			// place the image anywhere within the Question body.
+			// Only a successful new insertion consumes the clipboard.
 			pendingContentParts.add(imagePart);
 			refreshRegionPreviews();
 			setRegionCountLabel(pendingContentParts.size());
 			showQuestionPendingStatus();
 			updateQuestionCodeLock();
+			clearClipboardAfterAcceptedImage();
 			refreshSaveButtonState();
 		} catch (IOException exception) {
 			showAlert(Alert.AlertType.ERROR, "Clipboard image could not be added.",

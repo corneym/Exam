@@ -569,79 +569,63 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void duplicateClipboardImageRequiresConfirmationAndCanBeAddedAfterRemoval(FxRobot robot) throws Exception {
+	void duplicateClipboardImageIsBlockedAndCanBeAddedAfterRemoval(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Label count = lookup(robot, "#question-region-count", Label.class);
 		Button addFromClipboard = lookup(robot, "#paste-question-image", Button.class);
 		VBox previews = field(questionCapturePane(), "regionPreviewBox", VBox.class);
 
-		// Use the same real JavaFX clipboard route as Windows Snipping Tool.
-		robot.interact(() -> {
-			WritableImage image = new WritableImage(40, 20);
-			for (int y = 0; y < 20; y++) {
-				for (int x = 0; x < 40; x++) {
-					image.getPixelWriter().setColor(x, y, Color.ORANGE);
-				}
-			}
-			ClipboardContent content = new ClipboardContent();
-			content.putImage(image);
-			Clipboard.getSystemClipboard().setContent(content);
-			questionCapturePane().refreshClipboardImageAvailability();
-		});
+		// Image A is accepted and its clipboard source consumed.
+		placeImageOnClipboard(robot, Color.ORANGE);
 		assertFalse(addFromClipboard.isDisabled());
-
-		// The first addition is not a duplicate and must not open a dialog.
 		fireControl(robot, addFromClipboard);
 		assertEquals("Content parts: 1", count.getText());
 		assertEquals(1, previews.getChildren().size());
-		Node originalPreview = previews.getChildren().getFirst();
+		assertFalse(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
+		assertTrue(addFromClipboard.isDisabled());
+		Node imageAPreview = previews.getChildren().getFirst();
 
-		// A second insertion requests explicit consent. Declining must not
-		// change the content list or discard the clipboard image.
-		fireControlLater(addFromClipboard);
-		waitForDialogShowing(robot, "Duplicate clipboard image");
-		DialogPane declineDialog = showingDialogPane(robot, "Duplicate clipboard image");
-		assertEquals("This image has already been added to this Question.", declineDialog.getHeaderText());
-		assertEquals("Add it again?", declineDialog.getContentText());
-		Node decline = declineDialog.lookupButton(ButtonType.NO);
-		assertTrue(decline instanceof ButtonBase);
-		robot.interact(((ButtonBase) decline)::fire);
-		waitForDialogHidden(robot, "Duplicate clipboard image");
+		// Recopy A. Duplicate detection must still reject it.
+		// A rejected insertion must not consume the clipboard.
+		placeImageOnClipboard(robot, Color.ORANGE);
+		fireControl(robot, addFromClipboard);
 		assertEquals("Content parts: 1", count.getText());
-		assertEquals(1, previews.getChildren().size());
-		assertSame(originalPreview, previews.getChildren().getFirst());
+		assertSame(imageAPreview, previews.getChildren().getFirst());
+		assertTrue(robot.lookup("Duplicate clipboard image").tryQuery().isEmpty());
 		assertTrue(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
 
-		// The user may intentionally accept an exact duplicate.
-		fireControlLater(addFromClipboard);
-		waitForDialogShowing(robot, "Duplicate clipboard image");
-		DialogPane acceptDialog = showingDialogPane(robot, "Duplicate clipboard image");
-		Node accept = acceptDialog.lookupButton(ButtonType.YES);
-		assertTrue(accept instanceof ButtonBase);
-		robot.interact(((ButtonBase) accept)::fire);
-		waitForDialogHidden(robot, "Duplicate clipboard image");
+		// Image B is distinct and may be accepted.
+		placeImageOnClipboard(robot, Color.BLUE);
+		fireControl(robot, addFromClipboard);
 		assertEquals("Content parts: 2", count.getText());
-		assertEquals(2, previews.getChildren().size());
+		assertFalse(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
+		assertTrue(addFromClipboard.isDisabled());
+
+		// Interleave a PDF region between images A and B.
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-question-region");
+		fireControl(robot, "#question-content-move-up-2");
+		assertEquals("Content parts: 3", count.getText());
+
+		// Recopy A. Interleaving PDF content must not bypass
+		// image duplicate detection.
+		placeImageOnClipboard(robot, Color.ORANGE);
+		fireControl(robot, addFromClipboard);
+		assertEquals("Content parts: 3", count.getText());
+		assertEquals(3, previews.getChildren().size());
 		assertTrue(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
 
-		// Removal releases both accepted instances. The same clipboard image
-		// can then be added without confirmation because no duplicate remains.
-		fireControl(robot, "#question-content-remove-1");
+		// Removing A makes its content eligible for reinsertion.
 		fireControl(robot, "#question-content-remove-0");
-		assertEquals("Content parts: 0", count.getText());
-		assertTrue(previews.getChildren().isEmpty());
-		fireControl(robot, addFromClipboard);
-		assertEquals("Content parts: 1", count.getText());
-		assertEquals(1, previews.getChildren().size());
+		assertEquals("Content parts: 2", count.getText());
 
-		// Leave the shared test clipboard in the same deterministic non-image
-		// state as the existing clipboard workflow tests.
-		robot.interact(() -> {
-			ClipboardContent content = new ClipboardContent();
-			content.putString("Clipboard duplicate confirmation test completed");
-			Clipboard.getSystemClipboard().setContent(content);
-			questionCapturePane().refreshClipboardImageAvailability();
-		});
+		// A is still on the clipboard because rejection did not
+		// clear it. This insertion should now succeed.
+		fireControl(robot, addFromClipboard);
+		assertEquals("Content parts: 3", count.getText());
+		assertEquals(3, previews.getChildren().size());
+		assertFalse(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
+		assertTrue(addFromClipboard.isDisabled());
 	}
 
 	@Test
@@ -2126,6 +2110,21 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		return Files.readAllLines(csv).stream().skip(1).map(line -> line.split(",", -1))
 				.filter(columns -> columns.length == 7).filter(columns -> operation.equals(columns[3]))
 				.filter(columns -> "true".equals(columns[5])).count();
+	}
+
+	private void placeImageOnClipboard(FxRobot robot, Color colour) {
+		robot.interact(() -> {
+			WritableImage image = new WritableImage(40, 20);
+			for (int y = 0; y < 20; y++) {
+				for (int x = 0; x < 40; x++) {
+					image.getPixelWriter().setColor(x, y, colour);
+				}
+			}
+			ClipboardContent content = new ClipboardContent();
+			content.putImage(image);
+			Clipboard.getSystemClipboard().setContent(content);
+			questionCapturePane().refreshClipboardImageAvailability();
+		});
 	}
 
 	private void verifyLinearPdfPreviewExtractionCounts(FxRobot robot, boolean twoPages) throws Exception {
