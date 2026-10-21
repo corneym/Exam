@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Tag;
@@ -247,6 +248,101 @@ public class CurriculumSelectorPaneTest {
 	}
 
 	@Test
+	public void descriptorLookupPopulatesTopicAndReplacesPreviousHierarchy(FxRobot robot) throws Exception {
+
+		TextField search = robot.lookup("#curriculum-descriptor-search").queryAs(TextField.class);
+
+		TextField code = robot.lookup("#curriculum-code").queryAs(TextField.class);
+
+		ListView<DescriptorMatch> results = robot.lookup("#curriculum-descriptor-search-results").queryListView();
+
+		@SuppressWarnings("unchecked")
+		ComboBox<SyllabusVersion> syllabuses = robot.lookup("#curriculum-syllabus").queryAs(ComboBox.class);
+
+		@SuppressWarnings("unchecked")
+		ComboBox<Unit> units = robot.lookup("#curriculum-unit").queryAs(ComboBox.class);
+
+		@SuppressWarnings("unchecked")
+		ComboBox<Topic> topics = robot.lookup("#curriculum-topic").queryAs(ComboBox.class);
+
+		@SuppressWarnings("unchecked")
+		ComboBox<Subtopic> subtopics = robot.lookup("#curriculum-subtopic").queryAs(ComboBox.class);
+
+		@SuppressWarnings("unchecked")
+		ComboBox<Descriptor> descriptors = robot.lookup("#curriculum-descriptor").queryAs(ComboBox.class);
+
+		// First select a descriptor beneath a Subtopic using lookup.
+		robot.interact(() -> search.setText("3.1.1.1"));
+
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& results.getItems().getFirst().descriptor().equals(descriptor3111));
+
+		robot.interact(() -> {
+			results.getSelectionModel().selectFirst();
+			results.fireEvent(new KeyEvent(KeyEvent.KEY_PRESSED, "", "", KeyCode.ENTER, false, false, false, false));
+		});
+
+		// Verify actual visible ComboBox values, not only model state.
+		assertEquals(syllabus2025, syllabuses.getValue());
+		assertEquals(unit3, units.getValue());
+		assertEquals(topic31, topics.getValue());
+		assertEquals(subtopic311, subtopics.getValue());
+		assertEquals(descriptor3111, descriptors.getValue());
+
+		assertEquals(topic31, topics.getSelectionModel().getSelectedItem());
+		assertTrue(topics.getItems().contains(topic31));
+
+		assertEquals("3.1.1.1", code.getText());
+		assertEquals("", search.getText());
+
+		// Verify the hierarchy is internally consistent.
+		assertEquals(unit3, topic31.getParent());
+		assertEquals(topic31, subtopic311.getParent());
+		assertEquals(subtopic311, descriptor3111.getParent());
+
+		assertEquals(topic31, model.getTopic());
+		assertEquals(descriptor3111, model.getClassification());
+		assertEquals(descriptor3111, pane.selectedClassificationProperty().get());
+
+		// Broaden the Code scope, then locate a different Descriptor.
+		// This one belongs directly to Topic 3.2.
+		robot.interact(() -> code.setText("3"));
+		robot.interact(() -> search.setText("3.2.1"));
+
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+				&& results.getItems().getFirst().descriptor().equals(descriptor321));
+
+		robot.interact(() -> {
+			results.getSelectionModel().selectFirst();
+			results.fireEvent(new KeyEvent(KeyEvent.KEY_PRESSED, "", "", KeyCode.ENTER, false, false, false, false));
+		});
+
+		// The second result must replace the previous hierarchy,
+		// including the actual displayed Topic selection.
+		assertEquals(syllabus2025, syllabuses.getValue());
+		assertEquals(unit3, units.getValue());
+		assertEquals(topic32, topics.getValue());
+		assertNull(subtopics.getValue());
+		assertEquals(descriptor321, descriptors.getValue());
+
+		assertEquals(topic32, topics.getSelectionModel().getSelectedItem());
+		assertTrue(topics.getItems().contains(topic32));
+		assertFalse(subtopics.isVisible());
+
+		assertEquals("3.2.1", code.getText());
+		assertEquals("", search.getText());
+
+		assertEquals(unit3, topic32.getParent());
+		assertEquals(topic32, descriptor321.getParent());
+		assertEquals(syllabus2025, descriptor321.getSyllabusVersion());
+
+		assertEquals(topic32, model.getTopic());
+		assertNull(model.getSubtopic());
+		assertEquals(descriptor321, model.getClassification());
+		assertEquals(descriptor321, pane.selectedClassificationProperty().get());
+	}
+
+	@Test
 	public void descriptorLookupRespectsSyllabusSwitch(FxRobot robot) throws Exception {
 		TextField search = robot.lookup("#curriculum-descriptor-search").queryAs(TextField.class);
 		ComboBox<SyllabusVersion> syllabuses = robot.lookup("#curriculum-syllabus").queryComboBox();
@@ -440,6 +536,41 @@ public class CurriculumSelectorPaneTest {
 		assertEquals("3.1.1.1", codeField.getText());
 		robot.write(".");
 		assertEquals("3.1.1.1", codeField.getText());
+	}
+
+	@Test
+	public void refreshingSubjectsDoesNotClearAcceptedSubject(FxRobot robot) {
+
+		@SuppressWarnings("unchecked")
+		ComboBox<Subject> subjects = robot.lookup("#curriculum-subject").queryAs(ComboBox.class);
+
+		@SuppressWarnings("unchecked")
+		ComboBox<SyllabusVersion> syllabuses = robot.lookup("#curriculum-syllabus").queryAs(ComboBox.class);
+
+		robot.interact(() -> syllabuses.getSelectionModel().select(syllabus2019));
+
+		assertEquals(syllabus2019, syllabuses.getValue());
+		assertEquals(syllabus2019, model.getSyllabusVersion());
+
+		AtomicInteger unexpectedSubjectChanges = new AtomicInteger();
+
+		robot.interact(() -> {
+			// The application listens to this same property.
+			// A temporary null would initiate an unwanted Subject refresh.
+			subjects.valueProperty().addListener((_, _, selectedSubject) -> {
+				if (!chemistry.equals(selectedSubject)) {
+					unexpectedSubjectChanges.incrementAndGet();
+				}
+			});
+
+			pane.refreshSubjects();
+		});
+
+		assertEquals(0, unexpectedSubjectChanges.get());
+		assertEquals(chemistry, subjects.getValue());
+		assertEquals(chemistry, model.getSubject());
+		assertEquals(syllabus2019, syllabuses.getValue());
+		assertEquals(syllabus2019, model.getSyllabusVersion());
 	}
 
 	@Test
