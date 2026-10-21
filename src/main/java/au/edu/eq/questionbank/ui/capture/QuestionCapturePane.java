@@ -1739,6 +1739,11 @@ public final class QuestionCapturePane extends VBox {
 
 			// A non-null Question means persistence returned after commit.
 			Question question = result.question();
+
+			// Clear stale lookup keywords only after a committed save.
+			// Validation failures, failed Tasks and cancelled Tasks never
+			// enter this success path. The saved classification is unchanged.
+			curriculumSelectorPane.clearDescriptorSearch();
 			try {
 				questionsChangedHandler.accept(result.questions());
 				if (editing) {
