@@ -521,8 +521,16 @@ public class CurriculumSelectorPane extends VBox {
 
 	private void applyNodePath(CurriculumNode node) {
 		ClassificationPath path = classificationPath(node);
+
 		applyUnitAndTopic(path);
 		applyFinalClassification(path);
+
+		// Reassert the visible parent selections after the dependent
+		// hierarchy has been rebuilt. Do not call model.selectUnit()
+		// or model.selectTopic() here, because those operations clear
+		// the final classification.
+		selectAvailableValue(unitBox, path.unit());
+		selectAvailableValue(topicBox, path.topic());
 	}
 
 	private void applyUnitAndTopic(ClassificationPath path) {
@@ -1384,21 +1392,27 @@ public class CurriculumSelectorPane extends VBox {
 	}
 
 	private <T> void selectAvailableValue(ComboBox<T> box, T selectedValue) {
+
+		T availableValue = null;
+
 		if (selectedValue != null) {
 			for (T item : box.getItems()) {
 				if (item.equals(selectedValue)) {
-
-					// Select the actual item held by this ComboBox so its displayed value and
-					// selection model refer to the same hierarchy object.
-					box.getSelectionModel().select(item);
-					return;
+					availableValue = item;
+					break;
 				}
 			}
 		}
 
-		// A missing requested value means this hierarchy level is deliberately empty.
-		// Clear both JavaFX selection state and the independently retained value.
+		// A ComboBox can retain an obsolete selection when its items
+		// have been rebuilt with equivalent persistence objects.
+		// Explicitly reset both selection and value before selecting
+		// the current item from the displayed choices.
 		clearComboBoxValue(box);
+
+		if (availableValue != null) {
+			box.getSelectionModel().select(availableValue);
+		}
 	}
 
 	private void setCodeText(String text) {
