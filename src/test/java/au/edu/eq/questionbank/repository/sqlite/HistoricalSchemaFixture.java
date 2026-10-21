@@ -55,6 +55,10 @@ public final class HistoricalSchemaFixture {
 				}
 				try (Statement statement = connection.createStatement()) {
 
+					// Historical fixtures must not retain the schema-v24 tables.
+					// Their production migration must recreate them.
+					removeVersion24Objects(statement);
+
 					// Remove v21 triggers before modifying their
 					// referenced tables.
 					for (String triggerName : triggerNames) {
@@ -90,5 +94,23 @@ public final class HistoricalSchemaFixture {
 				throw exception;
 			}
 		}
+	}
+
+	/**
+	 * Removes version-24 Shared Context tables from a disposable historical test
+	 * fixture before its schema version is downgraded.
+	 *
+	 * @param statement statement operating on the fixture connection
+	 * @throws SQLException if either table cannot be removed
+	 */
+	public static void removeVersion24Objects(Statement statement) throws SQLException {
+		if (statement == null) {
+			throw new NullPointerException("statement");
+		}
+
+		// Content-order rows reference both source tables. Remove
+		// those references before dropping the image table.
+		statement.execute("DROP TABLE shared_question_context_content_parts");
+		statement.execute("DROP TABLE shared_question_context_images");
 	}
 }

@@ -316,7 +316,24 @@ public final class QuestionBookletPdfReplacementService {
 	}
 
 	private void deleteSharedContexts(Connection connection, long bookletId) throws SQLException {
-		try (PreparedStatement regions = connection.prepareStatement("""
+
+		// Remove content-order references before their image and PDF sources.
+		// The enclosing PDF replacement transaction owns the rollback.
+		try (PreparedStatement parts = connection.prepareStatement("""
+				DELETE FROM shared_question_context_content_parts
+				WHERE shared_context_id IN (
+				    SELECT id
+				    FROM shared_question_contexts
+				    WHERE booklet_id = ?
+				)
+				"""); PreparedStatement images = connection.prepareStatement("""
+				DELETE FROM shared_question_context_images
+				WHERE shared_context_id IN (
+				    SELECT id
+				    FROM shared_question_contexts
+				    WHERE booklet_id = ?
+				)
+				"""); PreparedStatement regions = connection.prepareStatement("""
 				DELETE FROM shared_question_context_regions
 				WHERE shared_context_id IN (
 				    SELECT id
@@ -327,10 +344,14 @@ public final class QuestionBookletPdfReplacementService {
 				DELETE FROM shared_question_contexts
 				WHERE booklet_id = ?
 				""")) {
+			parts.setLong(1, bookletId);
+			parts.executeUpdate();
+			images.setLong(1, bookletId);
+			images.executeUpdate();
 			regions.setLong(1, bookletId);
 			regions.executeUpdate();
 
-			// Context rows cannot survive without valid source coordinates.
+			// Context identities can be removed only after their content.
 			contexts.setLong(1, bookletId);
 			contexts.executeUpdate();
 		}

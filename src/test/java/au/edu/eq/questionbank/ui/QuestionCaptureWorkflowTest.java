@@ -32,6 +32,7 @@ import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ImageQuestionContentPart;
+import au.edu.eq.questionbank.model.ImageSharedContextContentPart;
 import au.edu.eq.questionbank.model.PdfQuestionContentPart;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionResponseType;
@@ -57,6 +58,7 @@ import javafx.scene.Parent;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBase;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
@@ -289,6 +291,41 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void automaticSharedContextImagePersistsWithQuestionSave(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Button addFromClipboard = lookup(robot, "#paste-question-image", Button.class);
+		Button saveQuestion = lookup(robot, "#save-question", Button.class);
+		CheckBox sharedContextFirst = lookup(robot, "#first-region-shared-context", CheckBox.class);
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		robot.clickOn(sharedContextFirst);
+		robot.interact(() -> questionCode.setText("1a"));
+		robot.interact(() -> {
+			WritableImage image = new WritableImage(20, 20);
+			for (int y = 0; y < 20; y++) {
+				for (int x = 0; x < 20; x++) {
+					image.getPixelWriter().setColor(x, y, Color.BLUE);
+				}
+			}
+			ClipboardContent content = new ClipboardContent();
+			content.putImage(image);
+			Clipboard.getSystemClipboard().setContent(content);
+			questionCapturePane().refreshClipboardImageAvailability();
+		});
+		fireControl(robot, addFromClipboard);
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-question-region");
+		fireControl(robot, saveQuestion);
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		Question saved = repository.findAll().stream()
+				.filter(question -> question.getBooklet().getId() == booklet.getId())
+				.filter(question -> "1a".equals(question.getQuestionCode())).findFirst().orElseThrow();
+		assertTrue(saved.hasSharedContext());
+		assertEquals(1, saved.getSharedContext().getContentParts().size());
+		assertTrue(saved.getSharedContext().getContentParts().getFirst() instanceof ImageSharedContextContentPart);
+	}
+
+	@Test
 	void bookletActivationStartsQuestionCaptureWithoutSecondaryStartAction(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		QuestionCapturePane pane = questionCapturePane();
@@ -315,6 +352,45 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.clickOn("#pdf-page-view");
 		WaitForAsyncUtils.waitForFxEvents();
 		assertFalse(selectionState.hasPendingSelection());
+	}
+
+	@Test
+	void clipboardImageCanBeAcceptedAsAutomaticSharedContext(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Button addFromClipboard = lookup(robot, "#paste-question-image", Button.class);
+		CheckBox sharedContextFirst = lookup(robot, "#first-region-shared-context", CheckBox.class);
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		Label saveStatus = lookup(robot, "#question-save-status", Label.class);
+
+		// Text-only clipboard must not enable the button.
+		robot.interact(() -> {
+			ClipboardContent content = new ClipboardContent();
+			content.putString("not an image");
+			Clipboard.getSystemClipboard().setContent(content);
+			questionCapturePane().refreshClipboardImageAvailability();
+		});
+		assertTrue(addFromClipboard.isDisabled());
+		robot.clickOn(sharedContextFirst);
+		robot.interact(() -> questionCode.setText("1a"));
+
+		// Image clipboard must enable the same existing button.
+		robot.interact(() -> {
+			WritableImage image = new WritableImage(20, 20);
+			for (int y = 0; y < 20; y++) {
+				for (int x = 0; x < 20; x++) {
+					image.getPixelWriter().setColor(x, y, Color.RED);
+				}
+			}
+			ClipboardContent content = new ClipboardContent();
+			content.putImage(image);
+			Clipboard.getSystemClipboard().setContent(content);
+			questionCapturePane().refreshClipboardImageAvailability();
+		});
+		assertFalse(addFromClipboard.isDisabled());
+		fireControl(robot, addFromClipboard);
+		assertTrue(saveStatus.getText().contains("Shared context captured"));
+		assertTrue(addFromClipboard.isDisabled());
+		assertFalse(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
 	}
 
 	@Test

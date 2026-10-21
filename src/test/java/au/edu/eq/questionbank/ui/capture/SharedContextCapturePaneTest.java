@@ -5,10 +5,14 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import javax.imageio.ImageIO;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
@@ -25,6 +29,7 @@ import org.testfx.framework.junit5.Stop;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
+import au.edu.eq.questionbank.model.ImageSharedContextContentPart;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.SharedContextContentPart;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
@@ -37,7 +42,9 @@ import au.edu.eq.questionbank.repository.assessment.SharedQuestionContextReposit
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.TextField;
 import javafx.scene.image.ImageView;
 import javafx.stage.Stage;
 
@@ -92,7 +99,7 @@ class SharedContextCapturePaneTest {
 		// preview must no longer reserve vertical space above the accepted list.
 		assertFalse(currentPreview.isVisible());
 		assertFalse(currentPreview.isManaged());
-		assertEquals("Regions: 1", robot.lookup("#shared-context-region-count").queryAs(Label.class).getText());
+		assertEquals("Content parts: 1", robot.lookup("#shared-context-region-count").queryAs(Label.class).getText());
 	}
 
 	@Test
@@ -181,6 +188,94 @@ class SharedContextCapturePaneTest {
 	}
 
 	@Test
+	void clipboardImageCanBeSavedAsImageOnlySharedContext(FxRobot robot) throws Exception {
+		byte[] png = testPngBytes();
+		robot.interact(() -> {
+			pane.lookup("#new-shared-context");
+			((Button) pane.lookup("#new-shared-context")).fire();
+			((javafx.scene.control.TextField) pane.lookup("#shared-context-label")).setText("Image-only context");
+			assertTrue(pane.acceptClipboardPng(png));
+			((Button) pane.lookup("#save-shared-context")).fire();
+		});
+		List<SharedQuestionContext> saved = repository.findByBooklet(booklet);
+		assertEquals(1, saved.size());
+		assertEquals("Image-only context", saved.getFirst().getLabel());
+		assertTrue(saved.getFirst().getRegions().isEmpty());
+		assertEquals(List.of(new ImageSharedContextContentPart(png)), saved.getFirst().getContentParts());
+	}
+
+	@Test
+	void duplicateClipboardImageIsRejectedAndCanBeReacceptedAfterRemoval(FxRobot robot) throws Exception {
+		byte[] png = testPngBytes();
+		robot.interact(() -> {
+			((Button) pane.lookup("#new-shared-context")).fire();
+			assertTrue(pane.acceptClipboardPng(png));
+			assertFalse(pane.acceptClipboardPng(png));
+			assertEquals("Content parts: 1", ((Label) pane.lookup("#shared-context-region-count")).getText());
+			((Button) pane.lookup("#remove-shared-context-image-0")).fire();
+			assertTrue(pane.acceptClipboardPng(png));
+			assertEquals("Content parts: 1", ((Label) pane.lookup("#shared-context-region-count")).getText());
+		});
+		assertEquals(0, repository.saveCount());
+	}
+
+	@Test
+	void mixedContentRecaptureRetainsContextIdentity(FxRobot robot) throws Exception {
+		byte[] png = testPngBytes();
+		SharedQuestionContextRegion originalRegion = new SharedQuestionContextRegion(1, 0.10, 0.10, 0.40, 0.20);
+		SharedQuestionContext original = repository.save(booklet, "Existing context", List.of(originalRegion));
+		AtomicInteger completed = new AtomicInteger();
+		robot.interact(() -> {
+			pane.refreshForCurrentBooklet();
+			assertTrue(pane.recaptureContext(original, completed::incrementAndGet));
+
+			// Replacement starts as an empty draft. The original
+			// remains persisted until Save Replacement succeeds.
+			assertTrue(pane.acceptClipboardPng(png));
+			pane.acceptSelection(new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM, 1, 0.20, 0.30,
+					0.50, 0.25));
+			((Button) pane.lookup("#add-shared-context-region")).fire();
+		});
+		SharedQuestionContext beforeSave = repository.findByBooklet(booklet).getFirst();
+		assertEquals(original.getId(), beforeSave.getId());
+		assertEquals(List.of(originalRegion), beforeSave.getContentParts());
+		robot.interact(() -> ((Button) pane.lookup("#save-shared-context")).fire());
+		SharedQuestionContext replacement = repository.findByBooklet(booklet).getFirst();
+		assertEquals(original.getId(), replacement.getId());
+		assertEquals(original.getLabel(), replacement.getLabel());
+		assertEquals(List.of(new ImageSharedContextContentPart(png),
+				new SharedQuestionContextRegion(1, 0.20, 0.30, 0.50, 0.25)), replacement.getContentParts());
+		assertEquals(1, completed.get());
+		assertFalse(pane.isCaptureMode());
+	}
+
+	@Test
+	void mixedPdfAndImageCapturePreservesPersistenceOrder(FxRobot robot) throws Exception {
+		byte[] png = testPngBytes();
+		SharedQuestionContextRegion first = new SharedQuestionContextRegion(1, 0.10, 0.10, 0.40, 0.20);
+		SharedQuestionContextRegion second = new SharedQuestionContextRegion(1, 0.20, 0.35, 0.50, 0.25);
+		robot.interact(() -> {
+			((Button) pane.lookup("#new-shared-context")).fire();
+			((TextField) pane.lookup("#shared-context-label")).setText("Mixed context");
+			pane.acceptSelection(new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM,
+					first.pageNumber(), first.x(), first.y(), first.width(), first.height()));
+			((Button) pane.lookup("#add-shared-context-region")).fire();
+			assertTrue(pane.acceptClipboardPng(png));
+			pane.acceptSelection(new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM,
+					second.pageNumber(), second.x(), second.y(), second.width(), second.height()));
+			((Button) pane.lookup("#add-shared-context-region")).fire();
+			assertEquals("Content parts: 3", ((Label) pane.lookup("#shared-context-region-count")).getText());
+			((Button) pane.lookup("#save-shared-context")).fire();
+		});
+		assertEquals(1, repository.saveCount());
+		SharedQuestionContext saved = repository.findByBooklet(booklet).getFirst();
+		assertEquals("Mixed context", saved.getLabel());
+		assertEquals(List.of(first, new ImageSharedContextContentPart(png), second), saved.getContentParts());
+		assertEquals(List.of(first, second), saved.getRegions());
+		assertFalse(pane.isCaptureMode());
+	}
+
+	@Test
 	void recapturingContextReplacesRegionsWithoutChangingIdentity(FxRobot robot) {
 		SharedQuestionContextRegion originalRegion = new SharedQuestionContextRegion(1, 0.10, 0.10, 0.50, 0.20);
 		SharedQuestionContext original = repository.save(booklet, "Question 21 shared context",
@@ -191,7 +286,7 @@ class SharedContextCapturePaneTest {
 			assertTrue(pane.recaptureContext(original, completed::incrementAndGet));
 		});
 		assertTrue(pane.isCaptureMode());
-		assertEquals("Regions: 0",
+		assertEquals("Content parts: 0",
 				robot.lookup("#shared-context-region-count").queryAs(javafx.scene.control.Label.class).getText());
 		Button save = robot.lookup("#save-shared-context").queryButton();
 		assertEquals("Save Replacement", save.getText());
@@ -226,6 +321,21 @@ class SharedContextCapturePaneTest {
 		});
 		assertEquals(0, selectionClearCount.get());
 		assertEquals(0, repository.saveCount());
+	}
+
+	@Test
+	void sharedContextSelectorDescribesStoredMixedContent(FxRobot robot) throws Exception {
+		byte[] png = testPngBytes();
+		SharedQuestionContext imageOnly = repository.saveContentParts(booklet, "Image context",
+				List.of(new ImageSharedContextContentPart(png)));
+		SharedQuestionContext mixed = repository.saveContentParts(booklet, "Mixed context", List.of(
+				new SharedQuestionContextRegion(1, 0.10, 0.10, 0.40, 0.20), new ImageSharedContextContentPart(png)));
+		robot.interact(pane::refreshForCurrentBooklet);
+		robot.interact(() -> {
+			ComboBox<SharedQuestionContext> selector = (ComboBox<SharedQuestionContext>) pane.lookup("#shared-context");
+			assertEquals("Image context — 1 image(s)", selector.getConverter().toString(imageOnly));
+			assertEquals("Mixed context — 1 region(s), 1 image(s)", selector.getConverter().toString(mixed));
+		});
 	}
 
 	@Test
@@ -313,6 +423,16 @@ class SharedContextCapturePaneTest {
 					pane.getPendingAutomaticContextRegions());
 		});
 		assertEquals(0, repository.saveCount());
+	}
+
+	private byte[] testPngBytes() throws Exception {
+		BufferedImage image = new BufferedImage(2, 2, BufferedImage.TYPE_INT_ARGB);
+		image.setRGB(0, 0, 0xFFFF0000);
+		image.setRGB(1, 0, 0xFF00FF00);
+		try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+			assertTrue(ImageIO.write(image, "png", output));
+			return output.toByteArray();
+		}
 	}
 
 	private static final class RecordingContextRepository implements SharedQuestionContextRepository {

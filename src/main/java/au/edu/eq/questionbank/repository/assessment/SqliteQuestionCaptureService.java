@@ -17,6 +17,7 @@ import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionContentPart;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
+import au.edu.eq.questionbank.model.SharedContextContentPart;
 import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
@@ -525,7 +526,8 @@ public final class SqliteQuestionCaptureService {
 		// older independent-MCQ continuation stored for the booklet.
 		PendingSharedContext pending = request.pendingSharedContext();
 		if (pending != null) {
-			return sharedContextRepository.save(connection, request.booklet(), pending.label(), pending.regions());
+			return sharedContextRepository.saveContentParts(connection, request.booklet(), pending.label(),
+					pending.contentParts());
 		}
 
 		// Independent MCQ continuation is deliberately sequence-aware. A context
@@ -645,30 +647,45 @@ public final class SqliteQuestionCaptureService {
 	}
 
 	/**
-	 * Shared shared context captured in memory and awaiting persistence.
+	 * Shared context captured in memory and awaiting persistence.
 	 *
-	 * @param label   non-blank label for the new reusable shared context
-	 * @param regions non-empty shared-context regions in source order
+	 * @param label        non-blank label for the new reusable Shared Context
+	 * @param contentParts non-empty ordered Shared Context content
 	 */
-	public record PendingSharedContext(String label, List<SharedQuestionContextRegion> regions) {
+	public record PendingSharedContext(String label, List<? extends SharedContextContentPart> contentParts) {
 
 		/**
-		 * Validates a pending shared context and copies its ordered regions.
+		 * Validates a pending Shared Context and copies its ordered content.
 		 *
-		 * @param label   non-blank label for the new reusable shared context
-		 * @param regions non-empty shared-context regions in source order
+		 * @param label        non-blank label for the new reusable Shared Context
+		 * @param contentParts non-empty ordered Shared Context content
 		 */
 		public PendingSharedContext {
 			if (label == null || label.isBlank()) {
 				throw new IllegalArgumentException("label must not be blank");
 			}
-			if (regions == null) {
-				throw new NullPointerException("regions");
+			if (contentParts == null) {
+				throw new NullPointerException("contentParts");
 			}
-			if (regions.isEmpty()) {
-				throw new IllegalArgumentException("regions must not be empty");
+			if (contentParts.isEmpty()) {
+				throw new IllegalArgumentException("contentParts must not be empty");
 			}
-			regions = List.copyOf(regions);
+			contentParts = List.copyOf(contentParts);
+		}
+
+		/**
+		 * Backwards-compatible PDF-only projection.
+		 *
+		 * @return immutable PDF-region projection
+		 */
+		public List<SharedQuestionContextRegion> regions() {
+			List<SharedQuestionContextRegion> regions = new ArrayList<>();
+			for (SharedContextContentPart part : contentParts) {
+				if (part instanceof SharedQuestionContextRegion region) {
+					regions.add(region);
+				}
+			}
+			return List.copyOf(regions);
 		}
 	}
 

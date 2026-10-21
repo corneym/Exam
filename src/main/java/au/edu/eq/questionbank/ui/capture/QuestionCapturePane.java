@@ -863,10 +863,7 @@ public final class QuestionCapturePane extends VBox {
 	 * current system clipboard.
 	 */
 	public void refreshClipboardImageAvailability() {
-
-		// JavaFX provides no clipboard-change event. The application therefore calls
-		// this when focus returns from an external capture tool.
-		refreshQuestionContentActionState();
+		pasteImageButton.setDisable(!canAcceptClipboardImage());
 	}
 
 	/**
@@ -1588,6 +1585,34 @@ public final class QuestionCapturePane extends VBox {
 		return preview;
 	}
 
+	private boolean canAcceptClipboardImage() {
+		if (questionSaveInProgress) {
+			return false;
+		}
+		if (bookletSupplier.get() == null) {
+			return false;
+		}
+		if (!clipboardImageReader.hasImage()) {
+			return false;
+		}
+
+		// Automatic Shared Context capture uses the same button.
+		if (sharedContextCapturePane.canAcceptAutomaticClipboardImage()) {
+			return true;
+		}
+		if (currentSelection != null) {
+			return false;
+		}
+		if (legacySplitCaptureState != null) {
+			return false;
+		}
+		if (importedQuestion != null && !importedQuestion.getContentParts().isEmpty()
+				&& !importedQuestion.isSourceCaptureRequired()) {
+			return false;
+		}
+		return true;
+	}
+
 	private void cancelLegacyQuestionSplit() {
 		Runnable completedHandler = finishLegacyQuestionSplitState();
 		if (completedHandler != null) {
@@ -1711,6 +1736,19 @@ public final class QuestionCapturePane extends VBox {
 		setRegionCountLabel(0);
 		updateQuestionCodeLock();
 		refreshSaveButtonState();
+	}
+
+	private void completeAutomaticSharedContextCapture() {
+		updateQuestionCodeLock();
+		hideSharedContextStatus();
+		if (importedQuestion != null && !importedQuestion.getContentParts().isEmpty()) {
+			saveStatusLabel.setText("Shared context captured — save the resolution.");
+		} else {
+			saveStatusLabel.setText("Shared context captured — add the question content.");
+		}
+		refreshRegionPreviews();
+		refreshSaveButtonState();
+		refreshClipboardImageAvailability();
 	}
 
 	private void completeLegacyQuestionSplit(LegacySplitSaveResult result) {
@@ -2941,19 +2979,15 @@ public final class QuestionCapturePane extends VBox {
 					"Enter the exam and booklet details before pasting Question content.");
 			return;
 		}
-		if (sharedContextCapturePane.isCaptureMode()) {
-			showAlert(Alert.AlertType.INFORMATION, "Shared context capture is active.",
-					"Finish or cancel shared context capture before pasting Question content.");
-			return;
-		}
+
+		// The current PDF selection always has priority. The user must either
+		// accept or cancel it before the clipboard image can be routed.
 		if (currentSelection != null) {
 			showAlert(Alert.AlertType.INFORMATION, "PDF selection pending.",
 					"Add the current PDF selection or click elsewhere in the PDF to cancel it before pasting an image.");
 			return;
 		}
 		if (legacySplitCaptureState != null) {
-
-			// Legacy split persistence intentionally remains PDF-region-only.
 			showAlert(Alert.AlertType.INFORMATION, "Clipboard images are unavailable during legacy split capture.",
 					"Complete this legacy split using PDF regions.");
 			return;
@@ -2969,24 +3003,39 @@ public final class QuestionCapturePane extends VBox {
 			if (pngBytes == null) {
 				showAlert(Alert.AlertType.INFORMATION, "No image on clipboard.",
 						"Copy or snip an image, then click Add From Clipboard again.");
+				refreshClipboardImageAvailability();
+				return;
+			}
+
+			// Automatic Shared Context capture uses the existing Question-side
+			// Add From Clipboard button. No separate UI button is introduced.
+			if (sharedContextCapturePane.canAcceptAutomaticClipboardImage()) {
+				sharedContextCapturePane.stageAcceptedQuestionImage(questionCodeField.getText().trim(), pngBytes);
+				try {
+					Clipboard.getSystemClipboard().clear();
+				} catch (RuntimeException exception) {
+					saveStatusLabel.setText("Shared context accepted, but clipboard could not be cleared.");
+				}
+				completeAutomaticSharedContextCapture();
 				return;
 			}
 			ImageQuestionContentPart imagePart = new ImageQuestionContentPart(pngBytes);
-
-			// Recopying an identical image cannot bypass duplicate detection.
-			// Rejected images leave the clipboard unchanged.
 			if (pendingContentParts.contains(imagePart)) {
+				refreshClipboardImageAvailability();
 				return;
 			}
-
-			// Only a successful new insertion consumes the clipboard.
 			pendingContentParts.add(imagePart);
 			refreshRegionPreviews();
 			setRegionCountLabel(pendingContentParts.size());
 			showQuestionPendingStatus();
 			updateQuestionCodeLock();
-			clearClipboardAfterAcceptedImage();
+			try {
+				Clipboard.getSystemClipboard().clear();
+			} catch (RuntimeException exception) {
+				saveStatusLabel.setText("Image accepted, but the clipboard could not be cleared.");
+			}
 			refreshSaveButtonState();
+			refreshClipboardImageAvailability();
 		} catch (IOException exception) {
 			showAlert(Alert.AlertType.ERROR, "Clipboard image could not be added.",
 					"The clipboard image could not be converted to PNG.");
@@ -3007,12 +3056,12 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private SqliteQuestionCaptureService.PendingSharedContext pendingSharedContextForSave() {
-		if (!sharedContextCapturePane.hasPendingAutomaticRegion()) {
+		if (!sharedContextCapturePane.hasPendingAutomaticContext()) {
 			return null;
 		}
 		return new SqliteQuestionCaptureService.PendingSharedContext(
 				sharedContextCapturePane.getPendingAutomaticContextLabel(),
-				sharedContextCapturePane.getPendingAutomaticContextRegions());
+				sharedContextCapturePane.getPendingAutomaticContextContentParts());
 	}
 
 	private void persistLegacyQuestionSplit(SplitRequest request) {
@@ -3353,7 +3402,7 @@ public final class QuestionCapturePane extends VBox {
 		boolean pasteAllowed = !questionSaveInProgress && currentSelection == null
 				&& !sharedContextCapturePane.isCaptureMode() && legacySplitCaptureState == null
 				&& !importedContentAlreadyStored;
-		pasteImageButton.setDisable(!pasteAllowed || !clipboardImageAvailable);
+		pasteImageButton.setDisable(!canAcceptClipboardImage());
 	}
 
 	private void refreshQuestionSaveActionState() {
@@ -4197,7 +4246,7 @@ public final class QuestionCapturePane extends VBox {
 		//
 		// A captured shared context does lock the number because changing the source
 		// question would change ownership of that shared context.
-		questionCodeField.setDisable(sharedContextCapturePane.hasPendingAutomaticRegion());
+		questionCodeField.setDisable(sharedContextCapturePane.hasPendingAutomaticContext());
 	}
 
 	private void updateRegionsScrollPane() {

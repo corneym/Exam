@@ -221,6 +221,25 @@ public final class SqliteExamAssetDeletionService {
 				DELETE FROM questions
 				WHERE booklet_id = ?
 				""", bookletId);
+
+		// Version 24 stores the authoritative mixed-content ordering separately.
+		// Delete references first, then their images and PDF source regions.
+		execute(connection, """
+				DELETE FROM shared_question_context_content_parts
+				WHERE shared_context_id IN (
+				    SELECT id
+				    FROM shared_question_contexts
+				    WHERE booklet_id = ?
+				)
+				""", bookletId);
+		execute(connection, """
+				DELETE FROM shared_question_context_images
+				WHERE shared_context_id IN (
+				    SELECT id
+				    FROM shared_question_contexts
+				    WHERE booklet_id = ?
+				)
+				""", bookletId);
 		execute(connection, """
 				DELETE FROM shared_question_context_regions
 				WHERE shared_context_id IN (

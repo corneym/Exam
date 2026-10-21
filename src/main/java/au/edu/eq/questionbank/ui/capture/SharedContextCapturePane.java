@@ -1,8 +1,8 @@
 package au.edu.eq.questionbank.ui.capture;
 
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.BiFunction;
@@ -10,7 +10,9 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ImageSharedContextContentPart;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.SharedContextContentPart;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.pdf.PdfSession;
@@ -28,7 +30,9 @@ import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.scene.control.Tooltip;
+import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.scene.input.Clipboard;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import javafx.util.StringConverter;
@@ -82,9 +86,10 @@ public final class SharedContextCapturePane extends VBox {
 	private final Button saveContextButton = new Button("Save Context");
 	private final Button cancelContextButton = new Button("Cancel");
 	private final VBox newContextBox = new VBox(COMPACT_SPACING);
-	private final List<SharedQuestionContextRegion> pendingRegions = new ArrayList<>();
+	private final SharedContextCaptureDraft pendingContent = new SharedContextCaptureDraft();
 	private Runnable contextEditCompletedHandler = () -> {
 	};
+	private final QuestionClipboardImageReader clipboardImageReader = new QuestionClipboardImageReader();
 
 	/**
 	 * Creates shared-context controls for the active booklet and exam PDF. The
@@ -126,12 +131,37 @@ public final class SharedContextCapturePane extends VBox {
 		if (!captureMode || currentSelection == null) {
 			return false;
 		}
-		if (!pendingRegions.isEmpty()) {
-			throw new IllegalStateException("Automatic shared context already has a region");
+		if (!pendingContent.isEmpty()) {
+			throw new IllegalStateException("Automatic shared context already has content");
 		}
 		addCurrentRegion();
 		leaveCaptureMode();
 		return true;
+	}
+
+	/**
+	 * Accepts one PNG into the current Shared Context draft. Duplicate images are
+	 * rejected without altering the draft.
+	 *
+	 * @param pngBytes encoded PNG data
+	 * @return true when a new image was accepted
+	 */
+	boolean acceptClipboardPng(byte[] pngBytes) {
+		if (!captureMode) {
+			throw new IllegalStateException("Shared Context capture is not active");
+		}
+		if (correctionSaveHandler != null) {
+			throw new IllegalStateException("Clipboard images are not yet available in source-wide correction");
+		}
+		if (currentSelection != null) {
+			throw new IllegalStateException("Accept or clear the current PDF selection first");
+		}
+		boolean accepted = pendingContent.addImage(pngBytes);
+		if (accepted) {
+			refreshRegionPreviews();
+			statusLabel.setText(pendingContent.size() + " shared context content part(s) accepted");
+		}
+		return accepted;
 	}
 
 	/**
@@ -214,6 +244,10 @@ public final class SharedContextCapturePane extends VBox {
 		return true;
 	}
 
+	boolean canAcceptAutomaticClipboardImage() {
+		return captureMode && correctionSaveHandler == null && editingContext == null && currentSelection == null;
+	}
+
 	/**
 	 * Cancels automatic capture and discards its transient regions.
 	 */
@@ -254,7 +288,7 @@ public final class SharedContextCapturePane extends VBox {
 		enterCaptureMode();
 		clearCurrentSelection();
 		contextLabelField.setText(initialLabel);
-		pendingRegions.clear();
+		pendingContent.clear();
 		refreshRegionPreviews();
 		contextLabelField.setVisible(true);
 		contextLabelField.setManaged(true);
@@ -284,7 +318,7 @@ public final class SharedContextCapturePane extends VBox {
 			cancelNewContext();
 		} else {
 			clearCurrentSelection();
-			pendingRegions.clear();
+			pendingContent.clear();
 			refreshRegionPreviews();
 		}
 		existingContextField.getSelectionModel().clearSelection();
@@ -313,6 +347,13 @@ public final class SharedContextCapturePane extends VBox {
 		}
 	}
 
+	List<SharedContextContentPart> getPendingAutomaticContextContentParts() {
+		if (!hasPendingAutomaticContext()) {
+			throw new IllegalStateException("No automatic Shared Context is pending");
+		}
+		return pendingContent.contentParts();
+	}
+
 	String getPendingAutomaticContextLabel() {
 		if (!hasPendingAutomaticRegion()) {
 			throw new IllegalStateException("No automatic shared context is pending");
@@ -328,7 +369,7 @@ public final class SharedContextCapturePane extends VBox {
 		if (!hasPendingAutomaticRegion()) {
 			throw new IllegalStateException("No automatic shared context is pending");
 		}
-		return List.copyOf(pendingRegions);
+		return pendingContent.regions();
 	}
 
 	/**
@@ -346,19 +387,24 @@ public final class SharedContextCapturePane extends VBox {
 		return currentSelection != null;
 	}
 
+	boolean hasPendingAutomaticContext() {
+		return !captureMode && correctionSaveHandler == null && editingContext == null && !pendingContent.isEmpty();
+	}
+
 	/**
 	 * @return whether accepted context regions await persistence, including after
 	 *         automatic capture mode ends
 	 */
 	boolean hasPendingAutomaticRegion() {
-		return !pendingRegions.isEmpty();
+		return pendingContent.size() == 1
+				&& pendingContent.contentParts().getFirst() instanceof SharedQuestionContextRegion;
 	}
 
 	/**
 	 * @return whether capture is active or accepted regions remain unsaved
 	 */
 	boolean hasUnsavedContextCapture() {
-		return captureMode || !pendingRegions.isEmpty();
+		return captureMode || !pendingContent.isEmpty();
 	}
 
 	/**
@@ -413,7 +459,7 @@ public final class SharedContextCapturePane extends VBox {
 		// label remains authoritative and is not editable in this workflow.
 		contextLabelField.setVisible(false);
 		contextLabelField.setManaged(false);
-		pendingRegions.clear();
+		pendingContent.clear();
 		refreshRegionPreviews();
 		contextCaptureHeadingLabel.setText("Recapture shared context");
 		saveContextButton.setText("Save Replacement");
@@ -461,6 +507,24 @@ public final class SharedContextCapturePane extends VBox {
 		existingContextField.setValue(matching);
 	}
 
+	void stageAcceptedQuestionImage(String label, byte[] pngBytes) {
+		if (!canAcceptAutomaticClipboardImage()) {
+			throw new IllegalStateException("Shared Context capture is not ready for a clipboard image");
+		}
+		if (label == null || label.isBlank()) {
+			throw new IllegalArgumentException("label must not be blank");
+		}
+		if (!pendingContent.isEmpty()) {
+			throw new IllegalStateException("Automatic Shared Context already has content");
+		}
+		contextLabelField.setText(label);
+		pendingContent.addImage(pngBytes);
+		clearCurrentSelection();
+		leaveCaptureMode();
+		refreshRegionPreviews();
+		statusLabel.setText("No shared context selected");
+	}
+
 	/**
 	 * Reclassifies an already accepted Question PDF region as an unsaved automatic
 	 * Shared Context region.
@@ -491,7 +555,7 @@ public final class SharedContextCapturePane extends VBox {
 				acceptedRegion.x(), acceptedRegion.y(), acceptedRegion.width(), acceptedRegion.height());
 		existingContextField.getSelectionModel().clearSelection();
 		contextLabelField.setText(label);
-		pendingRegions.add(contextRegion);
+		pendingContent.addRegion(contextRegion);
 		refreshRegionPreviews();
 		statusLabel.setText("1 shared context region(s) accepted");
 	}
@@ -508,7 +572,7 @@ public final class SharedContextCapturePane extends VBox {
 	 *                               available
 	 */
 	QuestionRegion takePendingAutomaticRegion() {
-		if (captureMode || currentSelection != null || pendingRegions.size() != 1 || editingContext != null
+		if (captureMode || currentSelection != null || !hasPendingAutomaticRegion() || editingContext != null
 				|| correctionSaveHandler != null) {
 			throw new IllegalStateException("No single accepted automatic Shared Context region");
 		}
@@ -516,15 +580,13 @@ public final class SharedContextCapturePane extends VBox {
 		if (booklet == null) {
 			throw new IllegalStateException("No active booklet");
 		}
-		SharedQuestionContextRegion region = pendingRegions.getFirst();
+		SharedQuestionContextRegion region = pendingContent.regions().getFirst();
 
-		// Preserve the original proportional PDF geometry and source.
+		// Preserve source coordinates when returning automatic
+		// Shared Context content to ordinary Question capture.
 		QuestionRegion questionRegion = new QuestionRegion(booklet, region.pageNumber(), region.x(), region.y(),
 				region.width(), region.height());
-
-		// Only the accepted automatic context is relinquished.
-		// Clearing an unrelated workspace selection is unnecessary.
-		pendingRegions.clear();
+		pendingContent.clear();
 		contextLabelField.clear();
 		refreshRegionPreviews();
 		statusLabel.setText("No shared context selected");
@@ -535,14 +597,14 @@ public final class SharedContextCapturePane extends VBox {
 		if (currentSelection == null) {
 			return;
 		}
-		pendingRegions.add(currentSelection);
+		pendingContent.addRegion(currentSelection);
 		currentSelection = null;
 		currentPreview.setImage(null);
 		currentPreview.setVisible(false);
 		selectionClearHandler.run();
 		setSelectionButtonsEnabled(false);
 		refreshRegionPreviews();
-		statusLabel.setText(pendingRegions.size() + " shared context region(s) accepted");
+		statusLabel.setText(pendingContent.size() + " shared context region(s) accepted");
 	}
 
 	private void beginNewContext() {
@@ -595,7 +657,7 @@ public final class SharedContextCapturePane extends VBox {
 
 	private void cancelNewContext() {
 		clearCurrentSelection();
-		pendingRegions.clear();
+		pendingContent.clear();
 		refreshRegionPreviews();
 		contextLabelField.clear();
 		leaveCaptureMode();
@@ -615,14 +677,14 @@ public final class SharedContextCapturePane extends VBox {
 	}
 
 	private void clearPersistedCaptureState() {
-		pendingRegions.clear();
+		pendingContent.clear();
 		contextLabelField.clear();
 		currentPreview.setImage(null);
 		currentPreview.setVisible(false);
 	}
 
 	private void clearRegions() {
-		pendingRegions.clear();
+		pendingContent.clear();
 		clearCurrentSelection();
 		refreshRegionPreviews();
 	}
@@ -705,12 +767,24 @@ public final class SharedContextCapturePane extends VBox {
 				if (context == null) {
 					return "";
 				}
-				return String.format("%s — %d region(s)", context.getLabel(), context.getRegions().size());
+				int total = context.getContentParts().size();
+				int pdfCount = context.getRegions().size();
+				int imageCount = total - pdfCount;
+
+				// Report the authoritative mixed-content inventory,
+				// not just its backwards-compatible PDF projection.
+				if (imageCount == 0) {
+					return String.format("%s — %d region(s)", context.getLabel(), pdfCount);
+				}
+				if (pdfCount == 0) {
+					return String.format("%s — %d image(s)", context.getLabel(), imageCount);
+				}
+				return String.format("%s — %d region(s), %d image(s)", context.getLabel(), pdfCount, imageCount);
 			}
 		});
 		newContextButton.setId("new-shared-context");
 		newContextButton.setTooltip(new Tooltip(
-				"Capture reusable source regions that can be linked to more than one independent Question."));
+				"Capture reusable source content that can be linked to more than one independent Question."));
 	}
 
 	private HBox createCurrentSelectionControls() {
@@ -724,6 +798,28 @@ public final class SharedContextCapturePane extends VBox {
 		HBox controls = new HBox(CONTROL_SPACING, new Label("Shared context"), existingContextField, newContextButton);
 		controls.setAlignment(Pos.CENTER_LEFT);
 		return controls;
+	}
+
+	private VBox createImagePreview(ImageSharedContextContentPart part, int index) {
+		Image image = new Image(new ByteArrayInputStream(part.pngBytes()));
+		if (image.isError()) {
+			throw new IllegalStateException("Stored Shared Context PNG cannot be previewed", image.getException());
+		}
+		ImageView imageView = new ImageView(image);
+		imageView.setId("shared-context-image-preview-" + index);
+		imageView.setPreserveRatio(true);
+		imageView.setSmooth(true);
+		imageView.fitWidthProperty()
+				.bind(Bindings.createDoubleBinding(
+						() -> Math.max(0.0, acceptedRegionScroll.getWidth() - REGION_PREVIEW_HORIZONTAL_INSET),
+						acceptedRegionScroll.widthProperty()));
+		Label label = new Label("Image " + (index + 1));
+		Button removeButton = new Button("Remove");
+		removeButton.setId("remove-shared-context-image-" + index);
+		removeButton.setOnAction(_ -> removeRegion(index));
+		HBox footer = new HBox(CONTROL_SPACING, label, removeButton);
+		footer.setAlignment(Pos.CENTER_LEFT);
+		return new VBox(REGION_PREVIEW_ITEM_SPACING, imageView, footer);
 	}
 
 	private VBox createRegionPreview(SharedQuestionContextRegion region, int regionIndex) {
@@ -766,7 +862,7 @@ public final class SharedContextCapturePane extends VBox {
 		existingContextField.getSelectionModel().clearSelection();
 		existingContextField.setDisable(true);
 		newContextButton.setDisable(true);
-		pendingRegions.clear();
+		pendingContent.clear();
 	}
 
 	private SharedQuestionContext findContextById(long id) {
@@ -793,15 +889,56 @@ public final class SharedContextCapturePane extends VBox {
 		existingContextField.getItems().setAll(contextRepository.findByBooklet(booklet));
 	}
 
+	private void pasteClipboardImage() {
+		if (correctionSaveHandler != null) {
+			showWarning("Clipboard capture unavailable", "Complete this source-wide correction using PDF regions.");
+			return;
+		}
+		if (currentSelection != null) {
+			showWarning("PDF selection pending", "Accept or clear the current PDF selection first.");
+			return;
+		}
+		try {
+			byte[] png = clipboardImageReader.readPng().orElse(null);
+			if (png == null) {
+				showWarning("No image on clipboard", "Copy or snip an image before using Add From Clipboard.");
+				return;
+			}
+
+			// A duplicate must not consume the clipboard.
+			if (!acceptClipboardPng(png)) {
+				statusLabel.setText("This image is already accepted in the Shared Context");
+				return;
+			}
+
+			// Only a successful insertion consumes clipboard content.
+			try {
+				Clipboard.getSystemClipboard().clear();
+			} catch (RuntimeException exception) {
+				statusLabel.setText("Image accepted, but clipboard could not be cleared");
+			}
+		} catch (IOException exception) {
+			showWarning("Clipboard image could not be added", "The clipboard image could not be converted to PNG.");
+		}
+	}
+
 	private void refreshRegionPreviews() {
 		acceptedRegionBox.getChildren().clear();
-		for (int i = 0; i < pendingRegions.size(); i++) {
-			acceptedRegionBox.getChildren().add(createRegionPreview(pendingRegions.get(i), i));
+		List<SharedContextContentPart> parts = pendingContent.contentParts();
+		for (int index = 0; index < parts.size(); index++) {
+			SharedContextContentPart part = parts.get(index);
+			if (part instanceof SharedQuestionContextRegion region) {
+				acceptedRegionBox.getChildren().add(createRegionPreview(region, index));
+			} else if (part instanceof ImageSharedContextContentPart image) {
+				acceptedRegionBox.getChildren().add(createImagePreview(image, index));
+			} else {
+				throw new IllegalStateException("Unsupported Shared Context content type");
+			}
 		}
-		regionCountLabel.setText("Regions: " + pendingRegions.size());
-		boolean hasRegions = !pendingRegions.isEmpty();
-		acceptedRegionScroll.setVisible(hasRegions);
-		acceptedRegionScroll.setManaged(hasRegions);
+		regionCountLabel.setText("Content parts: " + parts.size());
+		boolean hasContent = !parts.isEmpty();
+		acceptedRegionScroll.setVisible(hasContent);
+		acceptedRegionScroll.setManaged(hasContent);
 	}
 
 	private SharedQuestionContext reloadSavedContext(ExamBooklet booklet, SharedQuestionContext saved) {
@@ -810,7 +947,7 @@ public final class SharedContextCapturePane extends VBox {
 	}
 
 	private void removeRegion(int regionIndex) {
-		pendingRegions.remove(regionIndex);
+		pendingContent.removeAt(regionIndex);
 		refreshRegionPreviews();
 	}
 
@@ -824,8 +961,8 @@ public final class SharedContextCapturePane extends VBox {
 			showWarning("Shared Context is incomplete", "Enter a label for the Shared Context.");
 			return;
 		}
-		if (pendingRegions.isEmpty()) {
-			showWarning("Shared Context is incomplete", "Capture at least one Shared Context region.");
+		if (pendingContent.isEmpty()) {
+			showWarning("Shared Context is incomplete", "Capture at least one Shared Context content part.");
 			return;
 		}
 		ExamBooklet booklet = bookletSupplier.get();
@@ -862,17 +999,22 @@ public final class SharedContextCapturePane extends VBox {
 	}
 
 	private SharedQuestionContext savePendingContext(ExamBooklet booklet, String label) {
-		List<SharedQuestionContextRegion> regions = List.copyOf(pendingRegions);
+		List<SharedContextContentPart> parts = pendingContent.contentParts();
 		if (correctionSaveHandler != null) {
-			return correctionSaveHandler.apply(label, regions);
+
+			// Source-wide correction still owns Question relationships
+			// and supports PDF regions only.
+			if (parts.stream().anyMatch(part -> !(part instanceof SharedQuestionContextRegion))) {
+				throw new IllegalStateException("Mixed content requires a source-wide correction handler");
+			}
+			return correctionSaveHandler.apply(label, pendingContent.regions());
 		}
 		if (editingContext != null) {
 
-			// Replacement retains context identity and all
-			// existing Question foreign-key relationships.
-			return contextRepository.replace(editingContext, label, regions);
+			// Preserve persisted context identity and Question links.
+			return contextRepository.replaceContentParts(editingContext, label, parts);
 		}
-		return contextRepository.save(booklet, label, regions);
+		return contextRepository.saveContentParts(booklet, label, parts);
 	}
 
 	private void setNewContextBoxVisible(boolean visible) {
