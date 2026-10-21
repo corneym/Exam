@@ -1049,7 +1049,7 @@ public final class CorpusDashboardPane extends VBox {
 		declaredExamStateLabel.setText("");
 		selectedExamCountsLabel.setText("");
 		bookletTable.getItems().clear();
-		selectedBookletLabel.setText("Selected booklet: All booklets");
+		updateSelectedBookletLabel(null);
 		setVisibleAndManaged(bookletWarningLabel, false);
 		setVisibleAndManaged(mcqExplanationCoverageLabel, false);
 
@@ -1505,7 +1505,7 @@ public final class CorpusDashboardPane extends VBox {
 		});
 		bookletTable.getSelectionModel().selectedItemProperty().addListener((_, _, selected) -> {
 			if (selected == null) {
-				selectedBookletLabel.setText("Selected booklet: All booklets");
+				updateSelectedBookletLabel(null);
 				setVisibleAndManaged(bookletWarningLabel, false);
 				setVisibleAndManaged(mcqExplanationCoverageLabel, false);
 				updateCaptureActionState();
@@ -2283,7 +2283,7 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private void showSelectedBooklet(BookletCorpusStatus status) {
-		selectedBookletLabel.setText("Selected booklet: " + status.booklet().getName());
+		updateSelectedBookletLabel(status);
 		String warning = bookletWarningText(status);
 		bookletWarningLabel.setText(warning);
 		setVisibleAndManaged(bookletWarningLabel, !warning.isBlank());
@@ -2317,7 +2317,7 @@ public final class CorpusDashboardPane extends VBox {
 		List<BookletCorpusStatus> displayedBooklets = filteredBookletStatuses(status);
 		bookletTable.getItems().setAll(displayedBooklets);
 		bookletTable.getSelectionModel().clearSelection();
-		selectedBookletLabel.setText("Selected booklet: All booklets");
+		updateSelectedBookletLabel(null);
 		setVisibleAndManaged(bookletWarningLabel, false);
 		setVisibleAndManaged(mcqExplanationCoverageLabel, false);
 
@@ -2533,6 +2533,21 @@ public final class CorpusDashboardPane extends VBox {
 		boolean clear = item != null && !attention;
 		row.pseudoClassStateChanged(QUESTION_ROW_ATTENTION, attention);
 		row.pseudoClassStateChanged(QUESTION_ROW_CLEAR, clear);
+	}
+
+	private void updateSelectedBookletLabel(BookletCorpusStatus bookletStatus) {
+		ExamCorpusStatus examStatus = examTable.getSelectionModel().getSelectedItem();
+		if (examStatus == null) {
+			selectedBookletLabel.setText("Selected booklet: No Exam selected");
+			return;
+		}
+		Exam exam = examStatus.exam();
+		String bookletName = bookletStatus == null ? "All booklets" : bookletStatus.booklet().getName();
+
+		// Always derive the Exam identity from the current selection so
+		// changing Exams cannot retain the previous Exam's display.
+		selectedBookletLabel.setText(String.format("Selected booklet: %s %d — %s — %s", exam.getProvider().getName(),
+				exam.getYear(), exam.getName(), bookletName));
 	}
 
 	private String workLabel(ExamCorpusStatus status) {

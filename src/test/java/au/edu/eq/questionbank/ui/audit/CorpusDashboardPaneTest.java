@@ -765,7 +765,7 @@ class CorpusDashboardPaneTest {
 		assertTrue(selectedCounts.getText().contains("Need work: 4"));
 		assertEquals(2, booklets.getItems().size());
 		assertNull(booklets.getSelectionModel().getSelectedItem());
-		assertEquals("Selected booklet: All booklets", selectedBooklet.getText());
+		assertEquals("Selected booklet: QCAA 2025 — External Assessment — All booklets", selectedBooklet.getText());
 	}
 
 	@Test
@@ -1333,27 +1333,20 @@ class CorpusDashboardPaneTest {
 	void manageExamAssetsRequiresSelectedExam(FxRobot robot) {
 		AtomicReference<Exam> routedExam = new AtomicReference<>();
 		AtomicReference<ExamBooklet> routedBooklet = new AtomicReference<>();
-
 		robot.interact(() -> pane.setExamAssetsHandler((exam, booklet) -> {
 			routedExam.set(exam);
 			routedBooklet.set(booklet);
 		}));
-
 		Button manageAssets = robot.lookup("#corpus-dashboard-manage-exam-assets").queryButton();
-
 		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
-
 		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
 
 		// The initially selected Exam is COMPLETE.
 		// Exam / Assets must remain accessible for inspection
 		// and for adding a new Exam.
 		assertEquals(fixture.completeExam.getId(), exams.getSelectionModel().getSelectedItem().exam().getId());
-
 		assertFalse(manageAssets.isDisable());
-
 		robot.interact(manageAssets::fire);
-
 		assertNotNull(routedExam.get());
 		assertEquals(fixture.completeExam.getId(), routedExam.get().getId());
 		assertNull(routedBooklet.get());
@@ -1362,28 +1355,19 @@ class CorpusDashboardPaneTest {
 		// must also be passed through for read-only inspection.
 		routedExam.set(null);
 		routedBooklet.set(null);
-
 		robot.interact(() -> booklets.getSelectionModel().select(fixture.paper1Status));
-
 		assertFalse(manageAssets.isDisable());
-
 		robot.interact(manageAssets::fire);
-
 		assertEquals(fixture.completeExam.getId(), routedExam.get().getId());
-
 		assertEquals(fixture.paper1.getId(), routedBooklet.get().getId());
 
 		// Replace the COMPLETE Exam with an ACTIVE Exam.
 		// Normal management access must remain available.
 		routedExam.set(null);
 		routedBooklet.set(null);
-
 		robot.interact(() -> pane.replaceData(List.of(fixture.activeExamStatus), List.of()));
-
 		assertFalse(manageAssets.isDisable());
-
 		robot.interact(manageAssets::fire);
-
 		assertEquals(fixture.activeExam.getId(), routedExam.get().getId());
 		assertNull(routedBooklet.get());
 
@@ -1391,25 +1375,17 @@ class CorpusDashboardPaneTest {
 		// when routing the ACTIVE Exam into Exam / Assets.
 		routedExam.set(null);
 		routedBooklet.set(null);
-
 		robot.interact(() -> booklets.getSelectionModel().select(fixture.activePaperStatus));
-
 		robot.interact(manageAssets::fire);
-
 		assertEquals(fixture.activeExam.getId(), routedExam.get().getId());
-
 		assertEquals(fixture.activePaper.getId(), routedBooklet.get().getId());
 
 		// With no selected Exam there is no management target.
 		routedExam.set(null);
 		routedBooklet.set(null);
-
 		robot.interact(() -> exams.getSelectionModel().clearSelection());
-
 		assertTrue(manageAssets.isDisable());
-
 		robot.interact(manageAssets::fire);
-
 		assertNull(routedExam.get());
 		assertNull(routedBooklet.get());
 	}
@@ -1920,6 +1896,61 @@ class CorpusDashboardPaneTest {
 		robot.interact(() -> booklets.getSelectionModel().select(fixture.paper1Status));
 		assertNull(questions.getSelectionModel().getSelectedItem());
 		assertTrue(completeQuestion.isDisable());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void selectedBookletLabelFollowsExamAndBookletSelections(FxRobot robot) {
+		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		Label selectedBooklet = robot.lookup("#corpus-dashboard-selected-booklet").queryAs(Label.class);
+
+		// The first Exam is selected automatically, with all booklets in scope.
+		assertEquals(fixture.completeExamStatus, exams.getSelectionModel().getSelectedItem());
+		assertNull(booklets.getSelectionModel().getSelectedItem());
+		assertEquals("Selected booklet: QCAA 2025 — External Assessment — All booklets", selectedBooklet.getText());
+
+		// Selecting a booklet retains the Exam identity.
+		robot.interact(() -> booklets.getSelectionModel().select(fixture.paper2Status));
+		assertEquals("Selected booklet: QCAA 2025 — External Assessment — Paper 2", selectedBooklet.getText());
+
+		// Changing Exams removes the previous booklet selection and identity.
+		robot.interact(() -> exams.getSelectionModel().select(fixture.activeExamStatus));
+		assertNull(booklets.getSelectionModel().getSelectedItem());
+		assertEquals("Selected booklet: QCAA 2024 — External Assessment — All booklets", selectedBooklet.getText());
+
+		// A booklet selected under the second Exam uses that Exam's identity.
+		robot.interact(() -> booklets.getSelectionModel().select(fixture.activePaperStatus));
+		assertEquals("Selected booklet: QCAA 2024 — External Assessment — Paper 1", selectedBooklet.getText());
+
+		// Persistence refresh must preserve a still-valid Exam/booklet scope.
+		robot.interact(() -> pane.replaceData(List.of(fixture.completeExamStatus, fixture.activeExamStatus),
+				fixture.questions()));
+		assertEquals("Selected booklet: QCAA 2024 — External Assessment — Paper 1", selectedBooklet.getText());
+
+		// Clearing only the booklet selection restores all-booklets scope.
+		robot.interact(() -> booklets.getSelectionModel().clearSelection());
+		assertEquals("Selected booklet: QCAA 2024 — External Assessment — All booklets", selectedBooklet.getText());
+
+		// Returning to the original Exam must not restore a stale booklet.
+		robot.interact(() -> exams.getSelectionModel().select(fixture.completeExamStatus));
+		assertNull(booklets.getSelectionModel().getSelectedItem());
+		assertEquals("Selected booklet: QCAA 2025 — External Assessment — All booklets", selectedBooklet.getText());
+
+		// Explicitly clearing Exam selection must remove its identity.
+		robot.interact(() -> exams.getSelectionModel().clearSelection());
+		assertTrue(booklets.getItems().isEmpty());
+		assertEquals("Selected booklet: No Exam selected", selectedBooklet.getText());
+
+		// Reselecting an Exam must initialise the booklet scope correctly.
+		robot.interact(() -> exams.getSelectionModel().select(fixture.activeExamStatus));
+		assertEquals("Selected booklet: QCAA 2024 — External Assessment — All booklets", selectedBooklet.getText());
+
+		// Removing all Exams must not leave any selected Exam information.
+		robot.interact(() -> pane.replaceData(List.of(), List.of()));
+		assertNull(exams.getSelectionModel().getSelectedItem());
+		assertTrue(booklets.getItems().isEmpty());
+		assertEquals("Selected booklet: No Exam selected", selectedBooklet.getText());
 	}
 
 	@Test
