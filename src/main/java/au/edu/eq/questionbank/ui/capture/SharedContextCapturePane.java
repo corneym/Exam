@@ -50,6 +50,7 @@ public final class SharedContextCapturePane extends VBox {
 	private static final double REGION_PREVIEW_HORIZONTAL_INSET = 24.0;
 	private static final double REGION_PREVIEW_ITEM_SPACING = 5.0;
 	private static final double REGIONS_VIEWPORT_HEIGHT = 300.0;
+	private static final double REGIONS_VIEWPORT_MIN_HEIGHT = 96.0;
 	private static final Insets CAPTURE_PADDING = new Insets(8);
 
 	// Shared Context dependencies and callbacks.
@@ -778,18 +779,21 @@ public final class SharedContextCapturePane extends VBox {
 		currentPreview.setVisible(false);
 		currentPreview.managedProperty().bind(currentPreview.visibleProperty());
 		acceptedRegionScroll.setFitToWidth(true);
+		acceptedRegionScroll.setId("shared-context-accepted-scroll");
 		acceptedRegionScroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
 		acceptedRegionScroll.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
-		acceptedRegionScroll.setMinHeight(0);
-		acceptedRegionScroll.setMaxHeight(REGIONS_VIEWPORT_HEIGHT);
 
-		// Grow the accepted-region area with its actual content until the same
-		// 300 px scrolling limit used by ordinary Question capture is reached.
+		// The non-zero minimum breaks the initial layout dependency between the
+		// scroll width, ImageView fit width and content height.
+		acceptedRegionScroll.setMinHeight(REGIONS_VIEWPORT_MIN_HEIGHT);
+		acceptedRegionScroll.setMaxHeight(REGIONS_VIEWPORT_HEIGHT);
 		acceptedRegionScroll.prefHeightProperty()
 				.bind(Bindings.createDoubleBinding(
-						() -> Math.min(REGIONS_VIEWPORT_HEIGHT,
-								acceptedRegionBox.getLayoutBounds().getHeight() + REGION_VIEWPORT_EXTRA_HEIGHT),
-						acceptedRegionBox.layoutBoundsProperty()));
+						() -> Math.max(REGIONS_VIEWPORT_MIN_HEIGHT,
+								Math.min(REGIONS_VIEWPORT_HEIGHT,
+										acceptedRegionBox.prefHeight(-1) + REGION_VIEWPORT_EXTRA_HEIGHT)),
+						acceptedRegionBox.getChildren(), acceptedRegionBox.layoutBoundsProperty(),
+						acceptedRegionScroll.widthProperty()));
 		setSelectionButtonsEnabled(false);
 	}
 

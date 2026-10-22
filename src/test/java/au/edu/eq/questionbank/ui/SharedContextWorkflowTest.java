@@ -9,6 +9,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,6 +20,8 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
+
+import javax.imageio.ImageIO;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
@@ -845,6 +849,43 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// Reuse must not duplicate a previously saved context.
 		assertEquals(1, contexts.findByBooklet(booklet).size());
+	}
+
+	@Test
+	void editingQuestionWithImageSharedContextStartsCleanAndTracksRevertedChanges(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteQuestionRepository questions = new SqliteQuestionRepository(database);
+		SqliteSourceQuestionRepository sources = new SqliteSourceQuestionRepository(database);
+		SqliteSharedQuestionContextRepository contexts = new SqliteSharedQuestionContextRepository(database);
+		BufferedImage image = new BufferedImage(6, 4, BufferedImage.TYPE_INT_ARGB);
+		image.setRGB(1, 1, 0xFF008800);
+		ByteArrayOutputStream output = new ByteArrayOutputStream();
+		assertTrue(ImageIO.write(image, "png", output));
+		SourceQuestion source = sources.save(booklet, "79");
+		SharedQuestionContext context = contexts.saveContentParts(booklet, "Question 79 stimulus",
+				List.of(new ImageSharedContextContentPart(output.toByteArray())));
+		sources.updateSharedContextStatus(source, SharedContextStatus.PRESENT);
+		Question saved = questions.save(booklet, "79a", "", 2,
+				List.of(new QuestionRegion(booklet, 1, 0.12, 0.28, 0.70, 0.15)), classification, false, source, context,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		robot.interact(() -> assertTrue(questionCapturePane().editQuestion(saved, () -> {
+		})));
+		Button update = lookup(robot, "#save-question", Button.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		assertEquals("Update Question", update.getText());
+		assertNotNull(lookup(robot, "#question-shared-context-image-0", ImageView.class));
+		assertTrue(update.isDisabled(), "Opening Edit Question without changes must be clean");
+		robot.interact(() -> marks.setText("4"));
+		assertFalse(update.isDisabled(), "A changed mark must enable Update Question");
+		robot.interact(() -> marks.setText("2"));
+		assertTrue(update.isDisabled(), "Reverting a change must restore the clean state");
+		robot.interact(() -> ((Button) questionCapturePane().lookup("#cancel-question-edit")).fire());
+		assertEquals(2, questions.findById(saved.getId()).orElseThrow().getMarks(),
+				"Cancelling a clean edit must not persist anything");
 	}
 
 	@Test

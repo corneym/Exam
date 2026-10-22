@@ -2773,6 +2773,30 @@ public final class QuestionCapturePane extends VBox {
 				&& SourceQuestionCodeParser.derive(questionCodeField.getText()) == null;
 	}
 
+	private boolean isQuestionEditDirty() {
+		if (editingQuestion == null) {
+			return false;
+		}
+		Integer marks = QuestionCaptureValidator.parsePositiveMarks(marksField.getText());
+		SharedQuestionContext selectedContext = sharedContextCapturePane.getSelectedContext();
+		if (selectedContext == null) {
+			selectedContext = inheritedMcqSharedContext;
+		}
+		SharedQuestionContext originalContext = editingQuestion.getSharedContext();
+		long selectedContextId = selectedContext == null ? 0L : selectedContext.getId();
+		long originalContextId = originalContext == null ? 0L : originalContext.getId();
+
+		// Reordering, adding or removing body content is an edit; redisplaying the
+		// same persisted Shared Context is not. Classification uses persisted ID
+		// equality.
+		return !questionCodeField.getText().trim().equals(editingQuestion.getQuestionCode()) || marks == null
+				|| marks.intValue() != editingQuestion.getMarks()
+				|| selectedResponseType() != editingQuestion.getResponseType()
+				|| !Objects.equals(curriculumSelectionModel.getClassification(), editingQuestion.getClassification())
+				|| !pendingContentParts.equals(editingQuestion.getContentParts())
+				|| selectedContextId != originalContextId;
+	}
+
 	private void loadActiveLegacySplitPart() {
 		LegacyQuestionSplitDialog.PartDefinition part = legacySplitCaptureState.activeDefinition();
 
@@ -3399,7 +3423,12 @@ public final class QuestionCapturePane extends VBox {
 		// The shared content action changes meaning while the current PDF selection is
 		// owned by automatic Shared Context capture.
 		addRegionButton.setText(sharedContextCapturePane.isCaptureMode() ? "Add Context" : "Add Region");
-		saveQuestionButton.setDisable(!questionReadyToSave());
+
+		// In Edit Question, validity alone is insufficient: unchanged persisted data
+		// must not be submitted as an update. All other capture modes retain the
+		// existing readiness rules.
+		boolean ready = questionReadyToSave();
+		saveQuestionButton.setDisable(!ready || (editingQuestion != null && !isQuestionEditDirty()));
 	}
 
 	private void refreshRegionPreviews() {

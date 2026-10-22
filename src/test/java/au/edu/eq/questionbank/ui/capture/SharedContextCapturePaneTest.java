@@ -26,6 +26,7 @@ import org.testfx.api.FxRobot;
 import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
 import org.testfx.framework.junit5.Stop;
+import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
@@ -45,6 +46,7 @@ import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
 import javafx.scene.image.ImageView;
 import javafx.scene.image.WritableImage;
@@ -87,6 +89,25 @@ class SharedContextCapturePaneTest {
 		robot.interact(() -> {
 			assertThrows(IllegalStateException.class, pane::getPendingAutomaticContextLabel);
 			assertThrows(IllegalStateException.class, pane::getPendingAutomaticContextRegions);
+		});
+	}
+
+	@Test
+	void acceptedClipboardImageHasUsableViewportWithoutClick(FxRobot robot) throws Exception {
+		byte[] png = testPngBytes();
+		robot.interact(() -> {
+			((Button) pane.lookup("#new-shared-context")).fire();
+			assertTrue(pane.acceptClipboardPng(png));
+		});
+		WaitForAsyncUtils.waitForFxEvents();
+		robot.interact(() -> {
+			ScrollPane viewport = (ScrollPane) pane.lookup("#shared-context-accepted-scroll");
+			ImageView image = (ImageView) pane.lookup("#shared-context-image-preview-0");
+			assertTrue(viewport.isVisible());
+			assertTrue(viewport.getHeight() >= 96.0,
+					"The accepted image needs a visible viewport on its first layout pulse");
+			assertTrue(image.getBoundsInParent().getHeight() > 96.0,
+					"The ImageView must use its available width before any extra click");
 		});
 	}
 
