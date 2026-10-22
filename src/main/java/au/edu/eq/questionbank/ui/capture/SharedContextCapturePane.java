@@ -56,7 +56,7 @@ public final class SharedContextCapturePane extends VBox {
 	private final Supplier<ExamBooklet> bookletSupplier;
 	private final BooleanSupplier captureStartAllowed;
 	private final SharedQuestionContextRepository contextRepository;
-	private BiFunction<String, List<SharedQuestionContextRegion>, SharedQuestionContext> correctionSaveHandler;
+	private BiFunction<String, List<SharedContextContentPart>, SharedQuestionContext> correctionSaveHandler;
 	private final Supplier<PdfSession> examPdfSessionSupplier;
 	private final QuestionExtractor questionExtractor;
 	private final Runnable selectionClearHandler;
@@ -82,6 +82,7 @@ public final class SharedContextCapturePane extends VBox {
 	private final Label regionCountLabel = new Label("Regions: 0");
 	private final VBox acceptedRegionBox = new VBox(COMPACT_SPACING);
 	private final ScrollPane acceptedRegionScroll = new ScrollPane(acceptedRegionBox);
+	private final Button pasteClipboardButton = new Button("Add From Clipboard");
 
 	// Save and cancel controls.
 	private final Button saveContextButton = new Button("Save Context");
@@ -141,18 +142,15 @@ public final class SharedContextCapturePane extends VBox {
 	}
 
 	/**
-	 * Accepts one PNG into the current Shared Context draft. Duplicate images are
-	 * rejected without altering the draft.
+	 * Stages one clipboard PNG in the active Shared Context draft, including
+	 * source-wide corrections. Duplicate encoded images are not added.
 	 *
-	 * @param pngBytes encoded PNG data
-	 * @return true when a new image was accepted
+	 * @param pngBytes encoded PNG content
+	 * @return true only when the draft accepted a new image
 	 */
 	boolean acceptClipboardPng(byte[] pngBytes) {
 		if (!captureMode) {
 			throw new IllegalStateException("Shared Context capture is not active");
-		}
-		if (correctionSaveHandler != null) {
-			throw new IllegalStateException("Clipboard images are not yet available in source-wide correction");
 		}
 		if (currentSelection != null) {
 			throw new IllegalStateException("Accept or clear the current PDF selection first");
@@ -257,16 +255,16 @@ public final class SharedContextCapturePane extends VBox {
 	}
 
 	/**
-	 * Stages newly captured regions for a source-wide correction. The caller owns
-	 * transactional persistence at Save time.
+	 * Stages ordered PDF/image content for a source-wide correction. The caller
+	 * owns the atomic persistence callback, invoked only on Save.
 	 *
-	 * @param initialLabel     suggested editable context label
-	 * @param saveHandler      transactional correction callback
-	 * @param completedHandler callback after Save or Cancel
+	 * @param initialLabel     suggested editable Shared Context label
+	 * @param saveHandler      transactionally creates and links the mixed content
+	 * @param completedHandler invoked after successful Save or Cancel
 	 * @return true when capture started
 	 */
 	boolean captureMissingContext(String initialLabel,
-			BiFunction<String, List<SharedQuestionContextRegion>, SharedQuestionContext> saveHandler,
+			BiFunction<String, List<SharedContextContentPart>, SharedQuestionContext> saveHandler,
 			Runnable completedHandler) {
 		if (initialLabel == null || initialLabel.isBlank()) {
 			throw new IllegalArgumentException("initialLabel must not be blank");
@@ -275,12 +273,11 @@ public final class SharedContextCapturePane extends VBox {
 		Objects.requireNonNull(completedHandler, "completedHandler");
 		if (!captureStartAllowed.getAsBoolean()) {
 			showWarning("Question selection pending",
-					"Add or clear the current Question selection " + "before capturing Shared Context.");
+					"Add or clear the current Question selection before capturing Shared Context.");
 			return false;
 		}
 		if (bookletSupplier.get() == null) {
-			showWarning("No active booklet",
-					"Open the original Question booklet " + "before capturing Shared Context.");
+			showWarning("No active booklet", "Open the original Question booklet before capturing Shared Context.");
 			return false;
 		}
 		clearContextEditState();
@@ -295,7 +292,7 @@ public final class SharedContextCapturePane extends VBox {
 		contextLabelField.setManaged(true);
 		contextCaptureHeadingLabel.setText("Capture missing Shared Context");
 		saveContextButton.setText("Save and Link Context");
-		statusLabel.setText("Capture one or more context regions");
+		statusLabel.setText("Capture one or more Shared Context content parts");
 		setNewContextBoxVisible(true);
 		return true;
 	}
@@ -690,8 +687,8 @@ public final class SharedContextCapturePane extends VBox {
 
 	private void buildNewContextBox() {
 		newContextBox.getChildren().addAll(contextCaptureHeadingLabel, contextLabelField,
-				createCurrentSelectionControls(), currentPreview, regionCountLabel, acceptedRegionScroll,
-				createSaveControls());
+				createCurrentSelectionControls(), pasteClipboardButton, currentPreview, regionCountLabel,
+				acceptedRegionScroll, createSaveControls());
 		newContextBox.setPadding(CAPTURE_PADDING);
 		setNewContextBoxVisible(false);
 	}
@@ -743,6 +740,7 @@ public final class SharedContextCapturePane extends VBox {
 		addRegionButton.setOnAction(_ -> addCurrentRegion());
 		clearSelectionButton.setOnAction(_ -> clearCurrentSelection());
 		clearRegionsButton.setOnAction(_ -> clearRegions());
+		pasteClipboardButton.setOnAction(_ -> pasteClipboardImage());
 		saveContextButton.setOnAction(_ -> saveContext());
 		cancelContextButton.setOnAction(_ -> cancelContextCaptureFromUser());
 		existingContextField.valueProperty().addListener((_, _, newContext) -> updateSelectedContextStatus(newContext));
@@ -756,9 +754,12 @@ public final class SharedContextCapturePane extends VBox {
 				.setTooltip(new Tooltip("Accept the current PDF selection as another reusable Shared Context region."));
 		clearSelectionButton.setId("clear-shared-context-selection");
 		clearRegionsButton.setId("clear-shared-context-regions");
+		pasteClipboardButton.setId("paste-shared-context-image");
+		pasteClipboardButton.setTooltip(new Tooltip(
+				"Add an image from the system clipboard as Shared Context. Successful additions clear the clipboard."));
 		saveContextButton.setId("save-shared-context");
-		saveContextButton
-				.setTooltip(new Tooltip("Persist the captured regions as reusable Shared Context for this booklet."));
+		saveContextButton.setTooltip(
+				new Tooltip("Persist the ordered PDF/image content as reusable Shared Context for this booklet."));
 		cancelContextButton.setId("cancel-shared-context");
 		regionCountLabel.setId("shared-context-region-count");
 		currentPreview.setId("shared-context-current-preview");
@@ -939,8 +940,7 @@ public final class SharedContextCapturePane extends VBox {
 	}
 
 	private void pasteClipboardImage() {
-		if (correctionSaveHandler != null) {
-			showWarning("Clipboard capture unavailable", "Complete this source-wide correction using PDF regions.");
+		if (!captureMode) {
 			return;
 		}
 		if (currentSelection != null) {
@@ -954,13 +954,14 @@ public final class SharedContextCapturePane extends VBox {
 				return;
 			}
 
-			// A duplicate must not consume the clipboard.
+			// Do not consume the source if it was already accepted or rejected.
 			if (!acceptClipboardPng(png)) {
 				statusLabel.setText("This image is already accepted in the Shared Context");
 				return;
 			}
 
-			// Only a successful insertion consumes clipboard content.
+			// The staged PNG is independent of the clipboard. A clipboard-clear
+			// failure must not roll back accepted or previously saved content.
 			try {
 				Clipboard.getSystemClipboard().clear();
 			} catch (RuntimeException exception) {
@@ -1051,16 +1052,13 @@ public final class SharedContextCapturePane extends VBox {
 		List<SharedContextContentPart> parts = pendingContent.contentParts();
 		if (correctionSaveHandler != null) {
 
-			// Source-wide correction still owns Question relationships
-			// and supports PDF regions only.
-			if (parts.stream().anyMatch(part -> !(part instanceof SharedQuestionContextRegion))) {
-				throw new IllegalStateException("Mixed content requires a source-wide correction handler");
-			}
-			return correctionSaveHandler.apply(label, pendingContent.regions());
+			// The callback owns atomic creation, sibling linking and source-status
+			// updates. Preserve the entire ordered sequence, not PDF projection.
+			return correctionSaveHandler.apply(label, parts);
 		}
 		if (editingContext != null) {
 
-			// Preserve persisted context identity and Question links.
+			// Replacing content retains context identity for every linked Question.
 			return contextRepository.replaceContentParts(editingContext, label, parts);
 		}
 		return contextRepository.saveContentParts(booklet, label, parts);

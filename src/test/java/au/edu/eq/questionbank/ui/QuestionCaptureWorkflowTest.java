@@ -108,6 +108,48 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void acceptedClipboardImageMovesBetweenQuestionAndSharedContext(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		CheckBox sharedContextFirst = lookup(robot, "#first-region-shared-context", CheckBox.class);
+		Button paste = lookup(robot, "#paste-question-image", Button.class);
+		Label regionCount = lookup(robot, "#question-region-count", Label.class);
+		robot.interact(() -> questionCode.setText("1a"));
+		placeImageOnClipboard(robot, Color.BLUE);
+		fireControl(robot, paste);
+		assertEquals("Content parts: 1", regionCount.getText());
+		assertTrue(robot.lookup("#question-content-part-0").tryQuery().isPresent());
+		assertTrue(robot.lookup("#question-shared-context-preview").tryQuery().isEmpty());
+
+		// Moving an already accepted Question image to Shared Context must
+		// retain the image, not leave a pending but empty context.
+		fireControl(robot, sharedContextFirst);
+		assertTrue(sharedContextFirst.isSelected());
+		assertEquals("Content parts: 0", regionCount.getText());
+		assertTrue(robot.lookup("#question-content-part-0").tryQuery().isEmpty());
+		ImageView contextImage = lookup(robot, "#question-shared-context-image-0", ImageView.class);
+		assertEquals(40.0, contextImage.getImage().getWidth());
+		assertEquals(20.0, contextImage.getImage().getHeight());
+
+		// Unticking returns the same image to Question content.
+		fireControl(robot, sharedContextFirst);
+		assertFalse(sharedContextFirst.isSelected());
+		assertEquals("Content parts: 1", regionCount.getText());
+		assertTrue(robot.lookup("#question-shared-context-preview").tryQuery().isEmpty());
+		VBox restored = lookup(robot, "#question-content-part-0", VBox.class);
+		ImageView restoredImage = restored.getChildren().stream().filter(ImageView.class::isInstance)
+				.map(ImageView.class::cast).findFirst().orElseThrow();
+		assertEquals(40.0, restoredImage.getImage().getWidth());
+		assertEquals(20.0, restoredImage.getImage().getHeight());
+
+		// A second tick must transfer the image again, with no duplicate body part.
+		fireControl(robot, sharedContextFirst);
+		assertTrue(sharedContextFirst.isSelected());
+		assertEquals("Content parts: 0", regionCount.getText());
+		assertTrue(robot.lookup("#question-shared-context-image-0").tryQuery().isPresent());
+	}
+
+	@Test
 	void acceptedQuestionRegionBlocksWorkingSubjectChange(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		@SuppressWarnings("unchecked")
@@ -291,6 +333,41 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void automaticClipboardContextReturnsToQuestionWhenUnticked(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		CheckBox sharedContextFirst = lookup(robot, "#first-region-shared-context", CheckBox.class);
+		Button paste = lookup(robot, "#paste-question-image", Button.class);
+		Label regionCount = lookup(robot, "#question-region-count", Label.class);
+		robot.interact(() -> questionCode.setText("1a"));
+
+		// Begin automatic Shared Context capture before pasting any Question body.
+		fireControl(robot, sharedContextFirst);
+		assertTrue(sharedContextFirst.isSelected());
+		placeImageOnClipboard(robot, Color.RED);
+		assertFalse(paste.isDisabled());
+		fireControl(robot, paste);
+		assertEquals("Content parts: 0", regionCount.getText());
+		assertTrue(robot.lookup("#question-shared-context-image-0").tryQuery().isPresent());
+
+		// Turning the option off must reclassify the accepted image as Question
+		// content, not discard it when no PDF context region exists.
+		fireControl(robot, sharedContextFirst);
+		assertFalse(sharedContextFirst.isSelected());
+		assertEquals("Content parts: 1", regionCount.getText());
+		assertTrue(robot.lookup("#question-content-part-0").tryQuery().isPresent());
+		assertTrue(robot.lookup("#question-shared-context-preview").tryQuery().isEmpty());
+
+		// Turning the option back on must recover the same image as context.
+		fireControl(robot, sharedContextFirst);
+		assertTrue(sharedContextFirst.isSelected());
+		assertEquals("Content parts: 0", regionCount.getText());
+		ImageView contextImage = lookup(robot, "#question-shared-context-image-0", ImageView.class);
+		assertEquals(40.0, contextImage.getImage().getWidth());
+		assertEquals(20.0, contextImage.getImage().getHeight());
+	}
+
+	@Test
 	void automaticSharedContextImagePersistsWithQuestionSave(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Button addFromClipboard = lookup(robot, "#paste-question-image", Button.class);
@@ -375,6 +452,87 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void clipboardImageAcceptancePreservesImageAndText(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Button addFromClipboard = lookup(robot, "#paste-question-image", Button.class);
+		Label count = lookup(robot, "#question-region-count", Label.class);
+		AtomicReference<String> clipboardText = new AtomicReference<>();
+		robot.interact(() -> {
+			WritableImage image = new WritableImage(24, 12);
+			for (int y = 0; y < 12; y++) {
+				for (int x = 0; x < 24; x++) {
+					image.getPixelWriter().setColor(x, y, Color.ORANGE);
+				}
+			}
+			ClipboardContent content = new ClipboardContent();
+			content.putImage(image);
+			content.putString("retain this clipboard text");
+			Clipboard.getSystemClipboard().setContent(content);
+			questionCapturePane().refreshClipboardImageAvailability();
+		});
+		assertFalse(addFromClipboard.isDisabled());
+		fireControl(robot, addFromClipboard);
+		assertEquals("Content parts: 1", count.getText());
+		assertTrue(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
+		robot.interact(() -> clipboardText.set(Clipboard.getSystemClipboard().getString()));
+		assertEquals("retain this clipboard text", clipboardText.get());
+
+		// A repeated click cannot add a duplicate, even while the image
+		// remains on the clipboard and the action stays available.
+		fireControl(robot, addFromClipboard);
+		assertEquals("Content parts: 1", count.getText());
+		assertTrue(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
+		robot.interact(() -> clipboardText.set(Clipboard.getSystemClipboard().getString()));
+		assertEquals("retain this clipboard text", clipboardText.get());
+
+		// Removing the accepted part allows the unchanged clipboard image
+		// to be inserted again without copying it a second time.
+		fireControl(robot, "#question-content-remove-0");
+		assertEquals("Content parts: 0", count.getText());
+		fireControl(robot, addFromClipboard);
+		assertEquals("Content parts: 1", count.getText());
+		assertTrue(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
+		robot.interact(() -> clipboardText.set(Clipboard.getSystemClipboard().getString()));
+		assertEquals("retain this clipboard text", clipboardText.get());
+	}
+
+	@Test
+	void clipboardImageAlreadyInSharedContextCannotBeAddedToQuestionBody(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		CheckBox firstIsContext = lookup(robot, "#first-region-shared-context", CheckBox.class);
+		Button paste = lookup(robot, "#paste-question-image", Button.class);
+		Label count = lookup(robot, "#question-region-count", Label.class);
+		Label status = lookup(robot, "#question-save-status", Label.class);
+		robot.interact(() -> questionCode.setText("1a"));
+		fireControl(robot, firstIsContext);
+		assertTrue(firstIsContext.isSelected());
+		placeImageOnClipboard(robot, Color.ORANGE);
+		fireControl(robot, paste);
+		assertEquals("Content parts: 0", count.getText());
+		assertTrue(robot.lookup("#question-shared-context-image-0").tryQuery().isPresent());
+
+		// The original image is still on the clipboard after Batch 06F.
+		assertTrue(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
+
+		// Capture has returned to the ordinary Question body. Pasting the
+		// identical image must not make it appear there a second time.
+		fireControl(robot, paste);
+		assertEquals("Content parts: 0", count.getText());
+		assertTrue(status.getText().contains("already used as Shared Context"));
+		assertTrue(robot.lookup("#question-content-part-0").tryQuery().isEmpty());
+		assertTrue(robot.lookup("#question-shared-context-image-0").tryQuery().isPresent());
+		assertTrue(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
+
+		// A distinct clipboard image is valid Question-specific material.
+		placeImageOnClipboard(robot, Color.BLUE);
+		fireControl(robot, paste);
+		assertEquals("Content parts: 1", count.getText());
+		assertTrue(robot.lookup("#question-content-part-0").tryQuery().isPresent());
+		assertTrue(robot.lookup("#question-shared-context-image-0").tryQuery().isPresent());
+	}
+
+	@Test
 	void clipboardImageCanBeAcceptedAsAutomaticSharedContext(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Button addFromClipboard = lookup(robot, "#paste-question-image", Button.class);
@@ -382,8 +540,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		CheckBox sharedContextFirst = lookup(robot, "#first-region-shared-context", CheckBox.class);
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
 		Label saveStatus = lookup(robot, "#question-save-status", Label.class);
-
-		// The Question code must exist before multipart context capture starts.
+		Label regionCount = lookup(robot, "#question-region-count", Label.class);
 		robot.interact(() -> questionCode.setText("1a"));
 		robot.interact(() -> {
 			ClipboardContent content = new ClipboardContent();
@@ -392,31 +549,21 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 			questionCapturePane().refreshClipboardImageAvailability();
 		});
 		assertTrue(addFromClipboard.isDisabled());
-		robot.interact(() -> sharedContextFirst.setSelected(true));
+		fireControl(robot, sharedContextFirst);
 		assertTrue(sharedContextFirst.isSelected());
 		assertEquals("Add Context", addRegion.getText());
-
-		// Text alone remains insufficient during Shared Context capture.
 		robot.interact(questionCapturePane()::refreshClipboardImageAvailability);
 		assertTrue(addFromClipboard.isDisabled());
-		robot.interact(() -> {
-			WritableImage image = new WritableImage(20, 20);
-			for (int y = 0; y < 20; y++) {
-				for (int x = 0; x < 20; x++) {
-					image.getPixelWriter().setColor(x, y, Color.RED);
-				}
-			}
-			ClipboardContent content = new ClipboardContent();
-			content.putImage(image);
-			Clipboard.getSystemClipboard().setContent(content);
-			questionCapturePane().refreshClipboardImageAvailability();
-		});
+		placeImageOnClipboard(robot, Color.RED);
 		assertFalse(addFromClipboard.isDisabled());
 		fireControl(robot, addFromClipboard);
 		assertTrue(saveStatus.getText().contains("Shared context captured"));
 		assertEquals("Add Region", addRegion.getText());
-		assertTrue(addFromClipboard.isDisabled());
-		assertFalse(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
+		assertEquals("Content parts: 0", regionCount.getText());
+
+		// Clipboard remains readable after successful context capture.
+		assertTrue(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
+		assertFalse(addFromClipboard.isDisabled());
 	}
 
 	@Test
@@ -465,8 +612,41 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// The Question still requires its own content and marks.
 		assertTrue(save.isDisabled());
 
-		// Successful acceptance consumes the clipboard image.
-		assertFalse(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
+		// Successful Shared Context capture does not modify the clipboard.
+		assertTrue(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
+	}
+
+	@Test
+	void clipboardImagePromotedToSharedContextCannotBePastedAgain(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		CheckBox firstIsContext = lookup(robot, "#first-region-shared-context", CheckBox.class);
+		Button paste = lookup(robot, "#paste-question-image", Button.class);
+		Label count = lookup(robot, "#question-region-count", Label.class);
+		robot.interact(() -> questionCode.setText("1a"));
+		placeImageOnClipboard(robot, Color.ORANGE);
+		fireControl(robot, paste);
+		assertEquals("Content parts: 1", count.getText());
+
+		// Existing clipboard image moves to Shared Context, not a copy.
+		fireControl(robot, firstIsContext);
+		assertEquals("Content parts: 0", count.getText());
+		assertTrue(robot.lookup("#question-shared-context-image-0").tryQuery().isPresent());
+
+		// Clipboard remains intact. A repeated paste must be refused.
+		fireControl(robot, paste);
+		assertEquals("Content parts: 0", count.getText());
+		assertTrue(robot.lookup("#question-content-part-0").tryQuery().isEmpty());
+		assertTrue(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
+
+		// Unticking restores the accepted image to Question content.
+		fireControl(robot, firstIsContext);
+		assertEquals("Content parts: 1", count.getText());
+		assertTrue(robot.lookup("#question-shared-context-preview").tryQuery().isEmpty());
+
+		// The existing Question-content duplicate guard still applies.
+		fireControl(robot, paste);
+		assertEquals("Content parts: 1", count.getText());
 	}
 
 	@Test
@@ -727,57 +907,48 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Button addFromClipboard = lookup(robot, "#paste-question-image", Button.class);
 		VBox previews = field(questionCapturePane(), "regionPreviewBox", VBox.class);
 
-		// Image A is accepted and its clipboard source consumed.
+		// A remains in the system clipboard after it is accepted.
 		placeImageOnClipboard(robot, Color.ORANGE);
 		assertFalse(addFromClipboard.isDisabled());
 		fireControl(robot, addFromClipboard);
 		assertEquals("Content parts: 1", count.getText());
 		assertEquals(1, previews.getChildren().size());
-		assertFalse(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
-		assertTrue(addFromClipboard.isDisabled());
+		assertTrue(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
 		Node imageAPreview = previews.getChildren().getFirst();
 
-		// Recopy A. Duplicate detection must still reject it.
-		// A rejected insertion must not consume the clipboard.
-		placeImageOnClipboard(robot, Color.ORANGE);
+		// A second activation without a new copy must be rejected.
 		fireControl(robot, addFromClipboard);
 		assertEquals("Content parts: 1", count.getText());
 		assertSame(imageAPreview, previews.getChildren().getFirst());
 		assertTrue(robot.lookup("Duplicate clipboard image").tryQuery().isEmpty());
 		assertTrue(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
 
-		// Image B is distinct and may be accepted.
+		// A different clipboard image can still be accepted.
 		placeImageOnClipboard(robot, Color.BLUE);
 		fireControl(robot, addFromClipboard);
 		assertEquals("Content parts: 2", count.getText());
-		assertFalse(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
-		assertTrue(addFromClipboard.isDisabled());
+		assertTrue(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
 
-		// Interleave a PDF region between images A and B.
+		// Interleave a PDF part between the two accepted images.
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-question-region");
 		fireControl(robot, "#question-content-move-up-2");
 		assertEquals("Content parts: 3", count.getText());
 
-		// Recopy A. Interleaving PDF content must not bypass
-		// image duplicate detection.
+		// Recopy A; the intervening PDF part does not conceal the duplicate.
 		placeImageOnClipboard(robot, Color.ORANGE);
 		fireControl(robot, addFromClipboard);
 		assertEquals("Content parts: 3", count.getText());
 		assertEquals(3, previews.getChildren().size());
 		assertTrue(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
 
-		// Removing A makes its content eligible for reinsertion.
+		// Remove the first accepted image and reuse the unchanged clipboard.
 		fireControl(robot, "#question-content-remove-0");
 		assertEquals("Content parts: 2", count.getText());
-
-		// A is still on the clipboard because rejection did not
-		// clear it. This insertion should now succeed.
 		fireControl(robot, addFromClipboard);
 		assertEquals("Content parts: 3", count.getText());
 		assertEquals(3, previews.getChildren().size());
-		assertFalse(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
-		assertTrue(addFromClipboard.isDisabled());
+		assertTrue(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
 	}
 
 	@Test

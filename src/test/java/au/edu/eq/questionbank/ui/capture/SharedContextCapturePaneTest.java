@@ -11,6 +11,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import javax.imageio.ImageIO;
 
@@ -46,6 +47,10 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
 import javafx.scene.image.ImageView;
+import javafx.scene.image.WritableImage;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
+import javafx.scene.paint.Color;
 import javafx.stage.Stage;
 
 @Tag("ui")
@@ -185,6 +190,40 @@ class SharedContextCapturePaneTest {
 		assertEquals(original.getId(), afterCancel.getId());
 		assertEquals("Question 22 shared context", afterCancel.getLabel());
 		assertEquals(List.of(originalRegion), afterCancel.getRegions());
+	}
+
+	@Test
+	void clipboardButtonClearsOnlyAfterAcceptedSharedContextImage(FxRobot robot) {
+		AtomicReference<WritableImage> imageRef = new AtomicReference<>();
+		Button paste = robot.lookup("#paste-shared-context-image").queryAs(Button.class);
+		robot.interact(() -> {
+			((Button) pane.lookup("#new-shared-context")).fire();
+			WritableImage image = new WritableImage(4, 3);
+			image.getPixelWriter().setColor(0, 0, Color.BLUE);
+			imageRef.set(image);
+			ClipboardContent contents = new ClipboardContent();
+			contents.putImage(image);
+			Clipboard.getSystemClipboard().setContent(contents);
+		});
+		robot.interact(paste::fire);
+		robot.interact(() -> {
+			assertFalse(Clipboard.getSystemClipboard().hasImage(),
+					"Successful Shared Context insertion must clear the clipboard");
+			assertEquals("Content parts: 1", ((Label) pane.lookup("#shared-context-region-count")).getText());
+		});
+
+		// A second copy of the exact same image must not add a part or be cleared.
+		robot.interact(() -> {
+			ClipboardContent contents = new ClipboardContent();
+			contents.putImage(imageRef.get());
+			Clipboard.getSystemClipboard().setContent(contents);
+		});
+		robot.interact(paste::fire);
+		robot.interact(() -> {
+			assertTrue(Clipboard.getSystemClipboard().hasImage(),
+					"Duplicate rejection must leave the clipboard unchanged");
+			assertEquals("Content parts: 1", ((Label) pane.lookup("#shared-context-region-count")).getText());
+		});
 	}
 
 	@Test
@@ -336,6 +375,28 @@ class SharedContextCapturePaneTest {
 			assertEquals("Image context — 1 image(s)", selector.getConverter().toString(imageOnly));
 			assertEquals("Mixed context — 1 region(s), 1 image(s)", selector.getConverter().toString(mixed));
 		});
+	}
+
+	@Test
+	void sourceWideCorrectionAcceptsMixedContentInOrder(FxRobot robot) throws Exception {
+		byte[] png = testPngBytes();
+		AtomicInteger completed = new AtomicInteger();
+		SharedQuestionContextRegion pdf = new SharedQuestionContextRegion(1, 0.15, 0.20, 0.40, 0.30);
+		robot.interact(() -> {
+			assertTrue(pane.captureMissingContext("Question 31 context",
+					(label, parts) -> repository.saveContentParts(booklet, label, parts), completed::incrementAndGet));
+			assertTrue(pane.acceptClipboardPng(png));
+			pane.acceptSelection(new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM,
+					pdf.pageNumber(), pdf.x(), pdf.y(), pdf.width(), pdf.height()));
+			((Button) pane.lookup("#add-shared-context-region")).fire();
+			assertEquals("Content parts: 2", ((Label) pane.lookup("#shared-context-region-count")).getText());
+		});
+		assertEquals(0, repository.saveCount(), "Nothing persists before Save");
+		robot.interact(() -> ((Button) pane.lookup("#save-shared-context")).fire());
+		assertEquals(1, completed.get());
+		assertEquals(1, repository.saveCount());
+		SharedQuestionContext saved = repository.findByBooklet(booklet).getFirst();
+		assertEquals(List.of(new ImageSharedContextContentPart(png), pdf), saved.getContentParts());
 	}
 
 	@Test

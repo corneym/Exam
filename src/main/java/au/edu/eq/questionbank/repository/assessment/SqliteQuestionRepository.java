@@ -32,7 +32,6 @@ import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
-import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.model.Subject;
