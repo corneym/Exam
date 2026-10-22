@@ -26,11 +26,13 @@ import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ImageQuestionContentPart;
+import au.edu.eq.questionbank.model.ImageSharedContextContentPart;
 import au.edu.eq.questionbank.model.PdfQuestionContentPart;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionContentPart;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
+import au.edu.eq.questionbank.model.SharedContextContentPart;
 import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
@@ -208,7 +210,7 @@ public final class QuestionCapturePane extends VBox {
 	private List<Question> questionSnapshot = List.of();
 	private Consumer<Boolean> questionSaveBusyHandler = _ -> {
 	};
-	private List<SharedQuestionContextRegion> sharedContextPreviewRegions = List.of();
+	private List<SharedContextContentPart> sharedContextPreviewParts = List.of();
 
 	// This list is the authoritative transient assembly order for the Question
 	// body.
@@ -736,17 +738,14 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	/**
-	 * Indicates whether accepted Question content or automatic context regions
-	 * would be discarded by a workflow transition.
-	 * <p>
-	 * The retained method name is preserved for existing callers, but accepted
-	 * Question content may now contain PDF regions, pasted images, or both.
+	 * Indicates whether accepted Question content or automatic Shared Context
+	 * content would be discarded by a workflow transition.
 	 *
-	 * @return {@code true} when accepted transient Question content exists
+	 * @return true when accepted transient content exists
 	 */
 	public boolean hasAcceptedRegions() {
 		boolean splitPartsStaged = legacySplitCaptureState != null && !legacySplitCaptureState.completedParts.isEmpty();
-		return !pendingContentParts.isEmpty() || sharedContextCapturePane.hasPendingAutomaticRegion()
+		return !pendingContentParts.isEmpty() || sharedContextCapturePane.hasPendingAutomaticContext()
 				|| splitPartsStaged;
 	}
 
@@ -1556,51 +1555,36 @@ public final class QuestionCapturePane extends VBox {
 				questionWorkBox, sharedContextCapturePane);
 	}
 
-	private VBox cachedSharedContextPreview(List<SharedQuestionContextRegion> regions) {
-		if (regions.isEmpty()) {
-
-			// A deselected or cancelled context must release its image
-			// and must never reappear in the next Question.
+	private VBox cachedSharedContextPreview(List<SharedContextContentPart> parts) {
+		if (parts.isEmpty()) {
 			sharedContextPreviewNode = null;
-			sharedContextPreviewRegions = List.of();
+			sharedContextPreviewParts = List.of();
 			sharedContextPreviewSession = null;
 			return null;
 		}
 		PdfSession session = examPdfSessionSupplier.get();
 
-		// Region records describe immutable source geometry.
-		// Equal regions from the same session can reuse the preview
-		// even when a repository lookup supplies a new List instance.
+		// Reuse the rendered preview when its ordered content and
+		// originating PDF session have not changed.
 		if (sharedContextPreviewNode != null && sharedContextPreviewSession == session
-				&& sharedContextPreviewRegions.equals(regions)) {
+				&& sharedContextPreviewParts.equals(parts)) {
 			return sharedContextPreviewNode;
 		}
-
-		// A changed source, region set or PDF session requires fresh
-		// extraction. Do not retain images from the previous source.
-		VBox preview = createSharedContextPreview(regions);
+		VBox preview = createSharedContextPreview(parts);
 		sharedContextPreviewNode = preview;
-		sharedContextPreviewRegions = List.copyOf(regions);
+		sharedContextPreviewParts = List.copyOf(parts);
 		sharedContextPreviewSession = session;
 		return preview;
 	}
 
 	private boolean canAcceptClipboardImage() {
-		if (questionSaveInProgress) {
-			return false;
-		}
-		if (bookletSupplier.get() == null) {
-			return false;
-		}
-		if (!clipboardImageReader.hasImage()) {
+		if (questionSaveInProgress || bookletSupplier.get() == null) {
 			return false;
 		}
 
-		// Automatic Shared Context capture uses the same button.
-		if (sharedContextCapturePane.canAcceptAutomaticClipboardImage()) {
-			return true;
-		}
-		if (currentSelection != null) {
+		// Text-only, file-only and empty clipboard states never enable
+		// the existing Add From Clipboard button.
+		if (!clipboardImageReader.hasImage()) {
 			return false;
 		}
 		if (legacySplitCaptureState != null) {
@@ -1610,7 +1594,13 @@ public final class QuestionCapturePane extends VBox {
 				&& !importedQuestion.isSourceCaptureRequired()) {
 			return false;
 		}
-		return true;
+
+		// Never fall back to ordinary Question capture while Shared
+		// Context capture owns the workflow or its PDF selection.
+		if (sharedContextCapturePane.isCaptureMode()) {
+			return sharedContextCapturePane.canAcceptAutomaticClipboardImage();
+		}
+		return currentSelection == null;
 	}
 
 	private void cancelLegacyQuestionSplit() {
@@ -2262,29 +2252,35 @@ public final class QuestionCapturePane extends VBox {
 		return label;
 	}
 
-	private VBox createSharedContextPreview(List<SharedQuestionContextRegion> regions) {
+	private VBox createSharedContextPreview(List<SharedContextContentPart> parts) {
 		Label label = new Label("Shared Context");
 		VBox preview = new VBox(REGION_PREVIEW_ITEM_SPACING, label);
 		preview.setId("question-shared-context-preview");
-		for (int regionIndex = 0; regionIndex < regions.size(); regionIndex++) {
-			SharedQuestionContextRegion region = regions.get(regionIndex);
-			try {
-				BufferedImage image = extractSharedContextPreviewRegion(region);
-				ImageView imageView = new ImageView(SwingFXUtils.toFXImage(image, null));
-				imageView.setId("question-shared-context-image-" + regionIndex);
-				imageView.setPreserveRatio(true);
-
-				// Shared Context uses the same available-width presentation as ordinary
-				// Question content but remains outside the editable content-part sequence.
-				imageView.fitWidthProperty()
-						.bind(Bindings.createDoubleBinding(
-								() -> Math.max(0.0, regionsScrollPane.getWidth() - REGION_PREVIEW_HORIZONTAL_INSET),
-								regionsScrollPane.widthProperty()));
-				imageView.setSmooth(true);
-				preview.getChildren().add(imageView);
-			} catch (IOException exception) {
-				throw new RuntimeException("Unable to preview Shared Context", exception);
+		for (int index = 0; index < parts.size(); index++) {
+			SharedContextContentPart part = parts.get(index);
+			Image image;
+			if (part instanceof SharedQuestionContextRegion region) {
+				try {
+					image = SwingFXUtils.toFXImage(extractSharedContextPreviewRegion(region), null);
+				} catch (IOException exception) {
+					throw new RuntimeException("Unable to preview Shared Context PDF region", exception);
+				}
+			} else if (part instanceof ImageSharedContextContentPart imagePart) {
+				image = new Image(new ByteArrayInputStream(imagePart.pngBytes()));
+			} else {
+				throw new IllegalStateException("Unsupported Shared Context content: " + part);
 			}
+			ImageView imageView = new ImageView(image);
+			imageView.setId("question-shared-context-image-" + index);
+			imageView.setPreserveRatio(true);
+			imageView.setSmooth(true);
+
+			// Keep the same responsive width as ordinary Question content.
+			imageView.fitWidthProperty()
+					.bind(Bindings.createDoubleBinding(
+							() -> Math.max(0.0, regionsScrollPane.getWidth() - REGION_PREVIEW_HORIZONTAL_INSET),
+							regionsScrollPane.widthProperty()));
+			preview.getChildren().add(imageView);
 		}
 		return preview;
 	}
@@ -2293,27 +2289,21 @@ public final class QuestionCapturePane extends VBox {
 		return completionQuestions == null ? questionRepository.findAll() : completionQuestions;
 	}
 
-	private List<SharedQuestionContextRegion> currentSharedContextRegions() {
-		if (sharedContextCapturePane.hasPendingAutomaticRegion()) {
+	private List<SharedContextContentPart> currentSharedContextContentParts() {
+		if (sharedContextCapturePane.hasPendingAutomaticContext()) {
 
-			// Newly accepted Shared Context must be visible before persistence so the
-			// teacher sees the complete assembled Question while capturing it.
-			return sharedContextCapturePane.getPendingAutomaticContextRegions();
+			// Display accepted automatic Shared Context before persistence.
+			// Image-only contexts have no PDF regions, but remain valid content.
+			return sharedContextCapturePane.getPendingAutomaticContextContentParts();
 		}
 		if (inheritedMcqSharedContext != null) {
-
-			// An independent MCQ may inherit an already persisted context without the
-			// SharedContextCapturePane itself selecting it.
-			return inheritedMcqSharedContext.getRegions();
+			return inheritedMcqSharedContext.getContentParts();
 		}
 		SharedQuestionContext selectedContext = sharedContextCapturePane.getSelectedContext();
 		if (selectedContext == null) {
 			return List.of();
 		}
-
-		// Persisted multipart, imported and edited Questions display the referenced
-		// Shared Context without copying those regions into Question content.
-		return selectedContext.getRegions();
+		return selectedContext.getContentParts();
 	}
 
 	private boolean editingSourceMatches(String questionCode) {
@@ -2472,7 +2462,7 @@ public final class QuestionCapturePane extends VBox {
 			existingContext = findSharedContextForSourceQuestion(sourceQuestion);
 		}
 		boolean contextAvailable = sharedContextCapturePane.getSelectedContext() != null
-				|| sharedContextCapturePane.hasPendingAutomaticRegion() || existingContext != null;
+				|| sharedContextCapturePane.hasPendingAutomaticContext() || existingContext != null;
 		boolean unresolvedSharedContext = (importedQuestion != null && importedQuestion.isSharedContextUnresolved())
 				|| (editingQuestion != null && editingQuestion.isSharedContextUnresolved());
 		return sharedContextValidationError(sourceCode, sourceQuestion, unresolvedSharedContext, contextAvailable);
@@ -2998,6 +2988,11 @@ public final class QuestionCapturePane extends VBox {
 					"This imported Question already has body content.");
 			return;
 		}
+		if (sharedContextCapturePane.isCaptureMode() && !sharedContextCapturePane.canAcceptAutomaticClipboardImage()) {
+			showAlert(Alert.AlertType.INFORMATION, "Shared Context selection pending.",
+					"Accept or clear the Shared Context PDF selection " + "before adding a clipboard image.");
+			return;
+		}
 		try {
 			byte[] pngBytes = clipboardImageReader.readPng().orElse(null);
 			if (pngBytes == null) {
@@ -3010,7 +3005,7 @@ public final class QuestionCapturePane extends VBox {
 			// Automatic Shared Context capture uses the existing Question-side
 			// Add From Clipboard button. No separate UI button is introduced.
 			if (sharedContextCapturePane.canAcceptAutomaticClipboardImage()) {
-				sharedContextCapturePane.stageAcceptedQuestionImage(questionCodeField.getText().trim(), pngBytes);
+				sharedContextCapturePane.stageAcceptedQuestionImage(pngBytes);
 				try {
 					Clipboard.getSystemClipboard().clear();
 				} catch (RuntimeException exception) {
@@ -3382,26 +3377,13 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private void refreshQuestionContentActionState() {
-
-		// Add Region is available only when the workflow currently owns a compatible
-		// unaccepted PDF rectangle.
 		boolean compatibleSelectionPending = sharedContextCapturePane.isCaptureMode()
 				? sharedContextCapturePane.hasCurrentSelection()
 				: currentSelection != null;
 		addRegionButton.setDisable(questionSaveInProgress || !compatibleSelectionPending);
-		boolean importedContentAlreadyStored = importedQuestion != null && !importedQuestion.getContentParts().isEmpty()
-				&& !importedQuestion.isSourceCaptureRequired();
 
-		// Only clipboard image content is useful to Question capture. Text, files and
-		// other clipboard formats deliberately do not enable this action.
-		boolean clipboardImageAvailable = clipboardImageReader.hasImage();
-
-		// Clipboard content is ordinary Question-body content. It cannot be added
-		// while another PDF selection, Shared Context capture or PDF-only split is
-		// unresolved.
-		boolean pasteAllowed = !questionSaveInProgress && currentSelection == null
-				&& !sharedContextCapturePane.isCaptureMode() && legacySplitCaptureState == null
-				&& !importedContentAlreadyStored;
+		// Both Question and automatic Shared Context image capture use
+		// the same button and the same image-only clipboard availability test.
 		pasteImageButton.setDisable(!canAcceptClipboardImage());
 	}
 
@@ -3419,27 +3401,20 @@ public final class QuestionCapturePane extends VBox {
 
 	private void refreshRegionPreviews() {
 		PdfSession currentSession = examPdfSessionSupplier.get();
-
-		// Ordinary content previews are valid only for the PDF session
-		// against which their regions were originally extracted.
 		if (currentSession != contentPreviewSession) {
 			contentPreviewNodes.clear();
 			contentPreviewSession = currentSession;
 		}
 
-		// Release ordinary previews that are no longer part of the
-		// current Question's authoritative content sequence.
+		// Release cached Question previews that are no longer accepted.
 		contentPreviewNodes.keySet()
 				.removeIf(cachedPart -> pendingContentParts.stream().noneMatch(part -> part == cachedPart));
 
-		// Detach existing nodes before attaching them in their new
-		// presentation order. Unchanged images are not extracted again.
+		// The Shared Context preview always precedes the editable Question body.
 		regionPreviewBox.getChildren().clear();
-		List<SharedQuestionContextRegion> sharedContextRegions = currentSharedContextRegions();
-		VBox sharedPreview = cachedSharedContextPreview(sharedContextRegions);
+		List<SharedContextContentPart> sharedParts = currentSharedContextContentParts();
+		VBox sharedPreview = cachedSharedContextPreview(sharedParts);
 		if (sharedPreview != null) {
-
-			// Shared Context always precedes the editable Question body.
 			regionPreviewBox.getChildren().add(sharedPreview);
 		}
 		for (int index = 0; index < pendingContentParts.size(); index++) {
@@ -3486,15 +3461,12 @@ public final class QuestionCapturePane extends VBox {
 
 	private void refreshSharedContextPreview() {
 
-		// Only the Shared Context presentation is affected here.
-		// Leave ordinary content previews and their controls intact.
+		// Replace only the Shared Context preview; ordinary Question
+		// content retains its existing preview nodes and editing controls.
 		regionPreviewBox.getChildren().removeIf(node -> "question-shared-context-preview".equals(node.getId()));
-		List<SharedQuestionContextRegion> sharedContextRegions = currentSharedContextRegions();
-		VBox sharedPreview = cachedSharedContextPreview(sharedContextRegions);
+		List<SharedContextContentPart> sharedParts = currentSharedContextContentParts();
+		VBox sharedPreview = cachedSharedContextPreview(sharedParts);
 		if (sharedPreview != null) {
-
-			// Reattach the existing node when regions and source are
-			// unchanged. A new source or region list creates a new node.
 			regionPreviewBox.getChildren().addFirst(sharedPreview);
 		}
 		updateRegionsScrollPane();

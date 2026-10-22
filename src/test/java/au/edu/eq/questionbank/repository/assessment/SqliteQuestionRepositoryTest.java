@@ -29,11 +29,15 @@ import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.ImageQuestionContentPart;
+import au.edu.eq.questionbank.model.ImageSharedContextContentPart;
 import au.edu.eq.questionbank.model.PdfQuestionContentPart;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionContentPart;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
+import au.edu.eq.questionbank.model.SharedContextContentPart;
+import au.edu.eq.questionbank.model.SharedQuestionContext;
+import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.Subtopic;
@@ -280,6 +284,60 @@ class SqliteQuestionRepositoryTest {
 		assertEquals("B", loaded.getAnswer().getAnswerText());
 		assertEquals(1, loaded.getAnswer().getRegions().size());
 		assertEquals(4, loaded.getAnswer().getRegions().getFirst().pageNumber());
+	}
+
+	@Test
+	void reloadsQuestionsWithImageOnlyAndMixedSharedContexts() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("question-shared-mixed.db"));
+		database.initialiseSchema();
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
+		SyllabusVersion syllabus = curriculumWriter.insertSyllabusVersion(chemistry, "2019", false);
+		Unit unit = curriculumWriter.insertUnit(syllabus, "1", "Unit 1", 1);
+		Topic topic = curriculumWriter.insertTopic(unit, "1.1", "Topic 1", 1);
+		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.1.1", "Subtopic 1", 1);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2019,
+				"External Assessment", "Paper 1", "Chemistry/2019/paper1.pdf");
+		byte[] png = createTestPng();
+		SqliteSharedQuestionContextRepository contexts = new SqliteSharedQuestionContextRepository(database);
+
+		// A Shared Context containing no PDF regions is valid.
+		List<SharedContextContentPart> imageOnlyParts = List.of(new ImageSharedContextContentPart(png));
+		SharedQuestionContext imageOnly = contexts.saveContentParts(booklet, "Image-only context", imageOnlyParts);
+		SharedQuestionContextRegion firstRegion = new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.15);
+		SharedQuestionContextRegion secondRegion = new SharedQuestionContextRegion(1, 0.10, 0.40, 0.80, 0.20);
+		List<SharedContextContentPart> mixedParts = List.of(firstRegion, new ImageSharedContextContentPart(png),
+				secondRegion);
+		SharedQuestionContext mixed = contexts.saveContentParts(booklet, "Mixed context", mixedParts);
+		SqliteQuestionRepository questions = new SqliteQuestionRepository(database);
+		Question firstQuestion = questions.saveWithContent(booklet, "Q5", "", 1,
+				List.of(new PdfQuestionContentPart(new QuestionRegion(booklet, 1, 0.10, 0.60, 0.80, 0.15))), subtopic,
+				false, null, imageOnly, QuestionResponseType.MULTIPLE_CHOICE);
+		Question secondQuestion = questions.saveWithContent(booklet, "Q6", "", 1,
+				List.of(new PdfQuestionContentPart(new QuestionRegion(booklet, 1, 0.10, 0.80, 0.80, 0.10))), subtopic,
+				false, null, mixed, QuestionResponseType.MULTIPLE_CHOICE);
+
+		// Use a new repository instance to prove SQLite reconstruction.
+		SqliteQuestionRepository reloaded = new SqliteQuestionRepository(database);
+		Question restoredFirst = reloaded.findById(firstQuestion.getId()).orElseThrow();
+		assertTrue(restoredFirst.hasSharedContext());
+		assertEquals(imageOnly.getId(), restoredFirst.getSharedContext().getId());
+		assertEquals(imageOnlyParts, restoredFirst.getSharedContext().getContentParts());
+		assertTrue(restoredFirst.getSharedContext().getRegions().isEmpty());
+		Question restoredSecond = reloaded.findById(secondQuestion.getId()).orElseThrow();
+		assertTrue(restoredSecond.hasSharedContext());
+		assertEquals(mixed.getId(), restoredSecond.getSharedContext().getId());
+		assertEquals(mixedParts, restoredSecond.getSharedContext().getContentParts());
+		assertEquals(List.of(firstRegion, secondRegion), restoredSecond.getSharedContext().getRegions());
+
+		// Corpus-wide retrieval must use the same mixed-content reader.
+		List<Question> all = reloaded.findAll();
+		assertEquals(2, all.size());
+		assertEquals(imageOnlyParts, all.stream().filter(question -> question.getId() == firstQuestion.getId())
+				.findFirst().orElseThrow().getSharedContext().getContentParts());
+		assertEquals(mixedParts, all.stream().filter(question -> question.getId() == secondQuestion.getId()).findFirst()
+				.orElseThrow().getSharedContext().getContentParts());
 	}
 
 	@Test

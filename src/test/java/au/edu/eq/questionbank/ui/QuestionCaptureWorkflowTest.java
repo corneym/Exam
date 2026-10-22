@@ -295,10 +295,19 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		prepareExamAndClassification(robot);
 		Button addFromClipboard = lookup(robot, "#paste-question-image", Button.class);
 		Button saveQuestion = lookup(robot, "#save-question", Button.class);
+		Button addRegion = lookup(robot, "#add-question-region", Button.class);
 		CheckBox sharedContextFirst = lookup(robot, "#first-region-shared-context", CheckBox.class);
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
-		robot.clickOn(sharedContextFirst);
-		robot.interact(() -> questionCode.setText("1a"));
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+
+		// Establish Question identity before selecting Shared Context capture.
+		robot.interact(() -> {
+			questionCode.setText("1a");
+			marks.setText("2");
+			sharedContextFirst.setSelected(true);
+		});
+		assertTrue(sharedContextFirst.isSelected());
+		assertEquals("Add Context", addRegion.getText());
 		robot.interact(() -> {
 			WritableImage image = new WritableImage(20, 20);
 			for (int y = 0; y < 20; y++) {
@@ -311,12 +320,23 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 			Clipboard.getSystemClipboard().setContent(content);
 			questionCapturePane().refreshClipboardImageAvailability();
 		});
+		assertFalse(addFromClipboard.isDisabled());
 		fireControl(robot, addFromClipboard);
+		assertEquals("Add Region", addRegion.getText());
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-question-region");
-		fireControl(robot, saveQuestion);
+		assertFalse(saveQuestion.isDisabled(),
+				"Accepted image context and Question PDF content " + "must make Save available");
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
 		ExamBooklet booklet = examMetadataPane().getBooklet();
+		fireControl(robot, saveQuestion);
+
+		// Question save runs asynchronously. Wait for actual persistence,
+		// not merely for the Save action to return.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findAll().stream()
+						.anyMatch(question -> question.getBooklet().getId() == booklet.getId()
+								&& "1a".equals(question.getQuestionCode())));
 		Question saved = repository.findAll().stream()
 				.filter(question -> question.getBooklet().getId() == booklet.getId())
 				.filter(question -> "1a".equals(question.getQuestionCode())).findFirst().orElseThrow();
@@ -358,11 +378,13 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	void clipboardImageCanBeAcceptedAsAutomaticSharedContext(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		Button addFromClipboard = lookup(robot, "#paste-question-image", Button.class);
+		Button addRegion = lookup(robot, "#add-question-region", Button.class);
 		CheckBox sharedContextFirst = lookup(robot, "#first-region-shared-context", CheckBox.class);
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
 		Label saveStatus = lookup(robot, "#question-save-status", Label.class);
 
-		// Text-only clipboard must not enable the button.
+		// The Question code must exist before multipart context capture starts.
+		robot.interact(() -> questionCode.setText("1a"));
 		robot.interact(() -> {
 			ClipboardContent content = new ClipboardContent();
 			content.putString("not an image");
@@ -370,10 +392,13 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 			questionCapturePane().refreshClipboardImageAvailability();
 		});
 		assertTrue(addFromClipboard.isDisabled());
-		robot.clickOn(sharedContextFirst);
-		robot.interact(() -> questionCode.setText("1a"));
+		robot.interact(() -> sharedContextFirst.setSelected(true));
+		assertTrue(sharedContextFirst.isSelected());
+		assertEquals("Add Context", addRegion.getText());
 
-		// Image clipboard must enable the same existing button.
+		// Text alone remains insufficient during Shared Context capture.
+		robot.interact(questionCapturePane()::refreshClipboardImageAvailability);
+		assertTrue(addFromClipboard.isDisabled());
 		robot.interact(() -> {
 			WritableImage image = new WritableImage(20, 20);
 			for (int y = 0; y < 20; y++) {
@@ -389,7 +414,58 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertFalse(addFromClipboard.isDisabled());
 		fireControl(robot, addFromClipboard);
 		assertTrue(saveStatus.getText().contains("Shared context captured"));
+		assertEquals("Add Region", addRegion.getText());
 		assertTrue(addFromClipboard.isDisabled());
+		assertFalse(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
+	}
+
+	@Test
+	void clipboardImageCapturedAsSharedContextIsDisplayed(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		TextField questionCode = lookup(robot, "#question-code", TextField.class);
+		CheckBox sharedContextFirst = lookup(robot, "#first-region-shared-context", CheckBox.class);
+		Button addFromClipboard = lookup(robot, "#paste-question-image", Button.class);
+		Button addRegion = lookup(robot, "#add-question-region", Button.class);
+		Label regionCount = lookup(robot, "#question-region-count", Label.class);
+		Label status = lookup(robot, "#question-save-status", Label.class);
+		Button save = lookup(robot, "#save-question", Button.class);
+
+		// Establish multipart Question identity before entering
+		// automatic Shared Context capture.
+		robot.interact(() -> questionCode.setText("1a"));
+		assertEquals("Content parts: 0", regionCount.getText());
+
+		// Capture the first content part as Shared Context.
+		fireControl(robot, sharedContextFirst);
+		assertTrue(sharedContextFirst.isSelected());
+		assertEquals("Add Context", addRegion.getText());
+		placeImageOnClipboard(robot, Color.BLUE);
+		assertFalse(addFromClipboard.isDisabled());
+
+		// Exercise the actual Question-side Add From Clipboard button.
+		fireControl(robot, addFromClipboard);
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// Automatic context capture must have finished.
+		assertEquals("Add Region", addRegion.getText());
+		assertTrue(status.getText().contains("Shared context captured"));
+
+		// The clipboard image belongs to Shared Context,
+		// not the ordinary Question content list.
+		assertEquals("Content parts: 0", regionCount.getText());
+		VBox sharedPreview = lookup(robot, "#question-shared-context-preview", VBox.class);
+		ImageView sharedImage = lookup(robot, "#question-shared-context-image-0", ImageView.class);
+		assertTrue(sharedPreview.getChildren().contains(sharedImage));
+		assertTrue(sharedImage.getImage() != null);
+		assertEquals(40.0, sharedImage.getImage().getWidth());
+		assertEquals(20.0, sharedImage.getImage().getHeight());
+		assertTrue(robot.lookup("#question-content-part-0").tryQuery().isEmpty(),
+				"The Shared Context image must not be ordinary Question content");
+
+		// The Question still requires its own content and marks.
+		assertTrue(save.isDisabled());
+
+		// Successful acceptance consumes the clipboard image.
 		assertFalse(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
 	}
 

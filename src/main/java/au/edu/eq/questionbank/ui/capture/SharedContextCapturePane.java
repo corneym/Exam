@@ -10,6 +10,7 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ImageQuestionContentPart;
 import au.edu.eq.questionbank.model.ImageSharedContextContentPart;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.SharedContextContentPart;
@@ -355,12 +356,12 @@ public final class SharedContextCapturePane extends VBox {
 	}
 
 	String getPendingAutomaticContextLabel() {
-		if (!hasPendingAutomaticRegion()) {
-			throw new IllegalStateException("No automatic shared context is pending");
+		if (!hasPendingAutomaticContext()) {
+			throw new IllegalStateException("No automatic Shared Context is pending");
 		}
 		String label = contextLabelField.getText().trim();
 		if (label.isBlank()) {
-			throw new IllegalStateException("Automatic shared context has no label");
+			throw new IllegalStateException("Automatic Shared Context has no label");
 		}
 		return label;
 	}
@@ -507,22 +508,51 @@ public final class SharedContextCapturePane extends VBox {
 		existingContextField.setValue(matching);
 	}
 
-	void stageAcceptedQuestionImage(String label, byte[] pngBytes) {
+	void stageAcceptedQuestionImage(byte[] pngBytes) {
 		if (!canAcceptAutomaticClipboardImage()) {
 			throw new IllegalStateException("Shared Context capture is not ready for a clipboard image");
 		}
-		if (label == null || label.isBlank()) {
-			throw new IllegalArgumentException("label must not be blank");
+
+		// Preserve the label established when automatic capture began.
+		// This also preserves generated independent-MCQ context labels.
+		if (contextLabelField.getText().isBlank()) {
+			throw new IllegalStateException("Automatic Shared Context has no label");
 		}
 		if (!pendingContent.isEmpty()) {
 			throw new IllegalStateException("Automatic Shared Context already has content");
 		}
-		contextLabelField.setText(label);
-		pendingContent.addImage(pngBytes);
+		if (!pendingContent.addImage(pngBytes)) {
+			throw new IllegalStateException("Shared Context image was not accepted");
+		}
 		clearCurrentSelection();
 		leaveCaptureMode();
 		refreshRegionPreviews();
 		statusLabel.setText("No shared context selected");
+	}
+
+	/**
+	 * Reclassifies an already accepted Question image as automatic Shared Context.
+	 * The caller removes its Question-content reference only after staging
+	 * succeeds.
+	 *
+	 * @param label    generated Shared Context label
+	 * @param pngBytes encoded image already accepted as Question content
+	 */
+	void stageAcceptedQuestionImageContent(String label, byte[] pngBytes) {
+		if (label == null || label.isBlank()) {
+			throw new IllegalArgumentException("label must not be blank");
+		}
+		Objects.requireNonNull(pngBytes, "pngBytes");
+		if (hasUnsavedContextCapture() || currentSelection != null) {
+			throw new IllegalStateException("Another Shared Context capture is already pending");
+		}
+		if (!pendingContent.addImage(pngBytes)) {
+			throw new IllegalStateException("Question image could not be staged as Shared Context");
+		}
+		existingContextField.getSelectionModel().clearSelection();
+		contextLabelField.setText(label);
+		refreshRegionPreviews();
+		statusLabel.setText("1 shared context image accepted");
 	}
 
 	/**
@@ -558,6 +588,25 @@ public final class SharedContextCapturePane extends VBox {
 		pendingContent.addRegion(contextRegion);
 		refreshRegionPreviews();
 		statusLabel.setText("1 shared context region(s) accepted");
+	}
+
+	/**
+	 * Returns a single accepted automatic Shared Context image to ordinary Question
+	 * capture when the Shared Context checkbox is unticked.
+	 *
+	 * @return the recovered Question image
+	 */
+	ImageQuestionContentPart takePendingAutomaticImage() {
+		if (!hasPendingAutomaticContext() || currentSelection != null || pendingContent.size() != 1
+				|| !(pendingContent.contentParts().getFirst() instanceof ImageSharedContextContentPart image)) {
+			throw new IllegalStateException("No single accepted automatic Shared Context image");
+		}
+		ImageQuestionContentPart questionImage = new ImageQuestionContentPart(image.pngBytes());
+		pendingContent.clear();
+		contextLabelField.clear();
+		refreshRegionPreviews();
+		statusLabel.setText("No shared context selected");
+		return questionImage;
 	}
 
 	/**
