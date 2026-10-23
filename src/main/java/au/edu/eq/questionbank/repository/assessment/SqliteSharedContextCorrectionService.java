@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Objects;
 
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.SharedContextContentPart;
 import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
@@ -46,16 +47,30 @@ public final class SqliteSharedContextCorrectionService {
 	}
 
 	/**
-	 * Creates a new reusable context and attaches it to every stored member of the
-	 * selected Question's SourceQuestion.
+	 * Creates a PDF-only Shared Context and links every Question in the selected
+	 * multipart SourceQuestion. The context and all links commit atomically.
 	 *
-	 * @param questionId any persisted multipart member
+	 * @param questionId a persisted multipart Question identifier
 	 * @param label      non-blank context label
-	 * @param regions    nonempty ordered context regions
+	 * @param regions    non-empty ordered PDF regions
 	 * @return committed context and affected Question identifiers
 	 */
 	public CorrectionResult captureNew(long questionId, String label, List<SharedQuestionContextRegion> regions) {
-		return correct(questionId, null, label, regions);
+		return captureNewContentParts(questionId, label, regions);
+	}
+
+	/**
+	 * Creates an ordered PDF/image Shared Context and links all Questions in the
+	 * selected multipart SourceQuestion in one transaction.
+	 *
+	 * @param questionId   a persisted multipart Question identifier
+	 * @param label        non-blank context label
+	 * @param contentParts non-empty ordered PDF regions and/or PNG image parts
+	 * @return committed context and affected Question identifiers
+	 */
+	public CorrectionResult captureNewContentParts(long questionId, String label,
+			List<? extends SharedContextContentPart> contentParts) {
+		return correct(questionId, null, label, contentParts);
 	}
 
 	/**
@@ -104,7 +119,7 @@ public final class SqliteSharedContextCorrectionService {
 	}
 
 	private CorrectionResult correct(long questionId, Long existingContextId, String label,
-			List<SharedQuestionContextRegion> regions) {
+			List<? extends SharedContextContentPart> contentParts) {
 		Question selected = loadQuestion(questionId);
 		if (!selected.hasSourceQuestion()) {
 			throw new IllegalArgumentException("Question does not belong to a multipart SourceQuestion");
@@ -113,12 +128,11 @@ public final class SqliteSharedContextCorrectionService {
 			connection.setAutoCommit(false);
 			try {
 
-				// This is a structural relationship correction.
-				// A COMPLETE Exam must first be reactivated.
+				// Structural corrections are prohibited for a completed Exam.
 				examWriter.requireExamActive(connection, selected.getBooklet().getExam().getId());
 
-				// Reload authoritative source state inside the
-				// transaction. Do not rely on a stale UI Question.
+				// Re-read source identity under the transaction, rather than trusting
+				// a Question object cached while Search was open.
 				SourceQuestion source = loadSource(connection, selected);
 				if (source.getSharedContextStatus() == SharedContextStatus.PRESENT) {
 					throw new IllegalStateException("Source Question already has Shared Context. "
@@ -131,21 +145,21 @@ public final class SqliteSharedContextCorrectionService {
 				SharedQuestionContext context;
 				if (existingContextId != null) {
 
-					// The lookup enforces booklet ownership and
-					// prevents linking to another source PDF.
+					// Reused contexts must belong to the selected Question's booklet.
 					context = sharedContextRepository
 							.findById(connection, selected.getBooklet(), existingContextId.longValue())
 							.orElseThrow(() -> new IllegalArgumentException(
-									"Shared Context does not exist " + "in the selected booklet"));
+									"Shared Context does not exist in the selected booklet"));
 				} else {
 
-					// New context and all of its regions belong
-					// to this same transaction.
-					context = sharedContextRepository.save(connection, selected.getBooklet(), label, regions);
+					// The v24 mixed-content writer participates in this same
+					// transaction; do not call its separate-connection public API.
+					context = sharedContextRepository.saveContentParts(connection, selected.getBooklet(), label,
+							contentParts);
 				}
 
-				// Existing writer validates source ownership and
-				// rejects conflicting sibling context links.
+				// Every sibling link, the source status and mixed-content rows
+				// either commit together or are all rolled back.
 				questionWriter.applySharedContextToSourceQuestion(connection, source, context);
 				sourceQuestionRepository.updateSharedContextStatus(connection, source, SharedContextStatus.PRESENT);
 				connection.commit();

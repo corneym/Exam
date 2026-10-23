@@ -9,7 +9,8 @@ package au.edu.eq.questionbank.model;
  * @param width      normalized width
  * @param height     normalized height
  */
-public record SharedQuestionContextRegion(int pageNumber, double x, double y, double width, double height) {
+public record SharedQuestionContextRegion(int pageNumber, double x, double y, double width, double height)
+		implements SharedContextContentPart {
 
 	/**
 	 * Validates a one-based page and proportional bounds for a shared-context

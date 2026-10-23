@@ -3,6 +3,7 @@ package au.edu.eq.questionbank.pdf;
 import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -15,8 +16,10 @@ import java.util.Set;
 import javax.imageio.ImageIO;
 
 import au.edu.eq.questionbank.model.AnswerRegion;
+import au.edu.eq.questionbank.model.ImageSharedContextContentPart;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.SharedContextContentPart;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 
@@ -30,13 +33,13 @@ import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
  */
 public class QuestionExtractor {
 
+	private static final float RENDER_DPI = 150;
+
 	/**
 	 * Creates an extractor for ordered question, answer and shared-context regions.
 	 */
 	public QuestionExtractor() {
 	}
-
-	private static final float RENDER_DPI = 150;
 
 	/**
 	 * Opens a PDF and writes the assembled question image to PNG. Linked
@@ -214,42 +217,82 @@ public class QuestionExtractor {
 	}
 
 	/**
-	 * Opens a PDF and writes one complete shared context to PNG.
+	 * Writes the complete ordered Shared Context to one PNG. An image-only context
+	 * does not require or open a source PDF; mixed and PDF-only contexts open one
+	 * PDF session for the complete sequence.
 	 *
-	 * @param pdfPath    the PDF containing the shared-context regions
-	 * @param context    the shared context to extract
-	 * @param outputFile the destination PNG file
-	 * @throws Exception if the PDF cannot be opened, rendered, closed, or written
+	 * @param pdfPath    source PDF path, or {@code null} for image-only content
+	 * @param context    persisted ordered Shared Context
+	 * @param outputFile destination PNG
+	 * @throws Exception if a required PDF, stored image or output cannot be read or
+	 *                   written
 	 */
 	public void extractSharedContext(Path pdfPath, SharedQuestionContext context, File outputFile) throws Exception {
-		try (PdfSession session = PdfSession.open(pdfPath)) {
-			BufferedImage image = extractSharedContext(session, context);
-			ImageIO.write(image, "png", outputFile);
+		if (context == null) {
+			throw new NullPointerException("context");
+		}
+		if (outputFile == null) {
+			throw new NullPointerException("outputFile");
+		}
+		BufferedImage combined;
+		if (context.getRegions().isEmpty()) {
+
+			// No PDF-backed content: decode and assemble the stored PNGs directly.
+			combined = extractSharedContext(null, context);
+		} else {
+			try (PdfSession session = PdfSession.open(pdfPath)) {
+				combined = extractSharedContext(session, context);
+			}
+		}
+		if (!ImageIO.write(combined, "png", outputFile)) {
+			throw new IOException("No PNG writer is available for Shared Context output");
 		}
 	}
 
 	/**
-	 * Extracts all ordered regions belonging to one shared context using an
-	 * existing session. Exact duplicate source rectangles are rendered only once.
-	 * The session remains open.
+	 * Assembles an entire Shared Context in authoritative PDF/image content order.
+	 * PDF rectangles are extracted using the supplied session and exact duplicate
+	 * source rectangles are omitted. Stored images are decoded without PDF access.
+	 * The caller retains ownership of any supplied PDF session.
 	 *
-	 * @param session the PDF session containing the shared-context regions
-	 * @param context the shared context to extract
-	 * @return the vertically combined shared-context image
-	 * @throws IOException if a page cannot be rendered
+	 * @param session active PDF session; may be {@code null} for image-only content
+	 * @param context persisted ordered Shared Context
+	 * @return vertically assembled Shared Context image
+	 * @throws IOException              if PDF extraction or stored-image decoding
+	 *                                  fails
+	 * @throws IllegalArgumentException if PDF content is present without a session
 	 */
 	public BufferedImage extractSharedContext(PdfSession session, SharedQuestionContext context) throws IOException {
-		List<BufferedImage> regionImages = new ArrayList<>();
-
-		// Deduplicate within this context while retaining its stored reading order.
+		if (context == null) {
+			throw new NullPointerException("context");
+		}
+		List<BufferedImage> images = new ArrayList<>();
 		Set<RegionKey> renderedRegions = new HashSet<>();
-		for (SharedQuestionContextRegion region : context.getRegions()) {
-			RegionKey key = RegionKey.from(region);
-			if (renderedRegions.add(key)) {
-				regionImages.add(extractRegion(session, region));
+		for (SharedContextContentPart part : context.getContentParts()) {
+			if (part instanceof SharedQuestionContextRegion region) {
+				if (session == null) {
+					throw new IllegalArgumentException("PDF session required for PDF-backed Shared Context content");
+				}
+				RegionKey key = RegionKey.from(region);
+				if (renderedRegions.add(key)) {
+					images.add(extractRegion(session, region));
+				}
+			} else if (part instanceof ImageSharedContextContentPart imagePart) {
+
+				// Each stored image occupies its own position in the reading order;
+				// image bytes must never be interpreted as PDF coordinates.
+				try (ByteArrayInputStream input = new ByteArrayInputStream(imagePart.pngBytes())) {
+					BufferedImage image = ImageIO.read(input);
+					if (image == null) {
+						throw new IOException("Stored Shared Context image is not a readable PNG");
+					}
+					images.add(image);
+				}
+			} else {
+				throw new IllegalStateException("Unsupported Shared Context content part: " + part);
 			}
 		}
-		return combineRegionImages(regionImages);
+		return combineRegionImages(images);
 	}
 
 	private BufferedImage combineRegionImages(List<BufferedImage> regionImages) {

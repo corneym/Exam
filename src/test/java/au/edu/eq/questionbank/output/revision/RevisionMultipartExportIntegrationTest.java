@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.awt.Color;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -25,8 +26,14 @@ import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
+import au.edu.eq.questionbank.model.ImageQuestionContentPart;
+import au.edu.eq.questionbank.model.ImageSharedContextContentPart;
+import au.edu.eq.questionbank.model.PdfQuestionContentPart;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionContentPart;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.QuestionResponseType;
+import au.edu.eq.questionbank.model.SharedContextContentPart;
 import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
@@ -176,6 +183,16 @@ class RevisionMultipartExportIntegrationTest {
 	}
 
 	@Test
+	void exportsImageOnlySharedContextWithoutSourcePdf() throws Exception {
+		assertImageBackedSharedContextExport(false);
+	}
+
+	@Test
+	void exportsMixedSharedContextPreservingPartOrder() throws Exception {
+		assertImageBackedSharedContextExport(true);
+	}
+
+	@Test
 	void exportsMultipartQuestionWithSharedContextOnce() throws Exception {
 		Path pdfRoot = tempDir.resolve("pdf");
 		Files.createDirectories(pdfRoot);
@@ -260,6 +277,87 @@ class RevisionMultipartExportIntegrationTest {
 		assertEquals(2, result.getStatistics().getUniqueApplicableQuestions());
 	}
 
+	private void assertImageBackedSharedContextExport(boolean mixed) throws Exception {
+		Path pdfRoot = tempDir.resolve(mixed ? "mixed-pdf" : "image-only-pdf");
+		Files.createDirectories(pdfRoot);
+		if (mixed) {
+			createContrastingPdf(pdfRoot.resolve("question.pdf"));
+		}
+		Subject subject = new Subject(1, "Chemistry");
+		SyllabusVersion historical = new SyllabusVersion(2, subject, "2019", false);
+		Unit originalUnit = new Unit(3, historical, "1", "Historical unit", 1);
+		Topic originalTopic = new Topic(4, historical, originalUnit, "1.1", "Historical topic", 1);
+		Descriptor classification = new Descriptor(5, historical, originalTopic, "1.1.1", "Historical descriptor", 1);
+		SyllabusVersion current = new SyllabusVersion(6, subject, "2025", true);
+		Unit currentUnit = new Unit(7, current, "1", "Current unit", 1);
+		Topic currentTopic = new Topic(8, current, currentUnit, "1.1", "Current topic", 1);
+		Descriptor currentDescriptor = new Descriptor(9, current, currentTopic, "1.1.1", "Current descriptor", 1);
+		Exam exam = new Exam(10, subject, new ExamProvider(11, "QCAA"), 2019, "Exam");
+		ExamBooklet booklet = new ExamBooklet(12, exam, "Paper 1", new SourceDocument(13, "question.pdf"));
+		SourceQuestion source = new SourceQuestion(14, booklet, "24", SharedContextStatus.PRESENT);
+		List<SharedContextContentPart> contextParts = mixed
+				? List.of(new ImageSharedContextContentPart(createPng(40, 12, Color.RED)),
+						new SharedQuestionContextRegion(1, 0.0, 0.25, 1.0, 0.25),
+						new ImageSharedContextContentPart(createPng(35, 8, Color.GREEN)))
+				: List.of(new ImageSharedContextContentPart(createPng(40, 12, Color.RED)));
+		SharedQuestionContext context = SharedQuestionContext.fromContentParts(15, booklet, "Question 24 context",
+				contextParts);
+		QuestionRegion firstRegion = new QuestionRegion(booklet, 1, 0.0, 0.50, 1.0, 0.20);
+		QuestionRegion secondRegion = new QuestionRegion(booklet, 1, 0.0, 0.75, 1.0, 0.20);
+		List<QuestionRegion> firstRegions = mixed ? List.of(firstRegion) : List.of();
+		List<QuestionRegion> secondRegions = mixed ? List.of(secondRegion) : List.of();
+		List<QuestionContentPart> firstBody = mixed ? List.of(new PdfQuestionContentPart(firstRegion))
+				: List.of(new ImageQuestionContentPart(createPng(32, 10, Color.BLUE)));
+		List<QuestionContentPart> secondBody = mixed ? List.of(new PdfQuestionContentPart(secondRegion))
+				: List.of(new ImageQuestionContentPart(createPng(30, 9, Color.BLUE)));
+		Question partA = new Question(101, booklet, "24a", "", 2, firstRegions, classification, false, source, context,
+				QuestionResponseType.WRITTEN_RESPONSE, firstBody);
+		Question partB = new Question(102, booklet, "24b", "", 3, secondRegions, classification, false, source, context,
+				QuestionResponseType.WRITTEN_RESPONSE, secondBody);
+		partA.setAnswer(new Answer(201, "Answer A", List.of()));
+		partB.setAnswer(new Answer(202, "Answer B", List.of()));
+		InMemoryCurriculumRepository curriculum = new InMemoryCurriculumRepository(List.of(subject),
+				List.of(historical, current),
+				List.of(originalUnit, originalTopic, classification, currentUnit, currentTopic, currentDescriptor));
+		QuestionRetrievalService retrieval = new QuestionRetrievalService(
+				_ -> List.of(new QuestionApplicabilityMatch(partA, currentDescriptor),
+						new QuestionApplicabilityMatch(partB, currentDescriptor)),
+				new CurriculumSearchNodeExpansionService(curriculum));
+		RevisionCorpusBuilder corpusBuilder = new RevisionCorpusBuilder(curriculum, retrieval,
+				new InMemoryQuestionOutputApplicabilityRepository());
+		PdfStore pdfStore = new PdfStore(pdfRoot);
+		QuestionExtractor extractor = new QuestionExtractor();
+		RevisionExportService service = new RevisionExportService(corpusBuilder, new RevisionPresentationPlanner(),
+				new RevisionQuestionAssetRenderer(pdfStore, extractor),
+				new RevisionSharedContextAssetRenderer(pdfStore, extractor),
+				new RevisionAnswerAssetRenderer(pdfStore, extractor), new RevisionExportValidator());
+		Path destination = tempDir.resolve(mixed ? "mixed-context-output" : "image-only-context-output");
+		service.export(new RevisionExportRequest(subject, destination));
+		String contextFile = "context-" + context.getId() + ".png";
+		Path contextAsset = destination.resolve(Path.of("assets", "contexts", contextFile));
+		assertTrue(Files.isRegularFile(contextAsset));
+		BufferedImage contextImage = ImageIO.read(contextAsset.toFile());
+		assertEquals(Color.RED.getRGB(), contextImage.getRGB(10, 5));
+		if (mixed) {
+			assertEquals(150, contextImage.getWidth());
+			assertEquals(Color.BLUE.getRGB(), contextImage.getRGB(75, 20));
+			assertEquals(Color.GREEN.getRGB(), contextImage.getRGB(10, contextImage.getHeight() - 4));
+		} else {
+			assertEquals(40, contextImage.getWidth());
+			assertEquals(12, contextImage.getHeight());
+			assertFalse(Files.exists(pdfRoot.resolve("question.pdf")));
+		}
+		Path topicHtml = destination
+				.resolve(Path.of("units", "unit-" + currentUnit.getId(), "topic-" + currentTopic.getId() + ".html"));
+		String html = Files.readString(topicHtml);
+		assertEquals(1, countOccurrences(html, contextFile), "One Shared Context asset is referenced for both parts");
+		assertTrue(html.indexOf(contextFile) < html.indexOf("question-101.png"));
+		assertTrue(html.contains("question-101.png"));
+		assertTrue(html.contains("question-102.png"));
+		assertTrue(Files.isRegularFile(destination.resolve("assets/questions/question-101.png")));
+		assertTrue(Files.isRegularFile(destination.resolve("assets/questions/question-102.png")));
+	}
+
 	private int countOccurrences(String text, String target) {
 		int count = 0;
 		int offset = 0;
@@ -301,6 +399,21 @@ class RevisionMultipartExportIntegrationTest {
 				content.fill();
 			}
 			document.save(destination.toFile());
+		}
+	}
+
+	private byte[] createPng(int width, int height, Color color) throws IOException {
+		BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+		for (int y = 0; y < height; y++) {
+			for (int x = 0; x < width; x++) {
+				image.setRGB(x, y, color.getRGB());
+			}
+		}
+		try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+			if (!ImageIO.write(image, "png", output)) {
+				throw new IOException("Test PNG writer unavailable");
+			}
+			return output.toByteArray();
 		}
 	}
 }

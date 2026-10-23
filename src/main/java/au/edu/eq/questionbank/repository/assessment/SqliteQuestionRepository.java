@@ -32,7 +32,6 @@ import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
-import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.model.Subject;
@@ -68,6 +67,7 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 	private final SqliteDatabase database;
 	private final PerformanceRecorder performanceRecorder;
 	private final SqliteQuestionWriter writer;
+	private final SqliteSharedQuestionContextRepository sharedContextRepository;
 
 	/**
 	 * Creates a SQLite Question repository with diagnostics disabled.
@@ -95,6 +95,7 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 		this.performanceRecorder = performanceRecorder;
 		this.writer = new SqliteQuestionWriter(database);
 		this.curriculumRepository = new SqliteCurriculumRepository(database);
+		this.sharedContextRepository = new SqliteSharedQuestionContextRepository(database);
 	}
 
 	@Override
@@ -466,53 +467,13 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 
 	private SharedQuestionContext findSharedQuestionContext(Connection connection, long sharedContextId,
 			ExamBooklet questionBooklet) throws SQLException {
-		String label;
-		try (PreparedStatement statement = connection.prepareStatement("""
-				SELECT booklet_id, context_label
-				FROM shared_question_contexts
-				WHERE id = ?
-				""")) {
-			statement.setLong(1, sharedContextId);
-			try (ResultSet result = statement.executeQuery()) {
-				if (!result.next()) {
-					throw new IllegalStateException("Missing shared question context " + sharedContextId);
-				}
-				if (result.getLong("booklet_id") != questionBooklet.getId()) {
-					throw new IllegalStateException("Shared question context belongs to a different booklet");
-				}
-				label = result.getString("context_label");
-			}
-		}
-		List<SharedQuestionContextRegion> regions = findSharedQuestionContextRegions(connection, sharedContextId);
-		if (regions.isEmpty()) {
-			throw new IllegalStateException("Shared question context has no regions: " + sharedContextId);
-		}
-		return new SharedQuestionContext(sharedContextId, questionBooklet, label, regions);
-	}
 
-	private List<SharedQuestionContextRegion> findSharedQuestionContextRegions(Connection connection,
-			long sharedContextId) throws SQLException {
-		List<SharedQuestionContextRegion> regions = new ArrayList<>();
-		try (PreparedStatement statement = connection.prepareStatement("""
-				SELECT
-				    page_number,
-				    x,
-				    y,
-				    width,
-				    height
-				FROM shared_question_context_regions
-				WHERE shared_context_id = ?
-				ORDER BY region_order
-				""")) {
-			statement.setLong(1, sharedContextId);
-			try (ResultSet result = statement.executeQuery()) {
-				while (result.next()) {
-					regions.add(new SharedQuestionContextRegion(result.getInt("page_number"), result.getDouble("x"),
-							result.getDouble("y"), result.getDouble("width"), result.getDouble("height")));
-				}
-			}
-		}
-		return regions;
+		// Use the authoritative v24 mixed-content reader.
+		// It preserves content order, validates stored image references,
+		// and restricts the context to the Question's booklet.
+		return sharedContextRepository.findById(connection, questionBooklet, sharedContextId)
+				.orElseThrow(() -> new IllegalStateException("Missing shared question context " + sharedContextId
+						+ " for booklet " + questionBooklet.getId()));
 	}
 
 	private SourceQuestion findSourceQuestion(Connection connection, long sourceQuestionId, ExamBooklet questionBooklet)

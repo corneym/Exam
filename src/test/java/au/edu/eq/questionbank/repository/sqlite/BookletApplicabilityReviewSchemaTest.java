@@ -41,7 +41,7 @@ class BookletApplicabilityReviewSchemaTest {
 			statement.execute("DROP TRIGGER reject_v23_for_test");
 		}
 		database.initialiseSchema();
-		assertEquals(23, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		assertTrue(hasReview(database));
 		database.verifySchema();
 	}
@@ -55,7 +55,7 @@ class BookletApplicabilityReviewSchemaTest {
 
 		// Execute the real v22->v23 migration, including its trigger replacement.
 		database.initialiseSchema();
-		assertEquals(23, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		database.verifySchema();
 		assertTrue(hasReview(database));
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
@@ -187,10 +187,10 @@ class BookletApplicabilityReviewSchemaTest {
 		SqliteDatabase database = version22ReviewedFixture("v23-repeat-initialise.db");
 		database.initialiseSchema();
 		String installedTriggerSql = bookletUpdateTriggerSql(database);
-		assertEquals(23, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		assertTrue(hasReview(database));
 		database.initialiseSchema();
-		assertEquals(23, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		assertEquals(installedTriggerSql, bookletUpdateTriggerSql(database));
 		assertTrue(hasReview(database));
 		database.verifySchema();
@@ -259,6 +259,9 @@ class BookletApplicabilityReviewSchemaTest {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try (Statement statement = connection.createStatement()) {
+
+				// Reconstruct the v22 fixture without retaining v24 tables.
+				HistoricalSchemaFixture.removeVersion24Objects(statement);
 				statement.execute("DROP TRIGGER app_review_exam_booklets_update");
 				statement.execute(broadBookletUpdateTriggerSql());
 				statement.execute("UPDATE schema_version SET version = 22");

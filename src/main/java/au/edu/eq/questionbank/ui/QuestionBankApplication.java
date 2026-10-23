@@ -1713,8 +1713,8 @@ public class QuestionBankApplication extends Application {
 		// performs the complete transaction only when Save is pressed.
 		boolean started;
 		try {
-			started = questionCapturePane.captureMissingSharedContext(question,
-					(label, regions) -> service.captureNew(question.getId(), label, regions).context(), () -> {
+			started = questionCapturePane.captureMissingSharedContext(question, (label, contentParts) -> service
+					.captureNewContentParts(question.getId(), label, contentParts).context(), () -> {
 						pdfWorkspace.closeExamPdf();
 						resumeSearchAfterEdit(primaryStage, searchDialog, question.getId(), curriculumRepository,
 								metadataService);

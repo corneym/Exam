@@ -1719,6 +1719,7 @@ class SqliteConnectionTest {
 
 			// Construct a genuine v21 schema, rather than merely
 			// changing the recorded schema version.
+			HistoricalSchemaFixture.removeVersion24Objects(statement);
 			statement.execute("""
 					DROP INDEX ux_exam_booklets_legacy_paper_code
 					""");
@@ -2249,6 +2250,7 @@ class SqliteConnectionTest {
 
 			// Reconstruct the previous schema version to exercise the
 			// actual 21 -> 22 migration against saved booklet records.
+			HistoricalSchemaFixture.removeVersion24Objects(statement);
 			statement.execute("DROP INDEX ux_exam_booklets_legacy_paper_code");
 			statement.execute("ALTER TABLE exam_booklets DROP COLUMN legacy_paper_code");
 			statement.execute("UPDATE schema_version SET version = 21");

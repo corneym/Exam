@@ -1,98 +1,141 @@
 package au.edu.eq.questionbank.model;
 
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Reusable introductory source material required by one or more questions.
  * <p>
- * Examples include a shared context, common stem, graph, table or diagram. A
- * shared context belongs to one examination booklet and contains one or more
- * ordered source regions.
+ * A Shared Context belongs to one examination booklet and contains one or more
+ * ordered PDF regions, PNG images, or both.
  */
 public final class SharedQuestionContext {
 
-	// Shared Context identity and content.
 	private final ExamBooklet booklet;
+	private final List<SharedContextContentPart> contentParts;
 	private final long id;
 	private final String label;
 	private final List<SharedQuestionContextRegion> regions;
 
 	/**
-	 * Creates a persisted shared context from its ordered source regions.
+	 * Creates a persisted PDF-only Shared Context.
+	 * <p>
+	 * This constructor preserves compatibility with existing capture, repository
+	 * and correction workflows.
 	 *
 	 * @param id      the positive persistent identifier
-	 * @param booklet the examination booklet containing every region
+	 * @param booklet the owning examination booklet
 	 * @param label   the non-blank display label
-	 * @param regions one or more regions in source order; the list is copied
-	 * @throws IllegalArgumentException if {@code id} is not positive, the label is
-	 *                                  blank, or no regions are supplied
-	 * @throws NullPointerException     if the booklet, region list or an element is
-	 *                                  {@code null}
+	 * @param regions one or more PDF regions in source order
+	 * @throws IllegalArgumentException if the identifier, label or region
+	 *                                  collection is invalid
+	 * @throws NullPointerException     if any required value is null
 	 */
 	public SharedQuestionContext(long id, ExamBooklet booklet, String label,
 			List<SharedQuestionContextRegion> regions) {
+		this(id, booklet, label, copyRegionsAsContent(regions));
+	}
+
+	private SharedQuestionContext(long id, ExamBooklet booklet, String label,
+			Collection<? extends SharedContextContentPart> parts) {
 		if (id < 1) {
 			throw new IllegalArgumentException("id must be positive");
 		}
-		if (booklet == null) {
-			throw new NullPointerException("booklet");
-		}
+		this.booklet = Objects.requireNonNull(booklet, "booklet");
 		if (label == null || label.isBlank()) {
 			throw new IllegalArgumentException("label must not be blank");
 		}
-		if (regions == null) {
-			throw new NullPointerException("regions");
+		this.label = label;
+		Objects.requireNonNull(parts, "parts");
+		if (parts.isEmpty()) {
+			throw new IllegalArgumentException("Shared question context must contain at least one content part");
 		}
 
-		// A shared context represents captured material, so an empty placeholder is not
-		// valid.
-		if (regions.isEmpty()) {
-			throw new IllegalArgumentException("Shared question context must contain at least one region");
-		}
-		for (SharedQuestionContextRegion region : regions) {
-			if (region == null) {
-				throw new NullPointerException("regions contains null");
+		// The immutable mixed-content list is authoritative. PDF-only
+		// consumers receive a derived projection preserving relative
+		// region order, without changing or discarding image positions
+		// in the complete content sequence.
+		this.contentParts = List.copyOf(parts);
+		List<SharedQuestionContextRegion> pdfRegions = new ArrayList<>();
+		for (SharedContextContentPart part : contentParts) {
+			if (part instanceof SharedQuestionContextRegion region) {
+				pdfRegions.add(region);
 			}
 		}
+		this.regions = List.copyOf(pdfRegions);
 		this.id = id;
-		this.booklet = booklet;
-		this.label = label;
-
-		// All questions sharing this context see the same immutable region order.
-		this.regions = List.copyOf(regions);
 	}
 
 	/**
-	 * Returns the booklet containing this reusable shared context.
+	 * Creates a persisted Shared Context containing ordered PDF regions, PNG
+	 * images, or both.
 	 *
-	 * @return the booklet that owns this shared context
+	 * @param id           the positive persistent identifier
+	 * @param booklet      the owning examination booklet
+	 * @param label        the non-blank display label
+	 * @param contentParts one or more content parts in display order
+	 * @return the immutable Shared Context
+	 * @throws IllegalArgumentException if the identifier, label or content
+	 *                                  collection is invalid
+	 * @throws NullPointerException     if any required value is null
+	 */
+	public static SharedQuestionContext fromContentParts(long id, ExamBooklet booklet, String label,
+			List<? extends SharedContextContentPart> contentParts) {
+		return new SharedQuestionContext(id, booklet, label, contentParts);
+	}
+
+	private static List<SharedContextContentPart> copyRegionsAsContent(List<SharedQuestionContextRegion> regions) {
+		Objects.requireNonNull(regions, "regions");
+		List<SharedContextContentPart> parts = new ArrayList<>(regions.size());
+		parts.addAll(regions);
+		return List.copyOf(parts);
+	}
+
+	/**
+	 * Returns the owning examination booklet.
+	 *
+	 * @return the booklet
 	 */
 	public ExamBooklet getBooklet() {
 		return booklet;
 	}
 
 	/**
-	 * Returns the persistent identity of this shared context.
+	 * Returns all Shared Context fragments in authoritative display order.
 	 *
-	 * @return the positive persistent identifier
+	 * @return an immutable ordered list of PDF and image content parts
+	 */
+	public List<SharedContextContentPart> getContentParts() {
+		return contentParts;
+	}
+
+	/**
+	 * Returns the persistent identifier.
+	 *
+	 * @return the positive identifier
 	 */
 	public long getId() {
 		return id;
 	}
 
 	/**
-	 * Returns the label used to identify this shared context during capture.
+	 * Returns the display label.
 	 *
-	 * @return the display label
+	 * @return the Shared Context label
 	 */
 	public String getLabel() {
 		return label;
 	}
 
 	/**
-	 * Returns an immutable list in source and rendering order.
+	 * Returns the PDF-region projection of this Shared Context.
+	 * <p>
+	 * This compatibility method excludes image-backed parts and must not be used to
+	 * reconstruct the complete content order.
 	 *
-	 * @return the ordered shared-context regions
+	 * @return immutable PDF regions in their original relative order
 	 */
 	public List<SharedQuestionContextRegion> getRegions() {
 		return regions;

@@ -28,11 +28,14 @@ import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.ImageQuestionContentPart;
+import au.edu.eq.questionbank.model.ImageSharedContextContentPart;
 import au.edu.eq.questionbank.model.PdfQuestionContentPart;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionContentPart;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
+import au.edu.eq.questionbank.model.SharedQuestionContext;
+import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.Subtopic;
@@ -89,6 +92,25 @@ class QuestionContentRendererTest {
 	}
 
 	@Test
+	void rendersImageOnlySharedContextAheadOfBodyWithoutSourcePdf() throws Exception {
+		byte[] contextPng = createPng(40, 12, Color.GREEN);
+		byte[] questionPng = createPng(25, 7, Color.RED);
+		SharedQuestionContext context = SharedQuestionContext.fromContentParts(20, booklet, "Image stimulus",
+				List.of(new ImageSharedContextContentPart(contextPng)));
+		Question question = new Question(21, booklet, "Q5", "", 2, List.of(), classification, false, null, context,
+				QuestionResponseType.WRITTEN_RESPONSE, List.of(new ImageQuestionContentPart(questionPng)));
+
+		// No source PDF exists: neither the image context nor body should trigger
+		// extraction.
+		BufferedImage preview = renderer.renderQuestionPreview(question);
+		assertEquals(40, preview.getWidth());
+		assertEquals(19, preview.getHeight());
+		assertEquals(Color.GREEN.getRGB(), preview.getRGB(10, 5));
+		assertEquals(Color.RED.getRGB(), preview.getRGB(10, 15));
+		assertEquals(Color.WHITE.getRGB(), preview.getRGB(30, 15));
+	}
+
+	@Test
 	void rendersMixedImageThenPdfInAuthoritativeOrder() throws Exception {
 		createPdf(tempDir.resolve("pdf").resolve("exam.pdf"), Color.BLUE);
 		byte[] pngBytes = createPng(40, 20, Color.RED);
@@ -111,6 +133,25 @@ class QuestionContentRendererTest {
 
 		// PDF question material follows the image.
 		assertEquals(Color.BLUE.getRGB(), image.getRGB(75, 95));
+	}
+
+	@Test
+	void rendersMixedSharedContextInStoredOrderBeforeQuestionBody() throws Exception {
+		createPdf(tempDir.resolve("pdf").resolve("exam.pdf"), Color.BLUE);
+		SharedQuestionContextRegion region = new SharedQuestionContextRegion(1, 0.0, 0.0, 1.0, 1.0);
+		SharedQuestionContext context = SharedQuestionContext.fromContentParts(22, booklet, "Mixed stimulus",
+				List.of(new ImageSharedContextContentPart(createPng(40, 12, Color.RED)), region,
+						new ImageSharedContextContentPart(createPng(35, 8, Color.GREEN))));
+		Question question = new Question(23, booklet, "Q6", "", 2, List.of(), classification, false, null, context,
+				QuestionResponseType.WRITTEN_RESPONSE,
+				List.of(new ImageQuestionContentPart(createPng(30, 9, Color.YELLOW))));
+		BufferedImage preview = renderer.renderQuestionPreview(question);
+		assertEquals(150, preview.getWidth());
+		assertEquals(179, preview.getHeight());
+		assertEquals(Color.RED.getRGB(), preview.getRGB(10, 5));
+		assertEquals(Color.BLUE.getRGB(), preview.getRGB(75, 87));
+		assertEquals(Color.GREEN.getRGB(), preview.getRGB(10, 166));
+		assertEquals(Color.YELLOW.getRGB(), preview.getRGB(10, 175));
 	}
 
 	@BeforeEach

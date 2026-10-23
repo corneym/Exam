@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 23;
+	private static final int LATEST_SCHEMA_VERSION = 24;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -723,6 +723,13 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v22-to-v23.sql", 23);
 			return 23;
 		}
+		if (version == 23) {
+
+			// Version 24 introduces ordered Shared Context content without
+			// changing existing PDF-region coordinates or context identities.
+			executeMigration(connection, "/db/migration-v23-to-v24.sql", 24);
+			return 24;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -1015,6 +1022,12 @@ public final class SqliteDatabase {
 			// The v21 name-presence check alone cannot detect an accidentally
 			// retained broad UPDATE trigger on an otherwise version-23 database.
 			BookletApplicabilityReviewInvalidationTriggers.verifyVersion23BookletUpdateTrigger(connection);
+		}
+		if (version >= 24) {
+
+			// Both storage tables and their foreign keys are required before
+			// mixed Shared Context content may be persisted.
+			verifyVersion24SharedContextContentSchema(connection);
 		}
 	}
 
@@ -1599,6 +1612,23 @@ public final class SqliteDatabase {
 		if (!hasExactUniqueIndex(connection, "exam_booklets", List.of("exam_id", "legacy_paper_code"))) {
 			throw new SQLException("exam_booklets is missing exact unique key " + "(exam_id, legacy_paper_code)");
 		}
+	}
+
+	private void verifyVersion24SharedContextContentSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "shared_question_context_images",
+				List.of(column("shared_context_id", true, 1), column("image_order", true, 2),
+						column("image_png", true, 0)),
+				List.of(foreignKey("shared_context_id", "shared_question_contexts", "id")), List.of());
+		verifyTableSchema(connection, "shared_question_context_content_parts",
+				List.of(column("shared_context_id", true, 1), column("content_order", true, 2),
+						column("content_type", true, 0), column("region_order", false, 0),
+						column("image_order", false, 0)),
+				List.of(foreignKey("shared_context_id", "shared_question_contexts", "id")), List.of());
+
+		// verifyTableSchema validates individual column requirements.
+		// Explicitly verify the composite references used to retain the
+		// ownership and identity of each content part.
+		verifyForeignKeyIntegrity(connection);
 	}
 
 	private record ForeignKeyColumn(int sequence, String fromColumn, String targetColumn) {

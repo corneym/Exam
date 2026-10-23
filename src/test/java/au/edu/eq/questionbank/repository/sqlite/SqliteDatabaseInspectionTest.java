@@ -734,8 +734,9 @@ class SqliteDatabaseInspectionTest {
 					VALUES (1, 1, 1, 'MCQ')
 					""");
 
-			// Construct the genuine version-21 structure.
-			// Do not remove version-20 reviews or version-21 triggers.
+			// Version 21 has no mixed Shared Context content tables.
+			// Keep version-20 reviews and version-21 triggers intact.
+			HistoricalSchemaFixture.removeVersion24Objects(statement);
 			statement.execute("""
 					DROP INDEX ux_exam_booklets_legacy_paper_code
 					""");

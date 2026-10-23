@@ -16,10 +16,12 @@ import java.util.Set;
 import javax.imageio.ImageIO;
 
 import au.edu.eq.questionbank.model.ImageQuestionContentPart;
+import au.edu.eq.questionbank.model.ImageSharedContextContentPart;
 import au.edu.eq.questionbank.model.PdfQuestionContentPart;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionContentPart;
 import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.SharedContextContentPart;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.pdf.PdfSession;
 import au.edu.eq.questionbank.pdf.PdfStore;
@@ -110,28 +112,43 @@ public final class QuestionContentRenderer {
 		if (question.getContentParts().isEmpty()) {
 			throw new NoSuchElementException("Question has no content");
 		}
-		boolean requiresPdf = question.hasSharedContext() || requiresPdf(question.getContentParts());
-		if (!requiresPdf) {
-			return combineImages(renderBodyParts(null, question.getContentParts(), new HashSet<>()));
+		boolean contextRequiresPdf = question.hasSharedContext() && !question.getSharedContext().getRegions().isEmpty();
+		boolean needsPdf = contextRequiresPdf || requiresPdf(question.getContentParts());
+		if (!needsPdf) {
+			List<BufferedImage> images = new ArrayList<>();
+			if (question.hasSharedContext()) {
+				for (SharedContextContentPart part : question.getSharedContext().getContentParts()) {
+					if (part instanceof ImageSharedContextContentPart imagePart) {
+						images.add(decodeImage(imagePart));
+					} else {
+						throw new IllegalStateException("Unexpected PDF content without a PDF session");
+					}
+				}
+			}
+			images.addAll(renderBodyParts(null, question.getContentParts(), new HashSet<>()));
+			return combineImages(images);
 		}
 		Path sourcePdf = requireSourcePdf(question);
 		try (PdfSession session = PdfSession.open(sourcePdf)) {
 			List<BufferedImage> images = new ArrayList<>();
 			Set<RegionKey> renderedPdfRegions = new HashSet<>();
 
-			// Interactive preview retains the established behaviour of displaying linked
-			// shared context before the Question body.
+			// Preserve the complete mixed Shared Context order ahead of Question body.
+			// Only PDF rectangles are deduplicated; image content is independent.
 			if (question.hasSharedContext()) {
-				for (SharedQuestionContextRegion region : question.getSharedContext().getRegions()) {
-					RegionKey key = RegionKey.from(region);
-					if (renderedPdfRegions.add(key)) {
-						images.add(questionExtractor.extractRegion(session, region));
+				for (SharedContextContentPart part : question.getSharedContext().getContentParts()) {
+					if (part instanceof ImageSharedContextContentPart imagePart) {
+						images.add(decodeImage(imagePart));
+					} else if (part instanceof SharedQuestionContextRegion region) {
+						RegionKey key = RegionKey.from(region);
+						if (renderedPdfRegions.add(key)) {
+							images.add(questionExtractor.extractRegion(session, region));
+						}
+					} else {
+						throw new IllegalStateException("Unsupported Shared Context content part: " + part);
 					}
 				}
 			}
-
-			// Use the same region-key set for the body so an exact region already shown
-			// as shared context is not rendered twice.
 			images.addAll(renderBodyParts(session, question.getContentParts(), renderedPdfRegions));
 			return combineImages(images);
 		} catch (IOException e) {
@@ -195,6 +212,16 @@ public final class QuestionContentRenderer {
 			BufferedImage image = ImageIO.read(input);
 			if (image == null) {
 				throw new IOException("Stored Question image is not a readable PNG");
+			}
+			return image;
+		}
+	}
+
+	private BufferedImage decodeImage(ImageSharedContextContentPart imagePart) throws IOException {
+		try (ByteArrayInputStream input = new ByteArrayInputStream(imagePart.pngBytes())) {
+			BufferedImage image = ImageIO.read(input);
+			if (image == null) {
+				throw new IOException("Stored Shared Context image is not a readable PNG");
 			}
 			return image;
 		}

@@ -68,22 +68,6 @@ public final class RevisionQuestionAssetRenderer {
 		});
 	}
 
-	/**
-	 * Renders one PNG per unique renderable Question in persistent Question-id
-	 * order.
-	 * <p>
-	 * Each generated asset contains the Question's own ordered body content, which
-	 * may consist of PDF regions, stored images, or both. Shared context is
-	 * rendered separately.
-	 *
-	 * @param corpus     revision corpus containing Question placements
-	 * @param outputRoot root directory of the static export
-	 * @return rendered Question assets in deterministic Question-id order
-	 * @throws NullPointerException if {@code corpus} or {@code outputRoot} is
-	 *                              {@code null}
-	 * @throws IOException          if required source content cannot be read or an
-	 *                              asset cannot be written
-	 */
 	List<RevisionQuestionAsset> render(RevisionCorpus corpus, Path outputRoot, BiConsumer<Integer, Integer> progress)
 			throws IOException {
 		if (corpus == null) {
@@ -99,13 +83,13 @@ public final class RevisionQuestionAssetRenderer {
 
 		// One question may appear under several curriculum nodes; render its body only
 		// once.
-		Map<Long, Question> questionsById = new TreeMap<Long, Question>();
+		Map<Long, Question> questionsById = new TreeMap<>();
 		for (RevisionCorpusNode rootNode : corpus.getRootNodes()) {
 			collectRenderableQuestions(rootNode, questionsById);
 		}
 		int total = questionsById.size();
 		progress.accept(Integer.valueOf(0), Integer.valueOf(total));
-		List<RevisionQuestionAsset> assets = new ArrayList<RevisionQuestionAsset>();
+		List<RevisionQuestionAsset> assets = new ArrayList<>();
 		for (Question question : questionsById.values()) {
 			Path relativePath = questionAssetPath(question);
 			Path outputFile = normalizedOutputRoot.resolve(relativePath).normalize();
@@ -115,19 +99,13 @@ public final class RevisionQuestionAssetRenderer {
 			Files.createDirectories(outputFile.getParent());
 			try {
 
-				// Render only the Question body here. Shared context remains a separate
-				// revision
-				// asset so multipart presentation can display it once per group.
+				// Only Question-body content belongs in this image. Shared Context
+				// is a separate revision asset, displayed once for a multipart group.
 				contentRenderer.writeQuestionBody(question, outputFile);
-			} catch (IOException e) {
-
-				// Preserve specific source and image decoding diagnostics supplied by the
-				// mixed-content renderer.
-				throw e;
-			} catch (RuntimeException e) {
-
-				// Unexpected domain or rendering failures still identify the affected Question.
-				throw new IOException("Could not render question " + question.getId(), e);
+			} catch (IOException exception) {
+				throw exception;
+			} catch (RuntimeException exception) {
+				throw new IOException("Could not render question " + question.getId(), exception);
 			}
 			if (!Files.isRegularFile(outputFile) || Files.size(outputFile) == 0) {
 				throw new IOException("Question image was not written for question " + question.getId());

@@ -2,12 +2,15 @@ package au.edu.eq.questionbank.repository.assessment;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Arrays;
 import java.util.List;
@@ -16,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ImageSharedContextContentPart;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.Subject;
@@ -26,6 +30,312 @@ class SqliteSharedQuestionContextRepositoryTest {
 
 	@TempDir
 	Path tempDirectory;
+
+	@Test
+	void failedVersion24MigrationRollsBackSchemaAndDataThenRetries() throws Exception {
+		RepositoryFixture fixture = createFixture("context-v24-rollback.db");
+		SqliteDatabase database = fixture.database();
+		SharedQuestionContextRegion first = new SharedQuestionContextRegion(2, 0.10, 0.15, 0.70, 0.20);
+		SharedQuestionContextRegion second = new SharedQuestionContextRegion(3, 0.15, 0.25, 0.60, 0.30);
+		List<SharedQuestionContextRegion> originalRegions = List.of(first, second);
+		SharedQuestionContext original = fixture.repository().save(fixture.firstBooklet(), "Existing PDF context",
+				originalRegions);
+
+		// Reconstruct the pre-migration v23 schema using an isolated
+		// temporary database. The existing PDF region rows remain intact.
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("DROP TABLE shared_question_context_content_parts");
+			statement.execute("DROP TABLE shared_question_context_images");
+			statement.execute("UPDATE schema_version SET version = 23");
+
+			// The migration's final schema-version update occurs after
+			// table creation and PDF-region ordering backfill.
+			// Abort at that point to exercise rollback of earlier DDL/DML.
+			statement.execute("""
+					CREATE TRIGGER reject_version24_migration
+					BEFORE UPDATE ON schema_version
+					WHEN NEW.version = 24
+					BEGIN
+					    SELECT RAISE(
+					        ABORT,
+					        'injected version 24 migration failure'
+					    );
+					END
+					""");
+		}
+		assertEquals(23, database.schemaVersion());
+
+		// Migration must fail after it has executed the new DDL and
+		// backfill statements, but before the transaction can commit.
+		assertThrows(SQLException.class, database::initialiseSchema);
+
+		// SQLite transactional DDL must also be rolled back, not just
+		// the final schema-version value.
+		assertEquals(23, database.schemaVersion());
+		assertFalse(tableExists(database, "shared_question_context_images"));
+		assertFalse(tableExists(database, "shared_question_context_content_parts"));
+
+		// All original source records and relationships must remain intact.
+		// The database is deliberately at v23 here, so inspect its native
+		// tables rather than calling the v24 mixed-content repository.
+		assertEquals(1, rowCount(database, "shared_question_contexts"));
+		assertEquals(2, rowCount(database, "shared_question_context_regions"));
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT
+						    c.id,
+						    c.context_label,
+						    r.page_number,
+						    r.x,
+						    r.y,
+						    r.width,
+						    r.height
+						FROM shared_question_contexts c
+						JOIN shared_question_context_regions r
+						    ON r.shared_context_id = c.id
+						WHERE c.id = ?
+						ORDER BY r.region_order
+						""")) {
+			statement.setLong(1, original.getId());
+			try (ResultSet result = statement.executeQuery()) {
+				for (SharedQuestionContextRegion expected : originalRegions) {
+					assertTrue(result.next());
+					assertEquals(original.getId(), result.getLong("id"));
+					assertEquals(original.getLabel(), result.getString("context_label"));
+					assertEquals(expected.pageNumber(), result.getInt("page_number"));
+					assertEquals(expected.x(), result.getDouble("x"));
+					assertEquals(expected.y(), result.getDouble("y"));
+					assertEquals(expected.width(), result.getDouble("width"));
+					assertEquals(expected.height(), result.getDouble("height"));
+				}
+				assertFalse(result.next());
+			}
+		}
+
+		// Remove only the test's deliberate migration blocker.
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("DROP TRIGGER reject_version24_migration");
+		}
+
+		// Retrying on the same database must now succeed.
+		database.initialiseSchema();
+		assertEquals(24, database.schemaVersion());
+		assertTrue(tableExists(database, "shared_question_context_images"));
+		assertTrue(tableExists(database, "shared_question_context_content_parts"));
+		SharedQuestionContext migrated = fixture.repository().findByBooklet(fixture.firstBooklet()).getFirst();
+		assertEquals(original.getId(), migrated.getId());
+		assertEquals(original.getLabel(), migrated.getLabel());
+		assertEquals(originalRegions, migrated.getRegions());
+		assertEquals(2, rowCount(database, "shared_question_context_regions"));
+		assertEquals(2, rowCount(database, "shared_question_context_content_parts"));
+		assertEquals(0, rowCount(database, "shared_question_context_images"));
+
+		// Reinitialisation must be idempotent.
+		database.initialiseSchema();
+		assertEquals(24, database.schemaVersion());
+		assertEquals(2, rowCount(database, "shared_question_context_regions"));
+		assertEquals(2, rowCount(database, "shared_question_context_content_parts"));
+		assertEquals(0, rowCount(database, "shared_question_context_images"));
+	}
+
+	@Test
+	void imageOnlyAndMixedContextsSaveAndReloadInOrder() throws Exception {
+		RepositoryFixture fixture = createFixture("mixed-content.db");
+		SqliteSharedQuestionContextRepository repository = fixture.repository();
+		ImageSharedContextContentPart imageA = new ImageSharedContextContentPart(new byte[] { 1, 2, 3 });
+		ImageSharedContextContentPart imageB = new ImageSharedContextContentPart(new byte[] { 4, 5, 6 });
+		SharedQuestionContextRegion pdf = new SharedQuestionContextRegion(2, 0.1, 0.2, 0.6, 0.3);
+		SharedQuestionContext imageOnly = repository.saveContentParts(fixture.firstBooklet(), "Image only",
+				List.of(imageA));
+		SharedQuestionContext mixed = repository.saveContentParts(fixture.firstBooklet(), "Mixed",
+				List.of(imageA, pdf, imageB));
+		List<SharedQuestionContext> loaded = repository.findByBooklet(fixture.firstBooklet());
+		assertEquals(2, loaded.size());
+		assertEquals(imageOnly.getId(), loaded.get(0).getId());
+		assertEquals(List.of(imageA), loaded.get(0).getContentParts());
+		assertEquals(List.of(), loaded.get(0).getRegions());
+		assertEquals(mixed.getId(), loaded.get(1).getId());
+		assertEquals(List.of(imageA, pdf, imageB), loaded.get(1).getContentParts());
+		assertEquals(List.of(pdf), loaded.get(1).getRegions());
+		assertEquals(3, rowCount(fixture.database(), "shared_question_context_images"));
+		assertEquals(1, rowCount(fixture.database(), "shared_question_context_regions"));
+		assertEquals(4, rowCount(fixture.database(), "shared_question_context_content_parts"));
+	}
+
+	@Test
+	void migratesExistingPdfContextsWithoutChangingRegionsOrIdentity() throws Exception {
+		RepositoryFixture fixture = createFixture("context-v24-migration.db");
+		SqliteDatabase database = fixture.database();
+		List<SharedQuestionContextRegion> originalRegions = List.of(
+				new SharedQuestionContextRegion(2, 0.10, 0.15, 0.70, 0.20),
+				new SharedQuestionContextRegion(3, 0.15, 0.25, 0.60, 0.30));
+		SharedQuestionContext original = fixture.repository().save(fixture.firstBooklet(), "Existing PDF context",
+				originalRegions);
+
+		// Construct a representative v23 database using the established
+		// schema and data, but without the newly introduced v24 tables.
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("DROP TABLE shared_question_context_content_parts");
+			statement.execute("DROP TABLE shared_question_context_images");
+			statement.execute("UPDATE schema_version SET version = 23");
+		}
+		database.initialiseSchema();
+		assertEquals(24, database.schemaVersion());
+		SharedQuestionContext migrated = fixture.repository().findByBooklet(fixture.firstBooklet()).getFirst();
+		assertEquals(original.getId(), migrated.getId());
+		assertEquals(original.getLabel(), migrated.getLabel());
+		assertEquals(originalRegions, migrated.getRegions());
+
+		// The migration creates ordering records for the previously
+		// stored PDF regions without replacing their source records.
+		assertEquals(2, rowCount(database, "shared_question_context_regions"));
+		assertEquals(2, rowCount(database, "shared_question_context_content_parts"));
+		assertEquals(0, rowCount(database, "shared_question_context_images"));
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("""
+						SELECT content_order, content_type, region_order
+						FROM shared_question_context_content_parts
+						WHERE shared_context_id = %d
+						ORDER BY content_order
+						""".formatted(original.getId()))) {
+			assertTrue(result.next());
+			assertEquals(0, result.getInt("content_order"));
+			assertEquals("PDF_REGION", result.getString("content_type"));
+			assertEquals(0, result.getInt("region_order"));
+			assertTrue(result.next());
+			assertEquals(1, result.getInt("content_order"));
+			assertEquals("PDF_REGION", result.getString("content_type"));
+			assertEquals(1, result.getInt("region_order"));
+			assertFalse(result.next());
+		}
+	}
+
+	@Test
+	void mixedReplacementRetainsIdentityAndRemovesObsoleteImages() throws Exception {
+		RepositoryFixture fixture = createFixture("mixed-replacement.db");
+		SqliteSharedQuestionContextRepository repository = fixture.repository();
+		ImageSharedContextContentPart oldImage = new ImageSharedContextContentPart(new byte[] { 1, 1 });
+		ImageSharedContextContentPart newImage = new ImageSharedContextContentPart(new byte[] { 8, 9 });
+		SharedQuestionContextRegion pdf = new SharedQuestionContextRegion(1, 0.1, 0.2, 0.6, 0.3);
+		SharedQuestionContext original = repository.saveContentParts(fixture.firstBooklet(), "Before",
+				List.of(oldImage, pdf));
+		SharedQuestionContext replaced = repository.replaceContentParts(original, "After", List.of(pdf, newImage));
+		assertEquals(original.getId(), replaced.getId());
+		assertEquals(List.of(pdf, newImage), replaced.getContentParts());
+		assertEquals(List.of(pdf, newImage),
+				repository.findByBooklet(fixture.firstBooklet()).getFirst().getContentParts());
+		assertEquals("After", repository.findByBooklet(fixture.firstBooklet()).getFirst().getLabel());
+		assertEquals(1, rowCount(fixture.database(), "shared_question_context_images"));
+		assertEquals(1, rowCount(fixture.database(), "shared_question_context_regions"));
+		assertEquals(2, rowCount(fixture.database(), "shared_question_context_content_parts"));
+	}
+
+	@Test
+	void mixedReplacementRollsBackWhenContentOrderInsertFails() throws Exception {
+		RepositoryFixture fixture = createFixture("mixed-order-rollback.db");
+		SqliteSharedQuestionContextRepository repository = fixture.repository();
+		SharedQuestionContextRegion pdf = new SharedQuestionContextRegion(1, 0.1, 0.1, 0.6, 0.2);
+		ImageSharedContextContentPart originalImage = new ImageSharedContextContentPart(new byte[] { 1, 2 });
+		SharedQuestionContext original = repository.saveContentParts(fixture.firstBooklet(), "Unchanged",
+				List.of(pdf, originalImage));
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
+			statement.execute("""
+					CREATE TRIGGER reject_second_content_order
+					BEFORE INSERT ON shared_question_context_content_parts
+					WHEN NEW.content_order = 1
+					BEGIN
+					    SELECT RAISE(ABORT, 'injected content order failure');
+					END
+					""");
+		}
+		ImageSharedContextContentPart replacementImage = new ImageSharedContextContentPart(new byte[] { 3, 4 });
+		assertThrows(IllegalStateException.class,
+				() -> repository.replaceContentParts(original, "Should roll back", List.of(replacementImage, pdf)));
+		SharedQuestionContext reloaded = repository.findByBooklet(fixture.firstBooklet()).getFirst();
+		assertEquals(original.getId(), reloaded.getId());
+		assertEquals("Unchanged", reloaded.getLabel());
+		assertEquals(List.of(pdf, originalImage), reloaded.getContentParts());
+		assertEquals(1, rowCount(fixture.database(), "shared_question_contexts"));
+		assertEquals(1, rowCount(fixture.database(), "shared_question_context_regions"));
+		assertEquals(1, rowCount(fixture.database(), "shared_question_context_images"));
+		assertEquals(2, rowCount(fixture.database(), "shared_question_context_content_parts"));
+	}
+
+	@Test
+	void mixedSaveRollsBackWhenImageInsertFails() throws Exception {
+		RepositoryFixture fixture = createFixture("mixed-image-rollback.db");
+		try (Connection connection = fixture.database().openConnection();
+				Statement statement = connection.createStatement()) {
+			statement.execute("""
+					CREATE TRIGGER reject_context_image
+					BEFORE INSERT ON shared_question_context_images
+					BEGIN
+					    SELECT RAISE(ABORT, 'injected image insert failure');
+					END
+					""");
+		}
+		SharedQuestionContextRegion pdf = new SharedQuestionContextRegion(1, 0.1, 0.1, 0.6, 0.2);
+		ImageSharedContextContentPart image = new ImageSharedContextContentPart(new byte[] { 10, 20 });
+		assertThrows(IllegalStateException.class,
+				() -> fixture.repository().saveContentParts(fixture.firstBooklet(), "Will fail", List.of(pdf, image)));
+		assertEquals(0, rowCount(fixture.database(), "shared_question_contexts"));
+		assertEquals(0, rowCount(fixture.database(), "shared_question_context_regions"));
+		assertEquals(0, rowCount(fixture.database(), "shared_question_context_images"));
+		assertEquals(0, rowCount(fixture.database(), "shared_question_context_content_parts"));
+	}
+
+	@Test
+	void pdfOnlyCompatibilityPathsStillWorkAfterMixedSave() throws Exception {
+		RepositoryFixture fixture = createFixture("mixed-and-pdf-compatibility.db");
+		SqliteSharedQuestionContextRepository repository = fixture.repository();
+		SharedQuestionContextRegion pdf = new SharedQuestionContextRegion(1, 0.1, 0.1, 0.7, 0.2);
+		ImageSharedContextContentPart image = new ImageSharedContextContentPart(new byte[] { 7, 8 });
+		repository.saveContentParts(fixture.firstBooklet(), "Mixed", List.of(image, pdf));
+		repository.save(fixture.firstBooklet(), "PDF only", List.of(pdf));
+		assertEquals(2, repository.findByBooklet(fixture.firstBooklet()).size());
+		SharedQuestionContext original = repository.findByBooklet(fixture.firstBooklet()).getFirst();
+		SharedQuestionContext replaced = repository.replace(original, "PDF correction", List.of(pdf));
+		assertEquals(List.of(pdf), replaced.getContentParts());
+		assertEquals(List.of(pdf), repository.findByBooklet(fixture.firstBooklet()).getFirst().getContentParts());
+		assertEquals(0, rowCount(fixture.database(), "shared_question_context_images"));
+	}
+
+	@Test
+	void pdfOnlySaveAndReplacementMaintainVersion24ContentOrder() throws Exception {
+		RepositoryFixture fixture = createFixture("pdf-v24-order.db");
+		SqliteDatabase database = fixture.database();
+		SharedQuestionContextRegion first = new SharedQuestionContextRegion(1, 0.10, 0.10, 0.60, 0.20);
+		SharedQuestionContextRegion second = new SharedQuestionContextRegion(2, 0.10, 0.20, 0.60, 0.20);
+		SharedQuestionContext saved = fixture.repository().save(fixture.firstBooklet(), "Original context",
+				List.of(first, second));
+		assertEquals(2, rowCount(database, "shared_question_context_regions"));
+		assertEquals(2, rowCount(database, "shared_question_context_content_parts"));
+		SharedQuestionContextRegion replacement = new SharedQuestionContextRegion(3, 0.15, 0.25, 0.50, 0.30);
+		SharedQuestionContext replaced = fixture.repository().replace(saved, "Corrected context", List.of(replacement));
+		assertEquals(saved.getId(), replaced.getId());
+		assertEquals(1, rowCount(database, "shared_question_context_regions"));
+		assertEquals(1, rowCount(database, "shared_question_context_content_parts"));
+		SharedQuestionContext reloaded = fixture.repository().findByBooklet(fixture.firstBooklet()).getFirst();
+		assertEquals("Corrected context", reloaded.getLabel());
+		assertEquals(List.of(replacement), reloaded.getRegions());
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT content_order, content_type, region_order
+						FROM shared_question_context_content_parts
+						WHERE shared_context_id = ?
+						""")) {
+			statement.setLong(1, saved.getId());
+			try (ResultSet result = statement.executeQuery()) {
+				assertTrue(result.next());
+				assertEquals(0, result.getInt("content_order"));
+				assertEquals("PDF_REGION", result.getString("content_type"));
+				assertEquals(0, result.getInt("region_order"));
+				assertFalse(result.next());
+			}
+		}
+	}
 
 	@Test
 	void rejectsInvalidArguments() throws Exception {
@@ -193,6 +503,21 @@ class SqliteSharedQuestionContextRepositoryTest {
 				ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM " + table)) {
 			assertTrue(result.next());
 			return result.getInt(1);
+		}
+	}
+
+	private boolean tableExists(SqliteDatabase database, String tableName) throws Exception {
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT 1
+						FROM sqlite_master
+						WHERE type = 'table'
+						  AND name = ?
+						""")) {
+			statement.setString(1, tableName);
+			try (ResultSet result = statement.executeQuery()) {
+				return result.next();
+			}
 		}
 	}
 

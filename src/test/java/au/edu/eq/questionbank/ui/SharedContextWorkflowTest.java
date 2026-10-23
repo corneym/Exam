@@ -9,6 +9,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,6 +20,8 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
+
+import javax.imageio.ImageIO;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
@@ -33,6 +37,7 @@ import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
+import au.edu.eq.questionbank.model.ImageSharedContextContentPart;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
@@ -68,7 +73,11 @@ import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
 import javafx.scene.image.ImageView;
+import javafx.scene.image.WritableImage;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
 import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
 import javafx.stage.Stage;
 
 @Tag("ui")
@@ -513,6 +522,76 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void capturingMissingMixedSharedContextFromSearchLinksEveryPart(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteQuestionRepository questions = new SqliteQuestionRepository(database);
+		SqliteSourceQuestionRepository sources = new SqliteSourceQuestionRepository(database);
+		SqliteSharedQuestionContextRepository contexts = new SqliteSharedQuestionContextRepository(database);
+		SourceQuestion source = sources.save(booklet, "78");
+		sources.updateSharedContextStatus(source, SharedContextStatus.NONE);
+		Question first = questions.save(booklet, "78a", "", 2,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.30, 0.70, 0.10)), classification, false, source, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		Question second = questions.save(booklet, "78b", "", 3,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.50, 0.70, 0.10)), classification, false, source, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		Platform.runLater(() -> {
+			try {
+				invoke(application, "showQuestionSearch", new Class<?>[] { Stage.class, ApplicationConfig.class },
+						primaryStage, applicationConfig);
+			} catch (Exception exception) {
+				throw new RuntimeException(exception);
+			}
+		});
+		waitForDialogShowing(robot, "Search Questions");
+		openMissingSharedContextCaptureFromSearch(robot, second.getId());
+
+		// A real PDF gesture is intentional: the test verifies mixed source capture.
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-shared-context-region");
+		robot.interact(() -> {
+			WritableImage image = new WritableImage(24, 12);
+			image.getPixelWriter().setColor(0, 0, Color.BLUE);
+			ClipboardContent content = new ClipboardContent();
+			content.putImage(image);
+			Clipboard.getSystemClipboard().setContent(content);
+		});
+		fireControl(robot, "#paste-shared-context-image");
+		assertFalse(evaluateOnFx(robot, () -> Clipboard.getSystemClipboard().hasImage()));
+		assertEquals("Content parts: 2", lookup(robot, "#shared-context-region-count", Label.class).getText());
+		assertTrue(contexts.findByBooklet(booklet).isEmpty(), "Staging must not persist a context");
+		fireControlLater(robot, "#save-shared-context");
+		waitForDialogShowing(robot, "Search Questions");
+		SharedQuestionContext saved = contexts.findByBooklet(booklet).getFirst();
+		assertEquals(2, saved.getContentParts().size());
+		assertTrue(saved.getContentParts().get(0) instanceof SharedQuestionContextRegion);
+		assertTrue(saved.getContentParts().get(1) instanceof ImageSharedContextContentPart);
+		for (Question original : List.of(first, second)) {
+			Question linked = questions.findById(original.getId()).orElseThrow();
+			assertEquals(original.getId(), linked.getId());
+			assertEquals(original.getMarks(), linked.getMarks());
+			assertEquals(source.getId(), linked.getSourceQuestion().getId());
+			assertEquals(SharedContextStatus.PRESENT, linked.getSourceQuestion().getSharedContextStatus());
+			assertEquals(saved.getId(), linked.getSharedContext().getId());
+			assertEquals(saved.getContentParts(), linked.getSharedContext().getContentParts());
+			assertEquals(original.getRegions().size(), linked.getRegions().size());
+			QuestionRegion before = original.getRegions().getFirst();
+			QuestionRegion after = linked.getRegions().getFirst();
+			assertEquals(before.booklet().getId(), after.booklet().getId());
+			assertEquals(before.pageNumber(), after.pageNumber());
+			assertEquals(before.x(), after.x());
+			assertEquals(before.y(), after.y());
+			assertEquals(before.width(), after.width());
+			assertEquals(before.height(), after.height());
+		}
+		closeDialog(robot, "Search Questions");
+	}
+
+	@Test
 	void capturingMissingSharedContextFromSearchCanBeCancelledAndSaved(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet booklet = examMetadataPane().getBooklet();
@@ -553,7 +632,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals("Save and Link Context", lookup(robot, "#save-shared-context", Button.class).getText());
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-shared-context-region");
-		assertEquals("Regions: 1", lookup(robot, "#shared-context-region-count", Label.class).getText());
+		assertEquals("Content parts: 1", lookup(robot, "#shared-context-region-count", Label.class).getText());
 
 		// Staging one region must not yet create any context
 		// or link any persisted Question.
@@ -586,7 +665,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		WaitForAsyncUtils.waitForFxEvents();
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-shared-context-region");
-		assertEquals("Regions: 2", lookup(robot, "#shared-context-region-count", Label.class).getText());
+		assertEquals("Content parts: 2", lookup(robot, "#shared-context-region-count", Label.class).getText());
 		assertTrue(lookup(robot, "#shared-context-region-preview-0", Node.class).isVisible());
 		assertTrue(lookup(robot, "#shared-context-region-preview-1", Node.class).isVisible());
 
@@ -773,6 +852,43 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void editingQuestionWithImageSharedContextStartsCleanAndTracksRevertedChanges(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		ExamBooklet booklet = examMetadataPane().getBooklet();
+		CurriculumNode classification = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class)
+				.getClassification();
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteQuestionRepository questions = new SqliteQuestionRepository(database);
+		SqliteSourceQuestionRepository sources = new SqliteSourceQuestionRepository(database);
+		SqliteSharedQuestionContextRepository contexts = new SqliteSharedQuestionContextRepository(database);
+		BufferedImage image = new BufferedImage(6, 4, BufferedImage.TYPE_INT_ARGB);
+		image.setRGB(1, 1, 0xFF008800);
+		ByteArrayOutputStream output = new ByteArrayOutputStream();
+		assertTrue(ImageIO.write(image, "png", output));
+		SourceQuestion source = sources.save(booklet, "79");
+		SharedQuestionContext context = contexts.saveContentParts(booklet, "Question 79 stimulus",
+				List.of(new ImageSharedContextContentPart(output.toByteArray())));
+		sources.updateSharedContextStatus(source, SharedContextStatus.PRESENT);
+		Question saved = questions.save(booklet, "79a", "", 2,
+				List.of(new QuestionRegion(booklet, 1, 0.12, 0.28, 0.70, 0.15)), classification, false, source, context,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		robot.interact(() -> assertTrue(questionCapturePane().editQuestion(saved, () -> {
+		})));
+		Button update = lookup(robot, "#save-question", Button.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		assertEquals("Update Question", update.getText());
+		assertNotNull(lookup(robot, "#question-shared-context-image-0", ImageView.class));
+		assertTrue(update.isDisabled(), "Opening Edit Question without changes must be clean");
+		robot.interact(() -> marks.setText("4"));
+		assertFalse(update.isDisabled(), "A changed mark must enable Update Question");
+		robot.interact(() -> marks.setText("2"));
+		assertTrue(update.isDisabled(), "Reverting a change must restore the clean state");
+		robot.interact(() -> ((Button) questionCapturePane().lookup("#cancel-question-edit")).fire());
+		assertEquals(2, questions.findById(saved.getId()).orElseThrow().getMarks(),
+				"Cancelling a clean edit must not persist anything");
+	}
+
+	@Test
 	void failedMissingContextSaveRetainsRegionsAndCanBeRetried(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet booklet = examMetadataPane().getBooklet();
@@ -802,7 +918,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		openMissingSharedContextCaptureFromSearch(robot, partB.getId());
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-shared-context-region");
-		assertEquals("Regions: 1", lookup(robot, "#shared-context-region-count", Label.class).getText());
+		assertEquals("Content parts: 1", lookup(robot, "#shared-context-region-count", Label.class).getText());
 
 		// Force the final source-status update to fail after
 		// context creation and Question linking are attempted.
@@ -839,7 +955,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// The user must still have the accepted region and
 		// an active correction workspace after the error.
 		assertTrue(questionCapturePane().isCapturingSharedContext());
-		assertEquals("Regions: 1", lookup(robot, "#shared-context-region-count", Label.class).getText());
+		assertEquals("Content parts: 1", lookup(robot, "#shared-context-region-count", Label.class).getText());
 		assertEquals("Save and Link Context", lookup(robot, "#save-shared-context", Button.class).getText());
 
 		// Remove the simulated database failure and retry
