@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.awt.Color;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
@@ -27,6 +28,7 @@ import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
+import au.edu.eq.questionbank.model.ImageSharedContextContentPart;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
@@ -118,6 +120,40 @@ class QuestionExtractorTest {
 		BufferedImage image = readImage(output);
 		assertAll(() -> assertEquals(75, image.getWidth()), () -> assertEquals(75, image.getHeight()),
 				() -> assertEquals(Color.BLUE.getRGB(), image.getRGB(37, 37)));
+	}
+
+	@Test
+	void extractsImageOnlySharedContextWithNoSourcePdf() throws Exception {
+		SharedQuestionContext context = SharedQuestionContext.fromContentParts(51, booklet, "Image-only context",
+				List.of(new ImageSharedContextContentPart(createPng(40, 12, Color.RED))));
+		Path output = tempDir.resolve("image-only-shared-context.png");
+
+		// The PDF does not exist. No attempt to open it is permissible.
+		extractor.extractSharedContext(tempDir.resolve("missing-source.pdf"), context, output.toFile());
+		BufferedImage image = readImage(output);
+		assertEquals(40, image.getWidth());
+		assertEquals(12, image.getHeight());
+		assertEquals(Color.RED.getRGB(), image.getRGB(10, 5));
+	}
+
+	@Test
+	void extractsMixedSharedContextInOriginalPdfImageOrder() throws Exception {
+		Path pdf = createPdf(new PageSpec(72, 72, Color.BLUE));
+		SharedQuestionContext context = SharedQuestionContext.fromContentParts(52, booklet, "Mixed context",
+				List.of(new ImageSharedContextContentPart(createPng(40, 12, Color.RED)),
+						new SharedQuestionContextRegion(1, 0.0, 0.0, 1.0, 1.0),
+						new ImageSharedContextContentPart(createPng(35, 8, Color.GREEN))));
+		Path output = tempDir.resolve("mixed-shared-context.png");
+		extractor.extractSharedContext(pdf, context, output.toFile());
+		BufferedImage image = readImage(output);
+
+		// 12 px clipboard image, 150 px PDF region, then 8 px clipboard image.
+		assertEquals(150, image.getWidth());
+		assertEquals(170, image.getHeight());
+		assertEquals(Color.RED.getRGB(), image.getRGB(10, 5));
+		assertEquals(Color.BLUE.getRGB(), image.getRGB(75, 87));
+		assertEquals(Color.GREEN.getRGB(), image.getRGB(10, 165));
+		assertEquals(Color.WHITE.getRGB(), image.getRGB(100, 5));
 	}
 
 	@Test
@@ -281,6 +317,21 @@ class QuestionExtractorTest {
 			document.save(pdf.toFile());
 		}
 		return pdf;
+	}
+
+	private byte[] createPng(int width, int height, Color color) throws IOException {
+		BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+		for (int y = 0; y < height; y++) {
+			for (int x = 0; x < width; x++) {
+				image.setRGB(x, y, color.getRGB());
+			}
+		}
+		try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+			if (!ImageIO.write(image, "png", output)) {
+				throw new IOException("Test PNG writer unavailable");
+			}
+			return output.toByteArray();
+		}
 	}
 
 	private Path createRotatedPdf(float width, float height, int rotation, Color color) throws IOException {

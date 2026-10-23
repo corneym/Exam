@@ -69,8 +69,7 @@ public final class RevisionSharedContextAssetRenderer {
 		}
 		Path normalizedOutputRoot = outputRoot.toAbsolutePath().normalize();
 
-		// Deduplicate by context identity across questions and curriculum placements,
-		// with stable output order.
+		// Deduplicate Shared Context by persistent identity across Question placements.
 		Map<Long, SharedQuestionContext> contextsById = new TreeMap<>();
 		for (RevisionCorpusNode rootNode : corpus.getRootNodes()) {
 			collectRenderableContexts(rootNode, contextsById);
@@ -85,16 +84,22 @@ public final class RevisionSharedContextAssetRenderer {
 				throw new IOException("Shared-context asset path escapes the export root: " + relativePath);
 			}
 			Files.createDirectories(outputFile.getParent());
-			String sourceRelativePath = context.getBooklet().getSourceDocument().getRelativePath();
-			Path sourcePdf = pdfStore.resolve(sourceRelativePath);
-			if (!Files.isRegularFile(sourcePdf)) {
-				throw new IOException(
-						"Shared-context source PDF is not available for context " + context.getId() + ": " + sourcePdf);
+
+			// A PNG-only context is independent of its original exam PDF.
+			// Mixed contexts use the single PDF session opened inside QuestionExtractor.
+			Path sourcePdf = null;
+			if (!context.getRegions().isEmpty()) {
+				String relativeSource = context.getBooklet().getSourceDocument().getRelativePath();
+				sourcePdf = pdfStore.resolve(relativeSource);
+				if (!Files.isRegularFile(sourcePdf)) {
+					throw new IOException("Shared-context source PDF is not available for context " + context.getId()
+							+ ": " + sourcePdf);
+				}
 			}
 			try {
 				questionExtractor.extractSharedContext(sourcePdf, context, outputFile.toFile());
-			} catch (Exception e) {
-				throw new IOException("Could not render shared context " + context.getId() + " from " + sourcePdf, e);
+			} catch (Exception exception) {
+				throw new IOException("Could not render shared context " + context.getId(), exception);
 			}
 			if (!Files.isRegularFile(outputFile) || Files.size(outputFile) == 0) {
 				throw new IOException("Shared-context image was not written for context " + context.getId());

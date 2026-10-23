@@ -1,10 +1,13 @@
 package au.edu.eq.questionbank.service.backup;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -12,14 +15,35 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.time.Instant;
+import java.util.List;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
+
+import javax.imageio.ImageIO;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.ApplicationConfig;
+import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ImageQuestionContentPart;
+import au.edu.eq.questionbank.model.ImageSharedContextContentPart;
+import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionResponseType;
+import au.edu.eq.questionbank.model.SharedContextContentPart;
+import au.edu.eq.questionbank.model.SharedQuestionContext;
+import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
+import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.Subtopic;
+import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.model.Topic;
+import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
+import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
+import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
+import au.edu.eq.questionbank.repository.assessment.SqliteSharedQuestionContextRepository;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.HistoricalSchemaFixture;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
@@ -27,6 +51,11 @@ class DefaultRestoreExecutorTest {
 
 	@TempDir
 	Path tempDir;
+
+	@Test
+	void automaticDatabaseBackupRestoresImageOnlyAndMixedSharedContext() throws Exception {
+		assertSharedContextBackupRoundTrip(BackupKind.AUTOMATIC_DATABASE);
+	}
 
 	@Test
 	void databaseOnlyRestorePreservesManagedSubjectData() throws Exception {
@@ -70,6 +99,11 @@ class DefaultRestoreExecutorTest {
 				targetConfig.dataRoot().resolve("subjects/Chemistry/curriculum/2025/sources/curriculum.txt")));
 		assertEquals("legacy-Old Chemistry",
 				Files.readString(targetConfig.dataRoot().resolve("subjects/Chemistry/legacy/2019/questions.xlsx")));
+	}
+
+	@Test
+	void fullBackupRestoresImageOnlyAndMixedSharedContext() throws Exception {
+		assertSharedContextBackupRoundTrip(BackupKind.FULL);
 	}
 
 	@Test
@@ -196,6 +230,120 @@ class DefaultRestoreExecutorTest {
 		assertFalse(columnExists(reopenedDatabase, "source_questions", "preamble_status"));
 		assertEquals(1, readIntegerValue(reopenedDatabase, "questions", "shared_context_capture_required"));
 		assertEquals("PRESENT", readTextValue(reopenedDatabase, "source_questions", "shared_context_status"));
+	}
+
+	private void assertSharedContextBackupRoundTrip(BackupKind kind) throws Exception {
+		String suffix = kind == BackupKind.FULL ? "full" : "database";
+		ApplicationConfig sourceConfig = ApplicationConfig.fromDataRoot(tempDir.resolve("shared-source-" + suffix));
+		ApplicationConfig targetConfig = ApplicationConfig.fromDataRoot(tempDir.resolve("shared-target-" + suffix));
+		Files.createDirectories(sourceConfig.dataRoot());
+		Files.createDirectories(targetConfig.dataRoot());
+
+		// Full archives include managed Subject data; database-only archives do not.
+		Path sourceAsset = sourceConfig.dataRoot().resolve("subjects/Chemistry/context-source.txt");
+		Files.createDirectories(sourceAsset.getParent());
+		Files.writeString(sourceAsset, "original subject asset");
+		Path targetAsset = targetConfig.dataRoot().resolve("subjects/keep-existing.txt");
+		Files.createDirectories(targetAsset.getParent());
+		Files.writeString(targetAsset, "target subject asset");
+		SqliteDatabase sourceDatabase = new SqliteDatabase(sourceConfig.databasePath());
+		sourceDatabase.initialiseSchema();
+		SqliteCurriculumWriter curriculum = new SqliteCurriculumWriter(sourceDatabase);
+		Subject subject = curriculum.insertSubject("Chemistry");
+		SyllabusVersion syllabus = curriculum.insertSyllabusVersion(subject, "2025", true);
+		Unit unit = curriculum.insertUnit(syllabus, "1", "Unit 1", 1);
+		Topic topic = curriculum.insertTopic(unit, "1.1", "Topic 1", 1);
+		Subtopic classification = curriculum.insertSubtopic(topic, "1.1.1", "Topic content", 1);
+		SqliteExamWriter examWriter = new SqliteExamWriter(sourceDatabase);
+		ExamBooklet booklet = new SqliteExamImporter(sourceDatabase, examWriter).importExam(subject, "QCAA", 2025,
+				"External Assessment", "Paper 1", "Chemistry/2025/paper1.pdf");
+		byte[] imageA = sharedContextTestPng(0xFF0000);
+		byte[] imageB = sharedContextTestPng(0x0000FF);
+		byte[] questionImage = sharedContextTestPng(0x00FF00);
+		SharedQuestionContextRegion pdfRegion = new SharedQuestionContextRegion(1, 0.10, 0.15, 0.80, 0.20);
+		List<SharedContextContentPart> imageOnlyParts = List.of(new ImageSharedContextContentPart(imageA));
+		List<SharedContextContentPart> mixedParts = List.of(new ImageSharedContextContentPart(imageA), pdfRegion,
+				new ImageSharedContextContentPart(imageB));
+		SqliteSharedQuestionContextRepository contexts = new SqliteSharedQuestionContextRepository(sourceDatabase);
+		SharedQuestionContext imageOnly = contexts.saveContentParts(booklet, "Image-only stimulus", imageOnlyParts);
+		SharedQuestionContext mixed = contexts.saveContentParts(booklet, "Ordered mixed stimulus", mixedParts);
+		SqliteQuestionRepository questions = new SqliteQuestionRepository(sourceDatabase);
+		Question imageQuestion = questions.saveWithContent(booklet, "1", "", 1,
+				List.of(new ImageQuestionContentPart(questionImage)), classification, false, null, imageOnly,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		Question mixedFirst = questions.saveWithContent(booklet, "2a", "", 1,
+				List.of(new ImageQuestionContentPart(questionImage)), classification, false, null, mixed,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		Question mixedSecond = questions.saveWithContent(booklet, "2b", "", 1,
+				List.of(new ImageQuestionContentPart(questionImage)), classification, false, null, mixed,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		BackupRequest request = kind == BackupKind.FULL
+				? BackupRequest.full(tempDir.resolve("shared-backups-" + suffix))
+				: BackupRequest.automaticDatabase(sourceConfig);
+		BackupResult backup = new DefaultBackupService(sourceConfig, "Test").createBackup(request);
+		assertTrue(Files.isRegularFile(backup.backupPath()));
+		assertEquals(SqliteDatabase.latestSchemaVersion(), backup.manifest().databaseSchemaVersion());
+
+		// Restore into a distinct installation. The destination must have its own
+		// valid current database so the mandatory pre-restore safety backup succeeds.
+		SqliteDatabase targetDatabase = new SqliteDatabase(targetConfig.databasePath());
+		targetDatabase.initialiseSchema();
+		try (RestorePreparation preparation = new DefaultRestoreService(targetConfig)
+				.prepareRestore(backup.backupPath())) {
+			new DefaultRestoreExecutor(targetConfig, "Test").applyRestore(preparation, () -> {
+
+				// No long-lived resources are open in this integration fixture.
+			});
+		}
+		SqliteDatabase restoredDatabase = new SqliteDatabase(targetConfig.databasePath());
+		restoredDatabase.verifySchema();
+		restoredDatabase.verifyIntegrity();
+		assertEquals(SqliteDatabase.latestSchemaVersion(), restoredDatabase.schemaVersion());
+		SqliteQuestionRepository reloaded = new SqliteQuestionRepository(restoredDatabase);
+		Question restoredImage = reloaded.findById(imageQuestion.getId()).orElseThrow();
+		Question restoredMixedFirst = reloaded.findById(mixedFirst.getId()).orElseThrow();
+		Question restoredMixedSecond = reloaded.findById(mixedSecond.getId()).orElseThrow();
+		assertTrue(restoredImage.hasSharedContext());
+		assertEquals(imageOnly.getId(), restoredImage.getSharedContext().getId());
+		assertEquals(imageOnlyParts, restoredImage.getSharedContext().getContentParts());
+		assertTrue(restoredImage.getSharedContext().getRegions().isEmpty());
+		assertArrayEquals(imageA,
+				((ImageSharedContextContentPart) restoredImage.getSharedContext().getContentParts().getFirst())
+						.pngBytes());
+
+		// Both Questions must still link to the SAME persisted mixed context.
+		assertEquals(mixed.getId(), restoredMixedFirst.getSharedContext().getId());
+		assertEquals(mixed.getId(), restoredMixedSecond.getSharedContext().getId());
+		assertEquals(mixedParts, restoredMixedFirst.getSharedContext().getContentParts());
+		assertEquals(mixedParts, restoredMixedSecond.getSharedContext().getContentParts());
+		assertEquals(List.of(pdfRegion), restoredMixedFirst.getSharedContext().getRegions());
+		assertArrayEquals(imageA,
+				((ImageSharedContextContentPart) restoredMixedFirst.getSharedContext().getContentParts().get(0))
+						.pngBytes());
+		assertArrayEquals(imageB,
+				((ImageSharedContextContentPart) restoredMixedFirst.getSharedContext().getContentParts().get(2))
+						.pngBytes());
+		assertArrayEquals(questionImage,
+				((ImageQuestionContentPart) restoredImage.getContentParts().getFirst()).pngBytes());
+
+		// The archive must not create duplicate or orphaned Shared Context records.
+		assertEquals(2, sharedContextTableRowCount(restoredDatabase, "shared_question_contexts"));
+		assertEquals(1, sharedContextTableRowCount(restoredDatabase, "shared_question_context_regions"));
+		assertEquals(3, sharedContextTableRowCount(restoredDatabase, "shared_question_context_images"));
+		assertEquals(4, sharedContextTableRowCount(restoredDatabase, "shared_question_context_content_parts"));
+		try (Connection connection = restoredDatabase.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet violations = statement.executeQuery("PRAGMA foreign_key_check")) {
+			assertFalse(violations.next(), "Restored database contains invalid foreign-key relationships");
+		}
+		if (kind == BackupKind.FULL) {
+			assertEquals("original subject asset",
+					Files.readString(targetConfig.dataRoot().resolve("subjects/Chemistry/context-source.txt")));
+			assertFalse(Files.exists(targetAsset));
+		} else {
+			assertEquals("target subject asset", Files.readString(targetAsset));
+			assertFalse(Files.exists(targetConfig.dataRoot().resolve("subjects/Chemistry/context-source.txt")));
+		}
 	}
 
 	private boolean columnExists(SqliteDatabase database, String tableName, String columnName) throws Exception {
@@ -399,6 +547,30 @@ class DefaultRestoreExecutorTest {
 				ResultSet result = statement.executeQuery("SELECT " + columnName + " FROM " + tableName + " LIMIT 1")) {
 			assertTrue(result.next());
 			return result.getString(1);
+		}
+	}
+
+	private int sharedContextTableRowCount(SqliteDatabase database, String tableName) throws Exception {
+
+		// Only fixed, test-owned identifiers are passed to this helper.
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM " + tableName)) {
+			assertTrue(result.next());
+			return result.getInt(1);
+		}
+	}
+
+	private byte[] sharedContextTestPng(int rgb) throws IOException {
+		BufferedImage image = new BufferedImage(3, 2, BufferedImage.TYPE_INT_RGB);
+		for (int y = 0; y < image.getHeight(); y++) {
+			for (int x = 0; x < image.getWidth(); x++) {
+				image.setRGB(x, y, rgb);
+			}
+		}
+		try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+			assertTrue(ImageIO.write(image, "png", output));
+			return output.toByteArray();
 		}
 	}
 

@@ -79,6 +79,7 @@ import javafx.scene.control.ToggleGroup;
 import javafx.scene.control.Tooltip;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.scene.input.Clipboard;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
@@ -1674,6 +1675,17 @@ public final class QuestionCapturePane extends VBox {
 		});
 	}
 
+	private void clearClipboardAfterAcceptedImage() {
+
+		// Accepted image bytes already belong to the staged Question or Shared
+		// Context. A clipboard-clear failure must never discard accepted content.
+		try {
+			Clipboard.getSystemClipboard().clear();
+		} catch (RuntimeException exception) {
+			saveStatusLabel.setText("Image accepted, but clipboard could not be cleared.");
+		}
+	}
+
 	private void clearImportedCaptureCompletion() {
 		importedCaptureCompletionQuestionId = -1L;
 		importedCaptureCompletedHandler = () -> {
@@ -1951,7 +1963,7 @@ public final class QuestionCapturePane extends VBox {
 				"Accept the current PDF selection as Question content; it is persisted when the Question is saved."));
 		pasteImageButton.setId("paste-question-image");
 		pasteImageButton.setTooltip(new Tooltip(
-				"Add clipboard image content to the Question; it is persisted when the Question is saved."));
+				"Add an image to the Question or active Shared Context; successful additions clear the clipboard."));
 		saveQuestionButton.setId("save-question");
 		saveQuestionButton.setDisable(true);
 		regionCountLabel.setId("question-region-count");
@@ -3032,17 +3044,18 @@ public final class QuestionCapturePane extends VBox {
 				return;
 			}
 
-			// Automatic Shared Context capture owns the first accepted image.
-			// Nothing is inserted into the ordinary Question body in this mode.
+			// Automatic Shared Context owns the first accepted image. It must not
+			// also enter the ordinary Question body.
 			if (sharedContextCapturePane.canAcceptAutomaticClipboardImage()) {
 				sharedContextCapturePane.stageAcceptedQuestionImage(pngBytes);
 				completeAutomaticSharedContextCapture();
+				clearClipboardAfterAcceptedImage();
+				refreshClipboardImageAvailability();
 				return;
 			}
 
-			// Enforce one visible occurrence across *both* Question content
-			// and its pending, inherited or selected Shared Context.
-			// Re-check when clicked; the enabled button is not a guarantee.
+			// Check the entire active Question, including pending, inherited or
+			// selected Shared Context, every time the action is invoked.
 			if (isClipboardImageAlreadyUsedInQuestion(pngBytes)) {
 				boolean inContext = currentSharedContextContentParts()
 						.contains(new ImageSharedContextContentPart(pngBytes));
@@ -3057,6 +3070,7 @@ public final class QuestionCapturePane extends VBox {
 			showQuestionPendingStatus();
 			updateQuestionCodeLock();
 			refreshSaveButtonState();
+			clearClipboardAfterAcceptedImage();
 			refreshClipboardImageAvailability();
 		} catch (IOException exception) {
 			showAlert(Alert.AlertType.ERROR, "Clipboard image could not be added.",

@@ -160,7 +160,10 @@ public final class RevisionQuestionPresentation {
 			if (question == null) {
 				throw new NullPointerException("members contains null");
 			}
-			if (question.getRegions().isEmpty()) {
+
+			// A stored PNG is as renderable as a PDF region. getRegions() is only
+			// the backwards-compatible PDF projection of the authoritative body.
+			if (question.getContentParts().isEmpty()) {
 				throw new IllegalArgumentException("Presentation members must be renderable");
 			}
 			validateSourceQuestion(question, sourceQuestion);

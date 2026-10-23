@@ -146,11 +146,24 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 			saveInProgressAtCompletion.set(pane.isSaveInProgress());
 			callbackRan.set(true);
 		})));
-		fireControl(robot, "#save-question");
+
+		// An unchanged edit cannot be submitted. Make a genuine, valid edit so this
+		// test exercises save completion rather than firing a disabled control.
+		Button update = lookup(robot, "#save-question", Button.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		assertTrue(update.isDisabled(), "Update Question must be disabled for an unchanged edit");
+		int updatedMarks = question.getMarks() + 1;
+		robot.interact(() -> marks.setText(Integer.toString(updatedMarks)));
+		assertFalse(update.isDisabled(), "Changing the marks must enable Update Question");
+		fireControl(robot, update);
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, callbackRan::get);
 		assertFalse(saveInProgressAtCompletion.get(),
 				"Question edit completion must run after the save-in-progress state is cleared");
 		assertFalse(pane.isSaveInProgress());
+
+		// The callback must be associated with a real committed edit.
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		assertEquals(updatedMarks, repository.findById(question.getId()).orElseThrow().getMarks());
 	}
 
 	@Test
