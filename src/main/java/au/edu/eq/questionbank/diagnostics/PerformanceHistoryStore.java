@@ -25,6 +25,12 @@ public final class PerformanceHistoryStore {
 			+ "application_version,runtime_kind,schema_version," + "question_count,database_bytes,operation,samples,"
 			+ "failures,median_ms,p90_ms,max_ms";
 
+	/**
+	 * Creates a store for permanent historical performance summaries.
+	 */
+	public PerformanceHistoryStore() {
+	}
+
 	private static String csvText(String value) {
 		return "\"" + value.replace("\"", "\"\"") + "\"";
 	}
@@ -117,6 +123,10 @@ public final class PerformanceHistoryStore {
 	public record Checkpoint(UUID machineId, UUID sessionId, int checkpointIndex, Instant capturedAt,
 			String applicationVersion, String runtimeKind, int schemaVersion, long questionCount, long databaseBytes) {
 
+		/**
+		 * Validates the checkpoint's identity, timing and corpus metadata before it is
+		 * used to publish a historical performance summary.
+		 */
 		public Checkpoint {
 			Objects.requireNonNull(machineId, "machineId");
 			Objects.requireNonNull(sessionId, "sessionId");

@@ -24,8 +24,14 @@ import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ApplicationPaths;
 import au.edu.eq.questionbank.ConfigurationException;
 import au.edu.eq.questionbank.ManagedDataLayout;
+import au.edu.eq.questionbank.diagnostics.PerformanceCorpusCheckpointRecorder;
+import au.edu.eq.questionbank.diagnostics.PerformanceDiagnosticsPreferences;
+import au.edu.eq.questionbank.diagnostics.PerformanceFxStallProbe;
+import au.edu.eq.questionbank.diagnostics.PerformanceHistoryPublisher;
 import au.edu.eq.questionbank.diagnostics.PerformanceOperation;
 import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
+import au.edu.eq.questionbank.diagnostics.PerformanceRuntimeSampler;
+import au.edu.eq.questionbank.diagnostics.PerformanceSqlScope;
 import au.edu.eq.questionbank.importer.curriculum.CurriculumExcelImporter;
 import au.edu.eq.questionbank.importer.curriculum.CurriculumImportRow;
 import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
@@ -342,6 +348,9 @@ public class QuestionBankApplication extends Application {
 	private final ApplicationRestartService applicationRestartService = new ApplicationRestartService();
 	private PerformanceRecorder performanceRecorder = new PerformanceRecorder(false,
 			ApplicationPaths.diagnosticsDirectory().resolve("performance.csv"));
+	private PerformanceCorpusCheckpointRecorder performanceCorpusCheckpointRecorder;
+	private PerformanceFxStallProbe performanceFxStallProbe;
+	private PerformanceRuntimeSampler performanceRuntimeSampler;
 
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
@@ -451,9 +460,36 @@ public class QuestionBankApplication extends Application {
 			}
 		} finally {
 			try {
-				performanceRecorder.close();
+
+				// Stop new measurements before closing the session writer.
+				if (performanceFxStallProbe != null) {
+					performanceFxStallProbe.stop();
+				}
+				if (performanceRuntimeSampler != null) {
+					performanceRuntimeSampler.close();
+				}
+				if (performanceCorpusCheckpointRecorder != null) {
+					if (resourcesClosedForRestore) {
+						performanceCorpusCheckpointRecorder.closeWithoutFinalSample();
+					} else {
+						performanceCorpusCheckpointRecorder.close();
+					}
+				}
 			} finally {
-				removePrimaryStageFocusListener();
+				try {
+					performanceRecorder.close();
+					if (performanceRecorder.isEnabled() && performanceRecorder.sessionId() != null) {
+						try {
+							new PerformanceHistoryPublisher().publishSession(ApplicationPaths.diagnosticsDirectory(),
+									performanceRecorder.sessionId(), diagnosticRuntimeKind());
+						} catch (IOException | RuntimeException failure) {
+							System.err.println(
+									"Historical performance publication failed: " + failure.getClass().getSimpleName());
+						}
+					}
+				} finally {
+					removePrimaryStageFocusListener();
+				}
 			}
 		}
 	}
@@ -1155,24 +1191,6 @@ public class QuestionBankApplication extends Application {
 		setViewerMode(false);
 	}
 
-	private void completeDataRootChange(Path dataRoot, Runnable completionAction) {
-		try {
-
-			// Persist the new root only after the current data session has passed its
-			// normal backup and resource-close checks. Cancelling shutdown therefore
-			// leaves both the running session and startup configuration unchanged.
-			ApplicationConfig.saveDataRoot(applicationPropertiesFile, dataRoot);
-			completionAction.run();
-		} catch (IOException exception) {
-
-			// Resources are already closed at this point, so the current application
-			// cannot safely resume even though the configuration update failed.
-			showAlert(Alert.AlertType.ERROR, "Options", "Could not save the application options.",
-					failureMessage(exception));
-			applicationExitAction.run();
-		}
-	}
-
 	private void completeExitWithoutBackup(Runnable readyAction) {
 		ShutdownResult result = shutdownCoordinator.exitWithoutBackup();
 		if (result.exitAllowed()) {
@@ -1183,6 +1201,26 @@ public class QuestionBankApplication extends Application {
 		// Resource-close reporting is application-level and does not require a Stage
 		// parameter.
 		showResourceCloseFailure(result.failure());
+	}
+
+	private void completeOptionsChange(Path dataRoot, boolean changeDataRoot, boolean diagnosticsEnabled,
+			Runnable completionAction) {
+		try {
+
+			// Persist only the changed data root. A diagnostics-only
+			// change must not rewrite an existing legacy path configuration.
+			if (changeDataRoot) {
+				ApplicationConfig.saveDataRoot(applicationPropertiesFile, dataRoot);
+			}
+			PerformanceDiagnosticsPreferences.save(applicationPropertiesFile, diagnosticsEnabled);
+			completionAction.run();
+		} catch (IOException exception) {
+			showAlert(Alert.AlertType.ERROR, "Options", "Could not save the application options.",
+					failureMessage(exception));
+
+			// Normal shutdown already closed the current data session.
+			applicationExitAction.run();
+		}
 	}
 
 	private void completeRevisionExport(Task<RevisionExportResult> task, Alert progressAlert,
@@ -2190,6 +2228,14 @@ public class QuestionBankApplication extends Application {
 		refreshActiveExamContext();
 	}
 
+	private String diagnosticRuntimeKind() {
+		String configured = System.getProperty("eqb.performance.runtimeKind", "unknown");
+		return switch (configured) {
+		case "eclipse", "installed" -> configured;
+		default -> "unknown";
+		};
+	}
+
 	private void editQuestionMetadata(Stage primaryStage, QuestionSearchDialog searchDialog, Question question,
 			CurriculumRepository curriculumRepository, LegacyQuestionMetadataService metadataService) {
 		LegacyQuestionMetadataDialog metadataDialog = new LegacyQuestionMetadataDialog(primaryStage, question);
@@ -2912,6 +2958,11 @@ public class QuestionBankApplication extends Application {
 				() -> clearCaptureSelection(CaptureSelectionOwner.QUESTION), answerCapturePane::refreshQuestions);
 		questionCapturePane.setPerformanceRecorder(performanceRecorder);
 		questionCapturePane.setQuestionSaveBusyHandler(this::handleQuestionSaveBusy);
+		questionCapturePane.setQuestionSaveCommittedHandler(() -> {
+			if (performanceCorpusCheckpointRecorder != null) {
+				performanceCorpusCheckpointRecorder.questionSaved();
+			}
+		});
 		questionCapturePane.refreshImportedQuestions();
 	}
 
@@ -3092,9 +3143,10 @@ public class QuestionBankApplication extends Application {
 			try (PerformanceOperation snapshotOperation = performanceRecorder.start("dashboard.snapshot",
 					refreshOperation.id())) {
 				try {
-					return loadCorpusDashboardSnapshot(applicationConfig, corpusDashboardAuditService, dashboardSubject,
-							snapshotOperation.id());
-				} catch (SQLException | RuntimeException | Error failure) {
+					return PerformanceSqlScope.measure(performanceRecorder, "dashboard.snapshot",
+							snapshotOperation.id(), () -> loadCorpusDashboardSnapshot(applicationConfig,
+									corpusDashboardAuditService, dashboardSubject, snapshotOperation.id()));
+				} catch (Exception | Error failure) {
 					snapshotOperation.failed();
 					refreshOperation.failed();
 					throw failure;
@@ -4829,26 +4881,39 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void showOptions(Stage primaryStage, ApplicationConfig config) {
-		OptionsDialog dialog = new OptionsDialog(primaryStage, config.dataRoot());
+		boolean currentDiagnosticsPreference;
+		try {
+			currentDiagnosticsPreference = PerformanceDiagnosticsPreferences.load(applicationPropertiesFile);
+		} catch (IOException exception) {
+			showAlert(Alert.AlertType.ERROR, "Options", "Could not read the application options.",
+					failureMessage(exception));
+			return;
+		}
+		OptionsDialog dialog = new OptionsDialog(primaryStage, config.dataRoot(), currentDiagnosticsPreference);
 		Optional<ButtonType> result = dialog.showAndWait();
 		if (result.isEmpty() || result.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
 			return;
 		}
 		try {
 			Path dataRoot = dialog.getDataRoot();
-			if (dataRoot.equals(config.dataRoot())) {
+			boolean diagnosticsEnabled = dialog.isPerformanceDiagnosticsEnabled();
+			boolean dataRootChanged = !dataRoot.equals(config.dataRoot());
+			boolean diagnosticsChanged = diagnosticsEnabled != currentDiagnosticsPreference;
+			if (!dataRootChanged && !diagnosticsChanged) {
 				return;
 			}
-			boolean restart = showRestartRequiredChoice(primaryStage, "Data location changed.", """
-					Exam Question Bank must close the current data session before the new location can be activated.
+			String reason = dataRootChanged ? "Application data location or options changed."
+					: "Performance diagnostics setting changed.";
+			boolean restart = showRestartRequiredChoice(primaryStage, reason, """
+					Exam Question Bank must complete its normal shutdown
+					before these changes take effect.
 
-					Choose Restart Now to reopen using the new data location, or Exit to close the application.
+					Choose Restart Now to reopen with the updated options,
+					or Exit to close the application.
 					""");
 			Runnable completionAction = restart ? applicationRestartAction : applicationExitAction;
-
-			// Backup and resource shutdown still belong to the current data root. Persist
-			// the new startup location only after those safety checks have succeeded.
-			requestApplicationShutdown(primaryStage, () -> completeDataRootChange(dataRoot, completionAction));
+			requestApplicationShutdown(primaryStage,
+					() -> completeOptionsChange(dataRoot, dataRootChanged, diagnosticsEnabled, completionAction));
 		} catch (IllegalArgumentException exception) {
 			showAlert(Alert.AlertType.ERROR, "Options", "The data location is invalid.", exception.getMessage());
 		}
@@ -5226,12 +5291,59 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void startApplication(Stage primaryStage, ApplicationConfig config) throws SQLException {
-		performanceRecorder = PerformanceRecorder.fromSystemProperties(ApplicationPaths.diagnosticsDirectory());
+		boolean diagnosticsPreference = false;
+		try {
+			diagnosticsPreference = PerformanceDiagnosticsPreferences.load(applicationPropertiesFile);
+		} catch (IOException | RuntimeException failure) {
+
+			// A corrupt diagnostic preference cannot prevent application startup.
+			System.err.println(
+					"Could not read performance diagnostics preference: " + failure.getClass().getSimpleName());
+		}
+		performanceRecorder = PerformanceRecorder.fromSystemProperties(ApplicationPaths.diagnosticsDirectory(),
+				diagnosticsPreference);
+		if (performanceRecorder.isEnabled()) {
+			try {
+				performanceRuntimeSampler = new PerformanceRuntimeSampler(performanceRecorder);
+				performanceRuntimeSampler.start();
+				performanceFxStallProbe = new PerformanceFxStallProbe(performanceRecorder);
+				performanceFxStallProbe.start();
+			} catch (RuntimeException diagnosticsFailure) {
+
+				// Monitoring failures must not prevent the application
+				// from opening or modify Question persistence behaviour.
+				System.err.println(
+						"Runtime diagnostics initialisation failed: " + diagnosticsFailure.getClass().getSimpleName());
+			}
+		}
+		if (performanceRecorder.isEnabled()) {
+			try {
+				PerformanceCorpusCheckpointRecorder checkpoints = new PerformanceCorpusCheckpointRecorder(
+						ApplicationPaths.diagnosticsDirectory(), config.databasePath(),
+						performanceRecorder.sessionId());
+				checkpoints.start();
+				performanceCorpusCheckpointRecorder = checkpoints;
+
+				// Retry the historical publication of earlier completed
+				// sessions without delaying JavaFX startup.
+				Thread recovery = new Thread(() -> {
+					try {
+						new PerformanceHistoryPublisher()
+								.recoverCompletedSessions(ApplicationPaths.diagnosticsDirectory(), "unknown");
+					} catch (IOException | RuntimeException failure) {
+						System.err
+								.println("Performance history recovery failed: " + failure.getClass().getSimpleName());
+					}
+				}, "eqb-performance-history-recovery");
+				recovery.setDaemon(true);
+				recovery.start();
+			} catch (RuntimeException diagnosticFailure) {
+				System.err.println("Performance checkpoint initialisation failed: "
+						+ diagnosticFailure.getClass().getSimpleName());
+			}
+		}
 		try (PerformanceOperation operation = performanceRecorder.start("application.startup")) {
 			try {
-
-				// Retain immutable application paths for asynchronous
-				// Dashboard refreshes and workflow routing.
 				applicationConfig = config;
 				curriculumSelectionModel = new CurriculumSelectionModelFactory().create(config);
 				SqliteDatabase database = new SqliteDatabase(config.databasePath());

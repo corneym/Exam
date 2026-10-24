@@ -67,6 +67,15 @@ public final class SqliteReadProbe implements AutoCloseable {
 	}
 
 	/**
+	 * Returns whether the current thread already owns a SQL probe.
+	 *
+	 * @return true when a probe is active on this thread
+	 */
+	public static boolean isActive() {
+		return ACTIVE.get() != null;
+	}
+
+	/**
 	 * Records one successfully reconstructed Question.
 	 *
 	 * Has no effect when a diagnostic scope is not active.

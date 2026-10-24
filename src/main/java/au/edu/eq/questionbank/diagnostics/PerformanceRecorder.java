@@ -63,7 +63,20 @@ public final class PerformanceRecorder implements AutoCloseable {
 	 * @return configured recorder
 	 */
 	public static PerformanceRecorder fromSystemProperties(Path diagnosticsDirectory) {
-		boolean enabled = Boolean.parseBoolean(System.getProperty("eqb.performance.enabled", "false"));
+		return fromSystemProperties(diagnosticsDirectory, false);
+	}
+
+	/**
+	 * Creates the application recorder using a saved preference, overridden by an
+	 * explicitly supplied JVM system property.
+	 *
+	 * @param diagnosticsDirectory diagnostic output directory
+	 * @param preferenceEnabled    persisted collection preference
+	 * @return enabled or disabled recorder
+	 */
+	public static PerformanceRecorder fromSystemProperties(Path diagnosticsDirectory, boolean preferenceEnabled) {
+		String override = System.getProperty("eqb.performance.enabled");
+		boolean enabled = override == null ? preferenceEnabled : Boolean.parseBoolean(override);
 		if (!enabled) {
 			return new PerformanceRecorder(false, diagnosticsDirectory.resolve("performance.csv"));
 		}
@@ -228,6 +241,11 @@ public final class PerformanceRecorder implements AutoCloseable {
 		metadata.setProperty("session.id", sessionId.toString());
 		metadata.setProperty("session.startedAt", startedAt.toString());
 		metadata.setProperty("application.version", safeApplicationVersion());
+		String runtime = System.getProperty("eqb.performance.runtimeKind", "unknown");
+		if (!"eclipse".equals(runtime) && !"installed".equals(runtime)) {
+			runtime = "unknown";
+		}
+		metadata.setProperty("runtime.kind", runtime);
 		metadata.setProperty("java.version", System.getProperty("java.version", "unknown"));
 		metadata.setProperty("os.name", System.getProperty("os.name", "unknown"));
 		try (OutputStream output = Files.newOutputStream(metadataFile, StandardOpenOption.CREATE_NEW)) {

@@ -226,6 +226,8 @@ public final class QuestionCapturePane extends VBox {
 	private ExamBooklet importedQuestionBookletScope;
 	private FxPulseGapProbe importedEntryPulseProbe;
 	private PdfSession sharedContextPreviewSession;
+	private Runnable questionSaveCommittedHandler = () -> {
+	};
 
 	/**
 	 * Creates the question-capture workflow and its repository integration.
@@ -961,6 +963,16 @@ public final class QuestionCapturePane extends VBox {
 	 */
 	public void setQuestionSaveBusyHandler(Consumer<Boolean> handler) {
 		questionSaveBusyHandler = Objects.requireNonNull(handler, "handler");
+	}
+
+	/**
+	 * Sets a callback invoked when ordinary Question Save persistence has committed
+	 * successfully, independently of later UI publication.
+	 *
+	 * @param handler committed-save notification
+	 */
+	public void setQuestionSaveCommittedHandler(Runnable handler) {
+		questionSaveCommittedHandler = Objects.requireNonNull(handler, "handler");
 	}
 
 	/**
@@ -3691,9 +3703,6 @@ public final class QuestionCapturePane extends VBox {
 				List.copyOf(pendingContentParts), curriculumSelectionModel.getClassification(), selectedResponseType(),
 				sharedContextCapturePane.getSelectedContext(), pendingSharedContextForSave(),
 				continueSharedContextToNextMcq());
-
-		// This snapshot belongs to the FX thread. It is used only if
-		// the worker cannot publish a new authoritative corpus.
 		List<Question> beforeSaveSnapshot = List.copyOf(questionSnapshot);
 		int savedPreviousImportedIndex = previousImportedIndex;
 		boolean savedHadStoredContent = hadStoredContent;
@@ -3707,6 +3716,23 @@ public final class QuestionCapturePane extends VBox {
 					QuestionSaveResult result = saveTask.getValue();
 					if (result.validationError() != null) {
 						operation.failed();
+					}
+					if (result.question() != null) {
+
+						// Persistence has committed. Count this save even
+						// if subsequent UI publication encounters a failure.
+						// Checkpoint reporting cannot invalidate that commit.
+						try {
+							questionSaveCommittedHandler.run();
+						} catch (RuntimeException diagnosticFailure) {
+							try {
+								System.err.println("Performance checkpoint callback failed: "
+										+ diagnosticFailure.getClass().getSimpleName());
+							} catch (RuntimeException ignored) {
+
+								// Diagnostics must remain non-fatal.
+							}
+						}
 					}
 					try (PerformanceOperation publication = performanceRecorder.start("capture.question.save.publish",
 							operation.id())) {

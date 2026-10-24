@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.ui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -20,6 +21,7 @@ import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ApplicationVersion;
+import au.edu.eq.questionbank.diagnostics.PerformanceDiagnosticsPreferences;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.backup.BackupKind;
 import au.edu.eq.questionbank.service.backup.BackupManifest;
@@ -32,6 +34,7 @@ import javafx.event.Event;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuBar;
@@ -111,6 +114,40 @@ class ApplicationLifecycleWorkflowTest extends QuestionBankApplicationUiTestBase
 		assertEquals(1, restartCount.get());
 		assertEquals(1, automaticBackupCount());
 		assertEquals(newDataRoot.toAbsolutePath().normalize(), ApplicationConfig.load(propertiesFile).dataRoot());
+	}
+
+	@Test
+	void diagnosticsOptionPersistsThroughNormalRestartShutdown(FxRobot robot) throws Exception {
+		Path propertiesDirectory = Files.createTempDirectory("question-bank-diagnostics-options-");
+		Path propertiesFile = propertiesDirectory.resolve("questionbank.properties");
+		ApplicationConfig.saveDataRoot(propertiesFile, applicationConfig.dataRoot());
+		AtomicInteger exitCount = new AtomicInteger();
+		AtomicInteger restartCount = new AtomicInteger();
+		setField(application, "applicationPropertiesFile", propertiesFile);
+		setField(application, "applicationExitAction", (Runnable) exitCount::incrementAndGet);
+		setField(application, "applicationRestartAction", (Runnable) restartCount::incrementAndGet);
+		assertEquals(0, automaticBackupCount());
+		Platform.runLater(fileOptionsMenuItem()::fire);
+		waitForDialogShowing(robot, "Options");
+		CheckBox collection = lookupInShowingDialog(robot, "Options", "#performance-diagnostics-enabled",
+				CheckBox.class);
+		robot.interact(() -> {
+			assertFalse(collection.isSelected());
+			collection.setSelected(true);
+		});
+		DialogPane options = showingDialogPane(robot, "Options");
+		ButtonType saveType = options.getButtonTypes().stream().filter(type -> "Save".equals(type.getText()))
+				.findFirst().orElseThrow();
+		Button save = (Button) options.lookupButton(saveType);
+		fireControlLater(save);
+		waitForDialogShowing(robot, "Restart Required");
+		fireDialogButton(robot, "Restart Now");
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(1, restartCount.get());
+		assertEquals(0, exitCount.get());
+		assertEquals(1, automaticBackupCount());
+		assertTrue(PerformanceDiagnosticsPreferences.load(propertiesFile));
+		assertEquals(applicationConfig.dataRoot(), ApplicationConfig.load(propertiesFile).dataRoot());
 	}
 
 	@Test
