@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.ui.capture;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -67,6 +68,14 @@ class SharedContextCapturePaneTest {
 	private PdfSession session;
 	@TempDir
 	Path tempDirectory;
+
+	private static <T> String renderedContextText(ComboBox<T> selector, Object context) {
+		int index = selector.getItems().indexOf(context);
+		assertTrue(index >= 0, "Context must appear in selector");
+
+		// Retrieve the value through the ComboBox's actual generic type.
+		return selector.getConverter().toString(selector.getItems().get(index));
+	}
 
 	@Test
 	void acceptedAutomaticSharedContextIsExposedWithoutBeingPersisted(FxRobot robot) {
@@ -392,9 +401,9 @@ class SharedContextCapturePaneTest {
 				new SharedQuestionContextRegion(1, 0.10, 0.10, 0.40, 0.20), new ImageSharedContextContentPart(png)));
 		robot.interact(pane::refreshForCurrentBooklet);
 		robot.interact(() -> {
-			ComboBox<SharedQuestionContext> selector = (ComboBox<SharedQuestionContext>) pane.lookup("#shared-context");
-			assertEquals("Image context — 1 image(s)", selector.getConverter().toString(imageOnly));
-			assertEquals("Mixed context — 1 region(s), 1 image(s)", selector.getConverter().toString(mixed));
+			ComboBox<?> selector = assertInstanceOf(ComboBox.class, pane.lookup("#shared-context"));
+			assertEquals("Image context — 1 image(s)", renderedContextText(selector, imageOnly));
+			assertEquals("Mixed context — 1 region(s), 1 image(s)", renderedContextText(selector, mixed));
 		});
 	}
 

@@ -446,14 +446,15 @@ public class QuestionBankApplication extends Application {
 	@Override
 	public void stop() throws Exception {
 		try {
-			if (resourcesClosedForRestore) {
-				return;
-			}
-			if (shutdownCoordinator == null || !shutdownCoordinator.isReadyToExit()) {
+			if (!resourcesClosedForRestore && (shutdownCoordinator == null || !shutdownCoordinator.isReadyToExit())) {
 				pdfWorkspace.close();
 			}
 		} finally {
-			removePrimaryStageFocusListener();
+			try {
+				performanceRecorder.close();
+			} finally {
+				removePrimaryStageFocusListener();
+			}
 		}
 	}
 
