@@ -29,6 +29,7 @@ import au.edu.eq.questionbank.diagnostics.PerformanceCorpusCheckpointRecorder;
 import au.edu.eq.questionbank.diagnostics.PerformanceDiagnosticsPreferences;
 import au.edu.eq.questionbank.diagnostics.PerformanceFxStallProbe;
 import au.edu.eq.questionbank.diagnostics.PerformanceHistoryPublisher;
+import au.edu.eq.questionbank.diagnostics.PerformanceLatestReport;
 import au.edu.eq.questionbank.diagnostics.PerformanceOperation;
 import au.edu.eq.questionbank.diagnostics.PerformanceRawRetention;
 import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
@@ -482,8 +483,12 @@ public class QuestionBankApplication extends Application {
 					performanceRecorder.close();
 					if (performanceRecorder.isEnabled() && performanceRecorder.sessionId() != null) {
 						try {
-							new PerformanceHistoryPublisher().publishSession(ApplicationPaths.diagnosticsDirectory(),
+							Path diagnosticsRoot = ApplicationPaths.diagnosticsDirectory();
+							boolean published = new PerformanceHistoryPublisher().publishSession(diagnosticsRoot,
 									performanceRecorder.sessionId(), diagnosticRuntimeKind());
+							if (published && !resourcesClosedForRestore) {
+								new PerformanceLatestReport().refreshBeforeExit(diagnosticsRoot);
+							}
 						} catch (IOException | RuntimeException failure) {
 							System.err.println(
 									"Historical performance publication failed: " + failure.getClass().getSimpleName());
@@ -1974,8 +1979,11 @@ public class QuestionBankApplication extends Application {
 
 	private Menu createHelpMenu(ApplicationConfig config) {
 		Menu helpMenu = createMenu("_Help");
-		helpMenu.getItems().addAll(createMenuItem("_Help Contents...", this::showHelpContents), new SeparatorMenuItem(),
-				createMenuItem("_About...", this::showAbout),
+		MenuItem performanceReportItem = createMenuItem("View _Performance Report...",
+				this::showLatestPerformanceReport);
+		performanceReportItem.setId("help-performance-report");
+		helpMenu.getItems().addAll(createMenuItem("_Help Contents...", this::showHelpContents), performanceReportItem,
+				new SeparatorMenuItem(), createMenuItem("_About...", this::showAbout),
 				createMenuItem("_Version Information...", () -> showVersionInformation(config)));
 		return helpMenu;
 	}
@@ -4803,6 +4811,23 @@ public class QuestionBankApplication extends Application {
 		dialog.showAndWait();
 	}
 
+	private void showLatestPerformanceReport() {
+		Path report = PerformanceLatestReport.latestReportPath(ApplicationPaths.diagnosticsDirectory());
+		if (!Files.isRegularFile(report)) {
+			showAlert(Alert.AlertType.INFORMATION, "Performance Report", "No performance report is available yet.",
+					"Enable performance diagnostics in Options, restart, and close a normal session. "
+							+ "A report is generated automatically after completed sessions are published.\n\n"
+							+ "Expected report location:\n" + report);
+			return;
+		}
+		try {
+			getHostServices().showDocument(report.toUri().toASCIIString());
+		} catch (RuntimeException failure) {
+			showAlert(Alert.AlertType.ERROR, "Performance Report", "Could not open the report in the browser.",
+					"Open the following file manually:\n" + report + "\n\n" + failureMessage(failure));
+		}
+	}
+
 	private void showLegacyQuestionImportFromDashboard() {
 		if (!allowExamAssetsTransition()) {
 			return;
@@ -5371,22 +5396,29 @@ public class QuestionBankApplication extends Application {
 					try {
 						new PerformanceHistoryPublisher().recoverCompletedSessions(diagnosticsRoot, "unknown");
 
-						// Deliberately off by default until retention
-						// tests and disposable-data checks are green.
+						// Raw-session retention remains an explicit opt-in, never automatic by default.
 						if (Boolean.getBoolean("eqb.performance.rawRetention.enabled")) {
 							PerformanceRawRetention.Result result = new PerformanceRawRetention().enforce(
 									diagnosticsRoot, PerformanceRawRetention.DEFAULT_MAX_RAW_BYTES, protectedSession,
 									true);
 							if (!result.lockAcquired()) {
-								System.err
-										.println("Performance retention skipped: " + "another instance holds the lock");
+								System.err.println("Performance retention skipped: another instance holds the lock");
 							} else if (result.deletedSessions() > 0) {
 								System.out.println("Performance raw sessions pruned: " + result.deletedSessions());
 							}
 						}
 					} catch (IOException | RuntimeException failure) {
-						System.err.println("Performance history recovery or retention " + "failed: "
+						System.err.println("Performance history recovery or retention failed: "
 								+ failure.getClass().getSimpleName());
+					} finally {
+
+						// Retry any shutdown report refresh that could not complete before exit.
+						try {
+							new PerformanceLatestReport().refresh(diagnosticsRoot);
+						} catch (IOException | RuntimeException failure) {
+							System.err.println("Automatic performance report recovery failed: "
+									+ failure.getClass().getSimpleName());
+						}
 					}
 				}, "eqb-performance-history-recovery");
 				recovery.setDaemon(true);

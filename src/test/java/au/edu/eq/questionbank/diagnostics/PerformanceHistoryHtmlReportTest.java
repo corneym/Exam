@@ -73,6 +73,20 @@ class PerformanceHistoryHtmlReportTest {
 	}
 
 	@Test
+	void htmlTemplateContainsAutomaticFindingsWithoutOnlineDependencies() throws Exception {
+		try (InputStream input = PerformanceHistoryHtmlReport.class
+				.getResourceAsStream("performance-history-report.html")) {
+			assertTrue(input != null);
+			String html = new String(input.readAllBytes(), StandardCharsets.UTF_8);
+			assertTrue(html.contains("Automatic performance review"));
+			assertTrue(html.contains("id=\"automatic-findings\""));
+			assertTrue(html.contains("legacyObservations = __LEGACY_OBSERVATIONS__"));
+			assertFalse(html.contains("<script src="));
+			assertFalse(html.contains("<link rel=\"stylesheet\""));
+		}
+	}
+
+	@Test
 	void htmlTemplateIsPackagedAndOffline() throws Exception {
 		try (InputStream input = PerformanceHistoryHtmlReport.class
 				.getResourceAsStream("performance-history-report.html")) {
