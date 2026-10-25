@@ -13,6 +13,7 @@ import java.lang.reflect.Proxy;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -58,9 +59,11 @@ import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.audit.BookletCorpusAudit;
 import au.edu.eq.questionbank.service.audit.BookletCorpusStatus;
+import au.edu.eq.questionbank.service.curriculum.DescriptorLookupService.DescriptorMatch;
 import au.edu.eq.questionbank.ui.exam.ExamAssetsPane;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
+import javafx.animation.AnimationTimer;
 import javafx.application.Platform;
 import javafx.event.EventHandler;
 import javafx.scene.Node;
@@ -72,6 +75,7 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
+import javafx.scene.control.ListView;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.ScrollPane;
@@ -79,6 +83,8 @@ import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.input.ContextMenuEvent;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
@@ -1094,6 +1100,101 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		assertFalse(Files.exists(managedPdf));
 		assertNull(examMetadataPane().getBooklet());
 		assertTrue(robot.lookup("#exam-assets-question-booklet-" + booklet.getId()).tryQuery().isEmpty());
+	}
+
+	@Test
+	void descriptorSearchResultsKeepCaptureLayoutStable(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+
+		// Supply actual accepted Question content so the Descriptor
+		// results and content previews participate in the same layout.
+		robot.interact(() -> questionCapturePane().acceptSelection(
+				new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM, 1, 0.10, 0.05, 0.70, 0.35)));
+		fireControl(robot, "#add-question-region");
+		robot.interact(() -> questionCapturePane().acceptSelection(
+				new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM, 1, 0.10, 0.55, 0.70, 0.35)));
+		fireControl(robot, "#add-question-region");
+		WaitForAsyncUtils.waitForFxEvents();
+		ScrollPane captureScroll = lookup(robot, "#capture-workspace-scroll", ScrollPane.class);
+		Node classification = lookup(robot, "#classification-context", Node.class);
+		ScrollPane partsScroll = field(questionCapturePane(), "regionsScrollPane", ScrollPane.class);
+		VBox previewList = field(questionCapturePane(), "regionPreviewBox", VBox.class);
+		TextField search = lookup(robot, "#curriculum-descriptor-search", TextField.class);
+		Label status = lookup(robot, "#curriculum-descriptor-search-status", Label.class);
+		ListView<DescriptorMatch> results = listView(robot, "#curriculum-descriptor-search-results");
+		List<Node> originalPreviews = List.copyOf(previewList.getChildren());
+		assertEquals(2, originalPreviews.size());
+		assertTrue(partsScroll.isVisible());
+
+		// The outer viewport must reserve scrollbar width regardless
+		// of the number of matching Descriptors.
+		assertEquals(ScrollPane.ScrollBarPolicy.ALWAYS, captureScroll.getVbarPolicy());
+
+		// Case 1: a genuine asynchronous Descriptor search.
+		robot.interact(() -> search.setText("Descriptor"));
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> results.isVisible()
+				&& !results.getItems().isEmpty() && captureScroll.getViewportBounds().getWidth() > 0));
+		assertCaptureLayoutSettles(robot, captureScroll, classification, results, partsScroll);
+
+		// Case 2: stress the result ListView with many long, wrapped
+		// hierarchy paths while keeping the original search active.
+		//
+		// These synthetic matches are used only to exercise layout;
+		// the genuine search and selection are tested separately.
+		robot.interact(() -> {
+			DescriptorMatch original = results.getItems().getFirst();
+			List<DescriptorMatch> longMatches = new ArrayList<>();
+			for (int i = 0; i < 40; i++) {
+				String hierarchy = ("Unit One / Topic One / " + "Classification hierarchy with "
+						+ "substantial descriptive wording / ").repeat(5) + "Descriptor " + i;
+				longMatches.add(new DescriptorMatch(original.descriptor(), hierarchy));
+			}
+			results.getItems().setAll(longMatches);
+			captureScroll.setMaxHeight(270.0);
+		});
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(40, results.getItems().size());
+		assertTrue(results.isVisible());
+		assertCaptureLayoutSettles(robot, captureScroll, classification, results, partsScroll);
+
+		// Case 3: change the available vertical viewport without
+		// resizing the native Stage. This avoids headless framebuffer
+		// enlargement issues encountered in earlier UI tests.
+		robot.interact(() -> captureScroll.setMaxHeight(390.0));
+		assertCaptureLayoutSettles(robot, captureScroll, classification, results, partsScroll);
+
+		// Case 4: no results. The status remains visible and the
+		// result ListView becomes unmanaged.
+		robot.interact(() -> search.setText("unmatched-descriptor-sentinel-210"));
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot, () -> "No matching Descriptors.".equals(status.getText())
+						&& !results.isVisible() && !results.isManaged()));
+		assertCaptureLayoutSettles(robot, captureScroll, classification, results, partsScroll);
+
+		// Case 5: restore a genuine result and complete selection.
+		robot.interact(() -> search.setText("Descriptor"));
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot, () -> results.isVisible() && !results.getItems().isEmpty()));
+		assertCaptureLayoutSettles(robot, captureScroll, classification, results, partsScroll);
+		DescriptorMatch selected = results.getItems().getFirst();
+		robot.interact(() -> {
+			results.getSelectionModel().selectFirst();
+			results.fireEvent(new KeyEvent(KeyEvent.KEY_PRESSED, "", "", KeyCode.ENTER, false, false, false, false));
+		});
+
+		// Issue #191: selection clears the search.
+		assertEquals("", search.getText());
+		assertFalse(results.isVisible());
+
+		// Issue #189: selecting through search retains the code and
+		// the authoritative classification hierarchy.
+		TextField code = lookup(robot, "#curriculum-code", TextField.class);
+		assertEquals(selected.descriptor().getCode(), code.getText());
+
+		// The accepted Question previews must not be destroyed or
+		// replaced merely because Descriptor search was displayed.
+		assertEquals(originalPreviews, List.copyOf(previewList.getChildren()));
+		assertEquals(ScrollPane.ScrollBarPolicy.ALWAYS, captureScroll.getVbarPolicy());
 	}
 
 	@Test
@@ -3037,6 +3138,51 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
 		assertEquals(physics, model.getSubject());
 		assertEquals(physics, subjects.getValue());
+	}
+
+	private void assertCaptureLayoutSettles(FxRobot robot, ScrollPane captureScroll, Node classification,
+			ListView<DescriptorMatch> results, ScrollPane partsScroll) throws InterruptedException {
+		List<double[]> samples = new ArrayList<>();
+		CountDownLatch completed = new CountDownLatch(1);
+		AnimationTimer timer = new AnimationTimer() {
+
+			private int pulses;
+
+			@Override
+			public void handle(long now) {
+
+				// Record the geometry of the connected layout surfaces.
+				// All measurements occur on the JavaFX application thread.
+				samples.add(new double[] { captureScroll.getViewportBounds().getWidth(),
+						captureScroll.getViewportBounds().getHeight(), classification.getLayoutBounds().getWidth(),
+						classification.getLayoutBounds().getHeight(), results.getWidth(), results.getHeight(),
+						partsScroll.getWidth(), partsScroll.getHeight() });
+				pulses++;
+				if (pulses >= 20) {
+					stop();
+					completed.countDown();
+				}
+			}
+		};
+		robot.interact(timer::start);
+		try {
+			assertTrue(completed.await(10, TimeUnit.SECONDS), "JavaFX did not produce the required layout samples");
+		} finally {
+			robot.interact(timer::stop);
+		}
+		assertEquals(20, samples.size());
+
+		// Allow ten pulses for the layout transition. Once settled,
+		// none of the connected panes should keep alternating size.
+		double[] settled = samples.get(10);
+		assertTrue(settled[0] > 0.0 && settled[1] > 0.0, "The Capture viewport must have usable dimensions");
+		for (int sampleIndex = 11; sampleIndex < samples.size(); sampleIndex++) {
+			double[] measured = samples.get(sampleIndex);
+			for (int dimension = 0; dimension < settled.length; dimension++) {
+				assertEquals(settled[dimension], measured[dimension], 0.75,
+						"Capture layout continued resizing: " + "sample=" + sampleIndex + ", dimension=" + dimension);
+			}
+		}
 	}
 
 	private Path createPdf(Path path, int pageCount) throws Exception {

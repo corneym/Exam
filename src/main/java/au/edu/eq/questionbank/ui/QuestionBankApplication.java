@@ -1814,18 +1814,28 @@ public class QuestionBankApplication extends Application {
 	private VBox createCaptureWorkspaceModePane() {
 		VBox captureWorkspace = createCaptureWorkspacePane();
 
-		// Classification plus Question/Answer work may grow beyond the available
-		// vertical space. Scroll only that task-specific body.
+		// Classification and Question/Answer content share a
+		// vertically scrollable workspace.
 		captureWorkspaceScrollPane = new ScrollPane(captureWorkspace);
 		captureWorkspaceScrollPane.setId("capture-workspace-scroll");
 		captureWorkspaceScrollPane.setFitToWidth(true);
 		captureWorkspaceScrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-		captureWorkspaceScrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+
+		// Reserve the vertical scrollbar width even when the
+		// content currently fits.
+		//
+		// Descriptor lookup results contain wrapped hierarchy labels.
+		// If the scrollbar appears and disappears, viewport width
+		// changes can reflow those labels and the accepted Question
+		// previews, potentially causing a repeated layout cycle.
+		//
+		// A permanently reserved scrollbar prevents that particular
+		// width feedback mechanism.
+		captureWorkspaceScrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.ALWAYS);
 		captureWorkspaceScrollPane.setMinHeight(0);
 		VBox.setVgrow(captureWorkspaceScrollPane, Priority.ALWAYS);
 
-		// Active Exam / Booklet is deliberately outside the scroll pane so the source
-		// context remains visible throughout Question and Answer work.
+		// Keep the active Exam / Booklet outside the scrollable body.
 		VBox captureModePane = new VBox(SECTION_SPACING, createActiveExamContextPane(), captureWorkspaceScrollPane);
 		captureModePane.setId("capture-workspace-mode");
 		captureModePane.setMinHeight(0);
