@@ -23,6 +23,7 @@ public final class PerformanceHistoryHtmlReport {
 	private static final String EXPECTED_HEADER = "checkpoint_at,machine_id,session_id,checkpoint_index,"
 			+ "application_version,runtime_kind,schema_version," + "question_count,database_bytes,operation,samples,"
 			+ "failures,median_ms,p90_ms,max_ms";
+	private static final String SQL_HEADER = EXPECTED_HEADER + ",metric_unit,value_median,value_p90,value_max";
 	private static final String TEMPLATE_RESOURCE = "performance-history-report.html";
 
 	/**
@@ -89,7 +90,7 @@ public final class PerformanceHistoryHtmlReport {
 				throw new IOException("Packaged performance HTML template is missing");
 			}
 			String template = new String(input.readAllBytes(), StandardCharsets.UTF_8);
-			for (String placeholder : List.of("__OBSERVATIONS__", "__LEGACY_OBSERVATIONS__")) {
+			for (String placeholder : List.of("__OBSERVATIONS__", "__SQL_OBSERVATIONS__", "__LEGACY_OBSERVATIONS__")) {
 				int first = template.indexOf(placeholder);
 				if (first < 0 || template.indexOf(placeholder, first + placeholder.length()) >= 0) {
 					throw new IOException("Performance HTML template must contain exactly one " + placeholder);
@@ -99,11 +100,12 @@ public final class PerformanceHistoryHtmlReport {
 		}
 	}
 
-	private static List<Observation> read(Path historyDirectory) throws IOException {
+	private static HistoryData read(Path historyDirectory) throws IOException {
+		List<Observation> timings = new ArrayList<>();
+		List<SqlObservation> sql = new ArrayList<>();
 		if (!Files.isDirectory(historyDirectory)) {
-			return new ArrayList<>();
+			return new HistoryData(timings, sql);
 		}
-		List<Observation> result = new ArrayList<>();
 		try (Stream<Path> candidates = Files.walk(historyDirectory, 3)) {
 			for (Path file : candidates.filter(Files::isRegularFile).filter(path -> !Files.isSymbolicLink(path))
 					.filter(path -> SUMMARY_NAME.matcher(path.getFileName().toString()).matches()).toList()) {
@@ -120,7 +122,11 @@ public final class PerformanceHistoryHtmlReport {
 					throw new IOException("Invalid history directory identity", invalid);
 				}
 				List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
-				if (lines.isEmpty() || !EXPECTED_HEADER.equals(lines.getFirst())) {
+				if (lines.isEmpty()) {
+					throw new IOException("Empty historical summary");
+				}
+				boolean typedSql = SQL_HEADER.equals(lines.getFirst());
+				if (!typedSql && !EXPECTED_HEADER.equals(lines.getFirst())) {
 					throw new IOException("Unsupported historical summary format");
 				}
 				for (int line = 1; line < lines.size(); line++) {
@@ -129,24 +135,56 @@ public final class PerformanceHistoryHtmlReport {
 					}
 					try {
 						List<String> values = csvCells(lines.get(line));
-						if (values.size() != 15) {
+						if (values.size() != (typedSql ? 19 : 15)) {
 							throw new IllegalArgumentException("Incorrect summary column count");
 						}
-						Observation observation = new Observation(Instant.parse(values.get(0)),
-								UUID.fromString(values.get(1)), UUID.fromString(values.get(2)), values.get(4),
-								values.get(5), Long.parseLong(values.get(7)), values.get(9),
-								Long.parseLong(values.get(10)), Long.parseLong(values.get(11)),
-								Double.parseDouble(values.get(12)), Double.parseDouble(values.get(13)),
-								Double.parseDouble(values.get(14)));
-						if (!observation.machineId().equals(directoryMachine)
-								|| !observation.sessionId().equals(directorySession) || observation.samples() < 1
-								|| observation.failures() < 0 || observation.failures() > observation.samples()
-								|| !Double.isFinite(observation.median()) || !Double.isFinite(observation.p90())
-								|| !Double.isFinite(observation.maximum()) || observation.median() < 0
-								|| observation.p90() < 0 || observation.maximum() < 0) {
+						Instant captured = Instant.parse(values.get(0));
+						UUID machine = UUID.fromString(values.get(1));
+						UUID session = UUID.fromString(values.get(2));
+						String version = values.get(4);
+						String runtime = values.get(5);
+						long questionCount = Long.parseLong(values.get(7));
+						String operation = values.get(9);
+						long samples = Long.parseLong(values.get(10));
+						long failures = Long.parseLong(values.get(11));
+						double medianMs = Double.parseDouble(values.get(12));
+						double p90Ms = Double.parseDouble(values.get(13));
+						double maxMs = Double.parseDouble(values.get(14));
+						if (!machine.equals(directoryMachine) || !session.equals(directorySession) || samples < 1
+								|| failures < 0 || failures > samples || questionCount < -1
+								|| !validStatistic(medianMs, p90Ms, maxMs)) {
 							throw new IllegalArgumentException("Invalid historical observation");
 						}
-						result.add(observation);
+						String expectedUnit = PerformanceSqlMetric.unit(operation);
+						if (expectedUnit != null) {
+
+							// Legacy summaries do not contain SQL counter values; their
+							// elapsed_ms is recorder overhead and must NOT be charted.
+							if (!typedSql) {
+								continue;
+							}
+							if (!expectedUnit.equals(values.get(15))) {
+								throw new IllegalArgumentException("SQL statistic has the wrong unit");
+							}
+							double valueMedian = Double.parseDouble(values.get(16));
+							double valueP90 = Double.parseDouble(values.get(17));
+							double valueMax = Double.parseDouble(values.get(18));
+							if (!validStatistic(valueMedian, valueP90, valueMax)) {
+								throw new IllegalArgumentException("Invalid SQL metric values");
+							}
+							String workflow = operation.substring(0, operation.lastIndexOf(".sql."));
+							String metric = operation.substring(operation.lastIndexOf(".sql.") + 5);
+							sql.add(new SqlObservation(captured, machine, session, version, runtime, questionCount,
+									workflow, metric, expectedUnit, samples, failures, valueMedian, valueP90,
+									valueMax));
+						} else {
+							if (typedSql && (!values.get(15).isEmpty() || !values.get(16).isEmpty()
+									|| !values.get(17).isEmpty() || !values.get(18).isEmpty())) {
+								throw new IllegalArgumentException("Timed operation incorrectly contains SQL values");
+							}
+							timings.add(new Observation(captured, machine, session, version, runtime, questionCount,
+									operation, samples, failures, medianMs, p90Ms, maxMs));
+						}
 					} catch (RuntimeException invalid) {
 						throw new IOException("Invalid summary row in " + file.getFileName() + " at line " + (line + 1),
 								invalid);
@@ -154,7 +192,12 @@ public final class PerformanceHistoryHtmlReport {
 				}
 			}
 		}
-		return result;
+		return new HistoryData(timings, sql);
+	}
+
+	private static boolean validStatistic(double median, double p90, double maximum) {
+		return Double.isFinite(median) && Double.isFinite(p90) && Double.isFinite(maximum) && median >= 0
+				&& p90 >= median && maximum >= p90;
 	}
 
 	/**
@@ -181,14 +224,19 @@ public final class PerformanceHistoryHtmlReport {
 	 * @throws IOException if either source is invalid or output cannot be created
 	 */
 	public Path generate(Path historyDirectory, Path destination, Path legacyCsv) throws IOException {
-		List<Observation> observations = read(historyDirectory);
+		HistoryData history = read(historyDirectory);
+		List<Observation> observations = new ArrayList<>(history.timings());
+		List<SqlObservation> sql = new ArrayList<>(history.sql());
 		List<PerformanceLegacyCsvSummary.Group> legacy = legacyCsv == null ? List.of()
 				: new PerformanceLegacyCsvSummary().read(legacyCsv);
-		if (observations.isEmpty() && legacy.isEmpty()) {
+		if (observations.isEmpty() && sql.isEmpty() && legacy.isEmpty()) {
 			throw new IOException("No historical performance observations available");
 		}
 		observations.sort(Comparator.comparing(Observation::operation).thenComparing(o -> o.machineId().toString())
 				.thenComparing(Observation::questionCount).thenComparing(Observation::capturedAt));
+		sql.sort(Comparator.comparing(SqlObservation::workflow).thenComparing(SqlObservation::metric)
+				.thenComparing(o -> o.machineId().toString()).thenComparing(SqlObservation::questionCount)
+				.thenComparing(SqlObservation::capturedAt));
 		StringBuilder modernJson = new StringBuilder("[");
 		for (Observation observation : observations) {
 			if (modernJson.length() > 1) {
@@ -207,8 +255,26 @@ public final class PerformanceHistoryHtmlReport {
 		}
 		modernJson.append(']');
 
-		// Legacy measurements have neither reliable sessions nor corpus counts.
-		// Never present them as chart points or as members of modern cohorts.
+		// SQL values have their own units and MUST NOT be mixed with elapsed_ms.
+		StringBuilder sqlJson = new StringBuilder("[");
+		for (SqlObservation observation : sql) {
+			if (sqlJson.length() > 1) {
+				sqlJson.append(',');
+			}
+			sqlJson.append('{').append("\"machine\":").append(jsonString(observation.machineId().toString()))
+					.append(",\"session\":").append(jsonString(observation.sessionId().toString()))
+					.append(",\"version\":").append(jsonString(observation.version())).append(",\"runtime\":")
+					.append(jsonString(observation.runtime())).append(",\"workflow\":")
+					.append(jsonString(observation.workflow())).append(",\"metric\":")
+					.append(jsonString(observation.metric())).append(",\"unit\":")
+					.append(jsonString(observation.unit())).append(",\"captured\":")
+					.append(jsonString(observation.capturedAt().toString())).append(",\"questions\":")
+					.append(observation.questionCount()).append(",\"samples\":").append(observation.samples())
+					.append(",\"failures\":").append(observation.failures()).append(",\"median\":")
+					.append(observation.median()).append(",\"p90\":").append(observation.p90()).append(",\"maximum\":")
+					.append(observation.maximum()).append('}');
+		}
+		sqlJson.append(']');
 		StringBuilder legacyJson = new StringBuilder("[");
 		for (PerformanceLegacyCsvSummary.Group group : legacy) {
 			if (legacyJson.length() > 1) {
@@ -223,6 +289,7 @@ public final class PerformanceHistoryHtmlReport {
 		}
 		legacyJson.append(']');
 		String html = loadTemplate().replace("__OBSERVATIONS__", modernJson.toString())
+				.replace("__SQL_OBSERVATIONS__", sqlJson.toString())
 				.replace("__LEGACY_OBSERVATIONS__", legacyJson.toString());
 		Path output = destination.toAbsolutePath().normalize();
 		Path parent = output.getParent();
@@ -235,6 +302,14 @@ public final class PerformanceHistoryHtmlReport {
 			Files.deleteIfExists(temporary);
 		}
 		return output;
+	}
+
+	private record HistoryData(List<Observation> timings, List<SqlObservation> sql) {
+	}
+
+	private record SqlObservation(Instant capturedAt, UUID machineId, UUID sessionId, String version, String runtime,
+			long questionCount, String workflow, String metric, String unit, long samples, long failures, double median,
+			double p90, double maximum) {
 	}
 
 	private record Observation(Instant capturedAt, UUID machineId, UUID sessionId, String version, String runtime,

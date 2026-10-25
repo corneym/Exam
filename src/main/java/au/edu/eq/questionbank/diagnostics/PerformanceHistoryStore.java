@@ -24,11 +24,25 @@ public final class PerformanceHistoryStore {
 	private static final String HEADER = "checkpoint_at,machine_id,session_id,checkpoint_index,"
 			+ "application_version,runtime_kind,schema_version," + "question_count,database_bytes,operation,samples,"
 			+ "failures,median_ms,p90_ms,max_ms";
+	private static final String SQL_HEADER = HEADER + ",metric_unit,value_median,value_p90,value_max";
 
 	/**
 	 * Creates a store for permanent historical performance summaries.
 	 */
 	public PerformanceHistoryStore() {
+	}
+
+	static boolean isLegacySummary(Path file) throws IOException {
+		try (var reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+			String header = reader.readLine();
+			if (HEADER.equals(header)) {
+				return true;
+			}
+			if (SQL_HEADER.equals(header)) {
+				return false;
+			}
+			throw new IOException("Unsupported historical summary header");
+		}
 	}
 
 	private static String csvText(String value) {
@@ -49,6 +63,11 @@ public final class PerformanceHistoryStore {
 	 */
 	public Path writeCheckpoint(Path historyDirectory, Checkpoint checkpoint,
 			List<PerformanceCsvReader.Entry> measurements) throws IOException {
+		return writeCheckpoint(historyDirectory, checkpoint, measurements, false);
+	}
+
+	Path writeCheckpoint(Path historyDirectory, Checkpoint checkpoint, List<PerformanceCsvReader.Entry> measurements,
+			boolean typedSql) throws IOException {
 		Objects.requireNonNull(historyDirectory, "historyDirectory");
 		Objects.requireNonNull(checkpoint, "checkpoint");
 		Objects.requireNonNull(measurements, "measurements");
@@ -56,6 +75,7 @@ public final class PerformanceHistoryStore {
 			throw new IllegalArgumentException("A checkpoint needs at least one measurement");
 		}
 		Map<String, List<Double>> times = new TreeMap<>();
+		Map<String, List<Long>> values = new TreeMap<>();
 		Map<String, Long> failures = new TreeMap<>();
 		for (PerformanceCsvReader.Entry entry : measurements) {
 			if (entry == null || !checkpoint.sessionId().equals(entry.sessionId())) {
@@ -69,18 +89,22 @@ public final class PerformanceHistoryStore {
 			if (!entry.success()) {
 				failures.merge(entry.operation(), 1L, Long::sum);
 			}
+			if (typedSql && PerformanceSqlMetric.unit(entry.operation()) != null) {
+				if (entry.resultCount() < 0) {
+					throw new IllegalArgumentException("SQL metric has no recorded value: " + entry.operation());
+				}
+				values.computeIfAbsent(entry.operation(), _ -> new ArrayList<>()).add(entry.resultCount());
+			}
 		}
-		StringBuilder csv = new StringBuilder(HEADER).append('\n');
+		StringBuilder csv = new StringBuilder(typedSql ? SQL_HEADER : HEADER).append('\n');
 		for (Map.Entry<String, List<Double>> group : times.entrySet()) {
-			List<Double> values = group.getValue();
-			Collections.sort(values);
-			int count = values.size();
-			double median = count % 2 == 0 ? (values.get(count / 2 - 1) + values.get(count / 2)) / 2.0
-					: values.get(count / 2);
-
-			// p90 uses the nearest-rank definition.
-			double p90 = values.get((int) Math.ceil(count * 0.90) - 1);
-			double maximum = values.get(count - 1);
+			List<Double> durations = group.getValue();
+			Collections.sort(durations);
+			int count = durations.size();
+			double median = count % 2 == 0 ? (durations.get(count / 2 - 1) + durations.get(count / 2)) / 2.0
+					: durations.get(count / 2);
+			double p90 = durations.get((int) Math.ceil(count * 0.90) - 1);
+			double maximum = durations.get(count - 1);
 			csv.append(checkpoint.capturedAt()).append(',').append(checkpoint.machineId()).append(',')
 					.append(checkpoint.sessionId()).append(',').append(checkpoint.checkpointIndex()).append(',')
 					.append(csvText(checkpoint.applicationVersion())).append(',')
@@ -88,7 +112,27 @@ public final class PerformanceHistoryStore {
 					.append(',').append(checkpoint.questionCount()).append(',').append(checkpoint.databaseBytes())
 					.append(',').append(csvText(group.getKey())).append(',').append(count).append(',')
 					.append(failures.getOrDefault(group.getKey(), 0L)).append(',').append(median).append(',')
-					.append(p90).append(',').append(maximum).append('\n');
+					.append(p90).append(',').append(maximum);
+			if (typedSql) {
+				String unit = PerformanceSqlMetric.unit(group.getKey());
+				if (unit == null) {
+					csv.append(",,,,");
+				} else {
+					List<Long> metricValues = values.get(group.getKey());
+					if (metricValues == null || metricValues.size() != count) {
+						throw new IllegalArgumentException("Missing SQL values for " + group.getKey());
+					}
+					Collections.sort(metricValues);
+					double valueMedian = count % 2 == 0
+							? metricValues.get(count / 2 - 1) / 2.0 + metricValues.get(count / 2) / 2.0
+							: metricValues.get(count / 2).doubleValue();
+					long valueP90 = metricValues.get((int) Math.ceil(count * 0.90) - 1);
+					long valueMaximum = metricValues.get(count - 1);
+					csv.append(',').append(unit).append(',').append(valueMedian).append(',').append(valueP90)
+							.append(',').append(valueMaximum);
+				}
+			}
+			csv.append('\n');
 		}
 		Path sessionDirectory = historyDirectory.resolve(checkpoint.machineId().toString())
 				.resolve(checkpoint.sessionId().toString());
@@ -98,8 +142,7 @@ public final class PerformanceHistoryStore {
 		try {
 			Files.writeString(temporaryFile, csv.toString(), StandardCharsets.UTF_8);
 
-			// Publish the staged file without replacing an earlier
-			// checkpoint, even if an import or write is repeated.
+			// CREATE_NEW semantics preserve permanent checkpoint immutability.
 			Files.move(temporaryFile, destination);
 		} finally {
 			Files.deleteIfExists(temporaryFile);

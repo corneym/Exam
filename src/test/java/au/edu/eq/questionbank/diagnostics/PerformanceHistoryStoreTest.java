@@ -99,6 +99,51 @@ class PerformanceHistoryStoreTest {
 		assertFalse(Files.exists(history));
 	}
 
+	@Test
+	void typedCheckpointPreservesSqlCounterValuesAndLegacyWriter() throws Exception {
+		UUID machine = UUID.randomUUID();
+		UUID session = UUID.randomUUID();
+		PerformanceHistoryStore store = new PerformanceHistoryStore();
+		Path history = tempDir.resolve("typed-history");
+		PerformanceHistoryStore.Checkpoint checkpoint = checkpoint(machine, session, 0);
+		String countName = "dashboard.audit.subject.sql.execute-invocations";
+		String durationName = "dashboard.audit.subject.sql.execution-us";
+		List<PerformanceCsvReader.Entry> measurements = List.of(
+				new PerformanceCsvReader.Entry(Instant.parse("2026-10-24T00:00:00Z"), session, 1, 0, countName, 0.003,
+						true, 2),
+				new PerformanceCsvReader.Entry(Instant.parse("2026-10-24T00:00:00Z"), session, 2, 0, countName, 0.004,
+						true, 6),
+				new PerformanceCsvReader.Entry(Instant.parse("2026-10-24T00:00:00Z"), session, 3, 0, durationName,
+						0.004, true, 100),
+				new PerformanceCsvReader.Entry(Instant.parse("2026-10-24T00:00:00Z"), session, 4, 0,
+						"dashboard.refresh", 100.0, true, 1));
+		Path typed = store.writeCheckpoint(history, checkpoint, measurements, true);
+		String saved = Files.readString(typed);
+		assertTrue(saved.contains(",metric_unit,value_median,value_p90,value_max"));
+		assertTrue(saved.contains("\"" + countName + "\",2,0,0.0035,0.004,0.004,count,4.0,6,6"));
+		assertTrue(saved.contains("\"" + durationName + "\",1,0,0.004,0.004,0.004,us,100.0,100,100"));
+		assertTrue(saved.contains("\"dashboard.refresh\",1,0,100.0,100.0,100.0,,,,"));
+		assertFalse(PerformanceHistoryStore.isLegacySummary(typed));
+		Path oldHistory = tempDir.resolve("old-history");
+		Path original = store.writeCheckpoint(oldHistory, checkpoint, measurements);
+		assertTrue(PerformanceHistoryStore.isLegacySummary(original));
+		assertFalse(Files.readString(original).contains("value_median"));
+		assertTrue(Files.readString(original).contains("\"" + countName + "\",2,0,"));
+	}
+
+	@Test
+	void typedSqlMetricWithoutResultCountIsRejected() {
+		UUID machine = UUID.randomUUID();
+		UUID session = UUID.randomUUID();
+		Path history = tempDir.resolve("reject-missing-value");
+		List<PerformanceCsvReader.Entry> missing = List
+				.of(new PerformanceCsvReader.Entry(Instant.parse("2026-10-24T00:00:00Z"), session, 1, 0,
+						"dashboard.audit.subject.sql.rows-read", 0.01, true, -1));
+		assertThrows(IllegalArgumentException.class, () -> new PerformanceHistoryStore().writeCheckpoint(history,
+				checkpoint(machine, session, 0), missing, true));
+		assertFalse(Files.exists(history));
+	}
+
 	private PerformanceHistoryStore.Checkpoint checkpoint(UUID machineId, UUID sessionId, int index) {
 		return new PerformanceHistoryStore.Checkpoint(machineId, sessionId, index,
 				Instant.parse("2026-10-24T00:00:00Z"), "0.4", "eclipse", 24, 800, 819200);

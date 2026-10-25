@@ -94,6 +94,7 @@ class PerformanceHistoryHtmlReportTest {
 			String template = new String(input.readAllBytes(), StandardCharsets.UTF_8);
 			assertTrue(template.contains("<svg"));
 			assertTrue(template.contains("__OBSERVATIONS__"));
+			assertTrue(template.contains("__SQL_OBSERVATIONS__"));
 			assertTrue(template.contains("__LEGACY_OBSERVATIONS__"));
 			assertTrue(template.contains("Questions in corpus"));
 			assertTrue(template.contains("id=\"runtime\""));
@@ -145,6 +146,25 @@ class PerformanceHistoryHtmlReportTest {
 	}
 
 	@Test
+	void legacySqlMetricElapsedTimeIsNotMisreportedAsSqlActivity() throws Exception {
+		Path history = tempDir.resolve("legacy-sql-history");
+		UUID machine = UUID.randomUUID();
+		UUID session = UUID.randomUUID();
+		new PerformanceHistoryStore().writeCheckpoint(history, checkpoint(machine, session, "0.6", 626),
+				List.of(new PerformanceCsvReader.Entry(Instant.parse("2026-10-24T00:00:01Z"), session, 1, 0,
+						"dashboard.audit.subject.sql.execute-invocations", 0.002, true, 15),
+						measurement(session, 150.0)));
+		Path output = tempDir.resolve("legacy-sql.html");
+		new PerformanceHistoryHtmlReport().generate(history, output);
+		String html = Files.readString(output);
+		assertTrue(html.contains("const sqlObservations = [];"));
+		String timings = html.substring(html.indexOf("const observations = "),
+				html.indexOf("const legacyObservations = "));
+		assertFalse(timings.contains(".sql.execute-invocations"));
+		assertTrue(timings.contains("dashboard.refresh"));
+	}
+
+	@Test
 	void mixedReportKeepsModernTrendSeparateFromLegacyAggregates() throws Exception {
 		Path history = tempDir.resolve("history");
 		UUID machine = UUID.randomUUID();
@@ -175,6 +195,39 @@ class PerformanceHistoryHtmlReportTest {
 		Files.writeString(output, "existing report");
 		assertThrows(IOException.class, () -> new PerformanceHistoryHtmlReport().generate(history, output));
 		assertTrue(Files.readString(output).equals("existing report"));
+	}
+
+	@Test
+	void typedSqlActivityUsesRecordedValuesRatherThanMetricRecorderDurations() throws Exception {
+		Path history = tempDir.resolve("typed-sql-history");
+		UUID machine = UUID.randomUUID();
+		UUID session = UUID.randomUUID();
+		PerformanceHistoryStore.Checkpoint checkpoint = checkpoint(machine, session, "0.6", 626);
+		String operation = "dashboard.audit.subject.sql.execute-invocations";
+		new PerformanceHistoryStore().writeCheckpoint(history, checkpoint,
+				List.of(new PerformanceCsvReader.Entry(Instant.parse("2026-10-24T00:00:01Z"), session, 1, 0, operation,
+						0.001, true, 2),
+						new PerformanceCsvReader.Entry(Instant.parse("2026-10-24T00:00:01Z"), session, 2, 0, operation,
+								0.002, true, 6),
+						new PerformanceCsvReader.Entry(Instant.parse("2026-10-24T00:00:01Z"), session, 3, 0,
+								"dashboard.refresh", 120.0, true, 1)),
+				true);
+		Path output = tempDir.resolve("typed-sql.html");
+		new PerformanceHistoryHtmlReport().generate(history, output);
+		String html = Files.readString(output);
+		assertTrue(html.contains("const sqlObservations = ["));
+		assertTrue(html.contains("\"workflow\":\"dashboard.audit.subject\""));
+		assertTrue(html.contains("\"metric\":\"execute-invocations\""));
+		assertTrue(html.contains("\"unit\":\"count\""));
+		assertTrue(html.contains("\"median\":4.0"));
+		assertTrue(html.contains("\"p90\":6.0"));
+		assertTrue(html.contains("SQL Activity"));
+
+		// The SQL metric name never leaks into the conventional timing array.
+		String timings = html.substring(html.indexOf("const observations = "),
+				html.indexOf("const legacyObservations = "));
+		assertFalse(timings.contains(operation));
+		assertTrue(timings.contains("dashboard.refresh"));
 	}
 
 	private PerformanceHistoryStore.Checkpoint checkpoint(UUID machine, UUID session, String version,

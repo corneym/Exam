@@ -72,6 +72,31 @@
       </table>
     </div>
   </section>
+  <section class="panel" id="sql-panel">
+    <h2>SQL Activity</h2>
+    <p class="note">These statistics are values recorded by SQL instrumentation, NOT the time
+      taken to write diagnostic events. Counts describe JDBC execute invocations (not distinct
+      SQL statements), connections, rows and Questions. Values ending in -us are microseconds.
+      Summaries are grouped by workflow, session and corpus checkpoint. Immutable older summaries
+      lack these saved counter values and cannot be reconstructed from their timing columns.</p>
+    <div class="filters">
+      <label>Workflow <select id="sql-workflow"></select></label>
+      <label>SQL metric <select id="sql-metric"></select></label>
+    </div>
+    <p id="sql-count" class="note"></p>
+    <svg id="sql-chart" viewBox="0 0 940 390" role="img"
+         aria-label="SQL activity value versus Question count"></svg>
+    <div class="scroll">
+      <table>
+        <thead><tr>
+          <th>Machine</th><th>Version</th><th>Environment</th><th>Questions</th>
+          <th>Workflow</th><th>SQL metric</th><th>Unit</th><th>Samples</th>
+          <th>Failures</th><th>Median</th><th>P90</th><th>Max</th><th>Checkpoint UTC</th>
+        </tr></thead>
+        <tbody id="sql-observations"></tbody>
+      </table>
+    </div>
+  </section>
   <section class="panel" id="legacy-panel" hidden>
     <h2>Legacy performance.csv (unattributed)</h2>
     <p class="note">Explicitly selected seven-column legacy recordings. This CSV may span several application
@@ -91,6 +116,7 @@
   <script>
 	const observations = __OBSERVATIONS__;
 	const legacyObservations = __LEGACY_OBSERVATIONS__;
+	const sqlObservations = __SQL_OBSERVATIONS__;
 	// Advisory screening only: do not infer a regression from sparse data.
 	const findings = document.getElementById("automatic-findings");
 	const allSessions = new Set(observations.map(o => o.machine + "/" + o.session));
@@ -265,6 +291,82 @@
     for (const control of Object.values(controls)) {
       control.addEventListener("change", render);
     }
+	const sqlWorkflow = document.getElementById("sql-workflow");
+	const sqlMetric = document.getElementById("sql-metric");
+	const sqlWorkflows = [...new Set(sqlObservations.map(o => o.workflow))].sort();
+	for (const workflow of sqlWorkflows) sqlWorkflow.add(new Option(workflow, workflow));
+	function updateSqlMetrics() {
+	  sqlMetric.replaceChildren();
+	  const names = [...new Set(sqlObservations
+	    .filter(o => o.workflow === sqlWorkflow.value)
+	    .map(o => o.metric))].sort();
+	  for (const name of names) sqlMetric.add(new Option(name, name));
+	  renderSql();
+	}
+	function renderSql() {
+	  const selected = sqlObservations.filter(o =>
+	    o.workflow === sqlWorkflow.value && o.metric === sqlMetric.value);
+	  const rows = document.getElementById("sql-observations");
+	  const chart = document.getElementById("sql-chart");
+	  rows.replaceChildren();
+	  chart.replaceChildren();
+	  document.getElementById("sql-count").textContent =
+	    selected.length + " SQL/checkpoint observation(s)";
+	  for (const o of selected) {
+	    const row = document.createElement("tr");
+	    for (const value of [o.machine, o.version, o.runtime, o.questions,
+	        o.workflow, o.metric, o.unit, o.samples, o.failures,
+	        o.median.toFixed(2), o.p90.toFixed(2), o.maximum.toFixed(2), o.captured]) {
+	      const cell = document.createElement("td");
+	      cell.textContent = String(value);
+	      row.appendChild(cell);
+	    }
+	    rows.appendChild(row);
+	  }
+	  if (selected.length === 0) {
+	    chart.appendChild(svgNode("text", {x:70,y:180,fill:"#64748b"},
+	      "No SQL counter observations yet"));
+	    return;
+	  }
+	  const points = selected.filter(o => o.questions >= 0 && Number.isFinite(o.median));
+	  if (points.length === 0) return;
+	  const minX = Math.min(...points.map(o => o.questions));
+	  const maxX = Math.max(...points.map(o => o.questions));
+	  const maxY = Math.max(1, ...points.map(o => o.median));
+	  const x = n => 75 + 820 * (n - minX) / Math.max(1, maxX - minX);
+	  const y = n => 325 - 270 * n / maxY;
+	  chart.appendChild(svgNode("line", {x1:75,y1:325,x2:895,y2:325,stroke:"#64748b"}));
+	  chart.appendChild(svgNode("line", {x1:75,y1:45,x2:75,y2:325,stroke:"#64748b"}));
+	  chart.appendChild(svgNode("text", {x:370,y:372,fill:"#334155"},"Questions in corpus"));
+	  chart.appendChild(svgNode("text", {x:80,y:30,fill:"#334155"},
+	    sqlMetric.value + " median (" + selected[0].unit + ")"));
+	  chart.appendChild(svgNode("text", {x:75,y:347,fill:"#64748b"}, String(minX)));
+	  chart.appendChild(svgNode("text", {x:840,y:347,fill:"#64748b"}, String(maxX)));
+	  const series = new Map();
+	  for (const point of points) {
+	    const key = point.machine + " / " + point.version + " / " + point.runtime;
+	    if (!series.has(key)) series.set(key, []);
+	    series.get(key).push(point);
+	  }
+	  const colours = ["#2563eb", "#c2410c", "#047857", "#9333ea", "#b45309"];
+	  let index = 0;
+	  for (const [key, values] of series) {
+	    values.sort((a,b) => a.questions - b.questions || a.captured.localeCompare(b.captured));
+	    const colour = colours[index++ % colours.length];
+	    chart.appendChild(svgNode("polyline", {
+	      points: values.map(o => x(o.questions) + "," + y(o.median)).join(" "),
+	      fill:"none",stroke:colour,"stroke-width":2.5}));
+	    for (const o of values) {
+	      const dot = svgNode("circle", {cx:x(o.questions),cy:y(o.median),r:4,fill:colour});
+	      dot.appendChild(svgNode("title", {},
+	        key + ": " + o.questions + " Questions, median " + o.median.toFixed(2) + " " + o.unit));
+	      chart.appendChild(dot);
+	    }
+	  }
+	}
+	sqlWorkflow.addEventListener("change", updateSqlMetrics);
+	sqlMetric.addEventListener("change", renderSql);
+	updateSqlMetrics();
     render();
   </script>
 </body>

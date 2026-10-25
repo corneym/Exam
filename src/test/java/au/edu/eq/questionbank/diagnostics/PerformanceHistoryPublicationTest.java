@@ -9,6 +9,8 @@ import java.io.IOException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 import java.util.zip.ZipEntry;
@@ -197,6 +199,37 @@ class PerformanceHistoryPublicationTest {
 	}
 
 	@Test
+	void previouslyPublishedLegacyCheckpointIsRegeneratedWithoutSchemaChange() throws Exception {
+		Path diagnostics = tempDir.resolve("old-publisher");
+		UUID machine = UUID.randomUUID();
+		UUID session = createCompletedSession(diagnostics, machine);
+		PerformanceHistoryPublisher publisher = new PerformanceHistoryPublisher();
+		assertTrue(publisher.publishSession(diagnostics, session, "eclipse"));
+		Path history = diagnostics.resolve("history").resolve(machine.toString()).resolve(session.toString());
+
+		// Recreate a pre-upgrade 15-column fixture without changing the receipt.
+		for (int index = 0; index < 2; index++) {
+			Path summary = history.resolve("checkpoint-%06d.csv".formatted(index));
+			List<String> lines = Files.readAllLines(summary);
+			StringBuilder old = new StringBuilder();
+			for (String line : lines) {
+				String[] cells = line.split(",", -1);
+				old.append(String.join(",", Arrays.copyOf(cells, 15))).append('\n');
+			}
+			Files.writeString(summary, old.toString());
+		}
+		Files.delete(history.resolve(PerformanceHistoryIntegrity.MANIFEST_NAME));
+		new PerformanceHistoryIntegrity().publish(history);
+		Path previous = history.resolve("checkpoint-000000.csv");
+		String before = Files.readString(previous);
+		assertTrue(PerformanceHistoryStore.isLegacySummary(previous));
+		assertTrue(publisher.publishSession(diagnostics, session, "unknown"));
+		assertEquals(before, Files.readString(previous));
+		assertTrue(PerformanceHistoryStore.isLegacySummary(previous));
+		new PerformanceHistoryIntegrity().verify(history);
+	}
+
+	@Test
 	void recoveryDoesNotReclassifyAnAlreadyPublishedSession() throws Exception {
 		Path diagnostics = tempDir.resolve("diagnostics");
 		UUID machineId = UUID.randomUUID();
@@ -267,6 +300,30 @@ class PerformanceHistoryPublicationTest {
 		Files.writeString(second, Files.readString(second).replace("200.0,true", "999.0,true"));
 		assertThrows(IOException.class, () -> publisher.publishSession(diagnostics, sessionId, "unknown"));
 		assertEquals(receipt, Files.readString(historical.resolve("session.summary-complete")));
+	}
+
+	@Test
+	void sqlMetricHistoryIsImmutableAndRepublishesWithTypedValues() throws Exception {
+		Path diagnostics = tempDir.resolve("sql-publisher");
+		UUID machine = UUID.randomUUID();
+		UUID session = createCompletedSession(diagnostics, machine);
+		Path raw = diagnostics.resolve("sessions").resolve(session.toString()).resolve("operations.csv");
+		Files.writeString(raw,
+				"2026-10-24T00:00:03Z," + session
+						+ ",3,1,dashboard.audit.subject.sql.execute-invocations,0.001,true,7\n",
+				StandardOpenOption.APPEND);
+		PerformanceHistoryPublisher publisher = new PerformanceHistoryPublisher();
+		assertTrue(publisher.publishSession(diagnostics, session, "eclipse"));
+		Path history = diagnostics.resolve("history").resolve(machine.toString()).resolve(session.toString());
+		Path first = history.resolve("checkpoint-000000.csv");
+		String original = Files.readString(first);
+		assertTrue(original.contains("metric_unit,value_median,value_p90,value_max"));
+		assertTrue(original
+				.contains("\"dashboard.audit.subject.sql.execute-invocations\",1,0,0.001,0.001,0.001,count,7.0,7,7"));
+		new PerformanceHistoryIntegrity().verify(history);
+		assertTrue(publisher.publishSession(diagnostics, session, "unknown"));
+		assertEquals(original, Files.readString(first));
+		new PerformanceHistoryIntegrity().verify(history);
 	}
 
 	private UUID createCompletedSession(Path diagnostics, UUID machineId) throws Exception {

@@ -182,7 +182,7 @@ public final class PerformanceHistoryPublisher {
 				throw new IOException("Invalid previously published summary");
 			}
 			List<String> cells = csvCells(firstRow);
-			if (cells.size() != 15) {
+			if (cells.size() != 15 && cells.size() != 19) {
 				throw new IOException("Invalid previously published summary columns");
 			}
 			String originalRuntime = cells.get(5);
@@ -298,6 +298,24 @@ public final class PerformanceHistoryPublisher {
 			Path destination = diagnosticsRoot.resolve("history").resolve(machineId.toString())
 					.resolve(sessionId.toString());
 			PerformanceHistoryStore store = new PerformanceHistoryStore();
+
+			// Existing checkpoint summaries are immutable. Recovery must reproduce their
+			// original schema byte-for-byte, including partially published sessions.
+			Boolean existingLegacy = null;
+			if (Files.isDirectory(destination)) {
+				try (Stream<Path> files = Files.list(destination)) {
+					for (Path file : files.filter(Files::isRegularFile)
+							.filter(path -> path.getFileName().toString().matches("checkpoint-[0-9]{6}\\.csv"))
+							.toList()) {
+						boolean legacy = PerformanceHistoryStore.isLegacySummary(file);
+						if (existingLegacy != null && existingLegacy.booleanValue() != legacy) {
+							throw new IOException("Mixed checkpoint formats in one historical session");
+						}
+						existingLegacy = legacy;
+					}
+				}
+			}
+			boolean typedSql = existingLegacy == null || !existingLegacy.booleanValue();
 			int summaries = 0;
 			for (int i = 0; i < checkpoints.size(); i++) {
 				if (windows.get(i).isEmpty()) {
@@ -307,7 +325,7 @@ public final class PerformanceHistoryPublisher {
 				PerformanceHistoryStore.Checkpoint checkpoint = new PerformanceHistoryStore.Checkpoint(machineId,
 						sessionId, observed.index(), observed.capturedAt(), version, originalRuntimeKind,
 						observed.schemaVersion(), observed.questionCount(), observed.databaseBytes());
-				Path prepared = store.writeCheckpoint(staging, checkpoint, windows.get(i));
+				Path prepared = store.writeCheckpoint(staging, checkpoint, windows.get(i), typedSql);
 
 				// Compare the complete generated file with any existing
 				// history. A matching receipt alone is insufficient.
