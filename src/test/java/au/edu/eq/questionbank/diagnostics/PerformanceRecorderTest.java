@@ -253,9 +253,10 @@ class PerformanceRecorderTest {
 			System.setProperty("eqb.performance.enabled", "false");
 			try (PerformanceRecorder disabled = PerformanceRecorder.forSession(diagnostics, false)) {
 				assertFalse(disabled.isEnabled());
-				try (PerformanceOperation ignored = disabled.start("overhead.test")) {
+				try (PerformanceOperation operation = disabled.start("overhead.test")) {
+					assertEquals(0, operation.id());
 
-					// No file is created even though a timed operation is requested.
+					// Disabled recording must not create diagnostic files.
 				}
 			}
 			assertFalse(Files.exists(diagnostics));

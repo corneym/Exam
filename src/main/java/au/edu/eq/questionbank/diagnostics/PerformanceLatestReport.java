@@ -23,6 +23,13 @@ public final class PerformanceLatestReport {
 	private static final String REPORT_NAME = "performance-latest.html";
 
 	/**
+	 * Creates a report manager for refreshing the latest offline performance
+	 * report.
+	 */
+	public PerformanceLatestReport() {
+	}
+
+	/**
 	 * Resolves the stable report path without creating directories or files.
 	 *
 	 * @param diagnosticsRoot optional diagnostics root used by the application
@@ -72,7 +79,7 @@ public final class PerformanceLatestReport {
 			if (acquired == null) {
 				return false;
 			}
-			try (FileLock ignored = acquired) {
+			try (acquired) {
 
 				// Clean up unique staging files abandoned by an earlier forced exit.
 				// The lock proves no other valid writer is using them now.

@@ -46,6 +46,7 @@ class PerformanceLatestReportTest {
 		Path lockPath = latest.getParent().resolve(".latest-report.lock");
 		try (FileChannel channel = FileChannel.open(lockPath, StandardOpenOption.WRITE);
 				FileLock held = channel.lock()) {
+			assertTrue(held.isValid());
 			assertFalse(reports.refresh(root));
 		}
 		assertEquals(old, Files.readString(latest));

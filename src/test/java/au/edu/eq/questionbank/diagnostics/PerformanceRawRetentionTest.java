@@ -221,6 +221,8 @@ class PerformanceRawRetentionTest {
 		Path lockFile = root.resolve(".raw-retention.lock");
 		try (FileChannel channel = FileChannel.open(lockFile, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
 				FileLock lock = channel.lock()) {
+			assertTrue(lock.isValid());
+
 			PerformanceRawRetention.Result result = new PerformanceRawRetention().enforce(root, 1, null, true);
 			assertFalse(result.lockAcquired());
 			assertEquals(0, result.deletedSessions());
