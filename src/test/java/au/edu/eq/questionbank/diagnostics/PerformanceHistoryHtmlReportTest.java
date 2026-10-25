@@ -185,6 +185,32 @@ class PerformanceHistoryHtmlReportTest {
 	}
 
 	@Test
+	void pairedPercentilesAreRenderedForBothModernCharts() throws Exception {
+		try (InputStream input = PerformanceHistoryHtmlReport.class
+				.getResourceAsStream("performance-history-report.html")) {
+			assertTrue(input != null);
+			String template = new String(input.readAllBytes(), StandardCharsets.UTF_8);
+
+			// Both views use the same paired-percentile renderer and distinct cohort
+			// legends.
+			assertTrue(template.contains("function renderPercentileChart("));
+			assertTrue(template.contains("{field:\"median\", label:\"Median\", dash:null}"));
+			assertTrue(template.contains("{field:\"p90\", label:\"P90\", dash:\"7 5\"}"));
+			assertTrue(template.contains("line[\"stroke-dasharray\"] = percentile.dash"));
+			assertTrue(template.contains("renderPercentileChart(document.getElementById(\"chart\"),"));
+			assertTrue(template.contains("renderPercentileChart(document.getElementById(\"sql-chart\"),"));
+			assertTrue(template.contains("id=\"legend\""));
+			assertTrue(template.contains("id=\"sql-legend\""));
+			assertFalse(template.contains("id=\"metric\""));
+
+			// Data remain separately attributed and contain both saved percentiles.
+			assertTrue(template.contains("o.median.toFixed(2), o.p90.toFixed(2)"));
+			assertTrue(template.contains("description + \" — Median / P90 (\" + unit"));
+			assertFalse(template.contains("<script src="));
+		}
+	}
+
+	@Test
 	void reportDoesNotOverwriteExistingFile() throws Exception {
 		Path history = tempDir.resolve("history");
 		UUID machine = UUID.randomUUID();
