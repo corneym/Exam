@@ -119,6 +119,7 @@ public final class PerformanceHistoryTransfer {
 	 */
 	public int importArchive(Path historyRoot, Path archive) throws IOException {
 		Path stage = Files.createTempDirectory("eqb-history-import-");
+		Path normalizedStage = stage.normalize();
 		try {
 			long totalBytes = 0;
 			int entries = 0;
@@ -129,10 +130,13 @@ public final class PerformanceHistoryTransfer {
 						throw new IOException("Unexpected archive directory");
 					}
 					Path relative = Path.of(entry.getName());
-					if (!validRelativePath(relative) || ++entries > MAX_ENTRIES) {
+					if (relative.isAbsolute() || !validRelativePath(relative) || ++entries > MAX_ENTRIES) {
 						throw new IOException("Invalid history archive entry");
 					}
-					Path prepared = stage.resolve(relative).normalize();
+					Path prepared = normalizedStage.resolve(relative).normalize();
+					if (!prepared.startsWith(normalizedStage)) {
+						throw new IOException("Invalid history archive entry");
+					}
 					Files.createDirectories(prepared.getParent());
 					long size = 0;
 					try (OutputStream out = Files.newOutputStream(prepared, StandardOpenOption.CREATE_NEW)) {
