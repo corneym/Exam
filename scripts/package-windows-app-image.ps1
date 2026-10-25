@@ -177,6 +177,7 @@ Write-Host "Creating Windows application image..."
     --main-class "au.edu.eq.questionbank.Launcher" `
     --dest $packageDirectory `
     --java-options "--enable-native-access=ALL-UNNAMED" `
+    --java-options "-Deqb.performance.runtimeKind=installed" `
     --jlink-options "--strip-native-commands --strip-debug --no-man-pages --no-header-files --bind-services"
 
 if ($LASTEXITCODE -ne 0) {

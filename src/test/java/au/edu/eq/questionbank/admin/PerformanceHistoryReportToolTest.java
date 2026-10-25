@@ -53,6 +53,20 @@ class PerformanceHistoryReportToolTest {
 	}
 
 	@Test
+	void legacyOnlyReportUsesTimestampedOutputWithoutOverwritingCsv() throws Exception {
+		Path original = tempDir.resolve("performance.csv");
+		String csv = "timestamp,operation_id,parent_id,operation,elapsed_ms,success,result_count\n"
+				+ "2026-09-01T00:00:00Z,1,0,dashboard.refresh,70.0,true,1\n";
+		Files.writeString(original, csv);
+		Clock clock = Clock.fixed(Instant.parse("2026-10-25T00:00:00Z"), ZoneId.of("Australia/Brisbane"));
+		Path output = PerformanceHistoryReportTool.generateInDirectory(tempDir.resolve("missing-modern-history"),
+				tempDir.resolve("reports"), clock, original);
+		assertEquals("performance-history-2026-10-25-10-00-00.html", output.getFileName().toString());
+		assertTrue(Files.readString(output).contains("Legacy performance.csv (unattributed)"));
+		assertEquals(csv, Files.readString(original));
+	}
+
+	@Test
 	void missingHistoryNeverCreatesAReportFile() throws Exception {
 		Path directory = tempDir.resolve("output");
 		Clock clock = Clock.fixed(Instant.parse("2026-10-24T07:24:00Z"), ZoneId.of("UTC"));

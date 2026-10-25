@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.diagnostics;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.channels.FileChannel;
@@ -10,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.FileTime;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
@@ -107,6 +109,49 @@ class PerformanceRawRetentionTest {
 	}
 
 	@Test
+	void expiryDeletesVerifiedOldRawSessionsEvenWhenUnderByteLimit() throws Exception {
+		Path root = tempDir.resolve("age-expired");
+		UUID machine = UUID.randomUUID();
+		UUID older = completed(root, machine, 1);
+		UUID recent = completed(root, machine, 2);
+		Path olderRaw = raw(root, older);
+		Path recentRaw = raw(root, recent);
+		Files.setLastModifiedTime(olderRaw.resolve("session.complete"),
+				FileTime.from(Instant.now().minus(Duration.ofDays(120))));
+		Files.setLastModifiedTime(recentRaw.resolve("session.complete"),
+				FileTime.from(Instant.now().minus(Duration.ofDays(1))));
+
+		// The combined raw size is below the cap. Age alone must remove the old
+		// verified session, while preserving its immutable historical summary.
+		long generousCap = size(olderRaw) + size(recentRaw) + 1024;
+		PerformanceRawRetention.Result result = new PerformanceRawRetention().enforce(root, generousCap,
+				Duration.ofDays(90), null, true);
+		assertTrue(result.lockAcquired());
+		assertEquals(1, result.deletedSessions());
+		assertFalse(Files.exists(olderRaw));
+		assertTrue(Files.isDirectory(recentRaw));
+		Path oldHistory = root.resolve("history").resolve(machine.toString()).resolve(older.toString());
+		new PerformanceHistoryIntegrity().verify(oldHistory);
+	}
+
+	@Test
+	void expiryDryRunNeverDeletesRawSessions() throws Exception {
+		Path root = tempDir.resolve("age-dry-run");
+		UUID machine = UUID.randomUUID();
+		UUID old = completed(root, machine, 1);
+		Path session = raw(root, old);
+		Files.setLastModifiedTime(session.resolve("session.complete"),
+				FileTime.from(Instant.now().minus(Duration.ofDays(120))));
+		long generousCap = size(session) + 1024;
+		PerformanceRawRetention.Result result = new PerformanceRawRetention().enforce(root, generousCap,
+				Duration.ofDays(90), null, false);
+		assertTrue(result.lockAcquired());
+		assertEquals(0, result.deletedSessions());
+		assertEquals(result.beforeBytes(), result.afterBytes());
+		assertTrue(Files.isDirectory(session));
+	}
+
+	@Test
 	void incompleteAndCorruptHistoricalSessionsAreProtected() throws Exception {
 		Path root = tempDir.resolve("diagnostics");
 		UUID machine = UUID.randomUUID();
@@ -124,6 +169,15 @@ class PerformanceRawRetentionTest {
 	}
 
 	@Test
+	void invalidMaximumAgeIsRejected() throws Exception {
+		Path root = tempDir.resolve("age-invalid");
+		PerformanceRawRetention retention = new PerformanceRawRetention();
+		assertThrows(IllegalArgumentException.class, () -> retention.enforce(root, 1024, Duration.ZERO, null, true));
+		assertThrows(IllegalArgumentException.class,
+				() -> retention.enforce(root, 1024, Duration.ofDays(-1), null, true));
+	}
+
+	@Test
 	void oldestVerifiedRawSessionIsDeletedButHistoryRemains() throws Exception {
 		Path root = tempDir.resolve("diagnostics");
 		UUID machine = UUID.randomUUID();
@@ -132,9 +186,9 @@ class PerformanceRawRetentionTest {
 		Path olderRaw = raw(root, older);
 		Path newerRaw = raw(root, newer);
 		Files.setLastModifiedTime(olderRaw.resolve("session.complete"),
-				FileTime.from(Instant.parse("2026-01-01T00:00:00Z")));
+				FileTime.from(Instant.now().minus(Duration.ofDays(120))));
 		Files.setLastModifiedTime(newerRaw.resolve("session.complete"),
-				FileTime.from(Instant.parse("2026-02-01T00:00:00Z")));
+				FileTime.from(Instant.now().minus(Duration.ofDays(1))));
 		long ceiling = size(newerRaw) + 1;
 		PerformanceRawRetention.Result result = new PerformanceRawRetention().enforce(root, ceiling, null, true);
 		assertTrue(result.lockAcquired());

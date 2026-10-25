@@ -1,5 +1,6 @@
 package au.edu.eq.questionbank.diagnostics;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -79,11 +80,74 @@ class PerformanceHistoryHtmlReportTest {
 			String template = new String(input.readAllBytes(), StandardCharsets.UTF_8);
 			assertTrue(template.contains("<svg"));
 			assertTrue(template.contains("__OBSERVATIONS__"));
+			assertTrue(template.contains("__LEGACY_OBSERVATIONS__"));
 			assertTrue(template.contains("Questions in corpus"));
 			assertTrue(template.contains("id=\"runtime\""));
 			assertFalse(template.contains("<script src="));
 			assertFalse(template.contains("<link rel=\"stylesheet\""));
 		}
+	}
+
+	@Test
+	void invalidLegacyInputNeverCreatesOrOverwritesReport() throws Exception {
+		Path history = tempDir.resolve("history");
+		UUID machine = UUID.randomUUID();
+		UUID session = UUID.randomUUID();
+		new PerformanceHistoryStore().writeCheckpoint(history, checkpoint(machine, session, "0.6", 626),
+				List.of(measurement(session, 100)));
+		Path invalid = tempDir.resolve("not-legacy.csv");
+		Files.writeString(invalid, PerformanceRecorder.SESSION_HEADER + "\n");
+		Path output = tempDir.resolve("invalid.html");
+		assertThrows(IOException.class, () -> new PerformanceHistoryHtmlReport().generate(history, output, invalid));
+		assertFalse(Files.exists(output));
+		Files.writeString(output, "Original report");
+		Path valid = tempDir.resolve("performance.csv");
+		Files.writeString(valid,
+				PerformanceRecorder.HEADER + "\n" + "2026-10-01T00:00:00Z,1,0,dashboard.refresh,20.0,true,1\n");
+		assertThrows(IOException.class, () -> new PerformanceHistoryHtmlReport().generate(history, output, valid));
+		assertTrue(Files.readString(output).equals("Original report"));
+	}
+
+	@Test
+	void legacyOnlyReportIsClearlySeparatedAndDoesNotInventCorpusSizes() throws Exception {
+		Path csv = tempDir.resolve("performance.csv");
+		Files.writeString(csv,
+				PerformanceRecorder.HEADER + "\n" + "2026-10-01T00:00:00Z,1,0,dashboard.refresh,10.0,true,1\n"
+						+ "2026-10-02T00:00:00Z,1,0,dashboard.refresh,30.0,false,-1\n");
+		Path output = tempDir.resolve("legacy-only.html");
+		new PerformanceHistoryHtmlReport().generate(tempDir.resolve("no-modern-history"), output, csv);
+		String html = Files.readString(output);
+		assertTrue(html.contains("Legacy performance.csv (unattributed)"));
+		assertTrue(html.contains("\"operation\":\"dashboard.refresh\""));
+		assertTrue(html.contains("\"samples\":2"));
+		assertTrue(html.contains("\"failures\":1"));
+		assertTrue(html.contains("\"median\":20.0"));
+		assertTrue(html.contains("const observations = [];"));
+		assertFalse(html.contains("__LEGACY_OBSERVATIONS__"));
+		assertFalse(html.contains("\"questions\":-1"));
+		try (var rows = Files.lines(csv)) {
+			assertEquals(3L, rows.count());
+		}
+	}
+
+	@Test
+	void mixedReportKeepsModernTrendSeparateFromLegacyAggregates() throws Exception {
+		Path history = tempDir.resolve("history");
+		UUID machine = UUID.randomUUID();
+		UUID session = UUID.randomUUID();
+		new PerformanceHistoryStore().writeCheckpoint(history, checkpoint(machine, session, "0.6", 626),
+				List.of(measurement(session, 120)));
+		Path legacy = tempDir.resolve("old-performance.csv");
+		Files.writeString(legacy,
+				PerformanceRecorder.HEADER + "\n" + "2026-09-01T00:00:01Z,1,0,search.refresh,42.0,true,1\n");
+		Path output = tempDir.resolve("combined.html");
+		new PerformanceHistoryHtmlReport().generate(history, output, legacy);
+		String html = Files.readString(output);
+		assertTrue(html.contains("\"questions\":626"));
+		assertTrue(html.contains("\"operation\":\"search.refresh\""));
+		assertTrue(html.contains("\"median\":42.0"));
+		assertTrue(html.contains("const legacyObservations = ["));
+		assertFalse(html.contains(legacy.toAbsolutePath().toString()));
 	}
 
 	@Test

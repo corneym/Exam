@@ -32,6 +32,8 @@ import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ManagedDataLayout;
+import au.edu.eq.questionbank.diagnostics.PerformanceCsvReader;
+import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
 import au.edu.eq.questionbank.importer.legacy.LegacyExamIdentity;
 import au.edu.eq.questionbank.importer.legacy.LegacyExamKey;
@@ -82,6 +84,37 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 	private static final int TIMEOUT = 10;
 
+	private static void assertExamAssetsNavigationMetrics(List<PerformanceCsvReader.Entry> records,
+			String operationName) {
+		PerformanceCsvReader.Entry navigation = records.stream()
+				.filter(entry -> operationName.equals(entry.operation())).findFirst().orElseThrow();
+		PerformanceCsvReader.Entry load = records.stream()
+				.filter(entry -> (operationName + ".load").equals(entry.operation())).findFirst().orElseThrow();
+		PerformanceCsvReader.Entry sql = records.stream()
+				.filter(entry -> (operationName + ".load.sql.scope").equals(entry.operation())).findFirst()
+				.orElseThrow();
+		PerformanceCsvReader.Entry connections = records.stream()
+				.filter(entry -> (operationName + ".load.sql.connections").equals(entry.operation())).findFirst()
+				.orElseThrow();
+		PerformanceCsvReader.Entry executions = records.stream()
+				.filter(entry -> (operationName + ".load.sql.execute-invocations").equals(entry.operation()))
+				.findFirst().orElseThrow();
+		assertTrue(navigation.success());
+		assertTrue(load.success());
+		assertTrue(sql.success());
+		assertEquals(0L, navigation.parentId());
+		assertEquals(navigation.operationId(), load.parentId());
+		assertEquals(load.operationId(), sql.parentId());
+		assertEquals(sql.operationId(), connections.parentId());
+		assertEquals(sql.operationId(), executions.parentId());
+		assertTrue(connections.resultCount() >= 1L);
+		assertTrue(executions.resultCount() >= 1L);
+
+		// The source operation must have completed by the time navigation returns.
+		assertTrue(navigation.elapsedMillis() >= 0);
+		assertTrue(load.elapsedMillis() >= 0);
+	}
+
 	@Test
 	void corpusDashboardHomeShowsLiveDashboardForWorkingSubject(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1",
@@ -130,6 +163,77 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// The retired concatenated work-item presentation must not return.
 		assertFalse(nodePresentOnFx(robot, applicationRoot, "#corpus-work-items"));
+	}
+
+	@Test
+	void dashboardAddExamProducesCorrelatedSqlMetrics(FxRobot robot) throws Exception {
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		robot.interact(() -> subjects.getSelectionModel().selectFirst());
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-add-exam").tryQuery().isPresent());
+		Path csv = databasePath.resolveSibling("exam-assets-new-exam.csv");
+		PerformanceRecorder original = field(application, "performanceRecorder", PerformanceRecorder.class);
+		try (PerformanceRecorder measured = new PerformanceRecorder(true, csv)) {
+			setField(application, "performanceRecorder", measured);
+			try {
+				fireControl(robot, "#corpus-dashboard-add-exam");
+				WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
+						() -> robot.lookup("#exam-assets-state").tryQuery().filter(Label.class::isInstance)
+								.map(Label.class::cast).map(label -> "NEW EXAM".equals(label.getText())).orElse(false));
+
+				// Existing navigation rules still require cancellation before returning.
+				fireControl(robot, "#exam-assets-new-exam-cancel");
+				fireControl(robot, "#exam-assets-return-dashboard");
+				WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
+						() -> robot.lookup("#corpus-dashboard-no-exams").tryQuery().isPresent());
+			} finally {
+				setField(application, "performanceRecorder", original);
+			}
+		}
+		assertExamAssetsNavigationMetrics(PerformanceCsvReader.read(csv), "examAssets.open.new");
+	}
+
+	@Test
+	void dashboardAndCaptureExamAssetsNavigationProduceCorrelatedSqlMetrics(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1",
+				ExamBookletQuestionFormat.MIXED);
+		Path csv = databasePath.resolveSibling("exam-assets-navigation.csv");
+		PerformanceRecorder original = field(application, "performanceRecorder", PerformanceRecorder.class);
+		try (PerformanceRecorder measured = new PerformanceRecorder(true, csv)) {
+			setField(application, "performanceRecorder", measured);
+			try {
+
+				// First exercise Capture → Change Exam using the ordinary control.
+				fireControl(robot, "#change-exam-assets");
+				WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
+						() -> robot.lookup("#exam-assets-workspace").tryQuery().isPresent());
+
+				// Re-enter Dashboard Home; its actual persistence refresh stays async.
+				WaitForAsyncUtils.asyncFx(() -> {
+					invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
+					return null;
+				}).get();
+				WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
+						() -> robot.lookup("#corpus-dashboard-exams").tryQuery().filter(TableView.class::isInstance)
+								.map(TableView.class::cast).map(table -> table.getItems().size() == 1).orElse(false));
+
+				// Then use the Dashboard's real selected-Exam management action.
+				Node root = primaryStage.getScene().getRoot();
+				Button manage = lookupOnFx(robot, root, "#corpus-dashboard-manage-exam-assets", Button.class);
+				assertNotNull(manage);
+				assertFalse(manage.isDisabled());
+				fireControl(robot, manage);
+				WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
+						() -> robot.lookup("#exam-assets-workspace").tryQuery().isPresent());
+			} finally {
+
+				// The application owns its original session recorder.
+				setField(application, "performanceRecorder", original);
+			}
+		}
+		List<PerformanceCsvReader.Entry> records = PerformanceCsvReader.read(csv);
+		assertExamAssetsNavigationMetrics(records, "examAssets.open.general");
+		assertExamAssetsNavigationMetrics(records, "examAssets.open.selected");
 	}
 
 	@Test

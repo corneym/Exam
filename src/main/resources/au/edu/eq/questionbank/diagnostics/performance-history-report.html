@@ -65,9 +65,43 @@
       </table>
     </div>
   </section>
+  <section class="panel" id="legacy-panel" hidden>
+    <h2>Legacy performance.csv (unattributed)</h2>
+    <p class="note">Explicitly selected seven-column legacy recordings. This CSV may span several application
+      launches. Machine, session, version and Question count cannot be reconstructed; the statistics below are
+      aggregated across the entire file and are deliberately excluded from the Question-count chart.</p>
+    <p id="legacy-count" class="note"></p>
+    <div class="scroll">
+      <table>
+        <thead><tr>
+          <th>Operation</th><th>Samples</th><th>Failures</th><th>Median ms</th>
+          <th>P90 ms</th><th>Max ms</th><th>First UTC</th><th>Last UTC</th>
+        </tr></thead>
+        <tbody id="legacy-observations"></tbody>
+      </table>
+    </div>
+  </section>
   <script>
-    const observations = __OBSERVATIONS__;
-    const controls = Object.fromEntries(
+	const observations = __OBSERVATIONS__;
+	const legacyObservations = __LEGACY_OBSERVATIONS__;
+	if (legacyObservations.length) {
+	  document.getElementById("legacy-panel").hidden = false;
+	  const body = document.getElementById("legacy-observations");
+	  for (const observation of legacyObservations) {
+	    const row = document.createElement("tr");
+	    for (const value of [
+	      observation.operation, observation.samples, observation.failures,
+	      observation.median.toFixed(2), observation.p90.toFixed(2),
+	      observation.maximum.toFixed(2), observation.earliest, observation.latest]) {
+	      const cell = document.createElement("td");
+	      cell.textContent = String(value);
+	      row.appendChild(cell);
+	    }
+	    body.appendChild(row);
+	  }
+	  document.getElementById("legacy-count").textContent =
+	    legacyObservations.length + " aggregate operation(s) from one legacy file";
+	}    const controls = Object.fromEntries(
       ["operation", "machine", "version", "runtime", "metric"]
         .map(key => [key, document.getElementById(key)]));
     function populate(select, values, all) {
@@ -90,6 +124,16 @@
       return node;
     }
     function render() {
+		if (observations.length === 0) {
+		  document.getElementById("count").textContent = "0 modern checkpoint observations";
+		  const chart = document.getElementById("chart");
+		  chart.replaceChildren();
+		  chart.appendChild(svgNode("text", {x:70,y:180,fill:"#64748b"},
+		    "No modern corpus checkpoint observations"));
+		  document.getElementById("legend").replaceChildren();
+		  document.getElementById("observations").replaceChildren();
+		  return;
+		}
       const selected = observations.filter(o =>
         o.operation === controls.operation.value &&
         (controls.machine.value === "*" || o.machine === controls.machine.value) &&

@@ -246,6 +246,37 @@ class PerformanceRecorderTest {
 	}
 
 	@Test
+	void explicitSessionFactoryDoesNotDependOnJvmOverride() throws Exception {
+		Path diagnostics = tempDir.resolve("explicit-diagnostics");
+		String previous = System.getProperty("eqb.performance.enabled");
+		try {
+			System.setProperty("eqb.performance.enabled", "false");
+			try (PerformanceRecorder disabled = PerformanceRecorder.forSession(diagnostics, false)) {
+				assertFalse(disabled.isEnabled());
+				try (PerformanceOperation ignored = disabled.start("overhead.test")) {
+
+					// No file is created even though a timed operation is requested.
+				}
+			}
+			assertFalse(Files.exists(diagnostics));
+			PerformanceRecorder enabled = PerformanceRecorder.forSession(diagnostics, true);
+			try (enabled) {
+				assertTrue(enabled.isEnabled());
+				try (PerformanceOperation operation = enabled.start("overhead.test")) {
+					operation.resultCount(1);
+				}
+			}
+			assertEquals(0, enabled.droppedRecordCount());
+			assertEquals(0, enabled.failedWriteCount());
+			Path session = diagnostics.resolve("sessions").resolve(enabled.sessionId().toString());
+			assertTrue(Files.isRegularFile(session.resolve("session.complete")));
+			assertEquals(1, PerformanceCsvReader.readSession(session).size());
+		} finally {
+			restoreProperty(previous);
+		}
+	}
+
+	@Test
 	void failureIsRecorded() throws Exception {
 		Path output = tempDir.resolve("performance.csv");
 		try (PerformanceRecorder recorder = new PerformanceRecorder(true, output)) {
@@ -300,6 +331,42 @@ class PerformanceRecorderTest {
 			assertEquals(2, lines.size());
 			assertTrue(lines.get(1).contains("question.findById"));
 			assertTrue(lines.get(1).contains(",true,-1"));
+		}
+	}
+
+	@Test
+	void packagedRuntimePropertyIsRecordedAsInstalled() throws Exception {
+		String previousEnabled = System.getProperty("eqb.performance.enabled");
+		String previousRuntime = System.getProperty("eqb.performance.runtimeKind");
+		Path diagnostics = tempDir.resolve("packaged-runtime");
+		try {
+			System.setProperty("eqb.performance.enabled", "true");
+			System.setProperty("eqb.performance.runtimeKind", "installed");
+			UUID session;
+			try (PerformanceRecorder recorder = PerformanceRecorder.fromSystemProperties(diagnostics)) {
+				session = recorder.sessionId();
+				try (PerformanceOperation operation = recorder.start("application.startup")) {
+					operation.resultCount(1);
+				}
+			}
+			Path metadata = diagnostics.resolve("sessions").resolve(session.toString()).resolve("session.properties");
+			Properties properties = new Properties();
+			try (InputStream in = Files.newInputStream(metadata)) {
+				properties.load(in);
+			}
+			assertEquals("installed", properties.getProperty("runtime.kind"));
+			assertEquals(session.toString(), properties.getProperty("session.id"));
+		} finally {
+			if (previousEnabled == null) {
+				System.clearProperty("eqb.performance.enabled");
+			} else {
+				System.setProperty("eqb.performance.enabled", previousEnabled);
+			}
+			if (previousRuntime == null) {
+				System.clearProperty("eqb.performance.runtimeKind");
+			} else {
+				System.setProperty("eqb.performance.runtimeKind", previousRuntime);
+			}
 		}
 	}
 

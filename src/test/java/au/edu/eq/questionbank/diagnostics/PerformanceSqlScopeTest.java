@@ -13,6 +13,8 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -110,6 +112,75 @@ class PerformanceSqlScopeTest {
 				line -> line.contains(",capture.answer.save.persist.sql.scope,") && line.contains(",false,")));
 		assertMetric(lines, "capture.answer.save.persist.sql.execute-invocations", 1);
 		assertFalse(SqliteReadProbe.isActive());
+	}
+
+	@Test
+	void observerFailureCannotReplaceWorkflowOutcome() throws Exception {
+		Path csv = tempDir.resolve("observer-failure.csv");
+		IllegalStateException expected = new IllegalStateException("underlying workflow failure");
+		try (PerformanceRecorder recorder = new PerformanceRecorder(true, csv)) {
+			IllegalStateException observed = assertThrows(IllegalStateException.class,
+					() -> PerformanceSqlScope.measureUnchecked(recorder, "capture.question.save.validate", 0, () -> {
+						throw expected;
+					}, _ -> {
+						throw new IllegalArgumentException("observer reporting failed");
+					}));
+			assertSame(expected, observed);
+			assertFalse(SqliteReadProbe.isActive());
+		}
+		List<String> rows = Files.readAllLines(csv);
+		assertTrue(rows.stream().anyMatch(
+				row -> row.contains(",capture.question.save.validate.sql.scope,") && row.contains(",false,")));
+	}
+
+	@Test
+	void observerIsSkippedWhenRecorderDisabled() {
+		Path csv = tempDir.resolve("disabled-observer.csv");
+		AtomicInteger observerCalls = new AtomicInteger();
+		try (PerformanceRecorder recorder = new PerformanceRecorder(false, csv)) {
+			assertEquals("original", PerformanceSqlScope.measureUnchecked(recorder, "capture.question.save.refresh", 0,
+					() -> "original", _ -> observerCalls.incrementAndGet()));
+		}
+		assertEquals(0, observerCalls.get());
+		assertFalse(Files.exists(csv));
+		assertFalse(SqliteReadProbe.isActive());
+	}
+
+	@Test
+	void observerSeesSameSqlCountsWithoutSecondProbe() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("observer.db"));
+		database.initialiseSchema();
+		Path csv = tempDir.resolve("observer.csv");
+		AtomicReference<SqliteReadProbe.Snapshot> observed = new AtomicReference<>();
+		try (PerformanceRecorder recorder = new PerformanceRecorder(true, csv)) {
+			try (PerformanceOperation parent = recorder.start("capture.question.save.persist")) {
+				int count = PerformanceSqlScope.measureUnchecked(recorder, "capture.question.save.persist", parent.id(),
+						() -> {
+							try (Connection connection = database.openConnection();
+									Statement statement = connection.createStatement();
+									ResultSet results = statement.executeQuery("SELECT 1 UNION ALL SELECT 2")) {
+								int rows = 0;
+								while (results.next()) {
+									rows++;
+								}
+								return rows;
+							} catch (SQLException failure) {
+								throw new IllegalStateException(failure);
+							}
+						}, snapshot -> {
+							observed.set(snapshot);
+						});
+				assertEquals(2, count);
+			}
+		}
+		assertFalse(SqliteReadProbe.isActive());
+		assertEquals(1L, observed.get().connectionsOpened());
+		assertEquals(1L, observed.get().executions());
+		assertEquals(2L, observed.get().rowsRead());
+		List<String> rows = Files.readAllLines(csv);
+		assertMetric(rows, "capture.question.save.persist.sql.connections", 1);
+		assertMetric(rows, "capture.question.save.persist.sql.execute-invocations", 1);
+		assertMetric(rows, "capture.question.save.persist.sql.rows-read", 2);
 	}
 
 	@Test

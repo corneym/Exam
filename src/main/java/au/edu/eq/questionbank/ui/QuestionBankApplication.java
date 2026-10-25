@@ -3325,6 +3325,27 @@ public class QuestionBankApplication extends Application {
 		return new CurriculumDashboardState(coverages, true);
 	}
 
+	private void measureExamAssetsPersistence(String operationName, long parentId, ExamAssetsPersistenceAction action)
+			throws SQLException {
+		try (PerformanceOperation load = performanceRecorder.start(operationName + ".load", parentId)) {
+			try {
+
+				// The existing pane operation performs persistence reads and JavaFX
+				// presentation synchronously. Probe JDBC only; do not change threading.
+				PerformanceSqlScope.measure(performanceRecorder, operationName + ".load", load.id(), () -> {
+					action.run();
+					return null;
+				});
+			} catch (SQLException | RuntimeException | Error failure) {
+				load.failed();
+				throw failure;
+			} catch (Exception unexpectedChecked) {
+				load.failed();
+				throw new IllegalStateException("Unexpected Exam/Assets loading exception", unexpectedChecked);
+			}
+		}
+	}
+
 	private boolean offerQuestionRecaptureAfterSharedContextConversion(Stage primaryStage, Question question,
 			Runnable completedHandler) {
 		if (question == null) {
@@ -4675,20 +4696,27 @@ public class QuestionBankApplication extends Application {
 					"Select a Working Subject before managing Exam assets.");
 			return;
 		}
-		try {
+		try (PerformanceOperation navigation = performanceRecorder.start("examAssets.open.general")) {
+			try {
 
-			// Always reconstruct structural state from persistence before exposing it.
-			examAssetsPane.clearCorpusDashboardReturnHandler();
-			examAssetsPane.refresh(workingSubject);
-			bindExamAssetsDashboardReturn(dashboardReturnHandler);
-			setWorkspaceMode(examAssetsPane);
-		} catch (SQLException exception) {
+				// Always reconstruct structural state from persistence before exposing it.
+				examAssetsPane.clearCorpusDashboardReturnHandler();
+				measureExamAssetsPersistence("examAssets.open.general", navigation.id(),
+						() -> examAssetsPane.refresh(workingSubject));
+				bindExamAssetsDashboardReturn(dashboardReturnHandler);
+				setWorkspaceMode(examAssetsPane);
+			} catch (SQLException exception) {
+				navigation.failed();
 
-			// Capture remains mounted if loading fails, so its existing Dashboard session
-			// must remain untouched.
-			examAssetsPane.clearCorpusDashboardReturnHandler();
-			showAlert(Alert.AlertType.ERROR, "Exam / Assets", "Exam assets could not be loaded.",
-					exception.getMessage());
+				// Capture remains mounted if loading fails, so its existing Dashboard
+				// session must remain untouched.
+				examAssetsPane.clearCorpusDashboardReturnHandler();
+				showAlert(Alert.AlertType.ERROR, "Exam / Assets", "Exam assets could not be loaded.",
+						exception.getMessage());
+			} catch (RuntimeException | Error failure) {
+				navigation.failed();
+				throw failure;
+			}
 		}
 	}
 
@@ -4707,20 +4735,27 @@ public class QuestionBankApplication extends Application {
 					"Return to the Dashboard for the current Working Subject and try again.");
 			return;
 		}
-		try {
-			examAssetsPane.clearCorpusDashboardReturnHandler();
-			examAssetsPane.showForCorrection(workingSubject, exam.getId(),
-					booklet == null ? null : Long.valueOf(booklet.getId()));
+		try (PerformanceOperation navigation = performanceRecorder.start("examAssets.open.selected")) {
+			try {
+				examAssetsPane.clearCorpusDashboardReturnHandler();
+				measureExamAssetsPersistence("examAssets.open.selected", navigation.id(),
+						() -> examAssetsPane.showForCorrection(workingSubject, exam.getId(),
+								booklet == null ? null : Long.valueOf(booklet.getId())));
 
-			// Dashboard ownership is retained at application level so selecting a booklet
-			// can later transfer the same Return action into Capture.
-			bindExamAssetsDashboardReturn(returnHandler);
-			setWorkspaceMode(examAssetsPane);
-		} catch (SQLException | IllegalArgumentException | IllegalStateException exception) {
-			examAssetsPane.clearCorpusDashboardReturnHandler();
-			clearCorpusDashboardCaptureReturn();
-			showAlert(Alert.AlertType.ERROR, "Exam / Assets", "The requested Exam assets could not be opened.",
-					exception.getMessage());
+				// Dashboard ownership is retained at application level so selecting a
+				// booklet can later transfer the same Return action into Capture.
+				bindExamAssetsDashboardReturn(returnHandler);
+				setWorkspaceMode(examAssetsPane);
+			} catch (SQLException | IllegalArgumentException | IllegalStateException exception) {
+				navigation.failed();
+				examAssetsPane.clearCorpusDashboardReturnHandler();
+				clearCorpusDashboardCaptureReturn();
+				showAlert(Alert.AlertType.ERROR, "Exam / Assets", "The requested Exam assets could not be opened.",
+						exception.getMessage());
+			} catch (RuntimeException | Error failure) {
+				navigation.failed();
+				throw failure;
+			}
 		}
 	}
 
@@ -4736,19 +4771,26 @@ public class QuestionBankApplication extends Application {
 					"Select or add a Subject on the Corpus Dashboard first.");
 			return;
 		}
-		try {
-			examAssetsPane.clearCorpusDashboardReturnHandler();
-			examAssetsPane.showForNewExam(workingSubject);
+		try (PerformanceOperation navigation = performanceRecorder.start("examAssets.open.new")) {
+			try {
+				examAssetsPane.clearCorpusDashboardReturnHandler();
+				measureExamAssetsPersistence("examAssets.open.new", navigation.id(),
+						() -> examAssetsPane.showForNewExam(workingSubject));
 
-			// Saving or cancelling structural work restores Return availability. The same
-			// session also survives if the new booklet is subsequently activated.
-			bindExamAssetsDashboardReturn(this::refreshAndShowCorpusDashboardHome);
-			setWorkspaceMode(examAssetsPane);
-		} catch (SQLException | IllegalStateException exception) {
-			examAssetsPane.clearCorpusDashboardReturnHandler();
-			clearCorpusDashboardCaptureReturn();
-			showAlert(Alert.AlertType.ERROR, "Exam / Assets", "A new Exam could not be started.",
-					exception.getMessage());
+				// Saving or cancelling structural work restores Return availability.
+				// The same session survives if the new booklet is subsequently activated.
+				bindExamAssetsDashboardReturn(this::refreshAndShowCorpusDashboardHome);
+				setWorkspaceMode(examAssetsPane);
+			} catch (SQLException | IllegalStateException exception) {
+				navigation.failed();
+				examAssetsPane.clearCorpusDashboardReturnHandler();
+				clearCorpusDashboardCaptureReturn();
+				showAlert(Alert.AlertType.ERROR, "Exam / Assets", "A new Exam could not be started.",
+						exception.getMessage());
+			} catch (RuntimeException | Error failure) {
+				navigation.failed();
+				throw failure;
+			}
 		}
 	}
 
@@ -6142,6 +6184,12 @@ public class QuestionBankApplication extends Application {
 			// the JavaFX application thread.
 			mappingCoverages = List.copyOf(mappingCoverages);
 		}
+	}
+
+	@FunctionalInterface
+	private interface ExamAssetsPersistenceAction {
+
+		void run() throws SQLException;
 	}
 
 	private record PendingLegacyQuestionImport(Subject subject, SyllabusVersion syllabusVersion,

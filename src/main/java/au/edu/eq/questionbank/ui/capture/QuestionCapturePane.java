@@ -23,6 +23,7 @@ import java.util.function.Supplier;
 import au.edu.eq.questionbank.diagnostics.FxPulseGapProbe;
 import au.edu.eq.questionbank.diagnostics.PerformanceOperation;
 import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
+import au.edu.eq.questionbank.diagnostics.PerformanceSqlScope;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ImageQuestionContentPart;
@@ -2938,26 +2939,32 @@ public final class QuestionCapturePane extends VBox {
 		measureQuestionCodePhase(name, parentOperationId, _ -> action.run());
 	}
 
-	private <T> T measureQuestionSaveSql(String phase, Supplier<T> action) {
+	private <T> T measureQuestionSaveSql(String phase, long parentOperationId, Supplier<T> action) {
 		Objects.requireNonNull(phase, "phase");
 		Objects.requireNonNull(action, "action");
-		if (!Boolean.getBoolean("eqb.performance.sql.enabled")) {
+		boolean consoleEnabled = Boolean.getBoolean("eqb.performance.sql.enabled");
+		if (performanceRecorder.isEnabled()) {
+			String prefix = "capture.question.save." + phase;
+
+			// One recorder-owned SQL scope supplies both routine CSV metrics
+			// and the optional existing developer-console summary.
+			if (consoleEnabled) {
+				return PerformanceSqlScope.measureUnchecked(performanceRecorder, prefix, parentOperationId, action,
+						snapshot -> printQuestionSaveSql(phase, snapshot));
+			}
+			return PerformanceSqlScope.measureUnchecked(performanceRecorder, prefix, parentOperationId, action);
+		}
+		if (!consoleEnabled || SqliteReadProbe.isActive()) {
 			return action.get();
 		}
+
+		// Legacy console-only investigation mode remains available without
+		// enabling the persistent routine performance recorder.
 		SqliteReadProbe probe = SqliteReadProbe.begin();
 		try (probe) {
 			return action.get();
 		} finally {
-			SqliteReadProbe.Snapshot snapshot = probe.snapshot();
-
-			// Report JDBC executions rather than assuming each execute
-			// corresponds to exactly one SQL statement.
-			System.out.printf(
-					"QUESTION_SAVE_SQL phase=%s connections=%d " + "executions=%d rows=%d questions=%d "
-							+ "connection_ms=%.3f sql_ms=%.3f%n",
-					phase, snapshot.connectionsOpened(), snapshot.executions(), snapshot.rowsRead(),
-					snapshot.questionsReconstructed(), snapshot.connectionOpenNanos() / 1_000_000.0,
-					snapshot.executionNanos() / 1_000_000.0);
+			printQuestionSaveSql(phase, probe.snapshot());
 		}
 	}
 
@@ -3168,7 +3175,8 @@ public final class QuestionCapturePane extends VBox {
 			try (PerformanceOperation readOperation = performanceRecorder.start("capture.question.save.read-before",
 					validationOperation.id())) {
 				try {
-					validationError = measureQuestionSaveSql("validate", () -> validateStoredQuestion(request));
+					validationError = measureQuestionSaveSql("validate", readOperation.id(),
+							() -> validateStoredQuestion(request));
 
 					// No full Question reconstruction is required
 					// for scoped pre-save validation.
@@ -3192,7 +3200,8 @@ public final class QuestionCapturePane extends VBox {
 		try (PerformanceOperation persistenceOperation = performanceRecorder.start("capture.question.save.persist",
 				parentOperationId)) {
 			try {
-				saved = measureQuestionSaveSql("persist", () -> questionCaptureService.save(request));
+				saved = measureQuestionSaveSql("persist", persistenceOperation.id(),
+						() -> questionCaptureService.save(request));
 				persistenceOperation.resultCount(1);
 			} catch (RuntimeException | Error failure) {
 				persistenceOperation.failed();
@@ -3205,7 +3214,8 @@ public final class QuestionCapturePane extends VBox {
 		try (PerformanceOperation refreshOperation = performanceRecorder.start("capture.question.save.refresh",
 				parentOperationId)) {
 			try {
-				List<Question> refreshed = measureQuestionSaveSql("refresh", questionRepository::findAll);
+				List<Question> refreshed = measureQuestionSaveSql("refresh", refreshOperation.id(),
+						questionRepository::findAll);
 				refreshOperation.resultCount(refreshed.size());
 				return new QuestionSaveResult(saved, refreshed, null, null);
 			} catch (RuntimeException refreshFailure) {
@@ -3219,6 +3229,17 @@ public final class QuestionCapturePane extends VBox {
 				return new QuestionSaveResult(saved, List.copyOf(fallback), null, refreshFailure);
 			}
 		}
+	}
+
+	private void printQuestionSaveSql(String phase, SqliteReadProbe.Snapshot snapshot) {
+
+		// Executions count JDBC execute invocations, including JDBC batches.
+		System.out.printf(
+				"QUESTION_SAVE_SQL phase=%s connections=%d executions=%d rows=%d questions=%d "
+						+ "connection_ms=%.3f sql_ms=%.3f%n",
+				phase, snapshot.connectionsOpened(), snapshot.executions(), snapshot.rowsRead(),
+				snapshot.questionsReconstructed(), snapshot.connectionOpenNanos() / 1_000_000.0,
+				snapshot.executionNanos() / 1_000_000.0);
 	}
 
 	private boolean questionReadyToSave() {

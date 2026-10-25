@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -25,6 +26,8 @@ public final class PerformanceRawRetention {
 
 	/** Default soft ceiling for all raw session files (200 MiB). */
 	public static final long DEFAULT_MAX_RAW_BYTES = 200L * 1024 * 1024;
+	/** Default maximum age for completed, verified raw sessions (90 days). */
+	public static final Duration DEFAULT_MAX_RAW_AGE = Duration.ofDays(90);
 	private static final Set<String> SAFE_FILES = Set.of("operations.csv", "corpus-checkpoints.csv",
 			"session.properties", "session.complete");
 	private final PerformanceHistoryPublisher publisher;
@@ -101,24 +104,29 @@ public final class PerformanceRawRetention {
 	}
 
 	/**
-	 * Inspects or prunes old raw session directories.
+	 * Applies both byte and age limits to old raw performance sessions.
 	 *
-	 * Only four approved raw files inside a completed, fully republished session
-	 * can be deleted. An interprocess lock prevents two retention controllers from
-	 * pruning concurrently.
+	 * An expired session or a session needed to reduce total raw bytes may be
+	 * removed only after full historical re-publication and integrity validation.
+	 * Incomplete, unknown, unverified and protected sessions are retained.
 	 *
-	 * @param diagnosticsRoot  diagnostics directory, not the data root
-	 * @param maxRawBytes      desired maximum raw-session bytes
-	 * @param protectedSession session ID to preserve, or null
-	 * @param deleteVerified   true to permit verified raw deletion
+	 * @param diagnosticsRoot  diagnostics directory, not the Question data root
+	 * @param maxRawBytes      desired maximum total raw-session bytes
+	 * @param maxRawAge        maximum age of completed raw sessions
+	 * @param protectedSession current application session to preserve, or null
+	 * @param deleteVerified   explicitly permit deletion of verified raw sessions
 	 * @return observed sizes and deletion results
 	 * @throws IOException if scanning or lock acquisition fails
 	 */
-	public Result enforce(Path diagnosticsRoot, long maxRawBytes, UUID protectedSession, boolean deleteVerified)
-			throws IOException {
+	public Result enforce(Path diagnosticsRoot, long maxRawBytes, Duration maxRawAge, UUID protectedSession,
+			boolean deleteVerified) throws IOException {
 		Objects.requireNonNull(diagnosticsRoot, "diagnosticsRoot");
+		Objects.requireNonNull(maxRawAge, "maxRawAge");
 		if (maxRawBytes < 1) {
 			throw new IllegalArgumentException("maxRawBytes must be positive");
+		}
+		if (maxRawAge.isNegative() || maxRawAge.isZero()) {
+			throw new IllegalArgumentException("maxRawAge must be positive");
 		}
 		Path sessionsRoot = diagnosticsRoot.resolve("sessions");
 		if (Files.notExists(sessionsRoot)) {
@@ -147,13 +155,19 @@ public final class PerformanceRawRetention {
 				long remaining = initialBytes;
 				int deleted = 0;
 				int protectedCount = 0;
+				Instant expiryCutoff = Instant.now().minus(maxRawAge);
 
-				// Prioritise the oldest completed sessions.
-				// Incomplete sessions sort last and are never deleted.
+				// Oldest completed sessions first. Incomplete sessions sort last
+				// and remain ineligible regardless of either retention limit.
 				sessions.sort(Comparator.comparing(Session::completedAt));
 				for (Session candidate : sessions) {
-					if (remaining <= maxRawBytes || !deleteVerified) {
+					if (!deleteVerified) {
 						break;
+					}
+					boolean expired = candidate.completedAt().isBefore(expiryCutoff);
+					boolean overByteLimit = remaining > maxRawBytes;
+					if (!expired && !overByteLimit) {
+						continue;
 					}
 					if (candidate.id() == null || candidate.id().equals(protectedSession)
 							|| !candidate.safeToDelete()) {
@@ -162,15 +176,12 @@ public final class PerformanceRawRetention {
 					}
 					try {
 
-						// Recreate every summary from the authoritative
-						// raw session and compare immutable history files.
+						// Reconstruct historical aggregates from this raw session
+						// before considering deletion, and verify existing hashes.
 						if (!publisher.publishSession(diagnosticsRoot, candidate.id(), "unknown")) {
 							protectedCount++;
 							continue;
 						}
-
-						// Reject sessions whose contents have changed
-						// since initial inspection.
 						Session fresh = inspectOne(candidate.directory());
 						if (!fresh.safeToDelete() || fresh.bytes() != candidate.bytes()
 								|| !fresh.id().equals(candidate.id())) {
@@ -178,9 +189,6 @@ public final class PerformanceRawRetention {
 							continue;
 						}
 						List<Path> operations = PerformanceCsvReader.sessionOperationFiles(fresh.directory());
-
-						// The publisher has successfully reconstructed and verified
-						// the complete multi-segment session before deletion begins.
 						for (Path file : operations) {
 							Files.delete(file);
 						}
@@ -194,14 +202,31 @@ public final class PerformanceRawRetention {
 						deleted++;
 					} catch (IOException | RuntimeException failure) {
 
-						// Uncertain sessions must not be pruned.
-						// Their permanent historical records remain.
+						// Uncertain or concurrently changed raw sessions survive.
 						protectedCount++;
 					}
 				}
 				return new Result(initialBytes, remaining, deleted, protectedCount, true);
 			}
 		}
+	}
+
+	/**
+	 * Applies the default age and byte retention limits to raw diagnostic sessions.
+	 *
+	 * Only safe, completed and independently verified sessions may be deleted. This
+	 * operation does not delete anything when {@code deleteVerified} is false.
+	 *
+	 * @param diagnosticsRoot  diagnostics directory, not the Question data root
+	 * @param maxRawBytes      desired maximum total raw-session bytes
+	 * @param protectedSession current application session to preserve, or null
+	 * @param deleteVerified   explicitly permit deletion of verified raw sessions
+	 * @return observed sizes and deletion results
+	 * @throws IOException if scanning or lock acquisition fails
+	 */
+	public Result enforce(Path diagnosticsRoot, long maxRawBytes, UUID protectedSession, boolean deleteVerified)
+			throws IOException {
+		return enforce(diagnosticsRoot, maxRawBytes, DEFAULT_MAX_RAW_AGE, protectedSession, deleteVerified);
 	}
 
 	/**

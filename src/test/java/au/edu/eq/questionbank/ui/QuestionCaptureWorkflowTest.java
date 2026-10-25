@@ -28,6 +28,7 @@ import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.diagnostics.FxPulseGapProbe;
+import au.edu.eq.questionbank.diagnostics.PerformanceCsvReader;
 import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
@@ -84,6 +85,29 @@ import javafx.stage.Stage;
 @Tag("ui")
 @Tag("workflow-ui")
 class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
+
+	private static void assertQuestionSaveSqlPhase(List<PerformanceCsvReader.Entry> rows, String parentName,
+			String prefix) {
+		PerformanceCsvReader.Entry parent = rows.stream().filter(row -> parentName.equals(row.operation())).findFirst()
+				.orElseThrow();
+		PerformanceCsvReader.Entry scope = rows.stream().filter(row -> (prefix + ".sql.scope").equals(row.operation()))
+				.findFirst().orElseThrow();
+		PerformanceCsvReader.Entry connections = rows.stream()
+				.filter(row -> (prefix + ".sql.connections").equals(row.operation())).findFirst().orElseThrow();
+		PerformanceCsvReader.Entry executions = rows.stream()
+				.filter(row -> (prefix + ".sql.execute-invocations").equals(row.operation())).findFirst().orElseThrow();
+		PerformanceCsvReader.Entry rowCount = rows.stream()
+				.filter(row -> (prefix + ".sql.rows-read").equals(row.operation())).findFirst().orElseThrow();
+		assertTrue(parent.success());
+		assertTrue(scope.success());
+		assertEquals(parent.operationId(), scope.parentId());
+		assertEquals(scope.operationId(), connections.parentId());
+		assertEquals(scope.operationId(), executions.parentId());
+		assertEquals(scope.operationId(), rowCount.parentId());
+		assertTrue(connections.resultCount() >= 1L);
+		assertTrue(executions.resultCount() >= 1L);
+		assertTrue(rowCount.resultCount() >= 0L);
+	}
 
 	private static long previewImageBytes(Node node) {
 		if (node instanceof ImageView view && view.getImage() != null) {
@@ -2073,6 +2097,35 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		} finally {
 			release.countDown();
 		}
+	}
+
+	@Test
+	void questionSavePublishesThreeCorrelatedSqlPhases(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		QuestionCapturePane pane = questionCapturePane();
+		Path csv = databasePath.resolveSibling("question-save-sql.csv");
+		PerformanceRecorder previous = field(pane, "performanceRecorder", PerformanceRecorder.class);
+		try (PerformanceRecorder recorder = new PerformanceRecorder(true, csv)) {
+			robot.interact(() -> pane.setPerformanceRecorder(recorder));
+			try {
+				Question saved = captureQuestion(robot, "71");
+				assertEquals("71", saved.getQuestionCode());
+			} finally {
+
+				// Restore the original application recorder before closing the test
+				// recorder; the application owns its normal recorder lifecycle.
+				robot.interact(() -> pane.setPerformanceRecorder(previous));
+			}
+		}
+		List<PerformanceCsvReader.Entry> rows = PerformanceCsvReader.read(csv);
+		assertQuestionSaveSqlPhase(rows, "capture.question.save.read-before", "capture.question.save.validate");
+		assertQuestionSaveSqlPhase(rows, "capture.question.save.persist", "capture.question.save.persist");
+		assertQuestionSaveSqlPhase(rows, "capture.question.save.refresh", "capture.question.save.refresh");
+		PerformanceCsvReader.Entry reconstruction = rows.stream()
+				.filter(row -> "capture.question.save.refresh.sql.questions-reconstructed".equals(row.operation()))
+				.findFirst().orElseThrow();
+		assertTrue(reconstruction.resultCount() >= 1L);
+		assertFalse(Files.readString(csv).contains(",71,"));
 	}
 
 	@Test

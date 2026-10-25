@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
+import java.util.Objects;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.Callable;
@@ -55,6 +56,30 @@ public final class PerformanceRecorder implements AutoCloseable {
 	}
 
 	/**
+	 * Creates a session-aware diagnostic recorder for an explicitly selected
+	 * diagnostics directory, without reading or changing JVM configuration.
+	 *
+	 * The enabled variant uses the ordinary bounded background session writer.
+	 * Disabled recording neither starts a writer nor creates files. This factory is
+	 * intended for isolated comparison tools and focused tests.
+	 *
+	 * @param diagnosticsDirectory isolated destination for diagnostic sessions
+	 * @param enabled              whether collection is enabled
+	 * @return a new session-aware or disabled performance recorder
+	 * @throws NullPointerException if diagnosticsDirectory is null
+	 */
+	public static PerformanceRecorder forSession(Path diagnosticsDirectory, boolean enabled) {
+		Objects.requireNonNull(diagnosticsDirectory, "diagnosticsDirectory");
+		if (!enabled) {
+			return new PerformanceRecorder(false, diagnosticsDirectory.resolve("performance.csv"));
+		}
+		UUID sessionId = UUID.randomUUID();
+		Path outputFile = diagnosticsDirectory.resolve("sessions").resolve(sessionId.toString())
+				.resolve("operations.csv");
+		return new PerformanceRecorder(true, outputFile, sessionId, true);
+	}
+
+	/**
 	 * Creates the application recorder using JVM properties.
 	 *
 	 * Enabled application recorders write to a uniquely named session directory.
@@ -77,13 +102,7 @@ public final class PerformanceRecorder implements AutoCloseable {
 	public static PerformanceRecorder fromSystemProperties(Path diagnosticsDirectory, boolean preferenceEnabled) {
 		String override = System.getProperty("eqb.performance.enabled");
 		boolean enabled = override == null ? preferenceEnabled : Boolean.parseBoolean(override);
-		if (!enabled) {
-			return new PerformanceRecorder(false, diagnosticsDirectory.resolve("performance.csv"));
-		}
-		UUID sessionId = UUID.randomUUID();
-		Path outputFile = diagnosticsDirectory.resolve("sessions").resolve(sessionId.toString())
-				.resolve("operations.csv");
-		return new PerformanceRecorder(true, outputFile, sessionId, true);
+		return forSession(diagnosticsDirectory, enabled);
 	}
 
 	/**

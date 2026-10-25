@@ -16,6 +16,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import au.edu.eq.questionbank.diagnostics.PerformanceCsvReader;
 import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
@@ -213,6 +214,76 @@ class PerformanceBenchmarkToolTest {
 		assertEquals(2,
 				runTool("--snapshot", fixture.snapshot().toString(), "--operation", "question.findAll", "--csv"));
 		assertArrayEquals(snapshotBefore, Files.readAllBytes(fixture.snapshot()));
+	}
+
+	@Test
+	void overheadToolRejectsOverwritingExistingReport() throws Exception {
+		Fixture fixture = createFixture();
+		Path csv = tempDirectory.resolve("already-present-overhead.csv");
+		Files.writeString(csv, "must not overwrite");
+		ByteArrayOutputStream errors = new ByteArrayOutputStream();
+		int result = PerformanceDiagnosticsOverheadTool.run(
+				new String[] { "--snapshot", fixture.snapshot().toString(), "--subject-id",
+						Long.toString(fixture.subjectId()), "--csv", csv.toString(), "--diagnostics",
+						tempDirectory.resolve("isolated-overhead").toString(), "--rounds", "1", "--warmups", "1" },
+				new PrintStream(new ByteArrayOutputStream()), new PrintStream(errors));
+		assertEquals(1, result, errors.toString());
+		assertEquals("must not overwrite", Files.readString(csv));
+	}
+
+	@Test
+	void overheadToolRequiresReadOnlySnapshotAndSeparateOutput() throws Exception {
+		Fixture fixture = createFixture();
+		Path diagnostics = tempDirectory.resolve("isolated-overhead");
+		Path wal = fixture.snapshot().resolveSibling(fixture.snapshot().getFileName() + "-wal");
+		Files.writeString(wal, "unexpected sidecar");
+		ByteArrayOutputStream errors = new ByteArrayOutputStream();
+		int result = PerformanceDiagnosticsOverheadTool.run(
+				new String[] { "--snapshot", fixture.snapshot().toString(), "--subject-id",
+						Long.toString(fixture.subjectId()), "--csv",
+						tempDirectory.resolve("should-not-exist.csv").toString(), "--diagnostics",
+						diagnostics.toString(), "--warmups", "1", "--rounds", "1" },
+				new PrintStream(new ByteArrayOutputStream()), new PrintStream(errors));
+		assertEquals(1, result);
+		assertFalse(Files.exists(tempDirectory.resolve("should-not-exist.csv")));
+		assertFalse(Files.exists(diagnostics));
+		assertTrue(Files.isRegularFile(wal));
+	}
+
+	@Test
+	void overheadToolRunsPairedReadOnlyWorkloadsAndRecordsCompleteSession() throws Exception {
+		Fixture fixture = createFixture();
+		Path csv = tempDirectory.resolve("overhead-comparison.csv");
+		Path diagnostics = tempDirectory.resolve("isolated-overhead");
+		byte[] original = Files.readAllBytes(fixture.snapshot());
+		ByteArrayOutputStream standard = new ByteArrayOutputStream();
+		ByteArrayOutputStream errors = new ByteArrayOutputStream();
+		int status = PerformanceDiagnosticsOverheadTool.run(
+				new String[] { "--snapshot", fixture.snapshot().toString(), "--subject-id",
+						Long.toString(fixture.subjectId()), "--csv", csv.toString(), "--diagnostics",
+						diagnostics.toString(), "--label", "issue-204-test", "--warmups", "1", "--rounds", "1" },
+				new PrintStream(standard), new PrintStream(errors));
+		assertEquals(0, status, errors.toString());
+		assertArrayEquals(original, Files.readAllBytes(fixture.snapshot()));
+		assertFalse(Files.exists(fixture.snapshot().resolveSibling(fixture.snapshot().getFileName() + "-wal")));
+		assertFalse(Files.exists(fixture.snapshot().resolveSibling(fixture.snapshot().getFileName() + "-shm")));
+		List<String> lines = Files.readAllLines(csv);
+		assertEquals(4, lines.size());
+		assertTrue(lines.getFirst().contains("enabled_samples_ns"));
+		assertTrue(lines.get(1).contains("question.findAll,1,1,2,1,"));
+		assertTrue(lines.get(2).contains("dashboard.audit.subject,1,1,2,1,"));
+		assertTrue(lines.get(3).contains("search.current.subject,1,1,2,1,"));
+		assertTrue(lines.get(1).contains(PerformanceBenchmarkCsvReport.sha256(fixture.snapshot())));
+		assertTrue(standard.toString().contains("Overhead comparison completed"));
+		Path sessionsRoot = diagnostics.resolve("sessions");
+		Path session;
+		try (var contents = Files.list(sessionsRoot)) {
+			List<Path> found = contents.filter(Files::isDirectory).toList();
+			assertEquals(1, found.size());
+			session = found.getFirst();
+		}
+		assertTrue(Files.isRegularFile(session.resolve("session.complete")));
+		assertFalse(PerformanceCsvReader.readSession(session).isEmpty());
 	}
 
 	@Test

@@ -89,10 +89,11 @@ public final class PerformanceHistoryHtmlReport {
 				throw new IOException("Packaged performance HTML template is missing");
 			}
 			String template = new String(input.readAllBytes(), StandardCharsets.UTF_8);
-			String placeholder = "__OBSERVATIONS__";
-			int first = template.indexOf(placeholder);
-			if (first < 0 || template.indexOf(placeholder, first + placeholder.length()) >= 0) {
-				throw new IOException("Performance HTML template must contain " + "exactly one data placeholder");
+			for (String placeholder : List.of("__OBSERVATIONS__", "__LEGACY_OBSERVATIONS__")) {
+				int first = template.indexOf(placeholder);
+				if (first < 0 || template.indexOf(placeholder, first + placeholder.length()) >= 0) {
+					throw new IOException("Performance HTML template must contain exactly one " + placeholder);
+				}
 			}
 			return template;
 		}
@@ -157,26 +158,43 @@ public final class PerformanceHistoryHtmlReport {
 	}
 
 	/**
-	 * Generates a new offline report without modifying historical records.
+	 * Generates the original modern-history-only offline report.
 	 *
-	 * @param historyDirectory permanent historical-summary directory
+	 * @param historyDirectory permanent history root
 	 * @param destination      new HTML output file
-	 * @return generated report path
-	 * @throws IOException if the history cannot be read or output written
+	 * @return output path
+	 * @throws IOException if history is unavailable or writing fails
 	 */
 	public Path generate(Path historyDirectory, Path destination) throws IOException {
+		return generate(historyDirectory, destination, null);
+	}
+
+	/**
+	 * Generates a modern historical report with optional explicitly selected legacy
+	 * CSV observations, displayed separately from modern session data.
+	 *
+	 * @param historyDirectory permanent modern history root
+	 * @param destination      new HTML output file
+	 * @param legacyCsv        optional original seven-column performance.csv, or
+	 *                         null
+	 * @return newly generated HTML path
+	 * @throws IOException if either source is invalid or output cannot be created
+	 */
+	public Path generate(Path historyDirectory, Path destination, Path legacyCsv) throws IOException {
 		List<Observation> observations = read(historyDirectory);
-		if (observations.isEmpty()) {
+		List<PerformanceLegacyCsvSummary.Group> legacy = legacyCsv == null ? List.of()
+				: new PerformanceLegacyCsvSummary().read(legacyCsv);
+		if (observations.isEmpty() && legacy.isEmpty()) {
 			throw new IOException("No historical performance observations available");
 		}
 		observations.sort(Comparator.comparing(Observation::operation).thenComparing(o -> o.machineId().toString())
 				.thenComparing(Observation::questionCount).thenComparing(Observation::capturedAt));
-		StringBuilder json = new StringBuilder("[");
+		StringBuilder modernJson = new StringBuilder("[");
 		for (Observation observation : observations) {
-			if (json.length() > 1) {
-				json.append(',');
+			if (modernJson.length() > 1) {
+				modernJson.append(',');
 			}
-			json.append('{').append("\"machine\":").append(jsonString(observation.machineId().toString()))
+			modernJson.append('{').append("\"machine\":").append(jsonString(observation.machineId().toString()))
 					.append(",\"session\":").append(jsonString(observation.sessionId().toString()))
 					.append(",\"version\":").append(jsonString(observation.version())).append(",\"runtime\":")
 					.append(jsonString(observation.runtime())).append(",\"operation\":")
@@ -187,18 +205,31 @@ public final class PerformanceHistoryHtmlReport {
 					.append(observation.median()).append(",\"p90\":").append(observation.p90()).append(",\"maximum\":")
 					.append(observation.maximum()).append('}');
 		}
-		json.append(']');
-		String html = loadTemplate().replace("__OBSERVATIONS__", json.toString());
+		modernJson.append(']');
+
+		// Legacy measurements have neither reliable sessions nor corpus counts.
+		// Never present them as chart points or as members of modern cohorts.
+		StringBuilder legacyJson = new StringBuilder("[");
+		for (PerformanceLegacyCsvSummary.Group group : legacy) {
+			if (legacyJson.length() > 1) {
+				legacyJson.append(',');
+			}
+			legacyJson.append('{').append("\"operation\":").append(jsonString(group.operation()))
+					.append(",\"earliest\":").append(jsonString(group.earliest().toString())).append(",\"latest\":")
+					.append(jsonString(group.latest().toString())).append(",\"samples\":").append(group.samples())
+					.append(",\"failures\":").append(group.failures()).append(",\"median\":").append(group.median())
+					.append(",\"p90\":").append(group.p90()).append(",\"maximum\":").append(group.maximum())
+					.append('}');
+		}
+		legacyJson.append(']');
+		String html = loadTemplate().replace("__OBSERVATIONS__", modernJson.toString())
+				.replace("__LEGACY_OBSERVATIONS__", legacyJson.toString());
 		Path output = destination.toAbsolutePath().normalize();
 		Path parent = output.getParent();
 		Files.createDirectories(parent);
 		Path temporary = Files.createTempFile(parent, ".performance-report-", ".tmp");
 		try {
 			Files.writeString(temporary, html, StandardCharsets.UTF_8);
-
-			// A previously generated report is never overwritten.
-			// CREATE_NEW semantics of Files.copy without REPLACE_EXISTING
-			// prevent cross-platform replacement of an earlier report.
 			Files.copy(temporary, output);
 		} finally {
 			Files.deleteIfExists(temporary);

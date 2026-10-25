@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.diagnostics;
 
 import java.util.Objects;
 import java.util.concurrent.Callable;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 import au.edu.eq.questionbank.repository.sqlite.SqliteReadProbe;
@@ -23,19 +24,43 @@ public final class PerformanceSqlScope {
 	 * Disabled recording and already-active SQL scopes execute the action directly,
 	 * preserving existing application behaviour.
 	 *
+	 * @param <T>             result type
 	 * @param recorder        application performance recorder
 	 * @param operationPrefix stable diagnostic operation prefix
 	 * @param parentId        enclosing performance operation ID, or zero
 	 * @param action          database-related workflow
-	 * @param <T>             result type
 	 * @return original workflow result
 	 * @throws Exception original workflow exception
 	 */
 	public static <T> T measure(PerformanceRecorder recorder, String operationPrefix, long parentId, Callable<T> action)
 			throws Exception {
+		return measure(recorder, operationPrefix, parentId, action, _ -> {
+		});
+	}
+
+	/**
+	 * Executes a workflow, publishes SQL counters, and optionally observes the
+	 * completed aggregate JDBC snapshot.
+	 *
+	 * The observer runs after the thread-local probe has been closed. Its
+	 * exceptions cannot replace the original workflow outcome. Disabled or nested
+	 * diagnostic scopes do not invoke the observer.
+	 *
+	 * @param <T>             result type
+	 * @param recorder        application performance recorder
+	 * @param operationPrefix stable diagnostic operation prefix
+	 * @param parentId        enclosing performance operation ID, or zero
+	 * @param action          database-related workflow
+	 * @param observer        best-effort observer of the completed SQL snapshot
+	 * @return original workflow result
+	 * @throws Exception original workflow exception
+	 */
+	public static <T> T measure(PerformanceRecorder recorder, String operationPrefix, long parentId, Callable<T> action,
+			Consumer<SqliteReadProbe.Snapshot> observer) throws Exception {
 		Objects.requireNonNull(recorder, "recorder");
 		Objects.requireNonNull(operationPrefix, "operationPrefix");
 		Objects.requireNonNull(action, "action");
+		Objects.requireNonNull(observer, "observer");
 		if (!recorder.isEnabled() || SqliteReadProbe.isActive()) {
 			return action.call();
 		}
@@ -48,15 +73,21 @@ public final class PerformanceSqlScope {
 				throw failure;
 			} finally {
 
-				// Remove the thread-local probe before publishing metrics.
+				// Remove the thread-local probe before publishing measurements.
 				probe.close();
 				operation.close();
+				SqliteReadProbe.Snapshot snapshot = probe.snapshot();
 				try {
-					publish(recorder, operationPrefix, operation.id(), probe.snapshot());
-				} catch (RuntimeException diagnosticsFailure) {
+					publish(recorder, operationPrefix, operation.id(), snapshot);
+				} catch (RuntimeException | Error diagnosticFailure) {
 
-					// Measurement failures must not replace the
-					// workflow's original result or exception.
+					// Diagnostic publication must not replace the workflow result.
+				}
+				try {
+					observer.accept(snapshot);
+				} catch (RuntimeException | Error diagnosticFailure) {
+
+					// Optional console reporting is best effort only.
 				}
 			}
 		} finally {
@@ -65,29 +96,46 @@ public final class PerformanceSqlScope {
 	}
 
 	/**
-	 * Measures a workflow whose Java callback cannot throw checked exceptions.
+	 * Measures a workflow whose callback cannot throw checked exceptions.
 	 *
 	 * Preserves the original RuntimeException or Error, including when a nested
-	 * probe is already present or performance recording is disabled.
+	 * probe is active or recording is disabled.
 	 *
 	 * @param <T>             workflow result type
 	 * @param recorder        application performance recorder
-	 * @param operationPrefix stable operation name prefix
+	 * @param operationPrefix stable diagnostic operation prefix
 	 * @param parentId        enclosing operation ID, or zero
-	 * @param action          workflow returning the original result
-	 * @return result of the original action
+	 * @param action          original workflow
+	 * @return original workflow result
 	 */
 	public static <T> T measureUnchecked(PerformanceRecorder recorder, String operationPrefix, long parentId,
 			Supplier<T> action) {
+		return measureUnchecked(recorder, operationPrefix, parentId, action, _ -> {
+		});
+	}
+
+	/**
+	 * Measures a workflow without checked exceptions and observes the completed
+	 * aggregate JDBC snapshot when a new probe is active.
+	 *
+	 * @param <T>             workflow result type
+	 * @param recorder        application performance recorder
+	 * @param operationPrefix stable diagnostic operation prefix
+	 * @param parentId        enclosing operation ID, or zero
+	 * @param action          original workflow
+	 * @param observer        best-effort observer of the completed SQL snapshot
+	 * @return original workflow result
+	 */
+	public static <T> T measureUnchecked(PerformanceRecorder recorder, String operationPrefix, long parentId,
+			Supplier<T> action, Consumer<SqliteReadProbe.Snapshot> observer) {
 		Objects.requireNonNull(action, "action");
 		try {
-			return measure(recorder, operationPrefix, parentId, action::get);
+			return measure(recorder, operationPrefix, parentId, action::get, observer);
 		} catch (RuntimeException | Error failure) {
 			throw failure;
 		} catch (Exception unexpectedChecked) {
 
-			// Supplier.get cannot declare a checked exception. Preserve a
-			// meaningful cause if a future implementation breaks that rule.
+			// Supplier.get cannot declare checked exceptions.
 			throw new IllegalStateException("Unexpected checked diagnostic workflow failure", unexpectedChecked);
 		}
 	}
