@@ -21,6 +21,7 @@ module au.edu.eq.questionbank {
 	requires org.apache.pdfbox;
 	requires org.apache.poi.ooxml;
 	requires org.apache.poi.poi;
+	requires java.management;
 
 	opens au.edu.eq.questionbank;
 	opens au.edu.eq.questionbank.admin;

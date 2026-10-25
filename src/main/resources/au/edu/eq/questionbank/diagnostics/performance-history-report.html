@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Exam Question Bank — Performance History</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0 auto; max-width: 1250px;
+           padding: 28px; color: #172033; background: #f8fafc; }
+    h1 { margin-bottom: 6px; }
+    .subtitle, .note { color: #64748b; }
+    .note { font-size: 13px; }
+    .panel { margin-top: 20px; padding: 20px; background: white;
+             border: 1px solid #dce3ec; border-radius: 10px; }
+    .filters { display: flex; flex-wrap: wrap; gap: 18px; align-items: end; }
+    label { display: grid; gap: 6px; font-size: 13px; font-weight: 600; }
+    select { font: inherit; padding: 8px; min-width: 150px;
+             border: 1px solid #cbd5e1; border-radius: 5px; background: white; }
+    svg { display: block; width: 100%; height: auto; }
+    .legend { display: flex; flex-wrap: wrap; gap: 14px; }
+    .legend span { font-size: 13px; }
+    .swatch { display: inline-block; width: 12px; height: 12px; margin-right: 5px; }
+    .scroll { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 9px; border-bottom: 1px solid #e2e8f0;
+             text-align: left; white-space: nowrap; }
+    th { background: #f1f5f9; }
+  </style>
+</head>
+<body>
+  <h1>Exam Question Bank — Performance History</h1>
+  <p class="subtitle">Offline observations grouped by machine, application version and Question corpus size.</p>
+  <section class="panel" id="automatic-review-panel">
+    <h2>Automatic performance review</h2>
+    <p class="note">Derived from completed, session-attributed checkpoints. Large timing changes are
+      preliminary screening signals, not proof of a regression or an effect caused by corpus growth.
+      Legacy unattributed measurements are excluded from the comparisons.</p>
+    <ul id="automatic-findings"></ul>
+  </section>
+  <section class="panel filters">
+    <label>Operation <select id="operation"></select></label>
+    <label>Machine <select id="machine"></select></label>
+    <label>Application version <select id="version"></select></label>
+    <label>Environment <select id="runtime"></select></label>
+    <label>Timing statistic
+      <select id="metric">
+        <option value="median">Median (ms)</option>
+        <option value="p90">P90 (ms)</option>
+        <option value="maximum">Maximum (ms)</option>
+      </select>
+    </label>
+  </section>
+  <section class="panel">
+    <h2>Performance versus Question count</h2>
+    <svg id="chart" viewBox="0 0 940 390" role="img"
+         aria-label="Operation timing versus Question count"></svg>
+    <div id="legend" class="legend"></div>
+    <p class="note">Each series belongs to one machine, application version and runtime.
+      Points are checkpoint observations, not synthetic benchmarks. Correlation does not establish causation.</p>
+  </section>
+  <section class="panel">
+    <h2>Underlying observations</h2>
+    <p id="count" class="note"></p>
+    <div class="scroll">
+      <table>
+        <thead><tr>
+          <th>Machine</th><th>Version</th><th>Environment</th><th>Questions</th>
+          <th>Operation</th><th>Samples</th><th>Failures</th><th>Median ms</th>
+          <th>P90 ms</th><th>Max ms</th><th>Checkpoint UTC</th>
+        </tr></thead>
+        <tbody id="observations"></tbody>
+      </table>
+    </div>
+  </section>
+  <section class="panel" id="sql-panel">
+    <h2>SQL Activity</h2>
+    <p class="note">These statistics are values recorded by SQL instrumentation, NOT the time
+      taken to write diagnostic events. Counts describe JDBC execute invocations (not distinct
+      SQL statements), connections, rows and Questions. Values ending in -us are microseconds.
+      Summaries are grouped by workflow, session and corpus checkpoint. Immutable older summaries
+      lack these saved counter values and cannot be reconstructed from their timing columns.</p>
+    <div class="filters">
+      <label>Workflow <select id="sql-workflow"></select></label>
+      <label>SQL metric <select id="sql-metric"></select></label>
+    </div>
+    <p id="sql-count" class="note"></p>
+    <svg id="sql-chart" viewBox="0 0 940 390" role="img"
+         aria-label="SQL activity value versus Question count"></svg>
+    <div class="scroll">
+      <table>
+        <thead><tr>
+          <th>Machine</th><th>Version</th><th>Environment</th><th>Questions</th>
+          <th>Workflow</th><th>SQL metric</th><th>Unit</th><th>Samples</th>
+          <th>Failures</th><th>Median</th><th>P90</th><th>Max</th><th>Checkpoint UTC</th>
+        </tr></thead>
+        <tbody id="sql-observations"></tbody>
+      </table>
+    </div>
+  </section>
+  <section class="panel" id="legacy-panel" hidden>
+    <h2>Legacy performance.csv (unattributed)</h2>
+    <p class="note">Explicitly selected seven-column legacy recordings. This CSV may span several application
+      launches. Machine, session, version and Question count cannot be reconstructed; the statistics below are
+      aggregated across the entire file and are deliberately excluded from the Question-count chart.</p>
+    <p id="legacy-count" class="note"></p>
+    <div class="scroll">
+      <table>
+        <thead><tr>
+          <th>Operation</th><th>Samples</th><th>Failures</th><th>Median ms</th>
+          <th>P90 ms</th><th>Max ms</th><th>First UTC</th><th>Last UTC</th>
+        </tr></thead>
+        <tbody id="legacy-observations"></tbody>
+      </table>
+    </div>
+  </section>
+  <script>
+	const observations = __OBSERVATIONS__;
+	const legacyObservations = __LEGACY_OBSERVATIONS__;
+	const sqlObservations = __SQL_OBSERVATIONS__;
+	// Advisory screening only: do not infer a regression from sparse data.
+	const findings = document.getElementById("automatic-findings");
+	const allSessions = new Set(observations.map(o => o.machine + "/" + o.session));
+	const totalFailures = observations.reduce((total, o) => total + o.failures, 0);
+	const highestQuestionCount = observations.length
+	  ? Math.max(...observations.map(o => o.questions)) : null;
+	const overview = document.createElement("li");
+	overview.textContent = allSessions.size + " completed session(s), " +
+	  observations.length + " operation/checkpoint summaries, " +
+	  totalFailures + " recorded operation failure(s)" +
+	  (highestQuestionCount === null ? "." :
+	    "; highest observed corpus size " + highestQuestionCount + " Questions.");
+	findings.appendChild(overview);
+	const cohorts = new Map();
+	for (const point of observations) {
+	  if (point.samples < 5 || point.failures > 0 ||
+	      !Number.isFinite(point.median) || point.questions < 0 ||
+	      point.operation.startsWith("runtime.") || point.operation.includes(".sql.")) continue;
+	  const key = [point.machine, point.version, point.runtime, point.operation].join("|");
+	  if (!cohorts.has(key)) cohorts.set(key, []);
+	  cohorts.get(key).push(point);
+	}
+	let flagged = 0;
+	for (const points of cohorts.values()) {
+	  points.sort((a, b) => a.captured.localeCompare(b.captured));
+	  const first = points[0], last = points[points.length - 1];
+	  if (points.length < 3 || first.session === last.session ||
+	      first.median <= 0 || last.median - first.median < 50 ||
+	      last.median / first.median < 1.5) continue;
+	  const finding = document.createElement("li");
+	  finding.textContent = "Review " + last.operation + " (" + last.runtime +
+	    ", version " + last.version + "): median rose from " +
+	    first.median.toFixed(1) + " ms at " + first.questions + " Questions to " +
+	    last.median.toFixed(1) + " ms at " + last.questions +
+	    " Questions. This is a screening signal, not proof of a regression.";
+	  findings.appendChild(finding);
+	  if (++flagged === 5) break;
+	}
+	if (flagged === 0) {
+	  const finding = document.createElement("li");
+	  finding.textContent = "No strong slowdown screening signal from eligible comparable cohorts. " +
+	    "This does not establish that performance is unchanged; small or sparse samples may be inconclusive.";
+	  findings.appendChild(finding);
+	}
+	if (legacyObservations.length) {
+	  document.getElementById("legacy-panel").hidden = false;
+	  const body = document.getElementById("legacy-observations");
+	  for (const observation of legacyObservations) {
+	    const row = document.createElement("tr");
+	    for (const value of [
+	      observation.operation, observation.samples, observation.failures,
+	      observation.median.toFixed(2), observation.p90.toFixed(2),
+	      observation.maximum.toFixed(2), observation.earliest, observation.latest]) {
+	      const cell = document.createElement("td");
+	      cell.textContent = String(value);
+	      row.appendChild(cell);
+	    }
+	    body.appendChild(row);
+	  }
+	  document.getElementById("legacy-count").textContent =
+	    legacyObservations.length + " aggregate operation(s) from one legacy file";
+	}    const controls = Object.fromEntries(
+      ["operation", "machine", "version", "runtime", "metric"]
+        .map(key => [key, document.getElementById(key)]));
+    function populate(select, values, all) {
+      if (all) select.add(new Option("All", "*"));
+      for (const value of [...new Set(values)].sort()) {
+        select.add(new Option(value, value));
+      }
+    }
+    populate(controls.operation, observations.map(o => o.operation), false);
+    populate(controls.machine, observations.map(o => o.machine), true);
+    populate(controls.version, observations.map(o => o.version), true);
+    populate(controls.runtime, observations.map(o => o.runtime), true);
+    const svgNS = "http://www.w3.org/2000/svg";
+    function svgNode(name, attributes, text) {
+      const node = document.createElementNS(svgNS, name);
+      for (const [key, value] of Object.entries(attributes)) {
+        node.setAttribute(key, String(value));
+      }
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+    function render() {
+		if (observations.length === 0) {
+		  document.getElementById("count").textContent = "0 modern checkpoint observations";
+		  const chart = document.getElementById("chart");
+		  chart.replaceChildren();
+		  chart.appendChild(svgNode("text", {x:70,y:180,fill:"#64748b"},
+		    "No modern corpus checkpoint observations"));
+		  document.getElementById("legend").replaceChildren();
+		  document.getElementById("observations").replaceChildren();
+		  return;
+		}
+      const selected = observations.filter(o =>
+        o.operation === controls.operation.value &&
+        (controls.machine.value === "*" || o.machine === controls.machine.value) &&
+        (controls.version.value === "*" || o.version === controls.version.value) &&
+        (controls.runtime.value === "*" || o.runtime === controls.runtime.value));
+      const rows = document.getElementById("observations");
+      rows.replaceChildren();
+      for (const o of selected) {
+        const tr = document.createElement("tr");
+        for (const value of [
+          o.machine, o.version, o.runtime, o.questions, o.operation,
+          o.samples, o.failures, o.median.toFixed(2), o.p90.toFixed(2),
+          o.maximum.toFixed(2), o.captured]) {
+          const td = document.createElement("td");
+          td.textContent = String(value);
+          tr.appendChild(td);
+        }
+        rows.appendChild(tr);
+      }
+      document.getElementById("count").textContent =
+        selected.length + " checkpoint observation(s)";
+      const chart = document.getElementById("chart");
+      const legend = document.getElementById("legend");
+      chart.replaceChildren();
+      legend.replaceChildren();
+      const points = selected.filter(o => o.questions >= 0 &&
+        Number.isFinite(o[controls.metric.value]));
+      if (!points.length) {
+        chart.appendChild(svgNode("text", {x:70,y:180,fill:"#64748b"},
+          "No observations for these filters"));
+        return;
+      }
+      const minX = Math.min(...points.map(o => o.questions));
+      const maxX = Math.max(...points.map(o => o.questions));
+      const maxY = Math.max(1, ...points.map(o => o[controls.metric.value]));
+      const x = value => 75 + 820 * (value - minX) / Math.max(1, maxX - minX);
+      const y = value => 325 - 270 * value / maxY;
+      chart.appendChild(svgNode("line", {x1:75,y1:325,x2:895,y2:325,stroke:"#64748b"}));
+      chart.appendChild(svgNode("line", {x1:75,y1:45,x2:75,y2:325,stroke:"#64748b"}));
+      chart.appendChild(svgNode("text", {x:420,y:372,fill:"#334155"},
+        "Questions in corpus"));
+      chart.appendChild(svgNode("text", {x:75,y:347,fill:"#64748b"},String(minX)));
+      chart.appendChild(svgNode("text", {x:840,y:347,fill:"#64748b"},String(maxX)));
+      chart.appendChild(svgNode("text", {x:80,y:30,fill:"#334155"},
+        controls.metric.value + " elapsed time (ms)"));
+      chart.appendChild(svgNode("text", {x:10,y:58,fill:"#64748b"},maxY.toFixed(1)));
+      const series = new Map();
+      for (const point of points) {
+        const key = point.machine + " / " + point.version + " / " + point.runtime;
+        if (!series.has(key)) series.set(key, []);
+        series.get(key).push(point);
+      }
+      const colours = ["#2563eb", "#c2410c", "#047857", "#9333ea", "#b45309", "#0891b2"];
+      let index = 0;
+      for (const [name, values] of series) {
+        values.sort((a,b) => a.questions - b.questions ||
+          a.captured.localeCompare(b.captured));
+        const colour = colours[index++ % colours.length];
+        chart.appendChild(svgNode("polyline", {
+          points: values.map(o => x(o.questions) + "," + y(o[controls.metric.value])).join(" "),
+          fill:"none",stroke:colour,"stroke-width":2.5}));
+        for (const point of values) {
+          const dot = svgNode("circle", {
+            cx:x(point.questions),cy:y(point[controls.metric.value]),r:4,fill:colour});
+          dot.appendChild(svgNode("title",{},name + ": " + point.questions +
+            " Questions, " + point[controls.metric.value].toFixed(2) + " ms"));
+          chart.appendChild(dot);
+        }
+        const key = document.createElement("span");
+        const swatch = document.createElement("span");
+        swatch.className = "swatch";
+        swatch.style.background = colour;
+        key.appendChild(swatch);
+        key.appendChild(document.createTextNode(name));
+        legend.appendChild(key);
+      }
+    }
+    for (const control of Object.values(controls)) {
+      control.addEventListener("change", render);
+    }
+	const sqlWorkflow = document.getElementById("sql-workflow");
+	const sqlMetric = document.getElementById("sql-metric");
+	const sqlWorkflows = [...new Set(sqlObservations.map(o => o.workflow))].sort();
+	for (const workflow of sqlWorkflows) sqlWorkflow.add(new Option(workflow, workflow));
+	function updateSqlMetrics() {
+	  sqlMetric.replaceChildren();
+	  const names = [...new Set(sqlObservations
+	    .filter(o => o.workflow === sqlWorkflow.value)
+	    .map(o => o.metric))].sort();
+	  for (const name of names) sqlMetric.add(new Option(name, name));
+	  renderSql();
+	}
+	function renderSql() {
+	  const selected = sqlObservations.filter(o =>
+	    o.workflow === sqlWorkflow.value && o.metric === sqlMetric.value);
+	  const rows = document.getElementById("sql-observations");
+	  const chart = document.getElementById("sql-chart");
+	  rows.replaceChildren();
+	  chart.replaceChildren();
+	  document.getElementById("sql-count").textContent =
+	    selected.length + " SQL/checkpoint observation(s)";
+	  for (const o of selected) {
+	    const row = document.createElement("tr");
+	    for (const value of [o.machine, o.version, o.runtime, o.questions,
+	        o.workflow, o.metric, o.unit, o.samples, o.failures,
+	        o.median.toFixed(2), o.p90.toFixed(2), o.maximum.toFixed(2), o.captured]) {
+	      const cell = document.createElement("td");
+	      cell.textContent = String(value);
+	      row.appendChild(cell);
+	    }
+	    rows.appendChild(row);
+	  }
+	  if (selected.length === 0) {
+	    chart.appendChild(svgNode("text", {x:70,y:180,fill:"#64748b"},
+	      "No SQL counter observations yet"));
+	    return;
+	  }
+	  const points = selected.filter(o => o.questions >= 0 && Number.isFinite(o.median));
+	  if (points.length === 0) return;
+	  const minX = Math.min(...points.map(o => o.questions));
+	  const maxX = Math.max(...points.map(o => o.questions));
+	  const maxY = Math.max(1, ...points.map(o => o.median));
+	  const x = n => 75 + 820 * (n - minX) / Math.max(1, maxX - minX);
+	  const y = n => 325 - 270 * n / maxY;
+	  chart.appendChild(svgNode("line", {x1:75,y1:325,x2:895,y2:325,stroke:"#64748b"}));
+	  chart.appendChild(svgNode("line", {x1:75,y1:45,x2:75,y2:325,stroke:"#64748b"}));
+	  chart.appendChild(svgNode("text", {x:370,y:372,fill:"#334155"},"Questions in corpus"));
+	  chart.appendChild(svgNode("text", {x:80,y:30,fill:"#334155"},
+	    sqlMetric.value + " median (" + selected[0].unit + ")"));
+	  chart.appendChild(svgNode("text", {x:75,y:347,fill:"#64748b"}, String(minX)));
+	  chart.appendChild(svgNode("text", {x:840,y:347,fill:"#64748b"}, String(maxX)));
+	  const series = new Map();
+	  for (const point of points) {
+	    const key = point.machine + " / " + point.version + " / " + point.runtime;
+	    if (!series.has(key)) series.set(key, []);
+	    series.get(key).push(point);
+	  }
+	  const colours = ["#2563eb", "#c2410c", "#047857", "#9333ea", "#b45309"];
+	  let index = 0;
+	  for (const [key, values] of series) {
+	    values.sort((a,b) => a.questions - b.questions || a.captured.localeCompare(b.captured));
+	    const colour = colours[index++ % colours.length];
+	    chart.appendChild(svgNode("polyline", {
+	      points: values.map(o => x(o.questions) + "," + y(o.median)).join(" "),
+	      fill:"none",stroke:colour,"stroke-width":2.5}));
+	    for (const o of values) {
+	      const dot = svgNode("circle", {cx:x(o.questions),cy:y(o.median),r:4,fill:colour});
+	      dot.appendChild(svgNode("title", {},
+	        key + ": " + o.questions + " Questions, median " + o.median.toFixed(2) + " " + o.unit));
+	      chart.appendChild(dot);
+	    }
+	  }
+	}
+	sqlWorkflow.addEventListener("change", updateSqlMetrics);
+	sqlMetric.addEventListener("change", renderSql);
+	updateSqlMetrics();
+    render();
+  </script>
+</body>
+</html>

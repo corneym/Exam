@@ -3145,25 +3145,6 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		return booklet;
 	}
 
-	private DialogPane questionSaveErrorDialog(FxRobot robot) {
-		AtomicReference<DialogPane> result = new AtomicReference<>();
-		robot.interact(() -> {
-			for (Window window : Window.getWindows()) {
-				if (!window.isShowing() || window.getScene() == null) {
-					continue;
-				}
-				Node root = window.getScene().getRoot();
-				DialogPane dialog = root instanceof DialogPane pane ? pane
-						: root.lookup(".dialog-pane") instanceof DialogPane pane ? pane : null;
-				if (dialog != null && "Question could not be saved.".equals(dialog.getHeaderText())) {
-					result.set(dialog);
-					break;
-				}
-			}
-		});
-		return result.get();
-	}
-
 	private void stageDashboardQuestionRegion(FxRobot robot, String code) throws Exception {
 		TextField questionCode = lookup(robot, "#question-code", TextField.class);
 		TextField marks = lookup(robot, "#question-marks", TextField.class);

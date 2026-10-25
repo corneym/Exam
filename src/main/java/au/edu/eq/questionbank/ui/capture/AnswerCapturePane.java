@@ -20,6 +20,7 @@ import java.util.function.Supplier;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.diagnostics.PerformanceOperation;
 import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
+import au.edu.eq.questionbank.diagnostics.PerformanceSqlScope;
 import au.edu.eq.questionbank.model.Answer;
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.AnswerRegion;
@@ -169,6 +170,7 @@ public final class AnswerCapturePane extends VBox {
 	// Retain the complete most recently published Question snapshot so changing
 	// transient Exam scope never requires a synchronous repository reload.
 	private List<Question> questionSnapshot = List.of();
+	private PerformanceOperation activeAnswerSaveOperation;
 
 	/**
 	 * Creates the answer-capture workflow and its persistence integration.
@@ -1563,6 +1565,14 @@ public final class AnswerCapturePane extends VBox {
 				currentAnswerSelection != null, answerText, pendingAnswerRegions.size()));
 	}
 
+	private void finishActiveAnswerSaveOperation() {
+		PerformanceOperation operation = activeAnswerSaveOperation;
+		activeAnswerSaveOperation = null;
+		if (operation != null) {
+			operation.close();
+		}
+	}
+
 	private void finishAnswerEdit(boolean reloadQuestions) {
 		finishAnswerEditState(reloadQuestions).run();
 	}
@@ -1599,28 +1609,35 @@ public final class AnswerCapturePane extends VBox {
 	}
 
 	private void finishAnswerSaveTransition(Throwable failure) {
-		answerSaveInProgress = false;
-		setDisable(false);
-		updateAnswerPdfControlsVisibility(unansweredQuestionField.getValue());
-		refreshSaveButtonState();
-		if (failure == null) {
-			answerRegionStatusLabel.setText("Answer saved");
-		} else if (failure instanceof CancellationException) {
-			answerRegionStatusLabel.setText("Answer saved — PDF view changed");
-		} else {
-			answerRegionStatusLabel.setText("Answer saved — next PDF could not be loaded");
-			showAnswerFileError("Answer saved, but the next question's PDF could not be loaded.",
+		try {
+			answerSaveInProgress = false;
+			setDisable(false);
+			updateAnswerPdfControlsVisibility(unansweredQuestionField.getValue());
+			refreshSaveButtonState();
+			if (failure == null) {
+				answerRegionStatusLabel.setText("Answer saved");
+			} else if (failure instanceof CancellationException) {
+				answerRegionStatusLabel.setText("Answer saved — PDF view changed");
+			} else {
+				answerRegionStatusLabel.setText("Answer saved — next PDF could not be loaded");
+				showAnswerFileError("Answer saved, but the next question's PDF " + "could not be loaded.",
+						"Your answer is stored. Correct the Answer PDF " + "assignment in Exam / Assets before "
+								+ "continuing. " + failure.getMessage());
+			}
 
-					// Source correction belongs to Exam / Assets rather than Answer capture.
-					"Your answer is stored. Correct the Answer PDF assignment in Exam / Assets before continuing. "
-							+ failure.getMessage());
-		}
-
-		// Direct Dashboard correction returns only after the complete Answer save
-		// transition, including any asynchronous next-document handling, has finished.
-		Runnable completedHandler = takeAnswerCaptureCompletion();
-		if (completedHandler != null) {
-			completedHandler.run();
+			// The operation includes the asynchronous transition to
+			// the next Answer document, not just the SQL commit.
+			Runnable completedHandler = takeAnswerCaptureCompletion();
+			if (completedHandler != null) {
+				completedHandler.run();
+			}
+		} catch (RuntimeException | Error failureDuringPublication) {
+			if (activeAnswerSaveOperation != null) {
+				activeAnswerSaveOperation.failed();
+			}
+			throw failureDuringPublication;
+		} finally {
+			finishActiveAnswerSaveOperation();
 		}
 	}
 
@@ -2212,26 +2229,59 @@ public final class AnswerCapturePane extends VBox {
 			return;
 		}
 		if (answerCaptureCompletionQuestionId > 0 && answerCaptureCompletionQuestionId != question.getId()) {
-
-			// Changing to and saving another Question means the original direct
-			// Dashboard correction was abandoned.
 			clearAnswerCaptureCompletion();
 		}
 		int previousIndex = unansweredQuestionField.getSelectionModel().getSelectedIndex();
 		String storedText = answerText.isBlank() ? null : answerText;
-
-		// Snapshot transient Answer content before background persistence takes
-		// ownership of the save.
 		List<AnswerRegion> regions = List.copyOf(pendingAnswerRegions);
 		boolean updating = question.hasAnswer();
 		long existingAnswerId = updating ? question.getAnswer().getId() : 0;
 		boolean editing = editingAnswerQuestion != null;
-		beginAnswerSave();
-		CaptureBackgroundTask<Answer> saveTask = new CaptureBackgroundTask<>(
-				() -> persistAnswer(question, existingAnswerId, storedText, regions, updating));
-		saveTask.setOnSucceeded(_ -> completeAnswerSave(question, saveTask.getValue(), editing, previousIndex));
-		saveTask.setOnFailed(_ -> failAnswerSave(saveTask.getException()));
-		startDaemonTask("answer-save", saveTask);
+		PerformanceOperation operation = performanceRecorder.start("capture.answer.save");
+		activeAnswerSaveOperation = operation;
+		try {
+			beginAnswerSave();
+			CaptureBackgroundTask<Answer> saveTask = new CaptureBackgroundTask<>(() -> PerformanceSqlScope.measure(
+					performanceRecorder, "capture.answer.save.persist", operation.id(),
+					() -> persistAnswer(question, existingAnswerId, storedText, regions, updating)));
+			saveTask.setOnSucceeded(_ -> {
+				try {
+
+					// The Answer has committed even if subsequent
+					// PDF loading or UI publication encounters a problem.
+					operation.resultCount(1);
+					completeAnswerSave(question, saveTask.getValue(), editing, previousIndex);
+				} catch (RuntimeException | Error failure) {
+					operation.failed();
+					finishActiveAnswerSaveOperation();
+					throw failure;
+				}
+			});
+			saveTask.setOnFailed(_ -> {
+				operation.failed();
+				try {
+					failAnswerSave(saveTask.getException());
+				} finally {
+					finishActiveAnswerSaveOperation();
+				}
+			});
+			saveTask.setOnCancelled(_ -> {
+				operation.failed();
+				try {
+					failAnswerSave(new CancellationException("Answer save cancelled"));
+				} finally {
+					finishActiveAnswerSaveOperation();
+				}
+			});
+			startDaemonTask("answer-save", saveTask);
+		} catch (RuntimeException | Error failure) {
+			operation.failed();
+			finishActiveAnswerSaveOperation();
+			answerSaveInProgress = false;
+			setDisable(false);
+			refreshSaveButtonState();
+			throw failure;
+		}
 	}
 
 	private Path selectedPdfRoot(String relativePath) {

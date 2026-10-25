@@ -450,30 +450,6 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 		return List.copyOf(parts);
 	}
 
-	private List<SharedQuestionContextRegion> findRegions(Connection connection, long contextId) throws SQLException {
-		List<SharedQuestionContextRegion> regions = new ArrayList<>();
-		try (PreparedStatement statement = connection.prepareStatement("""
-				SELECT
-				    page_number,
-				    x,
-				    y,
-				    width,
-				    height
-				FROM shared_question_context_regions
-				WHERE shared_context_id = ?
-				ORDER BY region_order
-				""")) {
-			statement.setLong(1, contextId);
-			try (ResultSet result = statement.executeQuery()) {
-				while (result.next()) {
-					regions.add(new SharedQuestionContextRegion(result.getInt("page_number"), result.getDouble("x"),
-							result.getDouble("y"), result.getDouble("width"), result.getDouble("height")));
-				}
-			}
-		}
-		return regions;
-	}
-
 	private long insertContext(Connection connection, ExamBooklet booklet, String label) throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
 				INSERT INTO shared_question_contexts

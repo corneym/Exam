@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CancellationException;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -24,8 +25,16 @@ import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ApplicationPaths;
 import au.edu.eq.questionbank.ConfigurationException;
 import au.edu.eq.questionbank.ManagedDataLayout;
+import au.edu.eq.questionbank.diagnostics.PerformanceCorpusCheckpointRecorder;
+import au.edu.eq.questionbank.diagnostics.PerformanceDiagnosticsPreferences;
+import au.edu.eq.questionbank.diagnostics.PerformanceFxStallProbe;
+import au.edu.eq.questionbank.diagnostics.PerformanceHistoryPublisher;
+import au.edu.eq.questionbank.diagnostics.PerformanceLatestReport;
 import au.edu.eq.questionbank.diagnostics.PerformanceOperation;
+import au.edu.eq.questionbank.diagnostics.PerformanceRawRetention;
 import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
+import au.edu.eq.questionbank.diagnostics.PerformanceRuntimeSampler;
+import au.edu.eq.questionbank.diagnostics.PerformanceSqlScope;
 import au.edu.eq.questionbank.importer.curriculum.CurriculumExcelImporter;
 import au.edu.eq.questionbank.importer.curriculum.CurriculumImportRow;
 import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
@@ -342,6 +351,9 @@ public class QuestionBankApplication extends Application {
 	private final ApplicationRestartService applicationRestartService = new ApplicationRestartService();
 	private PerformanceRecorder performanceRecorder = new PerformanceRecorder(false,
 			ApplicationPaths.diagnosticsDirectory().resolve("performance.csv"));
+	private PerformanceCorpusCheckpointRecorder performanceCorpusCheckpointRecorder;
+	private PerformanceFxStallProbe performanceFxStallProbe;
+	private PerformanceRuntimeSampler performanceRuntimeSampler;
 
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
@@ -446,14 +458,46 @@ public class QuestionBankApplication extends Application {
 	@Override
 	public void stop() throws Exception {
 		try {
-			if (resourcesClosedForRestore) {
-				return;
-			}
-			if (shutdownCoordinator == null || !shutdownCoordinator.isReadyToExit()) {
+			if (!resourcesClosedForRestore && (shutdownCoordinator == null || !shutdownCoordinator.isReadyToExit())) {
 				pdfWorkspace.close();
 			}
 		} finally {
-			removePrimaryStageFocusListener();
+			try {
+
+				// Stop new measurements before closing the session writer.
+				if (performanceFxStallProbe != null) {
+					performanceFxStallProbe.stop();
+				}
+				if (performanceRuntimeSampler != null) {
+					performanceRuntimeSampler.close();
+				}
+				if (performanceCorpusCheckpointRecorder != null) {
+					if (resourcesClosedForRestore) {
+						performanceCorpusCheckpointRecorder.closeWithoutFinalSample();
+					} else {
+						performanceCorpusCheckpointRecorder.close();
+					}
+				}
+			} finally {
+				try {
+					performanceRecorder.close();
+					if (performanceRecorder.isEnabled() && performanceRecorder.sessionId() != null) {
+						try {
+							Path diagnosticsRoot = ApplicationPaths.diagnosticsDirectory();
+							boolean published = new PerformanceHistoryPublisher().publishSession(diagnosticsRoot,
+									performanceRecorder.sessionId(), diagnosticRuntimeKind());
+							if (published && !resourcesClosedForRestore) {
+								new PerformanceLatestReport().refreshBeforeExit(diagnosticsRoot);
+							}
+						} catch (IOException | RuntimeException failure) {
+							System.err.println(
+									"Historical performance publication failed: " + failure.getClass().getSimpleName());
+						}
+					}
+				} finally {
+					removePrimaryStageFocusListener();
+				}
+			}
 		}
 	}
 
@@ -1154,24 +1198,6 @@ public class QuestionBankApplication extends Application {
 		setViewerMode(false);
 	}
 
-	private void completeDataRootChange(Path dataRoot, Runnable completionAction) {
-		try {
-
-			// Persist the new root only after the current data session has passed its
-			// normal backup and resource-close checks. Cancelling shutdown therefore
-			// leaves both the running session and startup configuration unchanged.
-			ApplicationConfig.saveDataRoot(applicationPropertiesFile, dataRoot);
-			completionAction.run();
-		} catch (IOException exception) {
-
-			// Resources are already closed at this point, so the current application
-			// cannot safely resume even though the configuration update failed.
-			showAlert(Alert.AlertType.ERROR, "Options", "Could not save the application options.",
-					failureMessage(exception));
-			applicationExitAction.run();
-		}
-	}
-
 	private void completeExitWithoutBackup(Runnable readyAction) {
 		ShutdownResult result = shutdownCoordinator.exitWithoutBackup();
 		if (result.exitAllowed()) {
@@ -1182,6 +1208,26 @@ public class QuestionBankApplication extends Application {
 		// Resource-close reporting is application-level and does not require a Stage
 		// parameter.
 		showResourceCloseFailure(result.failure());
+	}
+
+	private void completeOptionsChange(Path dataRoot, boolean changeDataRoot, boolean diagnosticsEnabled,
+			Runnable completionAction) {
+		try {
+
+			// Persist only the changed data root. A diagnostics-only
+			// change must not rewrite an existing legacy path configuration.
+			if (changeDataRoot) {
+				ApplicationConfig.saveDataRoot(applicationPropertiesFile, dataRoot);
+			}
+			PerformanceDiagnosticsPreferences.save(applicationPropertiesFile, diagnosticsEnabled);
+			completionAction.run();
+		} catch (IOException exception) {
+			showAlert(Alert.AlertType.ERROR, "Options", "Could not save the application options.",
+					failureMessage(exception));
+
+			// Normal shutdown already closed the current data session.
+			applicationExitAction.run();
+		}
 	}
 
 	private void completeRevisionExport(Task<RevisionExportResult> task, Alert progressAlert,
@@ -1933,8 +1979,11 @@ public class QuestionBankApplication extends Application {
 
 	private Menu createHelpMenu(ApplicationConfig config) {
 		Menu helpMenu = createMenu("_Help");
-		helpMenu.getItems().addAll(createMenuItem("_Help Contents...", this::showHelpContents), new SeparatorMenuItem(),
-				createMenuItem("_About...", this::showAbout),
+		MenuItem performanceReportItem = createMenuItem("View _Performance Report...",
+				this::showLatestPerformanceReport);
+		performanceReportItem.setId("help-performance-report");
+		helpMenu.getItems().addAll(createMenuItem("_Help Contents...", this::showHelpContents), performanceReportItem,
+				new SeparatorMenuItem(), createMenuItem("_About...", this::showAbout),
 				createMenuItem("_Version Information...", () -> showVersionInformation(config)));
 		return helpMenu;
 	}
@@ -2187,6 +2236,14 @@ public class QuestionBankApplication extends Application {
 		refreshExamAssetsAfterAssetDeletion(booklet.getExam(), preferredBookletId);
 		deleteManagedAssetPdf(result, config, "Question booklet");
 		refreshActiveExamContext();
+	}
+
+	private String diagnosticRuntimeKind() {
+		String configured = System.getProperty("eqb.performance.runtimeKind", "unknown");
+		return switch (configured) {
+		case "eclipse", "installed" -> configured;
+		default -> "unknown";
+		};
 	}
 
 	private void editQuestionMetadata(Stage primaryStage, QuestionSearchDialog searchDialog, Question question,
@@ -2911,6 +2968,11 @@ public class QuestionBankApplication extends Application {
 				() -> clearCaptureSelection(CaptureSelectionOwner.QUESTION), answerCapturePane::refreshQuestions);
 		questionCapturePane.setPerformanceRecorder(performanceRecorder);
 		questionCapturePane.setQuestionSaveBusyHandler(this::handleQuestionSaveBusy);
+		questionCapturePane.setQuestionSaveCommittedHandler(() -> {
+			if (performanceCorpusCheckpointRecorder != null) {
+				performanceCorpusCheckpointRecorder.questionSaved();
+			}
+		});
 		questionCapturePane.refreshImportedQuestions();
 	}
 
@@ -3091,9 +3153,10 @@ public class QuestionBankApplication extends Application {
 			try (PerformanceOperation snapshotOperation = performanceRecorder.start("dashboard.snapshot",
 					refreshOperation.id())) {
 				try {
-					return loadCorpusDashboardSnapshot(applicationConfig, corpusDashboardAuditService, dashboardSubject,
-							snapshotOperation.id());
-				} catch (SQLException | RuntimeException | Error failure) {
+					return PerformanceSqlScope.measure(performanceRecorder, "dashboard.snapshot",
+							snapshotOperation.id(), () -> loadCorpusDashboardSnapshot(applicationConfig,
+									corpusDashboardAuditService, dashboardSubject, snapshotOperation.id()));
+				} catch (Exception | Error failure) {
 					snapshotOperation.failed();
 					refreshOperation.failed();
 					throw failure;
@@ -3268,6 +3331,27 @@ public class QuestionBankApplication extends Application {
 		List<CurriculumMappingCoverage> coverages = versions.stream().filter(version -> !version.isCurrent())
 				.map(version -> coverageService.calculateCoverage(version, targetVersion)).toList();
 		return new CurriculumDashboardState(coverages, true);
+	}
+
+	private void measureExamAssetsPersistence(String operationName, long parentId, ExamAssetsPersistenceAction action)
+			throws SQLException {
+		try (PerformanceOperation load = performanceRecorder.start(operationName + ".load", parentId)) {
+			try {
+
+				// The existing pane operation performs persistence reads and JavaFX
+				// presentation synchronously. Probe JDBC only; do not change threading.
+				PerformanceSqlScope.measure(performanceRecorder, operationName + ".load", load.id(), () -> {
+					action.run();
+					return null;
+				});
+			} catch (SQLException | RuntimeException | Error failure) {
+				load.failed();
+				throw failure;
+			} catch (Exception unexpectedChecked) {
+				load.failed();
+				throw new IllegalStateException("Unexpected Exam/Assets loading exception", unexpectedChecked);
+			}
+		}
 	}
 
 	private boolean offerQuestionRecaptureAfterSharedContextConversion(Stage primaryStage, Question question,
@@ -4620,20 +4704,27 @@ public class QuestionBankApplication extends Application {
 					"Select a Working Subject before managing Exam assets.");
 			return;
 		}
-		try {
+		try (PerformanceOperation navigation = performanceRecorder.start("examAssets.open.general")) {
+			try {
 
-			// Always reconstruct structural state from persistence before exposing it.
-			examAssetsPane.clearCorpusDashboardReturnHandler();
-			examAssetsPane.refresh(workingSubject);
-			bindExamAssetsDashboardReturn(dashboardReturnHandler);
-			setWorkspaceMode(examAssetsPane);
-		} catch (SQLException exception) {
+				// Always reconstruct structural state from persistence before exposing it.
+				examAssetsPane.clearCorpusDashboardReturnHandler();
+				measureExamAssetsPersistence("examAssets.open.general", navigation.id(),
+						() -> examAssetsPane.refresh(workingSubject));
+				bindExamAssetsDashboardReturn(dashboardReturnHandler);
+				setWorkspaceMode(examAssetsPane);
+			} catch (SQLException exception) {
+				navigation.failed();
 
-			// Capture remains mounted if loading fails, so its existing Dashboard session
-			// must remain untouched.
-			examAssetsPane.clearCorpusDashboardReturnHandler();
-			showAlert(Alert.AlertType.ERROR, "Exam / Assets", "Exam assets could not be loaded.",
-					exception.getMessage());
+				// Capture remains mounted if loading fails, so its existing Dashboard
+				// session must remain untouched.
+				examAssetsPane.clearCorpusDashboardReturnHandler();
+				showAlert(Alert.AlertType.ERROR, "Exam / Assets", "Exam assets could not be loaded.",
+						exception.getMessage());
+			} catch (RuntimeException | Error failure) {
+				navigation.failed();
+				throw failure;
+			}
 		}
 	}
 
@@ -4652,20 +4743,27 @@ public class QuestionBankApplication extends Application {
 					"Return to the Dashboard for the current Working Subject and try again.");
 			return;
 		}
-		try {
-			examAssetsPane.clearCorpusDashboardReturnHandler();
-			examAssetsPane.showForCorrection(workingSubject, exam.getId(),
-					booklet == null ? null : Long.valueOf(booklet.getId()));
+		try (PerformanceOperation navigation = performanceRecorder.start("examAssets.open.selected")) {
+			try {
+				examAssetsPane.clearCorpusDashboardReturnHandler();
+				measureExamAssetsPersistence("examAssets.open.selected", navigation.id(),
+						() -> examAssetsPane.showForCorrection(workingSubject, exam.getId(),
+								booklet == null ? null : Long.valueOf(booklet.getId())));
 
-			// Dashboard ownership is retained at application level so selecting a booklet
-			// can later transfer the same Return action into Capture.
-			bindExamAssetsDashboardReturn(returnHandler);
-			setWorkspaceMode(examAssetsPane);
-		} catch (SQLException | IllegalArgumentException | IllegalStateException exception) {
-			examAssetsPane.clearCorpusDashboardReturnHandler();
-			clearCorpusDashboardCaptureReturn();
-			showAlert(Alert.AlertType.ERROR, "Exam / Assets", "The requested Exam assets could not be opened.",
-					exception.getMessage());
+				// Dashboard ownership is retained at application level so selecting a
+				// booklet can later transfer the same Return action into Capture.
+				bindExamAssetsDashboardReturn(returnHandler);
+				setWorkspaceMode(examAssetsPane);
+			} catch (SQLException | IllegalArgumentException | IllegalStateException exception) {
+				navigation.failed();
+				examAssetsPane.clearCorpusDashboardReturnHandler();
+				clearCorpusDashboardCaptureReturn();
+				showAlert(Alert.AlertType.ERROR, "Exam / Assets", "The requested Exam assets could not be opened.",
+						exception.getMessage());
+			} catch (RuntimeException | Error failure) {
+				navigation.failed();
+				throw failure;
+			}
 		}
 	}
 
@@ -4681,19 +4779,26 @@ public class QuestionBankApplication extends Application {
 					"Select or add a Subject on the Corpus Dashboard first.");
 			return;
 		}
-		try {
-			examAssetsPane.clearCorpusDashboardReturnHandler();
-			examAssetsPane.showForNewExam(workingSubject);
+		try (PerformanceOperation navigation = performanceRecorder.start("examAssets.open.new")) {
+			try {
+				examAssetsPane.clearCorpusDashboardReturnHandler();
+				measureExamAssetsPersistence("examAssets.open.new", navigation.id(),
+						() -> examAssetsPane.showForNewExam(workingSubject));
 
-			// Saving or cancelling structural work restores Return availability. The same
-			// session also survives if the new booklet is subsequently activated.
-			bindExamAssetsDashboardReturn(this::refreshAndShowCorpusDashboardHome);
-			setWorkspaceMode(examAssetsPane);
-		} catch (SQLException | IllegalStateException exception) {
-			examAssetsPane.clearCorpusDashboardReturnHandler();
-			clearCorpusDashboardCaptureReturn();
-			showAlert(Alert.AlertType.ERROR, "Exam / Assets", "A new Exam could not be started.",
-					exception.getMessage());
+				// Saving or cancelling structural work restores Return availability.
+				// The same session survives if the new booklet is subsequently activated.
+				bindExamAssetsDashboardReturn(this::refreshAndShowCorpusDashboardHome);
+				setWorkspaceMode(examAssetsPane);
+			} catch (SQLException | IllegalStateException exception) {
+				navigation.failed();
+				examAssetsPane.clearCorpusDashboardReturnHandler();
+				clearCorpusDashboardCaptureReturn();
+				showAlert(Alert.AlertType.ERROR, "Exam / Assets", "A new Exam could not be started.",
+						exception.getMessage());
+			} catch (RuntimeException | Error failure) {
+				navigation.failed();
+				throw failure;
+			}
 		}
 	}
 
@@ -4704,6 +4809,23 @@ public class QuestionBankApplication extends Application {
 		// each invocation opens a fresh viewer owned by the current application window.
 		HelpDialog dialog = new HelpDialog(owner);
 		dialog.showAndWait();
+	}
+
+	private void showLatestPerformanceReport() {
+		Path report = PerformanceLatestReport.latestReportPath(ApplicationPaths.diagnosticsDirectory());
+		if (!Files.isRegularFile(report)) {
+			showAlert(Alert.AlertType.INFORMATION, "Performance Report", "No performance report is available yet.",
+					"Enable performance diagnostics in Options, restart, and close a normal session. "
+							+ "A report is generated automatically after completed sessions are published.\n\n"
+							+ "Expected report location:\n" + report);
+			return;
+		}
+		try {
+			getHostServices().showDocument(report.toUri().toASCIIString());
+		} catch (RuntimeException failure) {
+			showAlert(Alert.AlertType.ERROR, "Performance Report", "Could not open the report in the browser.",
+					"Open the following file manually:\n" + report + "\n\n" + failureMessage(failure));
+		}
 	}
 
 	private void showLegacyQuestionImportFromDashboard() {
@@ -4828,26 +4950,39 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void showOptions(Stage primaryStage, ApplicationConfig config) {
-		OptionsDialog dialog = new OptionsDialog(primaryStage, config.dataRoot());
+		boolean currentDiagnosticsPreference;
+		try {
+			currentDiagnosticsPreference = PerformanceDiagnosticsPreferences.load(applicationPropertiesFile);
+		} catch (IOException exception) {
+			showAlert(Alert.AlertType.ERROR, "Options", "Could not read the application options.",
+					failureMessage(exception));
+			return;
+		}
+		OptionsDialog dialog = new OptionsDialog(primaryStage, config.dataRoot(), currentDiagnosticsPreference);
 		Optional<ButtonType> result = dialog.showAndWait();
 		if (result.isEmpty() || result.get().getButtonData() != ButtonBar.ButtonData.OK_DONE) {
 			return;
 		}
 		try {
 			Path dataRoot = dialog.getDataRoot();
-			if (dataRoot.equals(config.dataRoot())) {
+			boolean diagnosticsEnabled = dialog.isPerformanceDiagnosticsEnabled();
+			boolean dataRootChanged = !dataRoot.equals(config.dataRoot());
+			boolean diagnosticsChanged = diagnosticsEnabled != currentDiagnosticsPreference;
+			if (!dataRootChanged && !diagnosticsChanged) {
 				return;
 			}
-			boolean restart = showRestartRequiredChoice(primaryStage, "Data location changed.", """
-					Exam Question Bank must close the current data session before the new location can be activated.
+			String reason = dataRootChanged ? "Application data location or options changed."
+					: "Performance diagnostics setting changed.";
+			boolean restart = showRestartRequiredChoice(primaryStage, reason, """
+					Exam Question Bank must complete its normal shutdown
+					before these changes take effect.
 
-					Choose Restart Now to reopen using the new data location, or Exit to close the application.
+					Choose Restart Now to reopen with the updated options,
+					or Exit to close the application.
 					""");
 			Runnable completionAction = restart ? applicationRestartAction : applicationExitAction;
-
-			// Backup and resource shutdown still belong to the current data root. Persist
-			// the new startup location only after those safety checks have succeeded.
-			requestApplicationShutdown(primaryStage, () -> completeDataRootChange(dataRoot, completionAction));
+			requestApplicationShutdown(primaryStage,
+					() -> completeOptionsChange(dataRoot, dataRootChanged, diagnosticsEnabled, completionAction));
 		} catch (IllegalArgumentException exception) {
 			showAlert(Alert.AlertType.ERROR, "Options", "The data location is invalid.", exception.getMessage());
 		}
@@ -5225,12 +5360,76 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void startApplication(Stage primaryStage, ApplicationConfig config) throws SQLException {
-		performanceRecorder = PerformanceRecorder.fromSystemProperties(ApplicationPaths.diagnosticsDirectory());
+		boolean diagnosticsPreference = false;
+		try {
+			diagnosticsPreference = PerformanceDiagnosticsPreferences.load(applicationPropertiesFile);
+		} catch (IOException | RuntimeException failure) {
+			System.err.println(
+					"Could not read performance diagnostics preference: " + failure.getClass().getSimpleName());
+		}
+		performanceRecorder = PerformanceRecorder.fromSystemProperties(ApplicationPaths.diagnosticsDirectory(),
+				diagnosticsPreference);
+		if (performanceRecorder.isEnabled()) {
+			try {
+				performanceRuntimeSampler = new PerformanceRuntimeSampler(performanceRecorder);
+				performanceRuntimeSampler.start();
+				performanceFxStallProbe = new PerformanceFxStallProbe(performanceRecorder);
+				performanceFxStallProbe.start();
+			} catch (RuntimeException diagnosticsFailure) {
+				System.err.println(
+						"Runtime diagnostics initialisation failed: " + diagnosticsFailure.getClass().getSimpleName());
+			}
+		}
+		if (performanceRecorder.isEnabled()) {
+			try {
+				PerformanceCorpusCheckpointRecorder checkpoints = new PerformanceCorpusCheckpointRecorder(
+						ApplicationPaths.diagnosticsDirectory(), config.databasePath(),
+						performanceRecorder.sessionId());
+				checkpoints.start();
+				performanceCorpusCheckpointRecorder = checkpoints;
+
+				// Capture this session's identity before the recovery
+				// thread starts. It must remain protected from pruning.
+				UUID protectedSession = performanceRecorder.sessionId();
+				Thread recovery = new Thread(() -> {
+					Path diagnosticsRoot = ApplicationPaths.diagnosticsDirectory();
+					try {
+						new PerformanceHistoryPublisher().recoverCompletedSessions(diagnosticsRoot, "unknown");
+
+						// Raw-session retention remains an explicit opt-in, never automatic by default.
+						if (Boolean.getBoolean("eqb.performance.rawRetention.enabled")) {
+							PerformanceRawRetention.Result result = new PerformanceRawRetention().enforce(
+									diagnosticsRoot, PerformanceRawRetention.DEFAULT_MAX_RAW_BYTES, protectedSession,
+									true);
+							if (!result.lockAcquired()) {
+								System.err.println("Performance retention skipped: another instance holds the lock");
+							} else if (result.deletedSessions() > 0) {
+								System.out.println("Performance raw sessions pruned: " + result.deletedSessions());
+							}
+						}
+					} catch (IOException | RuntimeException failure) {
+						System.err.println("Performance history recovery or retention failed: "
+								+ failure.getClass().getSimpleName());
+					} finally {
+
+						// Retry any shutdown report refresh that could not complete before exit.
+						try {
+							new PerformanceLatestReport().refresh(diagnosticsRoot);
+						} catch (IOException | RuntimeException failure) {
+							System.err.println("Automatic performance report recovery failed: "
+									+ failure.getClass().getSimpleName());
+						}
+					}
+				}, "eqb-performance-history-recovery");
+				recovery.setDaemon(true);
+				recovery.start();
+			} catch (RuntimeException diagnosticFailure) {
+				System.err.println("Performance checkpoint initialisation failed: "
+						+ diagnosticFailure.getClass().getSimpleName());
+			}
+		}
 		try (PerformanceOperation operation = performanceRecorder.start("application.startup")) {
 			try {
-
-				// Retain immutable application paths for asynchronous
-				// Dashboard refreshes and workflow routing.
 				applicationConfig = config;
 				curriculumSelectionModel = new CurriculumSelectionModelFactory().create(config);
 				SqliteDatabase database = new SqliteDatabase(config.databasePath());
@@ -5619,7 +5818,9 @@ public class QuestionBankApplication extends Application {
 				try (PerformanceOperation curriculum = performanceRecorder.start("workingSubject.curriculum",
 						refresh.id())) {
 					try {
-						curriculumSnapshot = workingSubjectCurriculumSnapshotLoader.apply(subject);
+						curriculumSnapshot = PerformanceSqlScope.measureUnchecked(performanceRecorder,
+								"workingSubject.curriculum", curriculum.id(),
+								() -> workingSubjectCurriculumSnapshotLoader.apply(subject));
 						curriculum.resultCount(curriculumSnapshot.syllabusVersions().size());
 					} catch (RuntimeException | Error failure) {
 						curriculum.failed();
@@ -5633,7 +5834,9 @@ public class QuestionBankApplication extends Application {
 
 						// One corpus read continues to supply both
 						// Question and Answer capture queues.
-						questions = List.copyOf(workingSubjectQuestionSnapshotLoader.get());
+						questions = PerformanceSqlScope.measureUnchecked(performanceRecorder,
+								"workingSubject.questions", retrieval.id(),
+								() -> List.copyOf(workingSubjectQuestionSnapshotLoader.get()));
 						retrieval.resultCount(questions.size());
 					} catch (RuntimeException | Error failure) {
 						retrieval.failed();
@@ -5712,51 +5915,93 @@ public class QuestionBankApplication extends Application {
 		if (examAssetsPane == null || workspaceModeHost == null
 				|| !workspaceModeHost.getChildren().contains(examAssetsPane)) {
 
-			// Hidden Exam/Assets needs no immediate Subject snapshot. Its ordinary entry
-			// path will load the then-current authoritative Subject.
+			// Hidden Exam/Assets needs no immediate Subject snapshot.
+			// The ordinary entry path loads the current Working Subject.
 			return;
 		}
+		PerformanceOperation refresh = performanceRecorder.start("examAssets.refresh");
+		try {
 
-		// Remove the previous Subject's Exams immediately on the FX thread before the
-		// replacement hierarchy begins loading.
-		examAssetsPane.beginSubjectRefresh(subject);
-		if (subject == null) {
+			// Old-Subject presentation is cleared on the FX thread.
+			examAssetsPane.beginSubjectRefresh(subject);
+			if (subject == null) {
+				refresh.resultCount(0);
+				refresh.close();
+				return;
+			}
+			Task<ExamAssetsPane.SubjectSnapshot> task = new ApplicationBackgroundTask<>(() -> {
+				try (PerformanceOperation snapshot = performanceRecorder.start("examAssets.snapshot", refresh.id())) {
+					try {
 
-			// Clearing Subject is complete once stale presentation has been removed.
-			return;
+						// Keep persisted Exam, booklet, AnswerFile and
+						// assignment reads on this background worker.
+						ExamAssetsPane.SubjectSnapshot result = PerformanceSqlScope.measureUnchecked(
+								performanceRecorder, "examAssets.snapshot", snapshot.id(),
+								() -> workingSubjectExamAssetsSnapshotLoader.apply(subject));
+						snapshot.resultCount(result.exams().size());
+						return result;
+					} catch (RuntimeException | Error failure) {
+						snapshot.failed();
+						throw failure;
+					}
+				}
+			});
+			task.setOnSucceeded(_ -> {
+				if (!isCurrentWorkingSubjectRefresh(subject, generation)) {
+
+					// Do not publish stale Exam data over a newer Subject.
+					refresh.failed();
+					refresh.close();
+					return;
+				}
+				try {
+					ExamAssetsPane.SubjectSnapshot result = task.getValue();
+					try (PerformanceOperation publish = performanceRecorder.start("examAssets.publish", refresh.id())) {
+						try {
+							examAssetsPane.applySubjectSnapshot(result);
+							publish.resultCount(result.exams().size());
+						} catch (RuntimeException | Error failure) {
+							publish.failed();
+							throw failure;
+						}
+					}
+					refresh.resultCount(result.exams().size());
+				} catch (RuntimeException | Error failure) {
+					refresh.failed();
+					throw failure;
+				} finally {
+					refresh.close();
+				}
+			});
+			task.setOnFailed(_ -> {
+				refresh.failed();
+				refresh.close();
+				if (!isCurrentWorkingSubjectRefresh(subject, generation)) {
+
+					// A failed obsolete load must not disturb the new Subject.
+					return;
+				}
+				Throwable failure = task.getException();
+				if (failure instanceof IllegalStateException && failure.getCause() != null) {
+
+					// Preserve the useful SQLite cause for the UI message.
+					failure = failure.getCause();
+				}
+				showAlert(Alert.AlertType.ERROR, "Exam / Assets", "Exam assets could not be refreshed.",
+						failureMessage(failure));
+			});
+			task.setOnCancelled(_ -> {
+				refresh.failed();
+				refresh.close();
+			});
+			Thread thread = new Thread(task, "working-subject-exam-assets-refresh-" + generation);
+			thread.setDaemon(true);
+			thread.start();
+		} catch (RuntimeException | Error failure) {
+			refresh.failed();
+			refresh.close();
+			throw failure;
 		}
-		Task<ExamAssetsPane.SubjectSnapshot> task = new ApplicationBackgroundTask<>(() -> {
-
-			// All Exam, booklet, AnswerFile and assignment reads occur away from
-			// the JavaFX application thread.
-			return workingSubjectExamAssetsSnapshotLoader.apply(subject);
-		});
-		task.setOnSucceeded(_ -> {
-			if (!isCurrentWorkingSubjectRefresh(subject, generation)) {
-
-				// A later Subject selection owns the workspace now.
-				return;
-			}
-			examAssetsPane.applySubjectSnapshot(task.getValue());
-		});
-		task.setOnFailed(_ -> {
-			if (!isCurrentWorkingSubjectRefresh(subject, generation)) {
-
-				// Failure from stale work must not disturb the current Subject.
-				return;
-			}
-			Throwable failure = task.getException();
-			if (failure instanceof IllegalStateException && failure.getCause() != null) {
-
-				// Surface the underlying SQLite failure rather than the Function wrapper.
-				failure = failure.getCause();
-			}
-			showAlert(Alert.AlertType.ERROR, "Exam / Assets", "Exam assets could not be refreshed.",
-					failureMessage(failure));
-		});
-		Thread thread = new Thread(task, "working-subject-exam-assets-refresh-" + generation);
-		thread.setDaemon(true);
-		thread.start();
 	}
 
 	private void startWorkingSubjectRefresh(Subject subject) {
@@ -5921,16 +6166,16 @@ public class QuestionBankApplication extends Application {
 		viewExamAssetPdf(booklet.getSourceDocument().getRelativePath(), "Question booklet", config);
 	}
 
+	private enum BackupFailureDecision {
+		RETRY, EXIT_WITHOUT_BACKUP, CANCEL_EXIT
+	}
+
 	private record DashboardAnswerCaptureSnapshot(List<Question> questions, AnswerFile answerFile) {
 
 		private DashboardAnswerCaptureSnapshot {
 			Objects.requireNonNull(questions, "questions");
 			questions = List.copyOf(questions);
 		}
-	}
-
-	private enum BackupFailureDecision {
-		RETRY, EXIT_WITHOUT_BACKUP, CANCEL_EXIT
 	}
 
 	private record CorpusDashboardSnapshot(List<ExamCorpusStatus> examStatuses, List<Question> questions,
@@ -5971,6 +6216,12 @@ public class QuestionBankApplication extends Application {
 			// the JavaFX application thread.
 			mappingCoverages = List.copyOf(mappingCoverages);
 		}
+	}
+
+	@FunctionalInterface
+	private interface ExamAssetsPersistenceAction {
+
+		void run() throws SQLException;
 	}
 
 	private record PendingLegacyQuestionImport(Subject subject, SyllabusVersion syllabusVersion,
