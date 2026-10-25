@@ -19,8 +19,9 @@
     svg { display: block; width: 100%; height: auto; }
     .legend { display: flex; flex-wrap: wrap; gap: 14px; }
     .legend span { font-size: 13px; }
-    .swatch { display: inline-block; width: 12px; height: 12px; margin-right: 5px; }
-    .scroll { overflow-x: auto; }
+	.line-key { display: inline-block; width: 24px; margin-right: 6px;
+	border-top: 3px solid; vertical-align: middle; }
+	.scroll { overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
     th, td { padding: 9px; border-bottom: 1px solid #e2e8f0;
              text-align: left; white-space: nowrap; }
@@ -42,22 +43,15 @@
     <label>Machine <select id="machine"></select></label>
     <label>Application version <select id="version"></select></label>
     <label>Environment <select id="runtime"></select></label>
-    <label>Timing statistic
-      <select id="metric">
-        <option value="median">Median (ms)</option>
-        <option value="p90">P90 (ms)</option>
-        <option value="maximum">Maximum (ms)</option>
-      </select>
-    </label>
   </section>
   <section class="panel">
     <h2>Performance versus Question count</h2>
     <svg id="chart" viewBox="0 0 940 390" role="img"
          aria-label="Operation timing versus Question count"></svg>
     <div id="legend" class="legend"></div>
-    <p class="note">Each series belongs to one machine, application version and runtime.
-      Points are checkpoint observations, not synthetic benchmarks. Correlation does not establish causation.</p>
-  </section>
+	<p class="note">Median is a solid line with filled markers; P90 is a dashed line with hollow markers.
+	Each colour identifies one machine, application version and runtime. Points are checkpoint
+	observations, not synthetic benchmarks. Correlation does not establish causation.</p>  </section>
   <section class="panel">
     <h2>Underlying observations</h2>
     <p id="count" class="note"></p>
@@ -84,8 +78,11 @@
       <label>SQL metric <select id="sql-metric"></select></label>
     </div>
     <p id="sql-count" class="note"></p>
-    <svg id="sql-chart" viewBox="0 0 940 390" role="img"
-         aria-label="SQL activity value versus Question count"></svg>
+		 <svg id="sql-chart" viewBox="0 0 940 390" role="img"
+		      aria-label="SQL activity Median and P90 versus Question count"></svg>
+		 <div id="sql-legend" class="legend"></div>
+		 <p class="note">Median is solid; P90 is dashed. Colour identifies machine, version and runtime.
+		   Counts and microsecond durations are separate metrics, selected above. Maximum remains in the table.</p>
     <div class="scroll">
       <table>
         <thead><tr>
@@ -178,9 +175,9 @@
 	  }
 	  document.getElementById("legacy-count").textContent =
 	    legacyObservations.length + " aggregate operation(s) from one legacy file";
-	}    const controls = Object.fromEntries(
-      ["operation", "machine", "version", "runtime", "metric"]
-        .map(key => [key, document.getElementById(key)]));
+	}       const controls = Object.fromEntries(
+	["operation", "machine", "version", "runtime"]
+	  .map(key => [key, document.getElementById(key)]));
     function populate(select, values, all) {
       if (all) select.add(new Option("All", "*"));
       for (const value of [...new Set(values)].sort()) {
@@ -200,94 +197,103 @@
       if (text !== undefined) node.textContent = text;
       return node;
     }
-    function render() {
-		if (observations.length === 0) {
-		  document.getElementById("count").textContent = "0 modern checkpoint observations";
-		  const chart = document.getElementById("chart");
-		  chart.replaceChildren();
-		  chart.appendChild(svgNode("text", {x:70,y:180,fill:"#64748b"},
-		    "No modern corpus checkpoint observations"));
-		  document.getElementById("legend").replaceChildren();
-		  document.getElementById("observations").replaceChildren();
-		  return;
-		}
-      const selected = observations.filter(o =>
-        o.operation === controls.operation.value &&
-        (controls.machine.value === "*" || o.machine === controls.machine.value) &&
-        (controls.version.value === "*" || o.version === controls.version.value) &&
-        (controls.runtime.value === "*" || o.runtime === controls.runtime.value));
-      const rows = document.getElementById("observations");
-      rows.replaceChildren();
-      for (const o of selected) {
-        const tr = document.createElement("tr");
-        for (const value of [
-          o.machine, o.version, o.runtime, o.questions, o.operation,
-          o.samples, o.failures, o.median.toFixed(2), o.p90.toFixed(2),
-          o.maximum.toFixed(2), o.captured]) {
-          const td = document.createElement("td");
-          td.textContent = String(value);
-          tr.appendChild(td);
-        }
-        rows.appendChild(tr);
-      }
-      document.getElementById("count").textContent =
-        selected.length + " checkpoint observation(s)";
-      const chart = document.getElementById("chart");
-      const legend = document.getElementById("legend");
-      chart.replaceChildren();
-      legend.replaceChildren();
-      const points = selected.filter(o => o.questions >= 0 &&
-        Number.isFinite(o[controls.metric.value]));
-      if (!points.length) {
-        chart.appendChild(svgNode("text", {x:70,y:180,fill:"#64748b"},
-          "No observations for these filters"));
-        return;
-      }
-      const minX = Math.min(...points.map(o => o.questions));
-      const maxX = Math.max(...points.map(o => o.questions));
-      const maxY = Math.max(1, ...points.map(o => o[controls.metric.value]));
-      const x = value => 75 + 820 * (value - minX) / Math.max(1, maxX - minX);
-      const y = value => 325 - 270 * value / maxY;
-      chart.appendChild(svgNode("line", {x1:75,y1:325,x2:895,y2:325,stroke:"#64748b"}));
-      chart.appendChild(svgNode("line", {x1:75,y1:45,x2:75,y2:325,stroke:"#64748b"}));
-      chart.appendChild(svgNode("text", {x:420,y:372,fill:"#334155"},
-        "Questions in corpus"));
-      chart.appendChild(svgNode("text", {x:75,y:347,fill:"#64748b"},String(minX)));
-      chart.appendChild(svgNode("text", {x:840,y:347,fill:"#64748b"},String(maxX)));
-      chart.appendChild(svgNode("text", {x:80,y:30,fill:"#334155"},
-        controls.metric.value + " elapsed time (ms)"));
-      chart.appendChild(svgNode("text", {x:10,y:58,fill:"#64748b"},maxY.toFixed(1)));
-      const series = new Map();
-      for (const point of points) {
-        const key = point.machine + " / " + point.version + " / " + point.runtime;
-        if (!series.has(key)) series.set(key, []);
-        series.get(key).push(point);
-      }
-      const colours = ["#2563eb", "#c2410c", "#047857", "#9333ea", "#b45309", "#0891b2"];
-      let index = 0;
-      for (const [name, values] of series) {
-        values.sort((a,b) => a.questions - b.questions ||
-          a.captured.localeCompare(b.captured));
-        const colour = colours[index++ % colours.length];
-        chart.appendChild(svgNode("polyline", {
-          points: values.map(o => x(o.questions) + "," + y(o[controls.metric.value])).join(" "),
-          fill:"none",stroke:colour,"stroke-width":2.5}));
-        for (const point of values) {
-          const dot = svgNode("circle", {
-            cx:x(point.questions),cy:y(point[controls.metric.value]),r:4,fill:colour});
-          dot.appendChild(svgNode("title",{},name + ": " + point.questions +
-            " Questions, " + point[controls.metric.value].toFixed(2) + " ms"));
-          chart.appendChild(dot);
-        }
-        const key = document.createElement("span");
-        const swatch = document.createElement("span");
-        swatch.className = "swatch";
-        swatch.style.background = colour;
-        key.appendChild(swatch);
-        key.appendChild(document.createTextNode(name));
-        legend.appendChild(key);
-      }
-    }
+	function renderPercentileChart(chart, legend, selected, description, unit, emptyMessage) {
+	  chart.replaceChildren();
+	  legend.replaceChildren();
+	  const points = selected.filter(o => o.questions >= 0 &&
+	    Number.isFinite(o.median) && Number.isFinite(o.p90));
+	  if (points.length === 0) {
+	    chart.appendChild(svgNode("text", {x:75,y:180,fill:"#64748b"}, emptyMessage));
+	    return;
+	  }
+	  const minX = Math.min(...points.map(o => o.questions));
+	  const maxX = Math.max(...points.map(o => o.questions));
+
+	  // Both percentiles must fit the same vertical scale, including when P90 is much higher.
+	  const maxY = points.reduce((maximum, o) => Math.max(maximum, o.median, o.p90), 1);
+	  const x = value => 75 + 820 * (value - minX) / Math.max(1, maxX - minX);
+	  const y = value => 325 - 270 * value / maxY;
+	  chart.appendChild(svgNode("line", {x1:75,y1:325,x2:895,y2:325,stroke:"#64748b"}));
+	  chart.appendChild(svgNode("line", {x1:75,y1:45,x2:75,y2:325,stroke:"#64748b"}));
+	  chart.appendChild(svgNode("text", {x:370,y:372,fill:"#334155"}, "Questions in corpus"));
+	  chart.appendChild(svgNode("text", {x:75,y:347,fill:"#64748b"}, String(minX)));
+	  chart.appendChild(svgNode("text", {x:840,y:347,fill:"#64748b"}, String(maxX)));
+	  chart.appendChild(svgNode("text", {x:80,y:30,fill:"#334155"},
+	    description + " — Median / P90 (" + unit + ")"));
+	  chart.appendChild(svgNode("text", {x:10,y:58,fill:"#64748b"}, maxY.toFixed(1)));
+
+	  const groups = new Map();
+	  for (const point of points) {
+	    const key = point.machine + " / " + point.version + " / " + point.runtime;
+	    if (!groups.has(key)) groups.set(key, []);
+	    groups.get(key).push(point);
+	  }
+	  const colours = ["#2563eb", "#c2410c", "#047857", "#9333ea", "#b45309", "#0891b2"];
+	  const percentiles = [
+	    {field:"median", label:"Median", dash:null},
+	    {field:"p90", label:"P90", dash:"7 5"}
+	  ];
+	  let colourIndex = 0;
+	  for (const [name, values] of groups) {
+	    values.sort((a, b) => a.questions - b.questions ||
+	      a.captured.localeCompare(b.captured));
+	    const colour = colours[colourIndex++ % colours.length];
+	    for (const percentile of percentiles) {
+	      const line = {
+	        points: values.map(o => x(o.questions) + "," + y(o[percentile.field])).join(" "),
+	        fill:"none", stroke:colour, "stroke-width":2.5
+	      };
+	      if (percentile.dash) line["stroke-dasharray"] = percentile.dash;
+	      chart.appendChild(svgNode("polyline", line));
+	      for (const point of values) {
+	        const dot = svgNode("circle", {
+	          cx:x(point.questions), cy:y(point[percentile.field]), r:4,
+	          fill:percentile.dash ? "#ffffff" : colour,
+	          stroke:colour, "stroke-width":percentile.dash ? 2 : 1
+	        });
+	        dot.appendChild(svgNode("title", {}, name + ": " + point.questions +
+	          " Questions, " + percentile.label + " " +
+	          point[percentile.field].toFixed(2) + " " + unit));
+	        chart.appendChild(dot);
+	      }
+	      const label = document.createElement("span");
+	      const key = document.createElement("span");
+	      key.className = "line-key";
+	      key.style.borderTopColor = colour;
+	      if (percentile.dash) key.style.borderTopStyle = "dashed";
+	      label.appendChild(key);
+	      label.appendChild(document.createTextNode(name + " — " + percentile.label));
+	      legend.appendChild(label);
+	    }
+	  }
+	}
+	function render() {
+	  const selected = observations.filter(o =>
+	    o.operation === controls.operation.value &&
+	    (controls.machine.value === "*" || o.machine === controls.machine.value) &&
+	    (controls.version.value === "*" || o.version === controls.version.value) &&
+	    (controls.runtime.value === "*" || o.runtime === controls.runtime.value));
+	  const rows = document.getElementById("observations");
+	  rows.replaceChildren();
+	  for (const o of selected) {
+	    const tr = document.createElement("tr");
+	    for (const value of [
+	      o.machine, o.version, o.runtime, o.questions, o.operation,
+	      o.samples, o.failures, o.median.toFixed(2), o.p90.toFixed(2),
+	      o.maximum.toFixed(2), o.captured]) {
+	      const td = document.createElement("td");
+	      td.textContent = String(value);
+	      tr.appendChild(td);
+	    }
+	    rows.appendChild(tr);
+	  }
+	  document.getElementById("count").textContent = observations.length === 0
+	    ? "0 modern checkpoint observations" : selected.length + " checkpoint observation(s)";
+	  renderPercentileChart(document.getElementById("chart"),
+	    document.getElementById("legend"), selected, "Operation elapsed time", "ms",
+	    observations.length === 0 ? "No modern corpus checkpoint observations" :
+	    "No observations for these filters");
+	}
     for (const control of Object.values(controls)) {
       control.addEventListener("change", render);
     }
@@ -307,9 +313,7 @@
 	  const selected = sqlObservations.filter(o =>
 	    o.workflow === sqlWorkflow.value && o.metric === sqlMetric.value);
 	  const rows = document.getElementById("sql-observations");
-	  const chart = document.getElementById("sql-chart");
 	  rows.replaceChildren();
-	  chart.replaceChildren();
 	  document.getElementById("sql-count").textContent =
 	    selected.length + " SQL/checkpoint observation(s)";
 	  for (const o of selected) {
@@ -323,46 +327,10 @@
 	    }
 	    rows.appendChild(row);
 	  }
-	  if (selected.length === 0) {
-	    chart.appendChild(svgNode("text", {x:70,y:180,fill:"#64748b"},
-	      "No SQL counter observations yet"));
-	    return;
-	  }
-	  const points = selected.filter(o => o.questions >= 0 && Number.isFinite(o.median));
-	  if (points.length === 0) return;
-	  const minX = Math.min(...points.map(o => o.questions));
-	  const maxX = Math.max(...points.map(o => o.questions));
-	  const maxY = Math.max(1, ...points.map(o => o.median));
-	  const x = n => 75 + 820 * (n - minX) / Math.max(1, maxX - minX);
-	  const y = n => 325 - 270 * n / maxY;
-	  chart.appendChild(svgNode("line", {x1:75,y1:325,x2:895,y2:325,stroke:"#64748b"}));
-	  chart.appendChild(svgNode("line", {x1:75,y1:45,x2:75,y2:325,stroke:"#64748b"}));
-	  chart.appendChild(svgNode("text", {x:370,y:372,fill:"#334155"},"Questions in corpus"));
-	  chart.appendChild(svgNode("text", {x:80,y:30,fill:"#334155"},
-	    sqlMetric.value + " median (" + selected[0].unit + ")"));
-	  chart.appendChild(svgNode("text", {x:75,y:347,fill:"#64748b"}, String(minX)));
-	  chart.appendChild(svgNode("text", {x:840,y:347,fill:"#64748b"}, String(maxX)));
-	  const series = new Map();
-	  for (const point of points) {
-	    const key = point.machine + " / " + point.version + " / " + point.runtime;
-	    if (!series.has(key)) series.set(key, []);
-	    series.get(key).push(point);
-	  }
-	  const colours = ["#2563eb", "#c2410c", "#047857", "#9333ea", "#b45309"];
-	  let index = 0;
-	  for (const [key, values] of series) {
-	    values.sort((a,b) => a.questions - b.questions || a.captured.localeCompare(b.captured));
-	    const colour = colours[index++ % colours.length];
-	    chart.appendChild(svgNode("polyline", {
-	      points: values.map(o => x(o.questions) + "," + y(o.median)).join(" "),
-	      fill:"none",stroke:colour,"stroke-width":2.5}));
-	    for (const o of values) {
-	      const dot = svgNode("circle", {cx:x(o.questions),cy:y(o.median),r:4,fill:colour});
-	      dot.appendChild(svgNode("title", {},
-	        key + ": " + o.questions + " Questions, median " + o.median.toFixed(2) + " " + o.unit));
-	      chart.appendChild(dot);
-	    }
-	  }
+	  renderPercentileChart(document.getElementById("sql-chart"),
+	    document.getElementById("sql-legend"), selected,
+	    "SQL activity: " + sqlMetric.value, selected.length ? selected[0].unit : "count",
+	    "No SQL counter observations yet");
 	}
 	sqlWorkflow.addEventListener("change", updateSqlMetrics);
 	sqlMetric.addEventListener("change", renderSql);
