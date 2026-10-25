@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -67,6 +69,21 @@ class PerformanceHistoryHtmlReportTest {
 		// The report must not fetch resources from the network.
 		assertFalse(html.contains("<script src="));
 		assertFalse(html.contains("<link rel=\"stylesheet\""));
+	}
+
+	@Test
+	void htmlTemplateIsPackagedAndOffline() throws Exception {
+		try (InputStream input = PerformanceHistoryHtmlReport.class
+				.getResourceAsStream("performance-history-report.html")) {
+			assertTrue(input != null);
+			String template = new String(input.readAllBytes(), StandardCharsets.UTF_8);
+			assertTrue(template.contains("<svg"));
+			assertTrue(template.contains("__OBSERVATIONS__"));
+			assertTrue(template.contains("Questions in corpus"));
+			assertTrue(template.contains("id=\"runtime\""));
+			assertFalse(template.contains("<script src="));
+			assertFalse(template.contains("<link rel=\"stylesheet\""));
+		}
 	}
 
 	@Test

@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.UUID;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -46,6 +47,8 @@ class PerformanceHistoryPublicationTest {
 		assertTrue(Files.isRegularFile(history.resolve("checkpoint-000001.csv")));
 		assertTrue(Files.isRegularFile(history.resolve("corpus-checkpoints.csv")));
 		assertTrue(Files.isRegularFile(history.resolve("session.summary-complete")));
+		assertTrue(Files.isRegularFile(history.resolve(PerformanceHistoryIntegrity.MANIFEST_NAME)));
+		new PerformanceHistoryIntegrity().verify(history);
 		String firstSummary = Files.readString(history.resolve("checkpoint-000000.csv"));
 		assertTrue(firstSummary.contains("dashboard.refresh"));
 		assertTrue(firstSummary.contains(machineId.toString()));
@@ -78,6 +81,24 @@ class PerformanceHistoryPublicationTest {
 	}
 
 	@Test
+	void corruptedHistoricalManifestIsDetectedAndNeverReplaced() throws Exception {
+		Path diagnostics = tempDir.resolve("manifest-corruption");
+		UUID machine = UUID.randomUUID();
+		UUID session = createCompletedSession(diagnostics, machine);
+		PerformanceHistoryPublisher publisher = new PerformanceHistoryPublisher();
+		assertTrue(publisher.publishSession(diagnostics, session, "eclipse"));
+		Path history = diagnostics.resolve("history").resolve(machine.toString()).resolve(session.toString());
+		Path integrity = history.resolve(PerformanceHistoryIntegrity.MANIFEST_NAME);
+		String original = Files.readString(integrity);
+		Files.writeString(integrity, "invalid\n");
+		assertThrows(IOException.class, () -> publisher.publishSession(diagnostics, session, "unknown"));
+		assertEquals("invalid\n", Files.readString(integrity));
+		assertTrue(Files
+				.isRegularFile(diagnostics.resolve("sessions").resolve(session.toString()).resolve("operations.csv")));
+		assertTrue(original.contains("sha256.checkpoint-000000.csv="));
+	}
+
+	@Test
 	void existingExportArchiveIsNeverDeleted() throws Exception {
 		Path diagnostics = tempDir.resolve("diagnostics");
 		UUID machineId = UUID.randomUUID();
@@ -99,10 +120,10 @@ class PerformanceHistoryPublicationTest {
 		Path archive = tempDir.resolve("history.zip");
 		PerformanceHistoryTransfer transfer = new PerformanceHistoryTransfer();
 		int exported = transfer.exportArchive(diagnostics.resolve("history"), archive);
-		assertEquals(4, exported);
+		assertEquals(5, exported);
 		assertTrue(Files.isRegularFile(archive));
 		Path workHistory = tempDir.resolve("work-history");
-		assertEquals(4, transfer.importArchive(workHistory, archive));
+		assertEquals(5, transfer.importArchive(workHistory, archive));
 
 		// Importing the same home history again is non-destructive.
 		assertEquals(0, transfer.importArchive(workHistory, archive));
@@ -112,12 +133,66 @@ class PerformanceHistoryPublicationTest {
 	}
 
 	@Test
+	void importRejectsArchiveWithCorruptedManifestBeforeWritingHistory() throws Exception {
+		Path diagnostics = tempDir.resolve("bad-archive-source");
+		UUID machine = UUID.randomUUID();
+		UUID session = createCompletedSession(diagnostics, machine);
+		assertTrue(new PerformanceHistoryPublisher().publishSession(diagnostics, session, "eclipse"));
+		Path history = diagnostics.resolve("history").resolve(machine.toString()).resolve(session.toString());
+		Path manifest = history.resolve(PerformanceHistoryIntegrity.MANIFEST_NAME);
+		Files.writeString(manifest, "changed and incorrect\n");
+
+		// Build the archive explicitly: exportArchive is not a verifier.
+		Path zipFile = tempDir.resolve("bad-history.zip");
+		try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(zipFile));
+				var paths = Files.list(history)) {
+			for (Path file : paths.filter(Files::isRegularFile).toList()) {
+				String entry = machine + "/" + session + "/" + file.getFileName();
+				zip.putNextEntry(new ZipEntry(entry));
+				Files.copy(file, zip);
+				zip.closeEntry();
+			}
+		}
+		Path imported = tempDir.resolve("would-be-imported-history");
+		assertThrows(IOException.class, () -> new PerformanceHistoryTransfer().importArchive(imported, zipFile));
+		assertFalse(Files.exists(imported));
+	}
+
+	@Test
 	void incompleteSessionIsNotPublished() throws Exception {
 		Path diagnostics = tempDir.resolve("diagnostics");
 		UUID machineId = UUID.randomUUID();
 		UUID sessionId = createCompletedSession(diagnostics, machineId);
 		Files.delete(diagnostics.resolve("sessions").resolve(sessionId.toString()).resolve("session.complete"));
 		assertFalse(new PerformanceHistoryPublisher().publishSession(diagnostics, sessionId, "eclipse"));
+		assertFalse(Files.exists(diagnostics.resolve("history")));
+	}
+
+	@Test
+	void missingLastSegmentIsNotTreatedAsComplete() throws Exception {
+		Path diagnostics = tempDir.resolve("missing-segment");
+		UUID machineId = UUID.randomUUID();
+		UUID sessionId = createCompletedSession(diagnostics, machineId);
+		Path session = diagnostics.resolve("sessions").resolve(sessionId.toString());
+
+		// The marker claims two files, but only operations.csv exists.
+		Path marker = session.resolve("session.complete");
+		Files.writeString(marker, Files.readString(marker) + "segments=2\n");
+		assertFalse(new PerformanceHistoryPublisher().publishSession(diagnostics, sessionId, "eclipse"));
+		assertFalse(Files.exists(diagnostics.resolve("history")));
+	}
+
+	@Test
+	void missingMiddleSegmentIsRejected() throws Exception {
+		Path diagnostics = tempDir.resolve("missing-middle");
+		UUID machineId = UUID.randomUUID();
+		UUID sessionId = createCompletedSession(diagnostics, machineId);
+		Path session = diagnostics.resolve("sessions").resolve(sessionId.toString());
+		Files.copy(session.resolve("operations.csv"), session.resolve("operations-000002.csv"));
+		Path marker = session.resolve("session.complete");
+		Files.writeString(marker, Files.readString(marker) + "segments=3\n");
+		assertThrows(IOException.class,
+				() -> new PerformanceHistoryPublisher().publishSession(diagnostics, sessionId, "eclipse"));
 		assertFalse(Files.exists(diagnostics.resolve("history")));
 	}
 
@@ -157,6 +232,41 @@ class PerformanceHistoryPublicationTest {
 		// The original session measurements remain recoverable.
 		assertTrue(Files.isRegularFile(
 				diagnostics.resolve("sessions").resolve(sessionId.toString()).resolve("operations.csv")));
+	}
+
+	@Test
+	void segmentedSessionPublishesEveryOperationAndCanBeRetried() throws Exception {
+		Path diagnostics = tempDir.resolve("segmented-diagnostics");
+		UUID machineId = UUID.randomUUID();
+		UUID sessionId = createCompletedSession(diagnostics, machineId);
+		Path session = diagnostics.resolve("sessions").resolve(sessionId.toString());
+		Path original = session.resolve("operations.csv");
+		List<String> lines = Files.readAllLines(original);
+
+		// Split the existing two-operation fixture across two files.
+		Files.writeString(original, lines.get(0) + "\n" + lines.get(1) + "\n");
+		Path second = session.resolve("operations-000001.csv");
+		Files.writeString(second, lines.get(0) + "\n" + lines.get(2) + "\n");
+		Path completion = session.resolve("session.complete");
+		Files.writeString(completion, Files.readString(completion) + "segments=2\n");
+		PerformanceHistoryPublisher publisher = new PerformanceHistoryPublisher();
+		assertTrue(publisher.publishSession(diagnostics, sessionId, "eclipse"));
+		Path historical = diagnostics.resolve("history").resolve(machineId.toString()).resolve(sessionId.toString());
+		String firstSummary = Files.readString(historical.resolve("checkpoint-000000.csv"));
+		String secondSummary = Files.readString(historical.resolve("checkpoint-000001.csv"));
+		assertTrue(firstSummary.contains("dashboard.refresh"));
+		assertTrue(secondSummary.contains("question.save"));
+		String receipt = Files.readString(historical.resolve("session.summary-complete"));
+		assertTrue(receipt.contains("rawSegments=2"));
+		assertTrue(receipt.contains("measurements=2"));
+		assertTrue(publisher.publishSession(diagnostics, sessionId, "unknown"));
+		assertEquals(firstSummary, Files.readString(historical.resolve("checkpoint-000000.csv")));
+		assertEquals(secondSummary, Files.readString(historical.resolve("checkpoint-000001.csv")));
+
+		// Changing any segment invalidates the published fingerprint.
+		Files.writeString(second, Files.readString(second).replace("200.0,true", "999.0,true"));
+		assertThrows(IOException.class, () -> publisher.publishSession(diagnostics, sessionId, "unknown"));
+		assertEquals(receipt, Files.readString(historical.resolve("session.summary-complete")));
 	}
 
 	private UUID createCompletedSession(Path diagnostics, UUID machineId) throws Exception {

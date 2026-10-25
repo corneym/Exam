@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Exam Question Bank — Performance History</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0 auto; max-width: 1250px;
+           padding: 28px; color: #172033; background: #f8fafc; }
+    h1 { margin-bottom: 6px; }
+    .subtitle, .note { color: #64748b; }
+    .note { font-size: 13px; }
+    .panel { margin-top: 20px; padding: 20px; background: white;
+             border: 1px solid #dce3ec; border-radius: 10px; }
+    .filters { display: flex; flex-wrap: wrap; gap: 18px; align-items: end; }
+    label { display: grid; gap: 6px; font-size: 13px; font-weight: 600; }
+    select { font: inherit; padding: 8px; min-width: 150px;
+             border: 1px solid #cbd5e1; border-radius: 5px; background: white; }
+    svg { display: block; width: 100%; height: auto; }
+    .legend { display: flex; flex-wrap: wrap; gap: 14px; }
+    .legend span { font-size: 13px; }
+    .swatch { display: inline-block; width: 12px; height: 12px; margin-right: 5px; }
+    .scroll { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 9px; border-bottom: 1px solid #e2e8f0;
+             text-align: left; white-space: nowrap; }
+    th { background: #f1f5f9; }
+  </style>
+</head>
+<body>
+  <h1>Exam Question Bank — Performance History</h1>
+  <p class="subtitle">Offline observations grouped by machine, application version and Question corpus size.</p>
+  <section class="panel filters">
+    <label>Operation <select id="operation"></select></label>
+    <label>Machine <select id="machine"></select></label>
+    <label>Application version <select id="version"></select></label>
+    <label>Environment <select id="runtime"></select></label>
+    <label>Timing statistic
+      <select id="metric">
+        <option value="median">Median (ms)</option>
+        <option value="p90">P90 (ms)</option>
+        <option value="maximum">Maximum (ms)</option>
+      </select>
+    </label>
+  </section>
+  <section class="panel">
+    <h2>Performance versus Question count</h2>
+    <svg id="chart" viewBox="0 0 940 390" role="img"
+         aria-label="Operation timing versus Question count"></svg>
+    <div id="legend" class="legend"></div>
+    <p class="note">Each series belongs to one machine, application version and runtime.
+      Points are checkpoint observations, not synthetic benchmarks. Correlation does not establish causation.</p>
+  </section>
+  <section class="panel">
+    <h2>Underlying observations</h2>
+    <p id="count" class="note"></p>
+    <div class="scroll">
+      <table>
+        <thead><tr>
+          <th>Machine</th><th>Version</th><th>Environment</th><th>Questions</th>
+          <th>Operation</th><th>Samples</th><th>Failures</th><th>Median ms</th>
+          <th>P90 ms</th><th>Max ms</th><th>Checkpoint UTC</th>
+        </tr></thead>
+        <tbody id="observations"></tbody>
+      </table>
+    </div>
+  </section>
+  <script>
+    const observations = __OBSERVATIONS__;
+    const controls = Object.fromEntries(
+      ["operation", "machine", "version", "runtime", "metric"]
+        .map(key => [key, document.getElementById(key)]));
+    function populate(select, values, all) {
+      if (all) select.add(new Option("All", "*"));
+      for (const value of [...new Set(values)].sort()) {
+        select.add(new Option(value, value));
+      }
+    }
+    populate(controls.operation, observations.map(o => o.operation), false);
+    populate(controls.machine, observations.map(o => o.machine), true);
+    populate(controls.version, observations.map(o => o.version), true);
+    populate(controls.runtime, observations.map(o => o.runtime), true);
+    const svgNS = "http://www.w3.org/2000/svg";
+    function svgNode(name, attributes, text) {
+      const node = document.createElementNS(svgNS, name);
+      for (const [key, value] of Object.entries(attributes)) {
+        node.setAttribute(key, String(value));
+      }
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+    function render() {
+      const selected = observations.filter(o =>
+        o.operation === controls.operation.value &&
+        (controls.machine.value === "*" || o.machine === controls.machine.value) &&
+        (controls.version.value === "*" || o.version === controls.version.value) &&
+        (controls.runtime.value === "*" || o.runtime === controls.runtime.value));
+      const rows = document.getElementById("observations");
+      rows.replaceChildren();
+      for (const o of selected) {
+        const tr = document.createElement("tr");
+        for (const value of [
+          o.machine, o.version, o.runtime, o.questions, o.operation,
+          o.samples, o.failures, o.median.toFixed(2), o.p90.toFixed(2),
+          o.maximum.toFixed(2), o.captured]) {
+          const td = document.createElement("td");
+          td.textContent = String(value);
+          tr.appendChild(td);
+        }
+        rows.appendChild(tr);
+      }
+      document.getElementById("count").textContent =
+        selected.length + " checkpoint observation(s)";
+      const chart = document.getElementById("chart");
+      const legend = document.getElementById("legend");
+      chart.replaceChildren();
+      legend.replaceChildren();
+      const points = selected.filter(o => o.questions >= 0 &&
+        Number.isFinite(o[controls.metric.value]));
+      if (!points.length) {
+        chart.appendChild(svgNode("text", {x:70,y:180,fill:"#64748b"},
+          "No observations for these filters"));
+        return;
+      }
+      const minX = Math.min(...points.map(o => o.questions));
+      const maxX = Math.max(...points.map(o => o.questions));
+      const maxY = Math.max(1, ...points.map(o => o[controls.metric.value]));
+      const x = value => 75 + 820 * (value - minX) / Math.max(1, maxX - minX);
+      const y = value => 325 - 270 * value / maxY;
+      chart.appendChild(svgNode("line", {x1:75,y1:325,x2:895,y2:325,stroke:"#64748b"}));
+      chart.appendChild(svgNode("line", {x1:75,y1:45,x2:75,y2:325,stroke:"#64748b"}));
+      chart.appendChild(svgNode("text", {x:420,y:372,fill:"#334155"},
+        "Questions in corpus"));
+      chart.appendChild(svgNode("text", {x:75,y:347,fill:"#64748b"},String(minX)));
+      chart.appendChild(svgNode("text", {x:840,y:347,fill:"#64748b"},String(maxX)));
+      chart.appendChild(svgNode("text", {x:80,y:30,fill:"#334155"},
+        controls.metric.value + " elapsed time (ms)"));
+      chart.appendChild(svgNode("text", {x:10,y:58,fill:"#64748b"},maxY.toFixed(1)));
+      const series = new Map();
+      for (const point of points) {
+        const key = point.machine + " / " + point.version + " / " + point.runtime;
+        if (!series.has(key)) series.set(key, []);
+        series.get(key).push(point);
+      }
+      const colours = ["#2563eb", "#c2410c", "#047857", "#9333ea", "#b45309", "#0891b2"];
+      let index = 0;
+      for (const [name, values] of series) {
+        values.sort((a,b) => a.questions - b.questions ||
+          a.captured.localeCompare(b.captured));
+        const colour = colours[index++ % colours.length];
+        chart.appendChild(svgNode("polyline", {
+          points: values.map(o => x(o.questions) + "," + y(o[controls.metric.value])).join(" "),
+          fill:"none",stroke:colour,"stroke-width":2.5}));
+        for (const point of values) {
+          const dot = svgNode("circle", {
+            cx:x(point.questions),cy:y(point[controls.metric.value]),r:4,fill:colour});
+          dot.appendChild(svgNode("title",{},name + ": " + point.questions +
+            " Questions, " + point[controls.metric.value].toFixed(2) + " ms"));
+          chart.appendChild(dot);
+        }
+        const key = document.createElement("span");
+        const swatch = document.createElement("span");
+        swatch.className = "swatch";
+        swatch.style.background = colour;
+        key.appendChild(swatch);
+        key.appendChild(document.createTextNode(name));
+        legend.appendChild(key);
+      }
+    }
+    for (const control of Object.values(controls)) {
+      control.addEventListener("change", render);
+    }
+    render();
+  </script>
+</body>
+</html>

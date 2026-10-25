@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.diagnostics;
 
 import java.util.Objects;
 import java.util.concurrent.Callable;
+import java.util.function.Supplier;
 
 import au.edu.eq.questionbank.repository.sqlite.SqliteReadProbe;
 
@@ -60,6 +61,34 @@ public final class PerformanceSqlScope {
 			}
 		} finally {
 			operation.close();
+		}
+	}
+
+	/**
+	 * Measures a workflow whose Java callback cannot throw checked exceptions.
+	 *
+	 * Preserves the original RuntimeException or Error, including when a nested
+	 * probe is already present or performance recording is disabled.
+	 *
+	 * @param <T>             workflow result type
+	 * @param recorder        application performance recorder
+	 * @param operationPrefix stable operation name prefix
+	 * @param parentId        enclosing operation ID, or zero
+	 * @param action          workflow returning the original result
+	 * @return result of the original action
+	 */
+	public static <T> T measureUnchecked(PerformanceRecorder recorder, String operationPrefix, long parentId,
+			Supplier<T> action) {
+		Objects.requireNonNull(action, "action");
+		try {
+			return measure(recorder, operationPrefix, parentId, action::get);
+		} catch (RuntimeException | Error failure) {
+			throw failure;
+		} catch (Exception unexpectedChecked) {
+
+			// Supplier.get cannot declare a checked exception. Preserve a
+			// meaningful cause if a future implementation breaks that rule.
+			throw new IllegalStateException("Unexpected checked diagnostic workflow failure", unexpectedChecked);
 		}
 	}
 

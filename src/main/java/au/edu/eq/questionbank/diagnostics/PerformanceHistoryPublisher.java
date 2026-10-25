@@ -64,6 +64,29 @@ public final class PerformanceHistoryPublisher {
 		return cells;
 	}
 
+	private static String operationFingerprint(List<Path> operationFiles) throws IOException {
+		if (operationFiles.isEmpty()) {
+			throw new IOException("No operation files to fingerprint");
+		}
+
+		// Preserve exact compatibility with previously published
+		// single-file session receipts.
+		if (operationFiles.size() == 1) {
+			return sha256(operationFiles.getFirst());
+		}
+		StringBuilder manifest = new StringBuilder();
+		for (Path file : operationFiles) {
+			manifest.append(file.getFileName()).append('=').append(sha256(file)).append('\n');
+		}
+		try {
+			MessageDigest digest = MessageDigest.getInstance("SHA-256");
+			byte[] fingerprint = digest.digest(manifest.toString().getBytes(StandardCharsets.UTF_8));
+			return HexFormat.of().formatHex(fingerprint);
+		} catch (NoSuchAlgorithmException unavailable) {
+			throw new IllegalStateException("SHA-256 unavailable", unavailable);
+		}
+	}
+
 	private static void publishIdenticalOrNew(Path source, Path destination) throws IOException {
 		Files.createDirectories(destination.getParent());
 		if (!Files.exists(destination)) {
@@ -215,6 +238,26 @@ public final class PerformanceHistoryPublisher {
 				|| !Files.isRegularFile(metadataFile)) {
 			return false;
 		}
+		List<Path> operationFiles = PerformanceCsvReader.sessionOperationFiles(session);
+
+		// Older sessions did not store the segment count. They are
+		// valid only when they contain the original single CSV file.
+		String segmentsProperty = completion.getProperty("segments");
+		if (segmentsProperty == null) {
+			if (operationFiles.size() != 1) {
+				return false;
+			}
+		} else {
+			int expectedSegments;
+			try {
+				expectedSegments = Integer.parseInt(segmentsProperty);
+			} catch (NumberFormatException invalid) {
+				throw new IOException("Invalid completed-session segment count", invalid);
+			}
+			if (expectedSegments < 1 || expectedSegments != operationFiles.size()) {
+				return false;
+			}
+		}
 		Properties metadata = readProperties(metadataFile);
 		if (!sessionId.toString().equals(metadata.getProperty("session.id"))) {
 			throw new IOException("Session metadata identity mismatch");
@@ -231,7 +274,7 @@ public final class PerformanceHistoryPublisher {
 		// historical sessions created before runtime.kind was persisted.
 		String originalRuntimeKind = resolveOriginalRuntimeKind(diagnosticsRoot, machineId, sessionId,
 				metadata.getProperty("runtime.kind"), runtimeKind);
-		List<PerformanceCsvReader.Entry> measurements = PerformanceCsvReader.read(operationsFile);
+		List<PerformanceCsvReader.Entry> measurements = PerformanceCsvReader.readSession(session);
 		List<List<PerformanceCsvReader.Entry>> windows = new ArrayList<>();
 		for (int i = 0; i < checkpoints.size(); i++) {
 			windows.add(new ArrayList<>());
@@ -276,15 +319,22 @@ public final class PerformanceHistoryPublisher {
 			// containing no completed operations.
 			publishIdenticalOrNew(checkpointsFile, destination.resolve("corpus-checkpoints.csv"));
 			String receipt = "sessionId=" + sessionId + "\n" + "machineId=" + machineId + "\n" + "rawSha256="
-					+ sha256(operationsFile) + "\n" + "checkpointSha256=" + sha256(checkpointsFile) + "\n"
+					+ operationFingerprint(operationFiles) + "\n" + "checkpointSha256=" + sha256(checkpointsFile) + "\n"
 					+ "checkpoints=" + checkpoints.size() + "\n" + "summaries=" + summaries + "\n" + "measurements="
 					+ measurements.size() + "\n";
+			if (operationFiles.size() > 1) {
+				receipt += "rawSegments=" + operationFiles.size() + "\n";
+			}
 			Path preparedReceipt = staging.resolve("receipt.properties");
 			Files.writeString(preparedReceipt, receipt, StandardCharsets.UTF_8);
 
 			// Publish completion last, after every summary has been
 			// regenerated and verified against existing history.
 			publishIdenticalOrNew(preparedReceipt, destination.resolve("session.summary-complete"));
+
+			// The independently verifiable historical record is created last.
+			// An existing manifest must agree with every regenerated summary.
+			new PerformanceHistoryIntegrity().publish(destination);
 			return true;
 		} finally {
 			try (Stream<Path> files = Files.walk(staging)) {

@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CancellationException;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -29,6 +30,7 @@ import au.edu.eq.questionbank.diagnostics.PerformanceDiagnosticsPreferences;
 import au.edu.eq.questionbank.diagnostics.PerformanceFxStallProbe;
 import au.edu.eq.questionbank.diagnostics.PerformanceHistoryPublisher;
 import au.edu.eq.questionbank.diagnostics.PerformanceOperation;
+import au.edu.eq.questionbank.diagnostics.PerformanceRawRetention;
 import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.diagnostics.PerformanceRuntimeSampler;
 import au.edu.eq.questionbank.diagnostics.PerformanceSqlScope;
@@ -5295,8 +5297,6 @@ public class QuestionBankApplication extends Application {
 		try {
 			diagnosticsPreference = PerformanceDiagnosticsPreferences.load(applicationPropertiesFile);
 		} catch (IOException | RuntimeException failure) {
-
-			// A corrupt diagnostic preference cannot prevent application startup.
 			System.err.println(
 					"Could not read performance diagnostics preference: " + failure.getClass().getSimpleName());
 		}
@@ -5309,9 +5309,6 @@ public class QuestionBankApplication extends Application {
 				performanceFxStallProbe = new PerformanceFxStallProbe(performanceRecorder);
 				performanceFxStallProbe.start();
 			} catch (RuntimeException diagnosticsFailure) {
-
-				// Monitoring failures must not prevent the application
-				// from opening or modify Question persistence behaviour.
 				System.err.println(
 						"Runtime diagnostics initialisation failed: " + diagnosticsFailure.getClass().getSimpleName());
 			}
@@ -5324,15 +5321,30 @@ public class QuestionBankApplication extends Application {
 				checkpoints.start();
 				performanceCorpusCheckpointRecorder = checkpoints;
 
-				// Retry the historical publication of earlier completed
-				// sessions without delaying JavaFX startup.
+				// Capture this session's identity before the recovery
+				// thread starts. It must remain protected from pruning.
+				UUID protectedSession = performanceRecorder.sessionId();
 				Thread recovery = new Thread(() -> {
+					Path diagnosticsRoot = ApplicationPaths.diagnosticsDirectory();
 					try {
-						new PerformanceHistoryPublisher()
-								.recoverCompletedSessions(ApplicationPaths.diagnosticsDirectory(), "unknown");
+						new PerformanceHistoryPublisher().recoverCompletedSessions(diagnosticsRoot, "unknown");
+
+						// Deliberately off by default until retention
+						// tests and disposable-data checks are green.
+						if (Boolean.getBoolean("eqb.performance.rawRetention.enabled")) {
+							PerformanceRawRetention.Result result = new PerformanceRawRetention().enforce(
+									diagnosticsRoot, PerformanceRawRetention.DEFAULT_MAX_RAW_BYTES, protectedSession,
+									true);
+							if (!result.lockAcquired()) {
+								System.err
+										.println("Performance retention skipped: " + "another instance holds the lock");
+							} else if (result.deletedSessions() > 0) {
+								System.out.println("Performance raw sessions pruned: " + result.deletedSessions());
+							}
+						}
 					} catch (IOException | RuntimeException failure) {
-						System.err
-								.println("Performance history recovery failed: " + failure.getClass().getSimpleName());
+						System.err.println("Performance history recovery or retention " + "failed: "
+								+ failure.getClass().getSimpleName());
 					}
 				}, "eqb-performance-history-recovery");
 				recovery.setDaemon(true);
@@ -5732,7 +5744,9 @@ public class QuestionBankApplication extends Application {
 				try (PerformanceOperation curriculum = performanceRecorder.start("workingSubject.curriculum",
 						refresh.id())) {
 					try {
-						curriculumSnapshot = workingSubjectCurriculumSnapshotLoader.apply(subject);
+						curriculumSnapshot = PerformanceSqlScope.measureUnchecked(performanceRecorder,
+								"workingSubject.curriculum", curriculum.id(),
+								() -> workingSubjectCurriculumSnapshotLoader.apply(subject));
 						curriculum.resultCount(curriculumSnapshot.syllabusVersions().size());
 					} catch (RuntimeException | Error failure) {
 						curriculum.failed();
@@ -5746,7 +5760,9 @@ public class QuestionBankApplication extends Application {
 
 						// One corpus read continues to supply both
 						// Question and Answer capture queues.
-						questions = List.copyOf(workingSubjectQuestionSnapshotLoader.get());
+						questions = PerformanceSqlScope.measureUnchecked(performanceRecorder,
+								"workingSubject.questions", retrieval.id(),
+								() -> List.copyOf(workingSubjectQuestionSnapshotLoader.get()));
 						retrieval.resultCount(questions.size());
 					} catch (RuntimeException | Error failure) {
 						retrieval.failed();
@@ -5825,51 +5841,93 @@ public class QuestionBankApplication extends Application {
 		if (examAssetsPane == null || workspaceModeHost == null
 				|| !workspaceModeHost.getChildren().contains(examAssetsPane)) {
 
-			// Hidden Exam/Assets needs no immediate Subject snapshot. Its ordinary entry
-			// path will load the then-current authoritative Subject.
+			// Hidden Exam/Assets needs no immediate Subject snapshot.
+			// The ordinary entry path loads the current Working Subject.
 			return;
 		}
+		PerformanceOperation refresh = performanceRecorder.start("examAssets.refresh");
+		try {
 
-		// Remove the previous Subject's Exams immediately on the FX thread before the
-		// replacement hierarchy begins loading.
-		examAssetsPane.beginSubjectRefresh(subject);
-		if (subject == null) {
+			// Old-Subject presentation is cleared on the FX thread.
+			examAssetsPane.beginSubjectRefresh(subject);
+			if (subject == null) {
+				refresh.resultCount(0);
+				refresh.close();
+				return;
+			}
+			Task<ExamAssetsPane.SubjectSnapshot> task = new ApplicationBackgroundTask<>(() -> {
+				try (PerformanceOperation snapshot = performanceRecorder.start("examAssets.snapshot", refresh.id())) {
+					try {
 
-			// Clearing Subject is complete once stale presentation has been removed.
-			return;
+						// Keep persisted Exam, booklet, AnswerFile and
+						// assignment reads on this background worker.
+						ExamAssetsPane.SubjectSnapshot result = PerformanceSqlScope.measureUnchecked(
+								performanceRecorder, "examAssets.snapshot", snapshot.id(),
+								() -> workingSubjectExamAssetsSnapshotLoader.apply(subject));
+						snapshot.resultCount(result.exams().size());
+						return result;
+					} catch (RuntimeException | Error failure) {
+						snapshot.failed();
+						throw failure;
+					}
+				}
+			});
+			task.setOnSucceeded(_ -> {
+				if (!isCurrentWorkingSubjectRefresh(subject, generation)) {
+
+					// Do not publish stale Exam data over a newer Subject.
+					refresh.failed();
+					refresh.close();
+					return;
+				}
+				try {
+					ExamAssetsPane.SubjectSnapshot result = task.getValue();
+					try (PerformanceOperation publish = performanceRecorder.start("examAssets.publish", refresh.id())) {
+						try {
+							examAssetsPane.applySubjectSnapshot(result);
+							publish.resultCount(result.exams().size());
+						} catch (RuntimeException | Error failure) {
+							publish.failed();
+							throw failure;
+						}
+					}
+					refresh.resultCount(result.exams().size());
+				} catch (RuntimeException | Error failure) {
+					refresh.failed();
+					throw failure;
+				} finally {
+					refresh.close();
+				}
+			});
+			task.setOnFailed(_ -> {
+				refresh.failed();
+				refresh.close();
+				if (!isCurrentWorkingSubjectRefresh(subject, generation)) {
+
+					// A failed obsolete load must not disturb the new Subject.
+					return;
+				}
+				Throwable failure = task.getException();
+				if (failure instanceof IllegalStateException && failure.getCause() != null) {
+
+					// Preserve the useful SQLite cause for the UI message.
+					failure = failure.getCause();
+				}
+				showAlert(Alert.AlertType.ERROR, "Exam / Assets", "Exam assets could not be refreshed.",
+						failureMessage(failure));
+			});
+			task.setOnCancelled(_ -> {
+				refresh.failed();
+				refresh.close();
+			});
+			Thread thread = new Thread(task, "working-subject-exam-assets-refresh-" + generation);
+			thread.setDaemon(true);
+			thread.start();
+		} catch (RuntimeException | Error failure) {
+			refresh.failed();
+			refresh.close();
+			throw failure;
 		}
-		Task<ExamAssetsPane.SubjectSnapshot> task = new ApplicationBackgroundTask<>(() -> {
-
-			// All Exam, booklet, AnswerFile and assignment reads occur away from
-			// the JavaFX application thread.
-			return workingSubjectExamAssetsSnapshotLoader.apply(subject);
-		});
-		task.setOnSucceeded(_ -> {
-			if (!isCurrentWorkingSubjectRefresh(subject, generation)) {
-
-				// A later Subject selection owns the workspace now.
-				return;
-			}
-			examAssetsPane.applySubjectSnapshot(task.getValue());
-		});
-		task.setOnFailed(_ -> {
-			if (!isCurrentWorkingSubjectRefresh(subject, generation)) {
-
-				// Failure from stale work must not disturb the current Subject.
-				return;
-			}
-			Throwable failure = task.getException();
-			if (failure instanceof IllegalStateException && failure.getCause() != null) {
-
-				// Surface the underlying SQLite failure rather than the Function wrapper.
-				failure = failure.getCause();
-			}
-			showAlert(Alert.AlertType.ERROR, "Exam / Assets", "Exam assets could not be refreshed.",
-					failureMessage(failure));
-		});
-		Thread thread = new Thread(task, "working-subject-exam-assets-refresh-" + generation);
-		thread.setDaemon(true);
-		thread.start();
 	}
 
 	private void startWorkingSubjectRefresh(Subject subject) {
@@ -6034,16 +6092,16 @@ public class QuestionBankApplication extends Application {
 		viewExamAssetPdf(booklet.getSourceDocument().getRelativePath(), "Question booklet", config);
 	}
 
+	private enum BackupFailureDecision {
+		RETRY, EXIT_WITHOUT_BACKUP, CANCEL_EXIT
+	}
+
 	private record DashboardAnswerCaptureSnapshot(List<Question> questions, AnswerFile answerFile) {
 
 		private DashboardAnswerCaptureSnapshot {
 			Objects.requireNonNull(questions, "questions");
 			questions = List.copyOf(questions);
 		}
-	}
-
-	private enum BackupFailureDecision {
-		RETRY, EXIT_WITHOUT_BACKUP, CANCEL_EXIT
 	}
 
 	private record CorpusDashboardSnapshot(List<ExamCorpusStatus> examStatuses, List<Question> questions,

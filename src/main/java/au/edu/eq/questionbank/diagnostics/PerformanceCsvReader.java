@@ -4,11 +4,15 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
+import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 /**
  * Reads legacy and session-aware performance diagnostic CSV files.
@@ -17,6 +21,8 @@ import java.util.UUID;
  * session identifier null rather than inventing one.
  */
 public final class PerformanceCsvReader {
+
+	private static final Pattern SEGMENT_FILE = Pattern.compile("operations-[0-9]{6}\\.csv");
 
 	private PerformanceCsvReader() {
 	}
@@ -47,6 +53,80 @@ public final class PerformanceCsvReader {
 			}
 		}
 		return List.copyOf(entries);
+	}
+
+	/**
+	 * Reads all operation segments for one session, in recorded order.
+	 *
+	 * Legacy single-file sessions remain supported.
+	 *
+	 * @param sessionDirectory UUID-named raw session directory
+	 * @return all measurements from its operation segments
+	 * @throws IOException if files or session identities are invalid
+	 */
+	public static List<Entry> readSession(Path sessionDirectory) throws IOException {
+		UUID sessionId;
+		try {
+			sessionId = UUID.fromString(sessionDirectory.getFileName().toString());
+		} catch (IllegalArgumentException invalid) {
+			throw new IOException("Invalid session directory identity", invalid);
+		}
+		List<Entry> merged = new ArrayList<>();
+		for (Path file : sessionOperationFiles(sessionDirectory)) {
+			for (Entry entry : read(file)) {
+				if (!sessionId.equals(entry.sessionId())) {
+					throw new IOException("Operation belongs to another session");
+				}
+				merged.add(entry);
+			}
+		}
+		return List.copyOf(merged);
+	}
+
+	/**
+	 * Returns the ordered operation CSV files for a raw session.
+	 *
+	 * Segment numbering must be contiguous, beginning at 000001. Unexpected
+	 * operation filenames and symbolic links are rejected.
+	 *
+	 * @param sessionDirectory session directory
+	 * @return immutable ordered list, including operations.csv
+	 * @throws IOException if the segment layout is incomplete or unsafe
+	 */
+	public static List<Path> sessionOperationFiles(Path sessionDirectory) throws IOException {
+		Path base = sessionDirectory.resolve("operations.csv");
+		if (Files.isSymbolicLink(sessionDirectory) || !Files.isDirectory(sessionDirectory, LinkOption.NOFOLLOW_LINKS)
+				|| !Files.isRegularFile(base, LinkOption.NOFOLLOW_LINKS)) {
+			throw new IOException("Missing or unsafe session operations CSV");
+		}
+		List<Path> segments = new ArrayList<>();
+		try (Stream<Path> stream = Files.list(sessionDirectory)) {
+			for (Path path : stream.toList()) {
+				String name = path.getFileName().toString();
+				if (!name.startsWith("operations-") || !name.endsWith(".csv")) {
+					if (name.startsWith("operations-")) {
+						throw new IOException("Unexpected operations segment filename");
+					}
+					continue;
+				}
+				if (!SEGMENT_FILE.matcher(name).matches() || !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+					throw new IOException("Invalid operations segment");
+				}
+				segments.add(path);
+			}
+		}
+		segments.sort(Comparator.comparing(path -> path.getFileName().toString()));
+		List<Path> ordered = new ArrayList<>();
+		ordered.add(base);
+		int expected = 1;
+		for (Path file : segments) {
+			String expectedName = "operations-%06d.csv".formatted(expected++);
+			if (!expectedName.equals(file.getFileName().toString())) {
+				throw new IOException("Missing or out-of-order operations segment");
+			}
+			ordered.add(file);
+		}
+		return List.copyOf(ordered);
 	}
 
 	private static Entry parse(String line, boolean sessionFormat, int lineNumber) throws IOException {

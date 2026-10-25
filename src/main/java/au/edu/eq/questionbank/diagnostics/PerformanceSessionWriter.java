@@ -21,6 +21,7 @@ final class PerformanceSessionWriter implements AutoCloseable {
 
 	static final int DEFAULT_CAPACITY = 2048;
 	private static final long CLOSE_WAIT_MILLIS = 2000;
+	static final long MAX_SEGMENT_BYTES = 20L * 1024 * 1024;
 	private final AtomicLong droppedRecords = new AtomicLong();
 	private final AtomicLong failedWrites = new AtomicLong();
 	private final String header;
@@ -31,18 +32,28 @@ final class PerformanceSessionWriter implements AutoCloseable {
 	private final Thread worker;
 	private volatile boolean closing;
 	private boolean started;
+	private final long maximumSegmentBytes;
+	private volatile int segmentCount;
 
 	PerformanceSessionWriter(Path outputFile, String header, SessionInitialiser initialiser) {
-		this(outputFile, header, initialiser, DEFAULT_CAPACITY);
+		this(outputFile, header, initialiser, DEFAULT_CAPACITY, MAX_SEGMENT_BYTES);
 	}
 
 	PerformanceSessionWriter(Path outputFile, String header, SessionInitialiser initialiser, int capacity) {
-		if (outputFile == null || header == null || initialiser == null || capacity < 1) {
+		this(outputFile, header, initialiser, capacity, MAX_SEGMENT_BYTES);
+	}
+
+	PerformanceSessionWriter(Path outputFile, String header, SessionInitialiser initialiser, int capacity,
+			long maximumSegmentBytes) {
+		if (outputFile == null || header == null || initialiser == null || capacity < 1
+				|| maximumSegmentBytes <= (header + "\n").getBytes(StandardCharsets.UTF_8).length
+				|| !"operations.csv".equals(outputFile.getFileName().toString())) {
 			throw new IllegalArgumentException("Invalid session writer configuration");
 		}
 		this.outputFile = outputFile;
 		this.header = header;
 		this.initialiser = initialiser;
+		this.maximumSegmentBytes = maximumSegmentBytes;
 		this.queue = new ArrayBlockingQueue<>(capacity);
 		this.worker = new Thread(this::runWriter, "eqb-performance-writer");
 		this.worker.setDaemon(true);
@@ -93,19 +104,34 @@ final class PerformanceSessionWriter implements AutoCloseable {
 		}
 	}
 
-	private BufferedWriter openWriter() throws IOException {
+	private BufferedWriter openWriter(int segmentIndex) throws IOException {
 		Path parent = outputFile.toAbsolutePath().getParent();
 		Files.createDirectories(parent);
 		initialiser.initialise(parent);
-		if (Files.notExists(outputFile)) {
-			Files.writeString(outputFile, header + System.lineSeparator(), StandardCharsets.UTF_8,
-					StandardOpenOption.CREATE_NEW);
+		Path segment = segmentFile(segmentIndex);
+		BufferedWriter result = Files.newBufferedWriter(segment, StandardCharsets.UTF_8, StandardOpenOption.CREATE_NEW,
+				StandardOpenOption.WRITE);
+		try {
+			result.write(header);
+			result.write('\n');
+			result.flush();
+			segmentCount = segmentIndex + 1;
+			return result;
+		} catch (IOException | RuntimeException failure) {
+			try {
+				result.close();
+			} catch (IOException closeFailure) {
+				failure.addSuppressed(closeFailure);
+			}
+			throw failure;
 		}
-		return Files.newBufferedWriter(outputFile, StandardCharsets.UTF_8, StandardOpenOption.APPEND);
 	}
 
 	private void runWriter() {
 		BufferedWriter writer = null;
+		int index = 0;
+		long bytes = 0;
+		long headerBytes = (header + "\n").getBytes(StandardCharsets.UTF_8).length;
 		try {
 			while (!closing || !queue.isEmpty()) {
 				String row = queue.poll(50, TimeUnit.MILLISECONDS);
@@ -113,11 +139,27 @@ final class PerformanceSessionWriter implements AutoCloseable {
 					continue;
 				}
 				try {
+					long rowBytes = row.getBytes(StandardCharsets.UTF_8).length;
+
+					// Reject an oversized individual record rather
+					// than silently exceeding the file-size cap.
+					if (rowBytes > maximumSegmentBytes - headerBytes) {
+						throw new IOException("Diagnostic row exceeds segment limit");
+					}
 					if (writer == null) {
-						writer = openWriter();
+						writer = openWriter(index);
+						bytes = headerBytes;
+					}
+					if (bytes + rowBytes > maximumSegmentBytes) {
+						writer.close();
+						writer = null;
+						index++;
+						writer = openWriter(index);
+						bytes = headerBytes;
 					}
 					writer.write(row);
 					writer.flush();
+					bytes += rowBytes;
 				} catch (IOException | RuntimeException failure) {
 					failedWrites.incrementAndGet();
 					warnOnFirstFailures(failure);
@@ -148,6 +190,16 @@ final class PerformanceSessionWriter implements AutoCloseable {
 		}
 	}
 
+	private Path segmentFile(int segmentIndex) throws IOException {
+		if (segmentIndex < 0 || segmentIndex > 999999) {
+			throw new IOException("Performance segment index exceeded");
+		}
+		if (segmentIndex == 0) {
+			return outputFile;
+		}
+		return outputFile.resolveSibling("operations-%06d.csv".formatted(segmentIndex));
+	}
+
 	private void warn(String message) {
 		try {
 			System.err.println(message);
@@ -164,16 +216,14 @@ final class PerformanceSessionWriter implements AutoCloseable {
 	}
 
 	private void writeCompletionMarker() {
-
-		// Absence of a completion marker identifies a potentially
-		// interrupted session.
 		if (!Files.isRegularFile(outputFile)) {
 			return;
 		}
 		boolean complete = droppedRecordCount() == 0 && failedWriteCount() == 0;
 		String marker = complete ? "session.complete" : "session.partial";
 		String status = "endedAt=" + Instant.now() + System.lineSeparator() + "droppedRecords=" + droppedRecordCount()
-				+ System.lineSeparator() + "failedWrites=" + failedWriteCount() + System.lineSeparator();
+				+ System.lineSeparator() + "failedWrites=" + failedWriteCount() + System.lineSeparator() + "segments="
+				+ segmentCount + System.lineSeparator();
 		try {
 			Files.writeString(outputFile.getParent().resolve(marker), status, StandardCharsets.UTF_8,
 					StandardOpenOption.CREATE_NEW);

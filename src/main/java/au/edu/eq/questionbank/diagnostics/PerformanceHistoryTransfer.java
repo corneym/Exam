@@ -48,6 +48,7 @@ public final class PerformanceHistoryTransfer {
 			}
 			String name = relative.getFileName().toString();
 			return name.equals("corpus-checkpoints.csv") || name.equals("session.summary-complete")
+					|| name.equals(PerformanceHistoryIntegrity.MANIFEST_NAME)
 					|| CHECKPOINT_FILE.matcher(name).matches();
 		} catch (IllegalArgumentException invalid) {
 			return false;
@@ -160,6 +161,13 @@ public final class PerformanceHistoryTransfer {
 					if (!Files.isRegularFile(session.resolve("session.summary-complete"))
 							|| !Files.isRegularFile(session.resolve("corpus-checkpoints.csv"))) {
 						throw new IOException("Incomplete historical session archive");
+					}
+
+					// A modern archive's manifest must verify before any file
+					// is copied into the permanent history. Older archives without
+					// this optional manifest remain importable.
+					if (Files.exists(session.resolve(PerformanceHistoryIntegrity.MANIFEST_NAME))) {
+						new PerformanceHistoryIntegrity().verify(session);
 					}
 				}
 			}
