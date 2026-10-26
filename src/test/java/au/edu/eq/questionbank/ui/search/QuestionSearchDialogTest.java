@@ -117,8 +117,10 @@ class QuestionSearchDialogTest {
 		assertTrue(editQuestion.getParent() == close.getParent());
 		assertTrue(robot.lookup("#question-search-action-row").tryQuery().isEmpty());
 		VBox leftColumn = robot.lookup("#question-search-left-column").queryAs(VBox.class);
+		VBox resultsColumn = robot.lookup("#question-search-results-column").queryAs(VBox.class);
 		VBox rightColumn = robot.lookup("#question-search-right-column").queryAs(VBox.class);
 		assertEquals(new Insets(12), leftColumn.getPadding());
+		assertTrue(resultsColumn.getChildren().size() == 1);
 		assertEquals(new Insets(12), rightColumn.getPadding());
 		robot.interact(dialog::close);
 	}

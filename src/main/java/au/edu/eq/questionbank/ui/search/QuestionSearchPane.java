@@ -44,6 +44,7 @@ import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.HPos;
 import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
+import javafx.geometry.Pos;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
@@ -51,7 +52,6 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.TextArea;
-import javafx.scene.control.TitledPane;
 import javafx.scene.control.Tooltip;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
@@ -85,8 +85,8 @@ public class QuestionSearchPane extends BorderPane {
 	private static final int SECTION_TOP_PADDING = 6;
 	private static final int SELECTOR_COLUMN_GAP = 8;
 	private static final int SELECTOR_ROW_GAP = 6;
-	private static final double COLUMN_DIVIDER_POSITION = 0.35;
-	private static final double LEFT_CONTENT_DIVIDER_POSITION = 0.52;
+	private static final double FILTERS_DIVIDER_POSITION = 0.34;
+	private static final double RESULTS_DIVIDER_POSITION = 0.59;
 	private static final double PREVIEW_DELAY_MILLIS = 40;
 	private static final double OUTPUT_LIST_MIN_HEIGHT = 90.0;
 	private static final double PREVIEW_VIEWPORT_MIN_HEIGHT = 96.0;
@@ -191,7 +191,6 @@ public class QuestionSearchPane extends BorderPane {
 	private final ComboBox<FilterOption<ExamBooklet>> bookletFilterBox = new ComboBox<>();
 	private final Button clearMetadataFiltersButton = new Button("Clear filters");
 	private final ComboBox<FilterOption<Exam>> examFilterBox = new ComboBox<>();
-	private final TitledPane metadataFilterPane = new TitledPane();
 	private final Label metadataFilterStatus = new Label();
 	private final ComboBox<FilterOption<SyllabusVersion>> originalSyllabusFilterBox = new ComboBox<>();
 	private final ComboBox<FilterOption<ExamProvider>> providerFilterBox = new ComboBox<>();
@@ -978,18 +977,12 @@ public class QuestionSearchPane extends BorderPane {
 		inclusionFilterBox.setButtonCell(new DisplayListCell<>(QuestionSearchInclusionFilter::displayText));
 		inclusionFilterBox.setCellFactory(_ -> new DisplayListCell<>(QuestionSearchInclusionFilter::displayText));
 		inclusionFilterBox.setTooltip(new Tooltip(
-				"Filter Questions by revision-output inclusion " + "within the selected current-curriculum scope."));
+				"Filter Questions by revision-output inclusion within the selected current-curriculum scope."));
 		inclusionFilterBox.setMaxWidth(Double.MAX_VALUE);
 		inclusionFilterBox.setDisable(searchScopeBox.getValue() != QuestionSearchScope.CURRENT_SYLLABUS);
 		clearMetadataFiltersButton.setId("question-search-clear-metadata-filters");
 		metadataFilterStatus.setId("question-search-metadata-filter-status");
 		metadataFilterStatus.setWrapText(true);
-		metadataFilterPane.setId("question-search-more-filters");
-		metadataFilterPane.setText("More filters");
-		metadataFilterPane.setCollapsible(true);
-		metadataFilterPane.setAnimated(false);
-		metadataFilterPane.setExpanded(false);
-		metadataFilterPane.setContent(createMetadataFilterContent());
 	}
 
 	private void configureOutputApplicabilityControls() {
@@ -1143,21 +1136,26 @@ public class QuestionSearchPane extends BorderPane {
 		selectedClassificationPane.setManaged(false);
 	}
 
-	private VBox createLeftColumn() {
-		VBox searchPane = createSearchFilterPane();
-		VBox resultsPane = createMatchingQuestionsPane();
-		VBox detailsPane = createQuestionDetailsPane();
+	private VBox createFiltersColumn() {
+		VBox filters = createSearchFilterPane();
+		ScrollPane scroll = new ScrollPane(filters);
+		scroll.setId("question-search-filters-scroll");
+		scroll.setFitToWidth(true);
+		scroll.setFitToHeight(false);
+		scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+		scroll.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+		scroll.setMinHeight(0);
 
-		// Matching Questions and Question Details share the vertical space left after
-		// the Search controls have taken their natural height.
-		SplitPane contentPane = new SplitPane(resultsPane, detailsPane);
-		contentPane.setOrientation(Orientation.VERTICAL);
-		contentPane.setDividerPositions(LEFT_CONTENT_DIVIDER_POSITION);
-		VBox leftColumn = new VBox(SECTION_SPACING, searchPane, contentPane);
-		leftColumn.setId("question-search-left-column");
-		leftColumn.setPadding(new Insets(PANE_PADDING));
-		VBox.setVgrow(contentPane, Priority.ALWAYS);
-		return leftColumn;
+		// Normal desktop height shows the entire filter form. At reduced
+		// height, only this full column scrolls; results and preview remain
+		// independently visible in their own columns.
+		VBox column = new VBox(scroll);
+		column.setId("question-search-left-column");
+		column.setPadding(new Insets(PANE_PADDING));
+		column.setMinWidth(320);
+		column.setMinHeight(0);
+		VBox.setVgrow(scroll, Priority.ALWAYS);
+		return column;
 	}
 
 	private VBox createMatchingQuestionsPane() {
@@ -1173,35 +1171,46 @@ public class QuestionSearchPane extends BorderPane {
 		return pane;
 	}
 
-	private ScrollPane createMetadataFilterContent() {
-		GridPane grid = new GridPane();
-		grid.setHgap(SELECTOR_COLUMN_GAP);
-		grid.setVgap(SELECTOR_ROW_GAP);
-		grid.addRow(0, createSelectorLabel("Provider"), providerFilterBox);
-		grid.addRow(1, createSelectorLabel("Year from"), yearFromFilterBox);
-		grid.addRow(2, createSelectorLabel("Year to"), yearToFilterBox);
-		grid.addRow(3, createSelectorLabel("Exam"), examFilterBox);
-		grid.addRow(4, createSelectorLabel("Booklet"), bookletFilterBox);
-		grid.addRow(5, createSelectorLabel("Response type"), responseTypeFilterBox);
-		grid.addRow(6, createSelectorLabel("Original syllabus"), originalSyllabusFilterBox);
-		grid.addRow(7, createSelectorLabel("Revision output"), inclusionFilterBox);
+	private VBox createMetadataFilterContent() {
+		GridPane source = new GridPane();
+		source.setHgap(SELECTOR_COLUMN_GAP);
+		source.setVgap(SELECTOR_ROW_GAP);
+		source.addRow(0, createSelectorLabel("Provider"), providerFilterBox);
+
+		// Both year limits belong to one compact row without hiding either
+		// filter or changing the existing range-correction handlers.
+		Label yearSeparator = new Label("to");
+		HBox years = new HBox(SECTION_SPACING, yearFromFilterBox, yearSeparator, yearToFilterBox);
+		years.setAlignment(Pos.CENTER_LEFT);
+		yearFromFilterBox.setMinWidth(0);
+		yearToFilterBox.setMinWidth(0);
+		HBox.setHgrow(yearFromFilterBox, Priority.ALWAYS);
+		HBox.setHgrow(yearToFilterBox, Priority.ALWAYS);
+		source.addRow(1, createSelectorLabel("Year"), years);
+		source.addRow(2, createSelectorLabel("Exam"), examFilterBox);
+		source.addRow(3, createSelectorLabel("Booklet"), bookletFilterBox);
 		GridPane.setHgrow(providerFilterBox, Priority.ALWAYS);
-		GridPane.setHgrow(yearFromFilterBox, Priority.ALWAYS);
-		GridPane.setHgrow(yearToFilterBox, Priority.ALWAYS);
+		GridPane.setHgrow(years, Priority.ALWAYS);
 		GridPane.setHgrow(examFilterBox, Priority.ALWAYS);
 		GridPane.setHgrow(bookletFilterBox, Priority.ALWAYS);
+		GridPane attributes = new GridPane();
+		attributes.setHgap(SELECTOR_COLUMN_GAP);
+		attributes.setVgap(SELECTOR_ROW_GAP);
+		attributes.addRow(0, createSelectorLabel("Response type"), responseTypeFilterBox);
+		attributes.addRow(1, createSelectorLabel("Original syllabus"), originalSyllabusFilterBox);
+		attributes.addRow(2, createSelectorLabel("Revision output"), inclusionFilterBox);
 		GridPane.setHgrow(responseTypeFilterBox, Priority.ALWAYS);
 		GridPane.setHgrow(originalSyllabusFilterBox, Priority.ALWAYS);
 		GridPane.setHgrow(inclusionFilterBox, Priority.ALWAYS);
-		VBox content = new VBox(SECTION_SPACING, grid, clearMetadataFiltersButton, metadataFilterStatus);
-		content.setPadding(new Insets(SECTION_TOP_PADDING));
-		ScrollPane scroll = new ScrollPane(content);
-		scroll.setFitToWidth(true);
-		scroll.setPrefViewportHeight(220);
-		scroll.setPrefHeight(235);
-		scroll.setMaxHeight(260);
-		scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
-		return scroll;
+		Label sourceHeading = new Label("Source");
+		sourceHeading.setStyle("-fx-font-weight: bold;");
+		Label attributesHeading = new Label("Question attributes");
+		attributesHeading.setStyle("-fx-font-weight: bold;");
+		VBox content = new VBox(SECTION_SPACING, sourceHeading, source, attributesHeading, attributes,
+				clearMetadataFiltersButton, metadataFilterStatus);
+		content.setId("question-search-metadata-filters");
+		content.setPadding(new Insets(SECTION_TOP_PADDING, 0, 0, 0));
+		return content;
 	}
 
 	private VBox createOutputApplicabilityPane() {
@@ -1272,17 +1281,30 @@ public class QuestionSearchPane extends BorderPane {
 		return pane;
 	}
 
+	private VBox createResultsColumn() {
+		VBox results = createMatchingQuestionsPane();
+		results.setMinHeight(0);
+		VBox column = new VBox(results);
+		column.setId("question-search-results-column");
+		column.setMinWidth(210);
+		column.setMinHeight(0);
+		VBox.setVgrow(results, Priority.ALWAYS);
+		return column;
+	}
+
 	private VBox createRightColumn() {
 		GridPane classificationPane = createSelectedClassificationPane();
 		VBox outputApplicabilityPane = createOutputApplicabilityPane();
 		VBox previewPane = createQuestionPreviewPane();
 
-		// Classification and revision-output applicability are compact controls.
-		// Preview owns the remaining height because Question content is the section
-		// that benefits from additional vertical space.
+		// Classification and placement actions retain their minimum heights.
+		// The preview alone takes the remaining vertical space, preserving the
+		// scrollbar/aspect-ratio protection introduced for #124.
 		VBox rightColumn = new VBox(SECTION_SPACING, classificationPane, outputApplicabilityPane, previewPane);
 		rightColumn.setId("question-search-right-column");
 		rightColumn.setPadding(new Insets(PANE_PADDING));
+		rightColumn.setMinWidth(400);
+		rightColumn.setMinHeight(0);
 		VBox.setVgrow(previewPane, Priority.ALWAYS);
 		return rightColumn;
 	}
@@ -1290,8 +1312,12 @@ public class QuestionSearchPane extends BorderPane {
 	private VBox createSearchFilterPane() {
 		Label heading = new Label("Question Search");
 		heading.setStyle("-fx-font-weight: bold;");
-		VBox pane = new VBox(SECTION_SPACING, heading, createSelectionPane(), metadataFilterPane);
+
+		// All controls live in the same Filters form. There is no TitledPane,
+		// expander or nested metadata ScrollPane.
+		VBox pane = new VBox(SECTION_SPACING, heading, createSelectionPane(), createMetadataFilterContent());
 		pane.setId("question-search-filter-section");
+		pane.setFillWidth(true);
 		return pane;
 	}
 
@@ -1377,15 +1403,13 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private SplitPane createWorkspacePane() {
-		VBox leftColumn = createLeftColumn();
-		VBox rightColumn = createRightColumn();
-
-		// The outer SplitPane gives the teacher control over the amount of horizontal
-		// space assigned to Search/results and selected-Question information.
-		SplitPane workspace = new SplitPane(leftColumn, rightColumn);
+		VBox filtersColumn = createFiltersColumn();
+		VBox resultsColumn = createResultsColumn();
+		VBox selectedQuestionColumn = createRightColumn();
+		SplitPane workspace = new SplitPane(filtersColumn, resultsColumn, selectedQuestionColumn);
 		workspace.setId("question-search-workspace");
 		workspace.setOrientation(Orientation.HORIZONTAL);
-		workspace.setDividerPositions(COLUMN_DIVIDER_POSITION);
+		workspace.setDividerPositions(FILTERS_DIVIDER_POSITION, RESULTS_DIVIDER_POSITION);
 		return workspace;
 	}
 
@@ -2888,7 +2912,22 @@ public class QuestionSearchPane extends BorderPane {
 
 	private void updateClassificationEditLock() {
 		boolean dirty = classificationDirty.get();
-		metadataFilterPane.setDisable(dirty);
+
+		// The former More filters TitledPane has been removed.
+		// Lock each metadata control directly while a Descriptor
+		// classification edit is pending.
+		providerFilterBox.setDisable(dirty);
+		yearFromFilterBox.setDisable(dirty);
+		yearToFilterBox.setDisable(dirty);
+		examFilterBox.setDisable(dirty);
+		bookletFilterBox.setDisable(dirty);
+		responseTypeFilterBox.setDisable(dirty);
+		originalSyllabusFilterBox.setDisable(dirty);
+		clearMetadataFiltersButton.setDisable(dirty);
+
+		// Revision-output filtering is available only within the
+		// Current syllabus scope, even after an edit is discarded.
+		inclusionFilterBox.setDisable(dirty || searchScopeBox.getValue() != QuestionSearchScope.CURRENT_SYLLABUS);
 
 		// Keep result navigation available so the containing Dialog can
 		// resolve a pending classification edit before changing selection.
