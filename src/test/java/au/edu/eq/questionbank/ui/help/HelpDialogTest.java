@@ -32,8 +32,7 @@ class HelpDialogTest {
 		HelpDialog[] dialogHolder = new HelpDialog[1];
 		robot.interact(() -> {
 
-			// Construct and show Help on the JavaFX application thread because
-			// WebView and Dialog are both JavaFX scene-graph components.
+			// Construct and show Help on the JavaFX application thread.
 			HelpDialog dialog = new HelpDialog(stage);
 			dialogHolder[0] = dialog;
 			dialog.show();
@@ -42,10 +41,6 @@ class HelpDialogTest {
 		AtomicReference<Worker.State> loadState = new AtomicReference<>();
 		robot.interact(() -> {
 			Worker<Void> loadWorker = webView.getEngine().getLoadWorker();
-
-			// WebEngine state may only be inspected on the FX application thread.
-			// Copy each state transition into a thread-safe value that the JUnit
-			// thread can wait on without touching WebEngine directly.
 			loadState.set(loadWorker.getState());
 			loadWorker.stateProperty().addListener((_, _, newState) -> loadState.set(newState));
 		});
@@ -57,9 +52,10 @@ class HelpDialogTest {
 		AtomicInteger stylesheetCount = new AtomicInteger();
 		robot.interact(() -> {
 
-			// WebEngine document access is also FX-thread confined, so capture the
-			// loaded document properties before asserting them on the JUnit thread.
-			title.set(webView.getEngine().getTitle());
+			// Read the loaded HTML document directly. WebEngine's
+			// title property may be published after load completion
+			// on some CI environments.
+			title.set((String) webView.getEngine().executeScript("document.title"));
 			location.set(webView.getEngine().getLocation());
 			Number loadedStylesheets = (Number) webView.getEngine().executeScript("document.styleSheets.length");
 			stylesheetCount.set(loadedStylesheets.intValue());
@@ -67,8 +63,7 @@ class HelpDialogTest {
 		assertEquals("Exam Question Bank Help", title.get());
 		assertTrue(location.get().endsWith("/au/edu/eq/questionbank/help/index.html"));
 
-		// CSS must be resolved as a packaged relative resource rather than being
-		// embedded in Java or silently omitted from Help presentation.
+		// Verify that the packaged relative stylesheet is present.
 		assertEquals(1, stylesheetCount.get());
 		robot.interact(dialogHolder[0]::close);
 	}
