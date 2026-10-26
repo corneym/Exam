@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -97,7 +98,6 @@ import javafx.scene.control.ScrollBar;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.TextArea;
-import javafx.scene.control.TitledPane;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.GridPane;
@@ -134,12 +134,37 @@ public class QuestionSearchPaneTest {
 	private Topic noMatchTopic;
 
 	@Test
+	public void allMetadataFiltersRemainVisibleInFiltersColumn(FxRobot robot) {
+		VBox filtersColumn = robot.lookup("#question-search-left-column").queryAs(VBox.class);
+		ScrollPane filtersScroll = robot.lookup("#question-search-filters-scroll").queryAs(ScrollPane.class);
+		Node filtersContent = filtersScroll.getContent();
+
+		// All #94 selectors are present in one always-expanded form.
+		// They are not children of an expandable TitledPane or a nested scroller.
+		List<String> selectors = List.of("#question-search-scope", "#question-search-unit", "#question-search-topic",
+				"#question-search-classification", "#question-search-descriptor", "#question-search-provider-filter",
+				"#question-search-year-from-filter", "#question-search-year-to-filter", "#question-search-exam-filter",
+				"#question-search-booklet-filter", "#question-search-response-type-filter",
+				"#question-search-original-syllabus-filter", "#question-search-inclusion-filter",
+				"#question-search-clear-metadata-filters");
+		for (String selector : selectors) {
+			Node control = robot.lookup(selector).query();
+			assertTrue(control.isVisible(), selector);
+			assertTrue(control.isManaged(), selector);
+			assertTrue(isDescendantOf(control, filtersColumn), selector);
+			assertTrue(isDescendantOf(control, filtersContent), selector);
+		}
+		assertTrue(robot.lookup("#question-search-more-filters").tryQuery().isEmpty());
+		assertEquals(ScrollPane.ScrollBarPolicy.NEVER, filtersScroll.getHbarPolicy());
+	}
+
+	@Test
 	public void allQuestionsScopeShowsWorkingSubjectWithoutCurriculumApplicability(FxRobot robot)
 			throws TimeoutException {
 		ComboBox<QuestionSearchScope> scopeBox = robot.lookup("#question-search-scope").queryComboBox();
 		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
-		TextArea detailsArea = robot.lookup("#question-search-details").queryAs(TextArea.class);
+		TextArea detailsArea = retainedDetailsArea();
 		ListView<QuestionOutputApplicabilityRow> outputList = robot.lookup("#question-search-output-applicability")
 				.queryListView();
 		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
@@ -683,7 +708,7 @@ public class QuestionSearchPaneTest {
 		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
 		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
 		ComboBox<CurriculumNode> descriptor = robot.lookup("#question-search-selected-descriptor").queryComboBox();
-		TextArea details = robot.lookup("#question-search-details").queryAs(TextArea.class);
+		TextArea details = retainedDetailsArea();
 		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
 		QuestionSearchResult original = results.getItems().stream()
@@ -953,7 +978,7 @@ public class QuestionSearchPaneTest {
 		ComboBox<CurriculumNode> classificationBox = robot.lookup("#question-search-classification").queryComboBox();
 		ComboBox<CurriculumNode> descriptorBox = robot.lookup("#question-search-descriptor").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
-		TextArea detailsArea = robot.lookup("#question-search-details").queryAs(TextArea.class);
+		TextArea detailsArea = retainedDetailsArea();
 
 		// Working Subject navigation supplies the current hierarchy without a separate
 		// Subject-selection action inside Search.
@@ -1093,7 +1118,7 @@ public class QuestionSearchPaneTest {
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		ImageView preview = robot.lookup("#question-search-preview").queryAs(ImageView.class);
 		Label previewStatus = robot.lookup("#question-search-preview-status").queryAs(Label.class);
-		TextArea detailsArea = robot.lookup("#question-search-details").queryAs(TextArea.class);
+		TextArea detailsArea = retainedDetailsArea();
 
 		// The replacement Pane begins its Working Subject search automatically.
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
@@ -1212,10 +1237,32 @@ public class QuestionSearchPaneTest {
 	}
 
 	@Test
+	public void filtersColumnScrollsAtCompactHeight(FxRobot robot) {
+		ScrollPane filtersScroll = robot.lookup("#question-search-filters-scroll").queryAs(ScrollPane.class);
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		ScrollPane preview = robot.lookup("#question-search-preview-scroll").queryAs(ScrollPane.class);
+
+		// Simulate the constrained vertical space without resizing the native
+		// TestFX Stage beyond the initial headless framebuffer dimensions.
+		robot.interact(() -> {
+			filtersScroll.setMaxHeight(190);
+			filtersScroll.applyCss();
+			filtersScroll.layout();
+		});
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(ScrollPane.ScrollBarPolicy.AS_NEEDED, filtersScroll.getVbarPolicy());
+		assertTrue(filtersScroll.getContent().getLayoutBounds().getHeight() > filtersScroll.getViewportBounds()
+				.getHeight(), "The Filters column must allow overflow at compact height");
+		assertTrue(results.isVisible());
+		assertTrue(preview.isVisible());
+		assertEquals(ScrollPane.ScrollBarPolicy.ALWAYS, preview.getVbarPolicy());
+	}
+
+	@Test
 	public void hierarchyFailureClearsExistingSearchState(FxRobot robot) throws TimeoutException {
 		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
-		TextArea detailsArea = robot.lookup("#question-search-details").queryAs(TextArea.class);
+		TextArea detailsArea = retainedDetailsArea();
 		Label previewStatus = robot.lookup("#question-search-preview-status").queryAs(Label.class);
 		Label statusLabel = robot.lookup("#question-search-status").queryAs(Label.class);
 
@@ -1297,8 +1344,6 @@ public class QuestionSearchPaneTest {
 		replaceSearchPane(robot, curriculumRepository, service, () -> sourceQuestions);
 		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
 		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
-		TitledPane moreFilters = robot.lookup("#question-search-more-filters").queryAs(TitledPane.class);
-		robot.interact(() -> moreFilters.setExpanded(true));
 		ComboBox<?> provider = robot.lookup("#question-search-provider-filter").queryComboBox();
 		ComboBox<?> exam = robot.lookup("#question-search-exam-filter").queryComboBox();
 		ComboBox<?> booklet = robot.lookup("#question-search-booklet-filter").queryComboBox();
@@ -1346,8 +1391,6 @@ public class QuestionSearchPaneTest {
 		replaceSearchPane(robot, curriculumRepository, retrievalService, () -> List.of(historicalQuestion, written));
 		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
 		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
-		TitledPane moreFilters = robot.lookup("#question-search-more-filters").queryAs(TitledPane.class);
-		robot.interact(() -> moreFilters.setExpanded(true));
 		ComboBox<?> response = robot.lookup("#question-search-response-type-filter").queryComboBox();
 		ComboBox<?> syllabus = robot.lookup("#question-search-original-syllabus-filter").queryComboBox();
 		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
@@ -2719,8 +2762,6 @@ public class QuestionSearchPaneTest {
 		// First is initially excluded; second is included.
 		outputApplicabilityRepository.setExcluded(first, currentDescriptor, true);
 		replaceSearchPane(robot, curriculumRepository, service, () -> questions);
-		TitledPane moreFilters = robot.lookup("#question-search-more-filters").queryAs(TitledPane.class);
-		robot.interact(() -> moreFilters.setExpanded(true));
 		ComboBox<QuestionSearchInclusionFilter> inclusion = robot.lookup("#question-search-inclusion-filter")
 				.queryComboBox();
 		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
@@ -2788,8 +2829,6 @@ public class QuestionSearchPaneTest {
 		outputApplicabilityRepository.setExcluded(mixed, noMatchDescriptor, true);
 		outputApplicabilityRepository.setExcluded(excluded, currentDescriptor, true);
 		replaceSearchPane(robot, curriculumRepository, service, () -> questions);
-		TitledPane moreFilters = robot.lookup("#question-search-more-filters").queryAs(TitledPane.class);
-		robot.interact(() -> moreFilters.setExpanded(true));
 		ComboBox<QuestionSearchInclusionFilter> inclusion = robot.lookup("#question-search-inclusion-filter")
 				.queryComboBox();
 		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
@@ -2859,47 +2898,39 @@ public class QuestionSearchPaneTest {
 	}
 
 	@Test
-	public void searchSectionsUseTwoColumnTaskLayout(FxRobot robot) {
+	public void searchSectionsUseThreeColumnTaskLayout(FxRobot robot) {
 		SplitPane workspace = robot.lookup("#question-search-workspace").queryAs(SplitPane.class);
-		Node leftColumn = robot.lookup("#question-search-left-column").query();
-		Node rightColumn = robot.lookup("#question-search-right-column").query();
+		VBox filtersColumn = robot.lookup("#question-search-left-column").queryAs(VBox.class);
+		VBox resultsColumn = robot.lookup("#question-search-results-column").queryAs(VBox.class);
+		VBox rightColumn = robot.lookup("#question-search-right-column").queryAs(VBox.class);
+		ScrollPane filtersScroll = robot.lookup("#question-search-filters-scroll").queryAs(ScrollPane.class);
 		VBox resultsSection = robot.lookup("#question-search-results-section").queryAs(VBox.class);
-		VBox detailsSection = robot.lookup("#question-search-details-section").queryAs(VBox.class);
 		assertEquals(Orientation.HORIZONTAL, workspace.getOrientation());
+		assertEquals(List.of(filtersColumn, resultsColumn, rightColumn), workspace.getItems());
+		assertEquals(2, workspace.getDividers().size());
 
-		// Search uses a narrower navigation/results column and gives the larger share
-		// of horizontal space to classification, applicability and Question preview.
-		// The requested divider is 0.35, but JavaFX may move it to
-		// respect child minimum widths. Font metrics under Xvfb can
-		// produce a different effective position from local Windows.
-		double dividerPosition = workspace.getDividerPositions()[0];
-		assertTrue(dividerPosition > 0.0 && dividerPosition < 0.5,
-				"Search/results must remain narrower than Question information");
-
-		// Verify the rendered columns as well as the divider position.
-		robot.interact(() -> {
-			workspace.applyCss();
-			workspace.layout();
-			double leftWidth = leftColumn.getBoundsInParent().getWidth();
-			double rightWidth = rightColumn.getBoundsInParent().getWidth();
-			assertTrue(leftWidth > 0.0);
-			assertTrue(rightWidth > leftWidth, "Question information should receive more horizontal space");
-		});
-
-		// Search, results and basic Question details belong together on the left.
-		assertTrue(isDescendantOf(robot.lookup("#question-search-filter-section").query(), leftColumn));
-		assertTrue(isDescendantOf(robot.lookup("#question-search-results-section").query(), leftColumn));
-		assertTrue(isDescendantOf(robot.lookup("#question-search-details-section").query(), leftColumn));
-
-		// Selected-Question decisions and visual output belong together on the right.
+		// The only Filters scrolling boundary belongs to the complete column.
+		assertTrue(isDescendantOf(robot.lookup("#question-search-filter-section").query(), filtersColumn));
+		assertEquals(filtersScroll.getContent(), robot.lookup("#question-search-filter-section").query());
+		assertTrue(robot.lookup("#question-search-more-filters").tryQuery().isEmpty());
+		assertTrue(robot.lookup("#question-search-details-section").tryQuery().isEmpty());
+		assertTrue(robot.lookup("#question-search-details").tryQuery().isEmpty());
+		assertTrue(isDescendantOf(resultsSection, resultsColumn));
+		assertTrue(isDescendantOf(robot.lookup("#question-search-results").query(), resultsColumn));
+		assertEquals(new Insets(12), resultsSection.getPadding());
 		assertTrue(isDescendantOf(robot.lookup("#question-search-selected-classification").query(), rightColumn));
 		assertTrue(isDescendantOf(robot.lookup("#question-search-output-section").query(), rightColumn));
 		assertTrue(isDescendantOf(robot.lookup("#question-search-preview-section").query(), rightColumn));
 
-		// The two vertically split Question sections use the same inset as the
-		// surrounding Search workspace rather than pressing against their pane edges.
-		assertEquals(new Insets(12), resultsSection.getPadding());
-		assertEquals(new Insets(12), detailsSection.getPadding());
+		// Do not assert exact effective divider positions: the 700 px headless
+		// fixture is narrower than the real dialog and Xvfb font metrics vary.
+		robot.interact(() -> {
+			workspace.applyCss();
+			workspace.layout();
+			double[] positions = workspace.getDividerPositions();
+			assertTrue(positions[0] > 0.0 && positions[0] < positions[1]);
+			assertTrue(positions[1] < 1.0);
+		});
 	}
 
 	@Test
@@ -3555,6 +3586,17 @@ public class QuestionSearchPaneTest {
 			stage.setScene(new Scene(pane[0], 700, 600));
 		});
 		return pane[0];
+	}
+
+	private TextArea retainedDetailsArea() {
+		QuestionSearchPane pane = (QuestionSearchPane) stage.getScene().getRoot();
+		try {
+			Field field = QuestionSearchPane.class.getDeclaredField("detailsArea");
+			field.setAccessible(true);
+			return (TextArea) field.get(pane);
+		} catch (ReflectiveOperationException exception) {
+			throw new AssertionError("Retained Question Details data is unavailable", exception);
+		}
 	}
 
 	private void selectMetadataFilter(FxRobot robot, ComboBox<?> box, String label) {

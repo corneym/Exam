@@ -17,6 +17,7 @@ import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
 import javafx.event.ActionEvent;
+import javafx.geometry.Rectangle2D;
 import javafx.scene.Scene;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
@@ -34,7 +35,8 @@ import javafx.stage.Window;
 public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.EditRequest> {
 
 	private static final int DIALOG_WIDTH = 1100;
-	private static final int DIALOG_HEIGHT = 700;
+	private static final int DIALOG_HEIGHT = 900;
+	private static final int DIALOG_PREFERRED_WIDTH = 1600;
 
 	// Dialog data and collaborators.
 	private final BiFunction<Long, CurriculumNode, Question> classificationUpdater;
@@ -305,14 +307,18 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 
 	private void configureGeometry() {
 
-		// Search controls have a functional minimum size below which selector labels
-		// and inline actions no longer remain usable.
+		// Prefer the agreed large-desktop workspace, but do not choose an
+		// initial preferred size larger than the available primary display.
+		Rectangle2D visualBounds = Screen.getPrimary().getVisualBounds();
+		double preferredWidth = Math.max(DIALOG_WIDTH,
+				Math.min(DIALOG_PREFERRED_WIDTH, visualBounds.getWidth() - 32.0));
+		double preferredHeight = Math.max(700.0, Math.min(DIALOG_HEIGHT, visualBounds.getHeight() - 48.0));
 		getDialogPane().setMinWidth(DIALOG_WIDTH);
-		getDialogPane().setPrefWidth(DIALOG_WIDTH);
-		getDialogPane().setPrefHeight(DIALOG_HEIGHT);
+		getDialogPane().setPrefWidth(preferredWidth);
+		getDialogPane().setPrefHeight(preferredHeight);
 
-		// JavaFX may permit programmatic width changes below the native Stage minimum.
-		// Correct those after the current resize event rather than re-entrantly.
+		// Retain the existing correction for native-window resize attempts
+		// below the functional minimum and the existing saved-size lifecycle.
 		widthProperty().addListener((_, _, width) -> {
 			if (!isShowing() || width.doubleValue() >= DIALOG_WIDTH) {
 				return;
