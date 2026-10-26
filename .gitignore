@@ -4,6 +4,9 @@
 # Local archived release installers
 /release-artifacts/
 
+# Data related to application
+/data/ 
+
 # Eclipse
 .classpath
 .project
