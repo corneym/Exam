@@ -1,42 +1,57 @@
-# Exam Question Bank — documentation
+# Exam Question Bank
 
-This directory contains engineering and workflow documentation for [Exam Question Bank](../README.md). It is separate from the user-facing Help packaged in the application.
+**Exam Question Bank** is a Windows desktop application for collecting, organising and reusing examination questions and associated marking material. It was developed for secondary-school science teaching, initially with Chemistry, while keeping the data model and workflows subject-neutral.
 
-**Source of truth:** Repository code, tests, GitHub Issues, pull requests and GitHub Releases take precedence over dated explanatory documents. Do not infer current feature or release status solely from an older sprint report.
+The application is written in Java 25 with JavaFX. It maintains a local SQLite question bank and packages its own Java runtime in a Windows MSI installer.
 
-## Key documents
+## Download and installation
 
-| Document | Purpose |
-| --- | --- |
-| [`Working-Instructions.md`](Working-Instructions.md) | Mandatory working rules for repository-guided development and verification. |
-| [`release-build.md`](release-build.md) | Windows build, MSI packaging, versioning, archival and manual release checks. **Some version-specific examples are historical**; use current scripts and GitHub Releases for current behaviour. |
-| [`data-layout-migration.md`](data-layout-migration.md) | Safeguarded migration of earlier data-root layouts to subject-first managed storage. |
-| [`performance-benchmarking.md`](performance-benchmarking.md) | Performance benchmarking approach and commands. |
-| [`performance-diagnostics.md`](performance-diagnostics.md) | Runtime diagnostics and performance investigation. |
-| [`development-roadmap.md`](development-roadmap.md) | Historical architecture and development direction; older sprint/status passages are retained as history, not as an up-to-date release register. |
-| [`design/backlog.md`](design/backlog.md) | Deliberately deferred design work; active work belongs in GitHub Issues. |
-| [`design/`](design/) | Historical numbered sprint design, implementation and verification records. |
+Download the latest published Windows installer from [GitHub Releases](https://github.com/corneym/Exam/releases/latest).
 
-## Current release and active work
+The application is distributed as a per-user Windows MSI. You do not need to install Java separately to run the packaged application.
 
-As verified on **26 October 2026**, the latest published Windows installer is [v0.7](https://github.com/corneym/Exam/releases/tag/v0.7). For the most recent version, always consult [GitHub Releases](https://github.com/corneym/Exam/releases/latest) rather than a version embedded in this document.
+**Current signing status:** The published v0.7 MSI is not digitally signed. Windows may display an unknown-publisher or application-reputation warning. A free, trusted signing route is being investigated in [Issue #217](https://github.com/corneym/Exam/issues/217). Do not disable Windows security controls or circumvent organisational security policies to install it.
 
-Feature requests, defects, implementation decisions and acceptance evidence are recorded in [GitHub Issues](https://github.com/corneym/Exam/issues). In particular, [Issue #217](https://github.com/corneym/Exam/issues/217) tracks investigation of zero-cost trusted Windows signing. The v0.7 MSI is unsigned, and no signed replacement of that historical release is authorised.
+**Code signing policy:** See the [Code signing policy](docs/code-signing-policy.md) for maintainer responsibilities, privacy, release approval and verification requirements. Trusted signing is not yet active.
 
-## Current architecture at a glance
+An installation contains the application and required runtime components, **not** examination papers, question-bank records, syllabus PDFs, curriculum workbooks or user databases. Users provide and manage their own source material.
 
-- **Runtime:** Java 25, JavaFX desktop UI, Maven-based build, SQLite persistence, PDFBox and Apache POI.
-- **Windows distribution:** `jpackage` application image and per-user WiX-backed MSI, containing a private Java runtime.
-- **Application home:** Corpus Dashboard with authoritative Working Subject; Exam/Assets, capture, search, curriculum and revision-output workflows.
-- **Local data:** Configurable authoritative SQLite/data root separate from program files. Managed source assets use a subject-first layout. The repository-root `data/` directory is not an authoritative runtime data store and is excluded from source tracking.
-- **Data safety:** Backup, restore, validation and migration protection for existing banks.
-- **Output:** Static revision HTML and SCORM 1.2 packages.
+## What the application does
 
-For actual user controls and workflow instructions, use **Help** in the installed application. For changing code, inspect the relevant source and tests on the current branch.
+- Register and manage examination papers, question booklets, answer booklets and expected capture counts.
+- Capture questions and answers from PDFs, including multipart questions, shared context, multiple-choice answers and written responses.
+- Track corpus completeness and outstanding capture/correction work from a dashboard.
+- Classify questions against syllabus structures and review historical-to-current curriculum mappings.
+- Search, inspect and correct captured questions; control their applicability to revision output.
+- Generate static HTML revision resources and SCORM 1.2 packages for learning platforms.
+- Back up and restore the local question bank and managed source assets.
 
-## Local verification
+The **Corpus Dashboard** is the main application entry point. Its Working Subject selection governs relevant curriculum, capture, search and export workflows. Built-in Help describes the main workflows.
 
-The project uses the Maven Wrapper. From Git Bash on Windows:
+## Data and privacy
+
+All application data is held locally under a configurable data root; the SQLite database is the authoritative store. Installation files and writable user data are kept separate, so ordinary application uninstall is not intended to remove the question bank.
+
+The default Windows configuration and data locations are:
+
+```text
+%LOCALAPPDATA%\Exam Question Bank Data\questionbank.properties
+%LOCALAPPDATA%\Exam Question Bank Data\data
+```
+
+The data root can be configured within the application. Back up your data before significant changes and follow the application's backup/restore workflow.
+
+**The Windows installer does not include examination papers, curriculum source datasets or user question-bank data.** The repository-root `data/` directory is excluded from Git tracking; a small number of curriculum workbook fixtures remain under `src/test/resources/` for testing and are not part of the installer. Users are responsible for ensuring that their use of third-party educational material complies with applicable permissions and licences.
+
+## Building from source
+
+Prerequisites for development:
+
+- Windows for MSI packaging; JDK 25 for compilation and development.
+- Git and the included Maven Wrapper.
+- WiX Toolset for Windows MSI creation.
+
+From the repository root in Git Bash on Windows:
 
 ```bash
 ./mvnw.cmd test
@@ -45,11 +60,16 @@ The project uses the Maven Wrapper. From Git Bash on Windows:
 ./mvnw.cmd javadoc:javadoc
 ```
 
-The GitHub Actions pipeline runs automated non-UI and headless JavaFX/UI coverage. The formal Windows release gate is `scripts/build-release.ps1`; it includes additional checks and packaging stages. The installer signing process is **not yet implemented**.
+Windows release builds use the PowerShell entry point `scripts/build-release.ps1`, which applies additional validation and packaging gates. Consult [release-build documentation](docs/release-build.md) and the actual scripts before producing a release; some historical release examples in that document may lag the latest published version.
 
-## Documentation upkeep
+## Documentation and project tracking
 
-- Treat GitHub Issues as the durable record for changes, design decisions and verification outcomes.
-- Maintain user-facing workflow guidance through the application's Help files.
-- Update stable reference documents when behaviour or operating procedures change; do not rewrite completed sprint histories to make them appear current.
-- Keep sensitive local configuration, examination material, collected questions and production databases outside the source repository and Windows release artefacts. Review separately licensed test fixtures before publication; do not assume that publicly accessible curriculum documents are copyright-free.
+- [Documentation index](docs/README.md) — architecture, operating instructions and development references.
+- [GitHub Issues](https://github.com/corneym/Exam/issues) — authoritative requirements, ongoing work and implementation decisions.
+- [GitHub Releases](https://github.com/corneym/Exam/releases) — versioned Windows installers.
+
+## Licence
+
+The original Exam Question Bank application source code is provided under the [MIT Licence](LICENSE). The MIT grant does **not** confer rights in third-party examination papers, syllabus documents, curriculum datasets or other materials that are not part of the licensed source code.
+
+Exam Question Bank is an independent educational project and is not an official product of any examination provider or publisher.

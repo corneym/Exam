@@ -12,6 +12,8 @@ The application is distributed as a per-user Windows MSI. You do not need to ins
 
 **Current signing status:** The published v0.7 MSI is not digitally signed. Windows may display an unknown-publisher or application-reputation warning. A free, trusted signing route is being investigated in [Issue #217](https://github.com/corneym/Exam/issues/217). Do not disable Windows security controls or circumvent organisational security policies to install it.
 
+**Code signing policy:** See the [Code signing policy](docs/code-signing-policy.md) for maintainer responsibilities, privacy, release approval and verification requirements. Trusted signing is not yet active.
+
 An installation contains the application and required runtime components, **not** examination papers, question-bank records, syllabus PDFs, curriculum workbooks or user databases. Users provide and manage their own source material.
 
 ## What the application does
