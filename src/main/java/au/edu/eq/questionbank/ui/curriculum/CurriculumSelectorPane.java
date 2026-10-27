@@ -728,18 +728,19 @@ public class CurriculumSelectorPane extends VBox {
 		descriptorLookupResults.setVisible(false);
 		descriptorLookupResults.managedProperty().bind(descriptorLookupResults.visibleProperty());
 
-		// Full hierarchy paths distinguish similarly worded Descriptors.
+		// The result identity retains its complete hierarchy, while the visible label
+		// remains compact enough to scan across many matching Descriptors.
 		descriptorLookupResults.setCellFactory(_ -> {
 			ListCell<DescriptorMatch> cell = new ListCell<>();
-			Label path = new Label();
-			path.setWrapText(true);
-			path.prefWidthProperty().bind(descriptorLookupResults.widthProperty().subtract(30));
+			Label label = new Label();
+			label.setWrapText(true);
+			label.prefWidthProperty().bind(descriptorLookupResults.widthProperty().subtract(30));
 			cell.itemProperty().addListener((_, _, match) -> {
 				if (match == null) {
 					cell.setGraphic(null);
 				} else {
-					path.setText(match.hierarchyPath());
-					cell.setGraphic(path);
+					label.setText(match.displayLabel());
+					cell.setGraphic(label);
 				}
 			});
 			return cell;

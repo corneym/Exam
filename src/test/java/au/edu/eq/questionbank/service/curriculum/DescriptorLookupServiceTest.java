@@ -63,6 +63,15 @@ class DescriptorLookupServiceTest {
 	}
 
 	@Test
+	void descriptorMatchesExposeCompactDisplayLabels() {
+		List<DescriptorMatch> matches = service.findMatches(current, service.loadDescriptors(current), "reaction rate",
+				20);
+		assertEquals("3.1.1.1 — Explain the reaction rate of metals", matches.getFirst().displayLabel());
+		assertFalse(matches.getFirst().displayLabel().contains("Chemical reactions"));
+		assertFalse(matches.getFirst().displayLabel().contains("Acids and bases"));
+	}
+
+	@Test
 	void blankAndUnmatchedQueriesReturnNoResults() {
 		List<CurriculumNode> descriptors = service.loadDescriptors(current);
 		assertTrue(service.findMatches(current, descriptors, "", 20).isEmpty());
@@ -106,9 +115,28 @@ class DescriptorLookupServiceTest {
 		List<DescriptorMatch> matches = service.findMatches(current, List.of(comparisonDescriptor, ratesDescriptor),
 				"reaction", 1);
 		assertEquals(1, matches.size());
-		assertEquals(comparisonDescriptor, matches.getFirst().descriptor());
+		assertEquals(ratesDescriptor, matches.getFirst().descriptor());
 		assertThrows(IllegalArgumentException.class,
 				() -> service.findMatches(current, List.of(ratesDescriptor), "reaction", 0));
+	}
+
+	@Test
+	void sortsNumericCodeComponentsBeforeBoundingAndUsesStableFallbacks() {
+		Descriptor codeTen = new Descriptor(200, current, ratesSubtopic, "4.1.10", "Natural descriptor", 1);
+		Descriptor codeTwo = new Descriptor(201, current, ratesSubtopic, "4.1.2", "Natural descriptor", 2);
+		Descriptor deeperCodeTwo = new Descriptor(202, current, ratesSubtopic, "4.1.2.1", "Natural descriptor", 3);
+		Descriptor duplicateCodeBeta = new Descriptor(203, current, ratesSubtopic, "4.1.10", "Natural beta", 4);
+		Descriptor duplicateCodeAlpha = new Descriptor(204, current, ratesSubtopic, "4.1.10", "Natural alpha", 5);
+		Descriptor nonNumericCode = new Descriptor(205, current, ratesSubtopic, "A.1", "Natural descriptor", 6);
+		List<CurriculumNode> candidates = List.of(codeTen, nonNumericCode, duplicateCodeBeta, deeperCodeTwo, codeTwo,
+				duplicateCodeAlpha);
+
+		List<DescriptorMatch> matches = service.findMatches(current, candidates, "natural", 4);
+		assertEquals(List.of(codeTwo, deeperCodeTwo, duplicateCodeAlpha, duplicateCodeBeta),
+				matches.stream().map(DescriptorMatch::descriptor).toList());
+
+		List<DescriptorMatch> allMatches = service.findMatches(current, candidates, "natural", 10);
+		assertEquals(nonNumericCode, allMatches.getLast().descriptor());
 	}
 
 	@Test

@@ -52,6 +52,8 @@ public class CurriculumSelectorPaneTest {
 	// Curriculum and assessment fixtures.
 	private Subject chemistry;
 	private Descriptor descriptor3111;
+	private Descriptor descriptor31110;
+	private Descriptor descriptor3112;
 	private Descriptor descriptor321;
 	private Subtopic subtopic311;
 	private SyllabusVersion syllabus2019;
@@ -358,6 +360,30 @@ public class CurriculumSelectorPaneTest {
 		assertNull(model.getSubtopic());
 		assertEquals(descriptor321, model.getClassification());
 		assertEquals(descriptor321, pane.selectedClassificationProperty().get());
+	}
+
+	@Test
+	public void descriptorLookupUsesCompactNaturalLabelsAndSelectsSimilarlyWordedResult(FxRobot robot) throws Exception {
+		TextField search = robot.lookup("#curriculum-descriptor-search").queryAs(TextField.class);
+		TextField code = robot.lookup("#curriculum-code").queryAs(TextField.class);
+		ListView<DescriptorMatch> results = robot.lookup("#curriculum-descriptor-search-results").queryListView();
+		robot.interact(() -> search.setText("shared wording"));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+
+		assertEquals(List.of(descriptor3112, descriptor31110),
+				results.getItems().stream().map(DescriptorMatch::descriptor).toList());
+		assertEquals("4.1.1.2 — Shared wording learning outcome", results.getItems().getFirst().displayLabel());
+
+		// Choosing the multi-digit sibling must select its authoritative hierarchy,
+		// even though the compact label does not display its parent path.
+		robot.interact(() -> {
+			results.getSelectionModel().select(1);
+			results.fireEvent(new KeyEvent(KeyEvent.KEY_PRESSED, "", "", KeyCode.ENTER, false, false, false, false));
+		});
+		assertEquals(descriptor31110, model.getClassification());
+		assertEquals(descriptor31110, pane.selectedClassificationProperty().get());
+		assertEquals("4.1.1.10", code.getText());
+		assertEquals("", search.getText());
 	}
 
 	@Test
@@ -706,9 +732,15 @@ public class CurriculumSelectorPaneTest {
 		descriptor3111 = new Descriptor(4, syllabus2025, subtopic311, "3.1.1.1", "Descriptor 3.1.1.1", 1);
 		topic32 = new Topic(5, syllabus2025, unit3, "3.2", "Topic 3.2", 2);
 		descriptor321 = new Descriptor(6, syllabus2025, topic32, "3.2.1", "Descriptor 3.2.1", 1);
+		Unit unit4 = new Unit(7, syllabus2025, "4", "Unit 4", 2);
+		Topic topic41 = new Topic(8, syllabus2025, unit4, "4.1", "Topic 4.1", 1);
+		Subtopic subtopic411 = new Subtopic(9, syllabus2025, topic41, "4.1.1", "Subtopic 4.1.1", 1);
+		descriptor3112 = new Descriptor(10, syllabus2025, subtopic411, "4.1.1.2", "Shared wording learning outcome", 1);
+		descriptor31110 = new Descriptor(11, syllabus2025, subtopic411, "4.1.1.10", "Shared wording learning outcome", 2);
 		InMemoryCurriculumRepository repository = new InMemoryCurriculumRepository(List.of(chemistry),
 				List.of(syllabus2019, syllabus2025),
-				List.of(unit3, topic31, subtopic311, descriptor3111, topic32, descriptor321));
+				List.of(unit3, topic31, subtopic311, descriptor3111, descriptor3112, descriptor31110, topic32,
+						descriptor321, unit4, topic41, subtopic411));
 		model = new CurriculumSelectionModel(repository);
 		pane = new CurriculumSelectorPane(model);
 		pane.selectSubject(chemistry);
