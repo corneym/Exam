@@ -48,11 +48,29 @@ jobs:
           # Make this exact, freshly installed version visible to jpackage.
           Add-Content -Path $env:GITHUB_PATH -Value $wixDirectory
 
-      - name: Build Windows MSI without advancing the Maven version
+      - name: Build fresh Windows application image
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          & .\scripts\package-windows-installer.ps1
+          & .\scripts\package-windows-app-image.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Windows application-image build failed' }
+
+          $launcher = 'target/package/Exam Question Bank/Exam Question Bank.exe'
+          if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
+            throw 'Application image launcher was not produced'
+          }
+          $hash = (Get-FileHash -LiteralPath $launcher -Algorithm SHA256).Hash.ToLowerInvariant()
+          Add-Content -Path $env:GITHUB_ENV -Value "EXPECTED_LAUNCHER_SHA256=$hash"
+          Write-Host "Application image launcher SHA-256 before MSI packaging: $hash"
+
+      - name: Package existing image into MSI without rebuilding
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not $env:EXPECTED_LAUNCHER_SHA256) {
+            throw 'No application-image checksum was captured'
+          }
+          & .\scripts\package-windows-installer.ps1 -UseExistingAppImage
           if ($LASTEXITCODE -ne 0) { throw 'Windows MSI packaging failed' }
 
       - name: Verify installer and record its provenance
@@ -87,6 +105,9 @@ jobs:
 
           $msiHash = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           $launcherHash = (Get-FileHash -LiteralPath $launcher -Algorithm SHA256).Hash.ToLowerInvariant()
+          if (-not $env:EXPECTED_LAUNCHER_SHA256 -or $launcherHash -ne $env:EXPECTED_LAUNCHER_SHA256) {
+            throw 'Application launcher changed between app-image and MSI packaging'
+          }
 
           $checksumPath = Join-Path $installer.DirectoryName 'SHA256SUMS.txt'
           "$msiHash  $($installer.Name)" | Set-Content -Path $checksumPath -Encoding utf8
@@ -101,6 +122,7 @@ jobs:
             "MSI SHA-256: $msiHash"
             "Launcher SHA-256: $launcherHash"
             'MSI and launcher signing status: NotSigned'
+            'App-image launcher hash preserved during MSI packaging: true'
           )
           $details | Set-Content -Path (Join-Path $installer.DirectoryName 'CI-BUILD.txt') -Encoding utf8
 
@@ -111,6 +133,7 @@ jobs:
             "Unchanged application version: ``$version``"
             "MSI: ``$($installer.Name)``"
             "SHA-256: ``$msiHash``"
+            'Launcher preserved during MSI packaging: yes'
           ) | Add-Content -Path $env:GITHUB_STEP_SUMMARY
 
       - name: Retain short-lived unsigned build artefacts
