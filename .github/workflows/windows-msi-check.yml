@@ -1,61 +1,125 @@
+# Issue #217: temporary, unsigned Windows packaging verification.
+# This workflow does not sign, version-bump, archive or publish a release.
+name: Windows MSI - unsigned test build
 
-    $installers = @(Get-ChildItem 'target/installer' -Filter '*.msi' -File)
-    if ($installers.Count -ne 1) {
-      throw "Expected exactly one MSI, found $($installers.Count)"
-    }
-    $installer = $installers[0]
-    if (-not $installer.Name.EndsWith("-$version.msi", [StringComparison]::OrdinalIgnoreCase)) {
-      throw "Installer filename does not match project version $version"
-    }
+on:
+  workflow_dispatch:
 
-    $launcher = 'target/package/Exam Question Bank/Exam Question Bank.exe'
-    if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
-      throw 'Packaged application launcher is missing'
-    }
+permissions:
+  contents: read
 
-    foreach ($file in @($installer.FullName, $launcher)) {
-      $signature = Get-AuthenticodeSignature -LiteralPath $file
-      if ($signature.Status -ne 'NotSigned') {
-        throw "Unexpected signing status for $file : $($signature.Status)"
-      }
-    }
+jobs:
+  build-unsigned-msi:
+    name: Build unsigned MSI on Windows
+    runs-on: windows-2025
+    timeout-minutes: 45
 
-    $msiHash = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-    $launcherHash = (Get-FileHash -LiteralPath $launcher -Algorithm SHA256).Hash.ToLowerInvariant()
+    steps:
+      - name: Check out selected source revision
+        uses: actions/checkout@v7
 
-    $checksumPath = Join-Path $installer.DirectoryName 'SHA256SUMS.txt'
-    "$msiHash  $($installer.Name)" | Set-Content -Path $checksumPath -Encoding utf8
+      - name: Set up Java 25
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
 
-    $details = @(
-      'UNSIGNED CI TEST BUILD - NOT A PUBLISHED RELEASE'
-      "Repository: $env:GITHUB_REPOSITORY"
-      "Source commit: $env:GITHUB_SHA"
-      "Workflow: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
-      "Maven version (unchanged): $version"
-      "MSI: $($installer.Name)"
-      "MSI SHA-256: $msiHash"
-      "Launcher SHA-256: $launcherHash"
-      'MSI and launcher signing status: NotSigned'
-    )
-    $details | Set-Content -Path (Join-Path $installer.DirectoryName 'CI-BUILD.txt') -Encoding utf8
+      - name: Install pinned WiX Toolset 7
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $wixDirectory = Join-Path $env:RUNNER_TEMP 'wix-tool'
+          dotnet tool install wix --version 7.0.0 --tool-path $wixDirectory
+          if ($LASTEXITCODE -ne 0) { throw 'Installing WiX 7.0.0 failed' }
 
-    @(
-      '## Unsigned Windows MSI test build'
-      '**This is not an official release. Do not distribute or install as a trusted release.**'
-      "Source commit: ``$env:GITHUB_SHA``"
-      "Unchanged application version: ``$version``"
-      "MSI: ``$($installer.Name)``"
-      "SHA-256: ``$msiHash``"
-    ) | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+          $wix = Join-Path $wixDirectory 'wix.exe'
+          # WiX 7 requires acceptance of its Open Source Maintenance Fee EULA.
+          # The maintainer must review and authorise those terms before enabling this workflow.
+          & $wix eula accept wix7
+          if ($LASTEXITCODE -ne 0) { throw 'WiX EULA acceptance failed' }
 
-- name: Retain short-lived unsigned build artefacts
-  uses: actions/upload-artifact@v7
-  with:
-    name: unsigned-msi-ci-${{ github.run_id }}
-    if-no-files-found: error
-    retention-days: 3
-    compression-level: 0
-    path: |
-      target/installer/*.msi
-      target/installer/SHA256SUMS.txt
-      target/installer/CI-BUILD.txt
+          & $wix extension add -g WixToolset.Util.wixext/7.0.0
+          if ($LASTEXITCODE -ne 0) { throw 'Installing WiX Util extension failed' }
+          & $wix --version
+          if ($LASTEXITCODE -ne 0) { throw 'WiX version check failed' }
+
+          # Make this exact, freshly installed version visible to jpackage.
+          Add-Content -Path $env:GITHUB_PATH -Value $wixDirectory
+
+      - name: Build Windows MSI without advancing the Maven version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\scripts\package-windows-installer.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Windows MSI packaging failed' }
+
+      - name: Verify installer and record its provenance
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          [xml] $pom = Get-Content 'pom.xml'
+          $versionNode = $pom.SelectSingleNode("/*[local-name()='project']/*[local-name()='version']")
+          if ($null -eq $versionNode) { throw 'Project version is missing from pom.xml' }
+          $version = $versionNode.InnerText.Trim()
+
+          $installers = @(Get-ChildItem 'target/installer' -Filter '*.msi' -File)
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one MSI, found $($installers.Count)"
+          }
+          $installer = $installers[0]
+          if (-not $installer.Name.EndsWith("-$version.msi", [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Installer filename does not match project version $version"
+          }
+
+          $launcher = 'target/package/Exam Question Bank/Exam Question Bank.exe'
+          if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
+            throw 'Packaged application launcher is missing'
+          }
+
+          foreach ($file in @($installer.FullName, $launcher)) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $file
+            if ($signature.Status -ne 'NotSigned') {
+              throw "Unexpected signing status for $file : $($signature.Status)"
+            }
+          }
+
+          $msiHash = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $launcherHash = (Get-FileHash -LiteralPath $launcher -Algorithm SHA256).Hash.ToLowerInvariant()
+
+          $checksumPath = Join-Path $installer.DirectoryName 'SHA256SUMS.txt'
+          "$msiHash  $($installer.Name)" | Set-Content -Path $checksumPath -Encoding utf8
+
+          $details = @(
+            'UNSIGNED CI TEST BUILD - NOT A PUBLISHED RELEASE'
+            "Repository: $env:GITHUB_REPOSITORY"
+            "Source commit: $env:GITHUB_SHA"
+            "Workflow: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+            "Maven version (unchanged): $version"
+            "MSI: $($installer.Name)"
+            "MSI SHA-256: $msiHash"
+            "Launcher SHA-256: $launcherHash"
+            'MSI and launcher signing status: NotSigned'
+          )
+          $details | Set-Content -Path (Join-Path $installer.DirectoryName 'CI-BUILD.txt') -Encoding utf8
+
+          @(
+            '## Unsigned Windows MSI test build'
+            '**This is not an official release. Do not distribute or install as a trusted release.**'
+            "Source commit: ``$env:GITHUB_SHA``"
+            "Unchanged application version: ``$version``"
+            "MSI: ``$($installer.Name)``"
+            "SHA-256: ``$msiHash``"
+          ) | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+
+      - name: Retain short-lived unsigned build artefacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: unsigned-msi-ci-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+          path: |
+            target/installer/*.msi
+            target/installer/SHA256SUMS.txt
+            target/installer/CI-BUILD.txt
