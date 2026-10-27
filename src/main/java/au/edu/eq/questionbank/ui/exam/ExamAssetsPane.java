@@ -86,7 +86,7 @@ public final class ExamAssetsPane extends VBox {
 	private final AnswerBookletCreationHandler answerBookletCreationHandler;
 	private final Supplier<Path> answerBookletSourceChooser;
 	private final Consumer<AnswerFile> answerFileDeleteHandler;
-	private final Runnable examSelectionPdfClearHandler;
+	private final Runnable examAssetPdfClearHandler;
 	private final QuestionBookletCreationHandler questionBookletCreationHandler;
 	private final Consumer<ExamBooklet> questionBookletDeleteHandler;
 	private final Supplier<Path> questionBookletSourceChooser;
@@ -192,9 +192,9 @@ public final class ExamAssetsPane extends VBox {
 	 *                                                 new Answer booklet
 	 * @param answerBookletCreationHandler             imports and persists the new
 	 *                                                 Answer asset
-	 * @param examSelectionPdfClearHandler             clears the displayed PDF when
-	 *                                                 the selected persisted Exam
-	 *                                                 changes
+	 * @param examAssetPdfClearHandler                 clears the displayed PDF when
+	 *                                                 its Exam/Assets context is no
+	 *                                                 longer current
 	 * @param questionBookletSourceChooser             chooses a source PDF for a
 	 *                                                 new Question booklet
 	 * @param questionBookletSourcePreviewHandler      opens a selected,
@@ -212,7 +212,7 @@ public final class ExamAssetsPane extends VBox {
 			ExamMetadataOptionsRepository optionsRepository, ExamCorrectionHandler correctionHandler,
 			Consumer<ExamBooklet> questionBookletDeleteHandler, Consumer<ExamBooklet> questionBookletViewHandler,
 			Consumer<AnswerFile> answerFileDeleteHandler, Consumer<AnswerFile> answerFileViewHandler,
-			Runnable examSelectionPdfClearHandler, Supplier<ExamBooklet> activeBookletSupplier,
+			Runnable examAssetPdfClearHandler, Supplier<ExamBooklet> activeBookletSupplier,
 			Consumer<ExamBooklet> captureBookletHandler, Consumer<ExamBooklet> bookletMetadataUpdatedHandler,
 			Supplier<Path> answerBookletSourceChooser, AnswerBookletCreationHandler answerBookletCreationHandler,
 			Supplier<Path> questionBookletSourceChooser, Predicate<Path> questionBookletSourcePreviewHandler,
@@ -242,8 +242,8 @@ public final class ExamAssetsPane extends VBox {
 		if (answerFileViewHandler == null) {
 			throw new NullPointerException("answerFileViewHandler");
 		}
-		if (examSelectionPdfClearHandler == null) {
-			throw new NullPointerException("examSelectionPdfClearHandler");
+		if (examAssetPdfClearHandler == null) {
+			throw new NullPointerException("examAssetPdfClearHandler");
 		}
 		if (activeBookletSupplier == null) {
 			throw new NullPointerException("activeBookletSupplier");
@@ -280,7 +280,7 @@ public final class ExamAssetsPane extends VBox {
 		this.questionBookletViewHandler = questionBookletViewHandler;
 		this.answerFileDeleteHandler = answerFileDeleteHandler;
 		this.answerFileViewHandler = answerFileViewHandler;
-		this.examSelectionPdfClearHandler = examSelectionPdfClearHandler;
+		this.examAssetPdfClearHandler = examAssetPdfClearHandler;
 		this.activeBookletSupplier = activeBookletSupplier;
 		this.captureBookletHandler = captureBookletHandler;
 		this.bookletMetadataUpdatedHandler = bookletMetadataUpdatedHandler;
@@ -755,6 +755,11 @@ public final class ExamAssetsPane extends VBox {
 		if (!canBeginAnswerBookletAdd(exam)) {
 			return;
 		}
+
+		// The existing Exam asset is no longer the user's current preview context once
+		// an add workflow starts. Clear before opening the native chooser so the change
+		// is immediate and any pending asynchronous load is invalidated.
+		examAssetPdfClearHandler.run();
 		Path sourcePath = answerBookletSourceChooser.get();
 		if (sourcePath == null) {
 
@@ -845,6 +850,10 @@ public final class ExamAssetsPane extends VBox {
 		if (!canBeginQuestionBookletAdd(exam)) {
 			return;
 		}
+
+		// Clear whichever Exam asset is displayed before source selection. A selected
+		// Question source may subsequently open as the new read-only preview.
+		examAssetPdfClearHandler.run();
 		Path sourcePath = questionBookletSourceChooser.get();
 		if (sourcePath == null) {
 
@@ -1570,7 +1579,7 @@ public final class ExamAssetsPane extends VBox {
 
 			// An old Exam's PDF must disappear before the replacement
 			// Exam's assets are presented, including when loading fails.
-			examSelectionPdfClearHandler.run();
+			examAssetPdfClearHandler.run();
 		}
 		try {
 			loadSelectedExam(exam);
