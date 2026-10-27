@@ -1,0 +1,61 @@
+
+    $installers = @(Get-ChildItem 'target/installer' -Filter '*.msi' -File)
+    if ($installers.Count -ne 1) {
+      throw "Expected exactly one MSI, found $($installers.Count)"
+    }
+    $installer = $installers[0]
+    if (-not $installer.Name.EndsWith("-$version.msi", [StringComparison]::OrdinalIgnoreCase)) {
+      throw "Installer filename does not match project version $version"
+    }
+
+    $launcher = 'target/package/Exam Question Bank/Exam Question Bank.exe'
+    if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
+      throw 'Packaged application launcher is missing'
+    }
+
+    foreach ($file in @($installer.FullName, $launcher)) {
+      $signature = Get-AuthenticodeSignature -LiteralPath $file
+      if ($signature.Status -ne 'NotSigned') {
+        throw "Unexpected signing status for $file : $($signature.Status)"
+      }
+    }
+
+    $msiHash = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    $launcherHash = (Get-FileHash -LiteralPath $launcher -Algorithm SHA256).Hash.ToLowerInvariant()
+
+    $checksumPath = Join-Path $installer.DirectoryName 'SHA256SUMS.txt'
+    "$msiHash  $($installer.Name)" | Set-Content -Path $checksumPath -Encoding utf8
+
+    $details = @(
+      'UNSIGNED CI TEST BUILD - NOT A PUBLISHED RELEASE'
+      "Repository: $env:GITHUB_REPOSITORY"
+      "Source commit: $env:GITHUB_SHA"
+      "Workflow: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+      "Maven version (unchanged): $version"
+      "MSI: $($installer.Name)"
+      "MSI SHA-256: $msiHash"
+      "Launcher SHA-256: $launcherHash"
+      'MSI and launcher signing status: NotSigned'
+    )
+    $details | Set-Content -Path (Join-Path $installer.DirectoryName 'CI-BUILD.txt') -Encoding utf8
+
+    @(
+      '## Unsigned Windows MSI test build'
+      '**This is not an official release. Do not distribute or install as a trusted release.**'
+      "Source commit: ``$env:GITHUB_SHA``"
+      "Unchanged application version: ``$version``"
+      "MSI: ``$($installer.Name)``"
+      "SHA-256: ``$msiHash``"
+    ) | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+
+- name: Retain short-lived unsigned build artefacts
+  uses: actions/upload-artifact@v7
+  with:
+    name: unsigned-msi-ci-${{ github.run_id }}
+    if-no-files-found: error
+    retention-days: 3
+    compression-level: 0
+    path: |
+      target/installer/*.msi
+      target/installer/SHA256SUMS.txt
+      target/installer/CI-BUILD.txt
