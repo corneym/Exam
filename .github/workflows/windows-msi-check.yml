@@ -23,6 +23,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '25'
+          java-package: 'jdk+jmods'
           cache: maven
 
       - name: Install pinned WiX Toolset 7
