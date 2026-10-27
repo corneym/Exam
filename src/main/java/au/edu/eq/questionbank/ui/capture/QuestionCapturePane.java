@@ -141,6 +141,7 @@ public final class QuestionCapturePane extends VBox {
 	private Question importedQuestion;
 	private LegacySplitCaptureState legacySplitCaptureState;
 	private boolean loadingQuestionEdit;
+	private long questionCodeGeneration;
 	private String sharedContextLookupError;
 
 	// New-Question capture is deliberately inactive until the user starts it.
@@ -1779,7 +1780,7 @@ public final class QuestionCapturePane extends VBox {
 	}
 
 	private void completeQuestionSave(QuestionSaveResult result, boolean editing, boolean imported,
-			int previousImportedIndex, boolean hadStoredContent) {
+			int previousImportedIndex, boolean hadStoredContent, boolean currentQuestionCodeGeneration) {
 		completionQuestions = result.questions();
 		Runnable completedHandler = null;
 		try {
@@ -1813,9 +1814,15 @@ public final class QuestionCapturePane extends VBox {
 				} else if (imported) {
 					action = hadStoredContent ? "Resolved" : "Captured";
 				}
-				showSavedQuestionStatus(action, question);
+				if (currentQuestionCodeGeneration) {
+					showSavedQuestionStatus(action, question);
+				} else {
+					saveStatusLabel.setText("");
+				}
 				if (result.refreshFailure() != null) {
-					saveStatusLabel.setText("Saved " + question.getQuestionCode() + " — list refresh failed");
+					if (currentQuestionCodeGeneration) {
+						saveStatusLabel.setText("Saved " + question.getQuestionCode() + " — list refresh failed");
+					}
 					finishQuestionSaveBusy();
 					showAlert(Alert.AlertType.WARNING, "Question saved; lists could not be fully refreshed.",
 							"Question " + question.getQuestionCode() + " was saved with ID " + question.getId()
@@ -1843,8 +1850,12 @@ public final class QuestionCapturePane extends VBox {
 				questionWorkBox.setDisable(true);
 				saveQuestionButton.setDisable(true);
 				cancelQuestionEditButton.setDisable(true);
-				saveStatusLabel.setText("Saved " + question.getQuestionCode() + " (ID " + question.getId()
-						+ ") — workspace refresh failed");
+				if (currentQuestionCodeGeneration) {
+					saveStatusLabel.setText("Saved " + question.getQuestionCode() + " (ID " + question.getId()
+							+ ") — workspace refresh failed");
+				} else {
+					saveStatusLabel.setText("");
+				}
 				finishQuestionSaveBusy();
 				showAlert(Alert.AlertType.WARNING, "Question saved; workspace refresh failed.",
 						"Question " + question.getQuestionCode() + " was saved successfully with ID " + question.getId()
@@ -2688,6 +2699,8 @@ public final class QuestionCapturePane extends VBox {
 	private void handleQuestionCodeChanged(String newCode) {
 		try (PerformanceOperation operation = performanceRecorder.start("capture.question.code-change")) {
 			try {
+				questionCodeGeneration++;
+				clearSavedQuestionStatus();
 				if (legacySplitCaptureState != null) {
 
 					// Confirmed split metadata bypasses ordinary inference.
@@ -3436,6 +3449,14 @@ public final class QuestionCapturePane extends VBox {
 		}
 	}
 
+	private void clearSavedQuestionStatus() {
+		String currentStatus = saveStatusLabel.getText();
+		if (currentStatus.startsWith("Saved ") || currentStatus.startsWith("Updated ")
+				|| currentStatus.startsWith("Captured ") || currentStatus.startsWith("Resolved ")) {
+			saveStatusLabel.setText("");
+		}
+	}
+
 	private void refreshQuestionCodeStatus(String questionCode) {
 		Question duplicate = findDuplicateQuestion(questionCode);
 		if (duplicate == null) {
@@ -3725,6 +3746,7 @@ public final class QuestionCapturePane extends VBox {
 				sharedContextCapturePane.getSelectedContext(), pendingSharedContextForSave(),
 				continueSharedContextToNextMcq());
 		List<Question> beforeSaveSnapshot = List.copyOf(questionSnapshot);
+		long savedQuestionCodeGeneration = questionCodeGeneration;
 		int savedPreviousImportedIndex = previousImportedIndex;
 		boolean savedHadStoredContent = hadStoredContent;
 		PerformanceOperation operation = performanceRecorder.start("capture.question.save");
@@ -3759,7 +3781,7 @@ public final class QuestionCapturePane extends VBox {
 							operation.id())) {
 						try {
 							completeQuestionSave(result, editing, imported, savedPreviousImportedIndex,
-									savedHadStoredContent);
+									savedHadStoredContent, savedQuestionCodeGeneration == questionCodeGeneration);
 							publication.resultCount(result.question() == null ? 0 : 1);
 						} catch (RuntimeException | Error failure) {
 							publication.failed();

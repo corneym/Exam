@@ -1970,6 +1970,123 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void savedQuestionStatusClearsImmediatelyWhenQuestionCodeChanges(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		Question savedFour = captureQuestion(robot, "4");
+		QuestionCapturePane pane = questionCapturePane();
+		TextField code = lookup(robot, "#question-code", TextField.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		Label saveStatus = lookup(robot, "#question-save-status", Label.class);
+		Label duplicateStatus = lookup(robot, "#question-code-status", Label.class);
+		Label regionCount = lookup(robot, "#question-region-count", Label.class);
+		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
+
+		assertEquals("Saved 4 (1 mark(s), 1 content part(s))", saveStatus.getText());
+		assertEquals("Content parts: 0", regionCount.getText());
+		selectFirst(robot, "#curriculum-unit");
+		selectFirst(robot, "#curriculum-topic");
+		selectFirstFinalClassification(robot);
+
+		// The number listener must invalidate the previous save outcome synchronously;
+		// it must not wait for focus loss or another control interaction.
+		robot.interact(() -> code.setText("5"));
+		assertEquals("", saveStatus.getText());
+		assertEquals("Content parts: 0", regionCount.getText());
+
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-question-region");
+		assertEquals("Pending 5 — 1 content part(s) accepted", saveStatus.getText());
+		assertEquals("Content parts: 1", regionCount.getText());
+
+		// Duplicate, incomplete and empty candidates must never revive Question 4's
+		// saved marks or content count. Accepted content remains staged throughout.
+		robot.interact(() -> code.setText("4"));
+		assertTrue(duplicateStatus.isVisible());
+		assertEquals("", saveStatus.getText());
+		robot.interact(() -> code.setText(""));
+		assertFalse(duplicateStatus.isVisible());
+		assertEquals("", saveStatus.getText());
+		robot.interact(() -> code.setText("5"));
+		assertEquals("Pending 5 — 1 content part(s) accepted", saveStatus.getText());
+		assertEquals("Content parts: 1", regionCount.getText());
+
+		robot.interact(() -> marks.setText("1"));
+		fireControl(robot, writtenResponse);
+		assertFalse(lookup(robot, "#save-question", Button.class).isDisabled());
+		fireControl(robot, "#save-question");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> repository.findAll().stream().anyMatch(question -> "5".equals(question.getQuestionCode())));
+		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+				() -> "Saved 5 (1 mark(s), 1 content part(s))".equals(saveStatus.getText()));
+
+		Question savedFive = repository.findAll().stream().filter(question -> "5".equals(question.getQuestionCode()))
+				.findFirst().orElseThrow();
+		boolean[] editStarted = { false };
+		robot.interact(() -> editStarted[0] = pane.editQuestion(savedFive, () -> {
+		}));
+		assertTrue(editStarted[0]);
+		assertEquals("Editing 5 — 1 stored content part(s) loaded", saveStatus.getText());
+		assertEquals("Content parts: 1", regionCount.getText());
+		assertEquals("4", savedFour.getQuestionCode());
+		assertEquals(2, repository.findAll().size());
+	}
+
+	@Test
+	void delayedSaveCompletionCannotRestoreStatusForChangedQuestionCode(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot);
+		TextField code = lookup(robot, "#question-code", TextField.class);
+		TextField marks = lookup(robot, "#question-marks", TextField.class);
+		Label saveStatus = lookup(robot, "#question-save-status", Label.class);
+		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
+		robot.interact(() -> {
+			code.setText("6");
+			marks.setText("1");
+		});
+		fireControl(robot, writtenResponse);
+		dragRegionOnDisplayedPage(robot);
+		fireControl(robot, "#add-question-region");
+
+		QuestionCapturePane pane = questionCapturePane();
+		SqliteQuestionRepository stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
+		CountDownLatch refreshEntered = new CountDownLatch(1);
+		CountDownLatch releaseRefresh = new CountDownLatch(1);
+		setField(pane, "questionRepository", new InMemoryQuestionRepository() {
+
+			@Override
+			public List<Question> findAll() {
+				refreshEntered.countDown();
+				try {
+					assertTrue(releaseRefresh.await(10, TimeUnit.SECONDS));
+				} catch (InterruptedException exception) {
+					Thread.currentThread().interrupt();
+					throw new IllegalStateException(exception);
+				}
+				return stored.findAll();
+			}
+		});
+		try {
+			fireControl(robot, "#save-question");
+			assertTrue(refreshEntered.await(5, TimeUnit.SECONDS));
+
+			// Model updates remain observable while the work area is disabled. This
+			// simulates a delayed callback racing a later number generation.
+			robot.interact(() -> code.setText("7"));
+			releaseRefresh.countDown();
+			WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+					() -> stored.findAll().stream().anyMatch(question -> "6".equals(question.getQuestionCode())));
+			WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !pane.isSaveInProgress());
+			WaitForAsyncUtils.waitForFxEvents();
+
+			assertEquals("", saveStatus.getText());
+			assertFalse(saveStatus.getText().contains("6"));
+			assertEquals(1, stored.findAll().size());
+		} finally {
+			releaseRefresh.countDown();
+		}
+	}
+
+	@Test
 	void pendingQuestionSelectionBlocksWorkingSubjectChange(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		@SuppressWarnings("unchecked")
