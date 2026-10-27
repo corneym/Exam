@@ -1,5 +1,6 @@
 package au.edu.eq.questionbank.service.curriculum;
 
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -41,7 +42,7 @@ public final class DescriptorLookupService {
 	 * @param descriptors     previously loaded Descriptor snapshot
 	 * @param query           search terms, possibly blank
 	 * @param maximumResults  maximum number of returned matches
-	 * @return immutable, bounded matches in source order
+	 * @return immutable, bounded matches in natural curriculum-code order
 	 */
 	public List<DescriptorMatch> findMatches(SyllabusVersion syllabusVersion, List<CurriculumNode> descriptors,
 			String query, int maximumResults) {
@@ -60,7 +61,7 @@ public final class DescriptorLookupService {
 	 * @param query           Descriptor code/wording keywords
 	 * @param codePrefix      optional Unit, Topic or partial classification code
 	 * @param maximumResults  positive maximum number of matches
-	 * @return immutable matching results in source order
+	 * @return immutable matching results in natural curriculum-code order
 	 */
 	public List<DescriptorMatch> findMatches(SyllabusVersion syllabusVersion, List<CurriculumNode> descriptors,
 			String query, String codePrefix, int maximumResults) {
@@ -100,11 +101,60 @@ public final class DescriptorLookupService {
 				continue;
 			}
 			matches.add(new DescriptorMatch(descriptor, formatHierarchy(descriptor)));
-			if (matches.size() == maximumResults) {
-				break;
+		}
+
+		// Sort before applying the display limit so a later repository row with a
+		// lower curriculum code is not incorrectly omitted from the result list.
+		matches.sort(this::compareMatches);
+		return List.copyOf(matches.subList(0, Math.min(matches.size(), maximumResults)));
+	}
+
+	private int compareMatches(DescriptorMatch first, DescriptorMatch second) {
+		CurriculumNode firstDescriptor = first.descriptor();
+		CurriculumNode secondDescriptor = second.descriptor();
+		int comparison = compareCurriculumCodes(firstDescriptor.getCode(), secondDescriptor.getCode());
+		if (comparison != 0) {
+			return comparison;
+		}
+		comparison = firstDescriptor.getCode().compareToIgnoreCase(secondDescriptor.getCode());
+		if (comparison != 0) {
+			return comparison;
+		}
+		comparison = firstDescriptor.getName().compareToIgnoreCase(secondDescriptor.getName());
+		if (comparison != 0) {
+			return comparison;
+		}
+		comparison = firstDescriptor.getName().compareTo(secondDescriptor.getName());
+		if (comparison != 0) {
+			return comparison;
+		}
+		return Long.compare(firstDescriptor.getId(), secondDescriptor.getId());
+	}
+
+	private int compareCurriculumCodes(String firstCode, String secondCode) {
+		String[] firstComponents = firstCode.split("\\.", -1);
+		String[] secondComponents = secondCode.split("\\.", -1);
+		int componentCount = Math.min(firstComponents.length, secondComponents.length);
+		for (int index = 0; index < componentCount; index++) {
+			int comparison = compareCodeComponents(firstComponents[index], secondComponents[index]);
+			if (comparison != 0) {
+				return comparison;
 			}
 		}
-		return List.copyOf(matches);
+		return Integer.compare(firstComponents.length, secondComponents.length);
+	}
+
+	private int compareCodeComponents(String firstComponent, String secondComponent) {
+		boolean firstNumeric = !firstComponent.isEmpty() && firstComponent.chars().allMatch(Character::isDigit);
+		boolean secondNumeric = !secondComponent.isEmpty() && secondComponent.chars().allMatch(Character::isDigit);
+		if (firstNumeric && secondNumeric) {
+			return new BigInteger(firstComponent).compareTo(new BigInteger(secondComponent));
+		}
+		if (firstNumeric != secondNumeric) {
+			return firstNumeric ? -1 : 1;
+		}
+		int comparison = firstComponent.compareToIgnoreCase(secondComponent);
+		return comparison != 0 ? comparison : firstComponent.compareTo(secondComponent);
 	}
 
 	/**
@@ -165,6 +215,15 @@ public final class DescriptorLookupService {
 			if (descriptor.getLevel() != CurriculumLevel.DESCRIPTOR) {
 				throw new IllegalArgumentException("Match must contain a Descriptor");
 			}
+		}
+
+		/**
+		 * Returns the compact label shown in Descriptor-search results.
+		 *
+		 * @return the Descriptor code followed by its wording
+		 */
+		public String displayLabel() {
+			return descriptor.getCode() + " — " + descriptor.getName();
 		}
 	}
 }
