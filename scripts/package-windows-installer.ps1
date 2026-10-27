@@ -1,3 +1,7 @@
+param (
+    [switch] $UseExistingAppImage
+)
+
 $ErrorActionPreference = "Stop"
 
 $repositoryRoot =
@@ -90,19 +94,45 @@ if (-not $jpackageVersion.StartsWith("25")) {
 
 Set-Location $repositoryRoot
 
-Write-Host "Building fresh application image..."
+if ($UseExistingAppImage) {
+    Write-Host "Packaging an existing application image without rebuilding it..."
+}
+else {
+    Write-Host "Building fresh application image..."
 
-# Always rebuild the tested application-image structure so the installer cannot
-# accidentally package stale application classes or dependencies.
-& $appImageScript
+    # Preserve the existing direct-installer/release workflow: build a fresh
+    # application image unless the caller explicitly opts into image reuse.
+    & $appImageScript
 
-if ($LASTEXITCODE -ne 0) {
-    throw "Application image build failed"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Application image build failed"
+    }
 }
 
-if (-not (Test-Path $appImageDirectory)) {
+if (-not (Test-Path -LiteralPath $appImageDirectory -PathType Container)) {
     throw "Application image was not produced: $appImageDirectory"
 }
+
+$launcher =
+    Join-Path $appImageDirectory "Exam Question Bank.exe"
+
+if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
+    throw "Application image launcher is missing: $launcher"
+}
+
+# A prebuilt image must belong to the same version as the current Maven
+# project. A stale image cannot be silently packaged under a new MSI version.
+$expectedJar =
+    Join-Path $appImageDirectory "app\exam-question-bank-$version.jar"
+
+if (-not (Test-Path -LiteralPath $expectedJar -PathType Leaf)) {
+    throw "Application image does not contain the expected versioned JAR: $expectedJar"
+}
+
+# A future signing step will modify this launcher before MSI packaging. Once
+# passed to jpackage, the launcher must remain byte-for-byte unchanged.
+$launcherHashBefore =
+    (Get-FileHash -LiteralPath $launcher -Algorithm SHA256).Hash
 
 if (Test-Path $installerDirectory) {
     Remove-Item `
@@ -118,7 +148,7 @@ New-Item `
 
 Write-Host "Creating Exam Question Bank $version MSI installer..."
 
-# Package the already-tested application image. The fixed upgrade UUID allows
+# Package the already-built application image. The fixed upgrade UUID allows
 # future releases to replace this application rather than appearing as unrelated
 # products in Windows Installer.
 & $jpackage `
@@ -137,6 +167,13 @@ if ($LASTEXITCODE -ne 0) {
     throw "jpackage MSI creation failed"
 }
 
+$launcherHashAfter =
+    (Get-FileHash -LiteralPath $launcher -Algorithm SHA256).Hash
+
+if ($launcherHashAfter -ne $launcherHashBefore) {
+    throw "MSI packaging changed the application launcher; an existing signature would no longer be valid."
+}
+
 $installers =
     @(Get-ChildItem `
         -Path $installerDirectory `
@@ -150,3 +187,4 @@ if ($installers.Count -ne 1) {
 Write-Host ""
 Write-Host "Windows installer created:"
 Write-Host $installers[0].FullName
+Write-Host "Application launcher SHA-256 preserved: $launcherHashAfter"
