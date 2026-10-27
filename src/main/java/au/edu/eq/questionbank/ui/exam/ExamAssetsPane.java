@@ -26,6 +26,7 @@ import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import javafx.event.EventHandler;
 import javafx.geometry.Insets;
+import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
@@ -33,6 +34,7 @@ import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
+import javafx.scene.control.ListCell;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.ScrollPane;
@@ -57,8 +59,10 @@ import javafx.util.StringConverter;
  */
 public final class ExamAssetsPane extends VBox {
 
-	private static final double SPACING = 8.0;
+	private static final double EXAM_SELECTOR_MAX_WIDTH = 240.0;
+	private static final double EXAM_SELECTOR_MIN_WIDTH = 120.0;
 	private static final double ROW_SPACING = 4.0;
+	private static final double SPACING = 8.0;
 	private static final Insets SECTION_PADDING = new Insets(8);
 	private static final String BORDER_STYLE = "-fx-border-color: #b0b0b0;-fx-border-width: 1;-fx-border-radius: 3;";
 	private static final String HEADING_STYLE = "-fx-font-weight: bold;";
@@ -87,6 +91,8 @@ public final class ExamAssetsPane extends VBox {
 	private final Supplier<Path> answerBookletSourceChooser;
 	private final Consumer<AnswerFile> answerFileDeleteHandler;
 	private final Runnable examAssetPdfClearHandler;
+	private Runnable legacyQuestionImportHandler = () -> {
+	};
 	private final QuestionBookletCreationHandler questionBookletCreationHandler;
 	private final Consumer<ExamBooklet> questionBookletDeleteHandler;
 	private final Supplier<Path> questionBookletSourceChooser;
@@ -120,6 +126,7 @@ public final class ExamAssetsPane extends VBox {
 
 	// Controls and initial workflow state (initialisation order retained).
 	private final ComboBox<Exam> examBox = new ComboBox<>();
+	private final CheckBox legacyImportCheckBox = new CheckBox("Legacy import");
 	private final Label stateLabel = new Label("State: —");
 	private final ComboBox<String> providerField = new ComboBox<>();
 	private final ComboBox<Integer> yearField = new ComboBox<>();
@@ -157,7 +164,7 @@ public final class ExamAssetsPane extends VBox {
 
 	// New Exam is a workspace-level structural transaction. It reuses the existing
 	// Exam Details controls but does not create another Subject selector.
-	private final Button addNewExamButton = new Button("Add New Exam");
+	private final Button addNewExamButton = new Button("+");
 	private final Button clearNewExamButton = new Button("Clear");
 	private final Button cancelNewExamButton = new Button("Cancel");
 	private final Button saveNewExamButton = new Button("Save Exam");
@@ -464,6 +471,19 @@ public final class ExamAssetsPane extends VBox {
 		// correction session rather than an ordinary workspace visit.
 		corpusDashboardReturnHandler = handler;
 		updateCorpusDashboardReturnState();
+	}
+
+	/**
+	 * Supplies the application-owned legacy Question metadata intake action.
+	 *
+	 * @param handler action that enters the existing legacy import workflow
+	 * @throws NullPointerException if {@code handler} is {@code null}
+	 */
+	public void setLegacyQuestionImportHandler(Runnable handler) {
+		if (handler == null) {
+			throw new NullPointerException("handler");
+		}
+		legacyQuestionImportHandler = handler;
 	}
 
 	/**
@@ -845,6 +865,17 @@ public final class ExamAssetsPane extends VBox {
 		updateCorpusDashboardReturnState();
 	}
 
+	private void beginSelectedExamCreationAction() {
+		if (!canBeginNewExam()) {
+			return;
+		}
+		if (legacyImportCheckBox.isSelected()) {
+			legacyQuestionImportHandler.run();
+		} else {
+			beginNewExam();
+		}
+	}
+
 	private void beginQuestionBookletAdd() {
 		Exam exam = examBox.getValue();
 		if (!canBeginQuestionBookletAdd(exam)) {
@@ -894,15 +925,21 @@ public final class ExamAssetsPane extends VBox {
 	}
 
 	private void buildContent() {
-		GridPane examSelectorGrid = new GridPane();
-		examSelectorGrid.setHgap(SPACING);
-		examSelectorGrid.add(examBox, 0, 0);
-		examSelectorGrid.add(stateLabel, 1, 0);
-		examSelectorGrid.add(addNewExamButton, 2, 0);
-		GridPane.setHgrow(examBox, Priority.ALWAYS);
+		HBox existingExamControls = new HBox(SPACING, stateLabel, examBox);
+		existingExamControls.setId("exam-assets-existing-exam-controls");
+		existingExamControls.setAlignment(Pos.CENTER_LEFT);
+		HBox.setHgrow(examBox, Priority.ALWAYS);
+		HBox examCreationControls = new HBox(SPACING, addNewExamButton, legacyImportCheckBox);
+		examCreationControls.setId("exam-assets-exam-creation-controls");
+		examCreationControls.setAlignment(Pos.CENTER_LEFT);
+		Region examControlSpacer = new Region();
+		HBox.setHgrow(examControlSpacer, Priority.ALWAYS);
+		HBox examSelectorRow = new HBox(SPACING, existingExamControls, examControlSpacer, examCreationControls);
+		examSelectorRow.setId("exam-assets-exam-selector-row");
+		examSelectorRow.setAlignment(Pos.CENTER_LEFT);
 		VBox examDetails = createExamDetailsSection();
 		newExamActionRow = createNewExamActionRow();
-		VBox examContent = new VBox(ROW_SPACING, examSelectorGrid, examDetails, newExamActionRow);
+		VBox examContent = new VBox(ROW_SPACING, examSelectorRow, examDetails, newExamActionRow);
 		VBox examSection = createWorkspaceSection("exam-assets-exam-section", "EXAM", null, examContent);
 		VBox questionBooklets = createQuestionBookletsSection();
 		VBox answerBooklets = createAnswerBookletsSection();
@@ -1086,7 +1123,10 @@ public final class ExamAssetsPane extends VBox {
 
 	private void configureControls() {
 		examBox.setId("exam-assets-exam");
-		examBox.setMaxWidth(Double.MAX_VALUE);
+		examBox.setAccessibleText("Existing Exam");
+		examBox.setMinWidth(EXAM_SELECTOR_MIN_WIDTH);
+		examBox.setPrefWidth(EXAM_SELECTOR_MAX_WIDTH);
+		examBox.setMaxWidth(EXAM_SELECTOR_MAX_WIDTH);
 		examBox.setConverter(new StringConverter<>() {
 
 			@Override
@@ -1101,7 +1141,10 @@ public final class ExamAssetsPane extends VBox {
 				return exam == null ? "" : formatExam(exam);
 			}
 		});
+		examBox.setCellFactory(_ -> createExamCell());
+		examBox.setButtonCell(createExamCell());
 		examBox.valueProperty().addListener((_, _, exam) -> {
+			examBox.setTooltip(exam == null ? null : new Tooltip(formatExam(exam)));
 
 			// Ordinary user selection still loads synchronously. Snapshot publication
 			// already contains the selected Exam hierarchy and must not read it twice.
@@ -1110,6 +1153,8 @@ public final class ExamAssetsPane extends VBox {
 			}
 		});
 		stateLabel.setId("exam-assets-state");
+		stateLabel.setMinWidth(Region.USE_PREF_SIZE);
+		stateLabel.setMaxWidth(Region.USE_PREF_SIZE);
 
 		// Provider and Assessment use reusable suggestions but their persisted Exam
 		// values remain authoritative.
@@ -1183,8 +1228,17 @@ public final class ExamAssetsPane extends VBox {
 		addAnswerBookletButton.setOnAction(_ -> beginAnswerBookletAdd());
 		updateAnswerBookletAddState();
 		addNewExamButton.setId("exam-assets-add-new-exam");
+		addNewExamButton.setAccessibleText("Add Exam");
 		addNewExamButton.setMinWidth(Region.USE_PREF_SIZE);
-		addNewExamButton.setOnAction(_ -> beginNewExam());
+		addNewExamButton.setMaxWidth(Region.USE_PREF_SIZE);
+		addNewExamButton.setPadding(new Insets(2, 7, 2, 7));
+		addNewExamButton.setTooltip(
+				new Tooltip("Add a new Exam, or start legacy import when Legacy import is selected."));
+		addNewExamButton.setOnAction(_ -> beginSelectedExamCreationAction());
+		legacyImportCheckBox.setId("exam-assets-legacy-import");
+		legacyImportCheckBox.setMinWidth(Region.USE_PREF_SIZE);
+		legacyImportCheckBox.setTooltip(
+				new Tooltip("Select before pressing + to import legacy Question metadata for the Working Subject."));
 		clearNewExamButton.setId("exam-assets-new-exam-clear");
 		clearNewExamButton.setOnAction(_ -> clearNewExamFields());
 		cancelNewExamButton.setId("exam-assets-new-exam-cancel");
@@ -1272,6 +1326,19 @@ public final class ExamAssetsPane extends VBox {
 		// dispatch, which differs between desktop and Xvfb.
 		field.setOnContextMenuRequested(showRemovalMenu);
 		field.getEditor().setOnContextMenuRequested(showRemovalMenu);
+	}
+
+	private ListCell<Exam> createExamCell() {
+		return new ListCell<>() {
+
+			@Override
+			protected void updateItem(Exam exam, boolean empty) {
+				super.updateItem(exam, empty);
+				String identity = empty || exam == null ? null : formatExam(exam);
+				setText(identity);
+				setTooltip(identity == null ? null : new Tooltip(identity));
+			}
+		};
 	}
 
 	private VBox createAnswerBookletsSection() {
@@ -2066,7 +2133,6 @@ public final class ExamAssetsPane extends VBox {
 		expectedQuestionBookletsField.setDisable(false);
 		expectedAnswerBookletsField.setDisable(false);
 		examBox.setDisable(true);
-		addNewExamButton.setDisable(true);
 		examDetailsActionRow.setVisible(false);
 		examDetailsActionRow.setManaged(false);
 		newExamActionRow.setVisible(true);
@@ -2079,6 +2145,7 @@ public final class ExamAssetsPane extends VBox {
 		addQuestionBookletButton.setDisable(true);
 		addAnswerBookletButton.setDisable(true);
 		useSelectedBookletButton.setDisable(true);
+		updateAddNewExamState();
 		updateNewExamSaveState();
 	}
 
@@ -2101,9 +2168,13 @@ public final class ExamAssetsPane extends VBox {
 
 	private void updateAddNewExamState() {
 
-		// The action remains visible but unavailable whenever another structural
-		// transaction currently owns the Exam/Assets workspace.
-		addNewExamButton.setDisable(!canBeginNewExam());
+		// The creation mode and its action remain visible but unavailable whenever
+		// another structural transaction currently owns the Exam/Assets workspace.
+		// This prevents an in-progress ordinary New Exam from changing into a legacy
+		// import before it is saved or cancelled.
+		boolean creationAvailable = canBeginNewExam();
+		addNewExamButton.setDisable(!creationAvailable);
+		legacyImportCheckBox.setDisable(!creationAvailable);
 	}
 
 	private void updateAnswerBookletAddState() {

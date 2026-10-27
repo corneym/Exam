@@ -109,9 +109,7 @@ public final class CorpusDashboardPane extends VBox {
 
 	// Dashboard layout sections.
 	private StackPane bookletsSection;
-	private HBox examEmptyStateRow;
 	private ScrollPane examEmptyStateScroll;
-	private HBox examFilterRow;
 	private VBox examOperationalContent;
 	private StackPane questionWorkSection;
 
@@ -180,11 +178,6 @@ public final class CorpusDashboardPane extends VBox {
 	private Runnable mapCurriculumHandler = () -> {
 	};
 
-	// Legacy metadata intake belongs to the Working Subject rather than to one
-	// selected Exam or booklet.
-	private final Button importLegacyQuestionsButton = new Button("Import Legacy");
-	private Runnable legacyQuestionImportHandler = () -> {
-	};
 	private final Button examLifecycleButton = new Button("Mark Complete");
 	private BiConsumer<Exam, ExamCaptureState> examLifecycleHandler = (_, _) -> {
 	};
@@ -522,22 +515,6 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	/**
-	 * Supplies the Subject-level legacy Question metadata intake action.
-	 *
-	 * @param handler action that enters the existing legacy import workflow
-	 * @throws NullPointerException if {@code handler} is {@code null}
-	 */
-	public void setLegacyQuestionImportHandler(Runnable handler) {
-		if (handler == null) {
-			throw new NullPointerException("handler");
-		}
-
-		// Dashboard owns only navigation into legacy intake. Exam/Assets and the
-		// existing importer remain authoritative for the actual transaction.
-		legacyQuestionImportHandler = handler;
-	}
-
-	/**
 	 * Supplies the application-owned action for reviewing curriculum mappings for
 	 * the current Working Subject.
 	 *
@@ -821,19 +798,15 @@ public final class CorpusDashboardPane extends VBox {
 
 	private SplitPane buildHierarchyRow() {
 
-		// Keep the Exam filter row as application state because Legacy Import
-		// moves between the populated and empty Exam presentations.
-		examFilterRow = new HBox(SPACING, createBoldLabel("Provider"), providerBox, createBoldLabel("Year"), yearBox,
+		HBox examFilterRow = new HBox(SPACING, createBoldLabel("Provider"), providerBox, createBoldLabel("Year"), yearBox,
 				createBoldLabel("Exam state"), examStateBox, clearFiltersButton);
 		examFilterRow.setId("corpus-dashboard-exam-filter-row");
 		examFilterRow.setAlignment(Pos.CENTER_LEFT);
 		ScrollPane examFilterScroll = createHorizontalScrollRow("corpus-dashboard-exam-filters-scroll", examFilterRow);
-		examEmptyStateRow = new HBox(SPACING, noExamsLabel, addExamButton);
+		HBox examEmptyStateRow = new HBox(SPACING, noExamsLabel, addExamButton);
 		examEmptyStateRow.setId("corpus-dashboard-exam-empty-state");
 		examEmptyStateRow.setAlignment(Pos.CENTER_LEFT);
 
-		// The empty-state row must remain a reusable HBox because the same
-		// Legacy Import button is moved into it during onboarding.
 		examEmptyStateScroll = createHorizontalScrollRow("corpus-dashboard-empty-exam-scroll", examEmptyStateRow);
 		HBox selectedExamTitleRow = new HBox(SPACING, selectedExamLabel, declaredExamStateLabel, manageExamAssetsButton,
 				inspectExamQuestionsButton, examLifecycleButton);
@@ -1239,7 +1212,6 @@ public final class CorpusDashboardPane extends VBox {
 	private void configureCommandActions() {
 		addExamButton.setOnAction(_ -> addExamHandler.run());
 		assignDescriptorsButton.setOnAction(_ -> assignSelectedBookletDescriptors());
-		importLegacyQuestionsButton.setOnAction(_ -> legacyQuestionImportHandler.run());
 		inspectBookletQuestionsButton.setOnAction(_ -> inspectSelectedBookletQuestions());
 		inspectExamQuestionsButton.setOnAction(_ -> inspectSelectedExamQuestions());
 		manageExamAssetsButton.setOnAction(_ -> manageSelectedExamAssets());
@@ -1281,10 +1253,6 @@ public final class CorpusDashboardPane extends VBox {
 		addExamButton.setId("corpus-dashboard-add-exam");
 		addExamButton.setTooltip(new Tooltip("Add an Exam to the current Subject."));
 		addExamButton.setMinWidth(Region.USE_PREF_SIZE);
-		importLegacyQuestionsButton.setId("corpus-dashboard-import-legacy-questions");
-		importLegacyQuestionsButton
-				.setTooltip(new Tooltip("Import legacy Question metadata for the current Working Subject."));
-		importLegacyQuestionsButton.setMinWidth(Region.USE_PREF_SIZE);
 
 		// Status labels must remain readable as the adjacent panel grows or
 		// shrinks, rather than forcing the enclosing section to be wider.
@@ -1936,22 +1904,6 @@ public final class CorpusDashboardPane extends VBox {
 				.map(question -> new QuestionCorpusWorkItem(question, QuestionCorpusAudit.assess(question))).toList();
 	}
 
-	private void moveLegacyImportButton(HBox target) {
-		if (target == null) {
-			throw new NullPointerException("target");
-		}
-		if (importLegacyQuestionsButton.getParent() == target) {
-			return;
-		}
-
-		// Reuse one action in both populated and empty Exam presentations so the
-		// Dashboard never exposes two competing legacy-import entry points.
-		if (importLegacyQuestionsButton.getParent() instanceof HBox currentParent) {
-			currentParent.getChildren().remove(importLegacyQuestionsButton);
-		}
-		target.getChildren().add(importLegacyQuestionsButton);
-	}
-
 	private String nullableCount(Integer count) {
 
 		// An absent planning count is different from zero. State that explicitly
@@ -2063,9 +2015,6 @@ public final class CorpusDashboardPane extends VBox {
 
 	private void refreshCurriculumMappingSummary() {
 
-		// Legacy metadata requires an existing syllabus version because workbook
-		// classification must resolve against authoritative curriculum.
-		importLegacyQuestionsButton.setDisable(!curriculumAvailable);
 		if (!curriculumAvailable) {
 
 			// No syllabus version exists for this Subject yet. Distinguish that onboarding
@@ -2442,10 +2391,6 @@ public final class CorpusDashboardPane extends VBox {
 
 	private void updateExamEmptyState() {
 		boolean noExams = examStatuses.isEmpty();
-
-		// Preserve the existing Subject-level Legacy Import action as it moves
-		// between the normal filter row and the empty-Exam onboarding row.
-		moveLegacyImportButton(noExams ? examEmptyStateRow : examFilterRow);
 
 		// Hide the complete scroll container so an empty scroll area does
 		// not remain visible when normal Exam operations are displayed.

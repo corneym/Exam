@@ -772,20 +772,19 @@ class CorpusDashboardPaneTest {
 	void emptyExamControlsRetainTheirScrollableContainer(FxRobot robot) {
 		ScrollPane emptyExamScroll = robot.lookup("#corpus-dashboard-empty-exam-scroll").queryAs(ScrollPane.class);
 		Button addExam = robot.lookup("#corpus-dashboard-add-exam").queryButton();
-		Button legacyImport = robot.lookup("#corpus-dashboard-import-legacy-questions").queryButton();
 
 		// Start from the ordinary populated-Exam state.
 		assertFalse(emptyExamScroll.isManaged());
 		robot.interact(() -> pane.replaceData(List.of(), List.of(), List.of(), true, -1L));
 		WaitForAsyncUtils.waitForFxEvents();
 
-		// Empty-Exam onboarding must expose its entire control row, including
-		// the single Legacy Import action moved from the normal filter row.
+		// Empty-Exam onboarding retains only ordinary Exam creation. Legacy intake now
+		// belongs to the Exam/Assets EXAM controls.
 		assertTrue(emptyExamScroll.isVisible());
 		assertTrue(emptyExamScroll.isManaged());
 		assertEquals("corpus-dashboard-exam-empty-state", emptyExamScroll.getContent().getId());
 		assertEquals(emptyExamScroll.getContent(), addExam.getParent());
-		assertEquals(emptyExamScroll.getContent(), legacyImport.getParent());
+		assertTrue(robot.lookup("#corpus-dashboard-import-legacy-questions").tryQuery().isEmpty());
 
 		// Returning to a populated Exam must remove the empty-state container
 		// rather than leaving a blank scroll area.
@@ -794,7 +793,6 @@ class CorpusDashboardPaneTest {
 		WaitForAsyncUtils.waitForFxEvents();
 		assertFalse(emptyExamScroll.isVisible());
 		assertFalse(emptyExamScroll.isManaged());
-		assertEquals("corpus-dashboard-exam-filter-row", legacyImport.getParent().getId());
 	}
 
 	@Test
@@ -1264,30 +1262,11 @@ class CorpusDashboardPaneTest {
 	}
 
 	@Test
-	void legacyQuestionImportIsSubjectLevelAndRequiresCurriculum(FxRobot robot) {
-		AtomicReference<Boolean> importCalled = new AtomicReference<>(Boolean.FALSE);
-		robot.interact(() -> pane.setLegacyQuestionImportHandler(() -> importCalled.set(Boolean.TRUE)));
-		Button importLegacy = robot.lookup("#corpus-dashboard-import-legacy-questions").queryButton();
+	void legacyQuestionImportControlIsAbsentFromDashboard(FxRobot robot) {
+		assertTrue(robot.lookup("#corpus-dashboard-import-legacy-questions").tryQuery().isEmpty());
 
-		// Populated Subjects keep legacy intake on the existing Exam filter row rather
-		// than reserving another complete Dashboard row.
-		assertEquals("Import Legacy", importLegacy.getText());
-		assertEquals("corpus-dashboard-exam-filter-row", importLegacy.getParent().getId());
-		assertFalse(importLegacy.isDisable());
-		robot.interact(importLegacy::fire);
-		assertTrue(importCalled.get().booleanValue());
-		robot.interact(() -> {
-
-			// Empty Subject onboarding reuses the same action beside Add Exam.
-			pane.replaceData(List.of(), List.of(), List.of(), false, -1L);
-		});
-		assertTrue(importLegacy.isVisible());
-		assertTrue(importLegacy.isManaged());
-		assertEquals("corpus-dashboard-exam-empty-state", importLegacy.getParent().getId());
-
-		// The workbook classification cannot be resolved without an authoritative
-		// curriculum version for this Subject.
-		assertTrue(importLegacy.isDisable());
+		robot.interact(() -> pane.replaceData(List.of(), List.of(), List.of(), false, -1L));
+		assertTrue(robot.lookup("#corpus-dashboard-import-legacy-questions").tryQuery().isEmpty());
 	}
 
 	@Test
@@ -1689,12 +1668,10 @@ class CorpusDashboardPaneTest {
 		ScrollPane filters = robot.lookup("#corpus-dashboard-exam-filters-scroll").queryAs(ScrollPane.class);
 		ScrollPane examActions = robot.lookup("#corpus-dashboard-exam-actions-scroll").queryAs(ScrollPane.class);
 		ScrollPane bookletActions = robot.lookup("#corpus-dashboard-booklet-actions-scroll").queryAs(ScrollPane.class);
-		Button legacyImport = robot.lookup("#corpus-dashboard-import-legacy-questions").queryButton();
 		Button lifecycle = robot.lookup("#corpus-dashboard-exam-lifecycle").queryButton();
 		Button captureMcq = robot.lookup("#corpus-dashboard-capture-mcq-explanations").queryButton();
 
 		// Wrapping the rows must preserve their existing button containers.
-		assertEquals(filters.getContent(), legacyImport.getParent());
 		assertEquals(examActions.getContent(), lifecycle.getParent());
 		assertEquals(bookletActions.getContent(), captureMcq.getParent());
 		robot.interact(() -> pane.getScene().getWindow().setWidth(820));

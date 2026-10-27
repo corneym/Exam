@@ -3094,6 +3094,7 @@ public class QuestionBankApplication extends Application {
 				(exam, sourcePath, name, questionFormat, expectedQuestionCount, legacyPaperCode,
 						answerFile) -> importQuestionBookletFromExamAssets(exam, sourcePath, name, questionFormat,
 								expectedQuestionCount, legacyPaperCode, answerFile, config));
+		examAssetsPane.setLegacyQuestionImportHandler(this::showLegacyQuestionImportFromExamAssets);
 		workingSubjectExamAssetsSnapshotLoader = subject -> {
 			try {
 
@@ -4440,7 +4441,6 @@ public class QuestionBankApplication extends Application {
 		dashboard.setApplicabilityReviewHandler(this::changeCorpusDashboardBookletReview);
 		dashboard.setAddExamHandler(this::showExamAssetsModeForNewExam);
 		dashboard.setAddCurriculumHandler(() -> showDashboardAddCurriculum(primaryStage(), applicationConfig));
-		dashboard.setLegacyQuestionImportHandler(this::showLegacyQuestionImportFromDashboard);
 		dashboard.setMapCurriculumHandler(() -> reviewCurriculumMappings(primaryStage(), applicationConfig));
 
 		// Every Dashboard operation routes into an existing authoritative workflow.
@@ -4839,36 +4839,14 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
-	private void showLegacyQuestionImportFromDashboard() {
+	private void showLegacyQuestionImportFromExamAssets() {
 		if (!allowExamAssetsTransition()) {
 			return;
 		}
 
-		// Legacy intake begins a fresh Dashboard-owned structural workflow.
-		clearCorpusDashboardCaptureReturn();
-		if (workingSubject == null) {
-			showAlert(Alert.AlertType.WARNING, "Legacy Question Import", "No Working Subject is selected.",
-					"Select a Working Subject before importing legacy Question metadata.");
-			return;
-		}
-		try {
-			examAssetsPane.clearCorpusDashboardReturnHandler();
-			examAssetsPane.refresh(workingSubject);
-
-			// Exam/Assets remains authoritative for structural preflight while the same
-			// Dashboard session owns cancellation and successful completion.
-			bindExamAssetsDashboardReturn(this::refreshAndShowCorpusDashboardHome);
-			setWorkspaceMode(examAssetsPane);
-			importLegacyQuestionMetadata(primaryStage(), applicationConfig, true);
-		} catch (SQLException exception) {
-			resetLegacyQuestionImportState();
-			examAssetsPane.clearCorpusDashboardReturnHandler();
-			showAlert(Alert.AlertType.ERROR, "Legacy Question Import",
-					"Exam assets could not be prepared for legacy Question import.", exception.getMessage());
-
-			// The Dashboard launched this failed transition, so restore it immediately.
-			refreshAndShowCorpusDashboardHome();
-		}
+		// Exam/Assets is already the authoritative structural workspace. The existing
+		// importer owns syllabus/workbook selection, preflight and persistence.
+		importLegacyQuestionMetadata(primaryStage(), applicationConfig, false);
 	}
 
 	private void showLegacyQuestionImportResult(LegacyQuestionImportResult importResult) {
