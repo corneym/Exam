@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.ui.exam;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -8,10 +9,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -27,8 +30,10 @@ import org.testfx.framework.junit5.Start;
 
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.Exam;
+import au.edu.eq.questionbank.model.ExamAssetExpectations;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
+import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
@@ -40,8 +45,12 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.CheckBox;
+import javafx.scene.control.ComboBox;
+import javafx.scene.control.Label;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
 import javafx.stage.Stage;
 
 @Tag("ui")
@@ -56,11 +65,14 @@ class ExamAssetsPanePreviewTest {
 	private SqliteExamWriter examWriter;
 	@TempDir
 	Path tempDirectory;
+	private Subject workingSubject;
 
 	// UI fixtures and chooser observations.
 	private final AtomicBoolean answerChooserSawClearedPreview = new AtomicBoolean();
 	private ExamAssetsPane examAssetsPane;
+	private final AtomicInteger legacyImportRequests = new AtomicInteger();
 	private PdfWorkspacePane pdfWorkspace;
+	private Stage stage;
 	private final AtomicBoolean questionChooserSawClearedPreview = new AtomicBoolean();
 
 	@AfterEach
@@ -127,16 +139,101 @@ class ExamAssetsPanePreviewTest {
 		assertNotNull(pageView.getImage());
 	}
 
+	@Test
+	@SuppressWarnings("unchecked")
+	void compactExamActionsRouteByLegacySelectionAndKeepLifecycleStatesLegible(FxRobot robot) throws Exception {
+		Button addExam = robot.lookup("#exam-assets-add-new-exam").queryAs(Button.class);
+		Button cancelNewExam = robot.lookup("#exam-assets-new-exam-cancel").queryAs(Button.class);
+		Button saveNewExam = robot.lookup("#exam-assets-new-exam-save").queryAs(Button.class);
+		CheckBox legacyImport = robot.lookup("#exam-assets-legacy-import").queryAs(CheckBox.class);
+		ComboBox<Exam> examSelector = robot.lookup("#exam-assets-exam").queryAs(ComboBox.class);
+		ComboBox<String> provider = robot.lookup("#exam-assets-provider").queryAs(ComboBox.class);
+		ComboBox<Integer> year = robot.lookup("#exam-assets-year").queryAs(ComboBox.class);
+		ComboBox<String> assessment = robot.lookup("#exam-assets-assessment").queryAs(ComboBox.class);
+		Label state = robot.lookup("#exam-assets-state").queryAs(Label.class);
+		HBox existingExamControls = robot.lookup("#exam-assets-existing-exam-controls").queryAs(HBox.class);
+		HBox examCreationControls = robot.lookup("#exam-assets-exam-creation-controls").queryAs(HBox.class);
+
+		assertEquals("+", addExam.getText());
+		assertEquals("Add Exam", addExam.getAccessibleText());
+		assertNotNull(addExam.getTooltip());
+		assertFalse(legacyImport.isSelected());
+		assertEquals(List.of(state, examSelector), existingExamControls.getChildren());
+		assertEquals(List.of(addExam, legacyImport), examCreationControls.getChildren());
+
+		// The compact selector still exposes the complete selected identity without
+		// forcing the EXAM row to consume the available workspace width.
+		assertTrue(examSelector.getWidth() <= 240.5);
+		assertNotNull(examSelector.getTooltip());
+		assertEquals("2026 QCAA A deliberately long External Assessment identity",
+				examSelector.getTooltip().getText());
+
+		// Unchecked + starts the ordinary New Exam transaction.
+		robot.interact(addExam::fire);
+		assertEquals("NEW EXAM", state.getText());
+		assertEquals(0, legacyImportRequests.get());
+		assertTrue(legacyImport.isDisabled());
+		robot.interact(legacyImport::fire);
+		assertFalse(legacyImport.isSelected());
+		robot.interact(cancelNewExam::fire);
+		assertEquals("State: ACTIVE", state.getText());
+		assertFalse(legacyImport.isDisabled());
+
+		// Toggling legacy mode alone is passive. Only the subsequent + action routes to
+		// the application-owned importer, without creating or selecting another Exam.
+		int persistedExamCount = examWriter.findExamsForSubject(workingSubject).size();
+		Exam selectedExam = examSelector.getValue();
+		robot.interact(legacyImport::fire);
+		assertEquals(persistedExamCount, examWriter.findExamsForSubject(workingSubject).size());
+		assertEquals(selectedExam, examSelector.getValue());
+		assertEquals(0, legacyImportRequests.get());
+		robot.interact(addExam::fire);
+		assertEquals(1, legacyImportRequests.get());
+		assertEquals(selectedExam, examSelector.getValue());
+
+		// Saving an ordinary New Exam also ends the transaction and restores the mode
+		// control. A failed or incomplete Save would leave it disabled.
+		robot.interact(legacyImport::fire);
+		robot.interact(addExam::fire);
+		assertTrue(legacyImport.isDisabled());
+		robot.interact(() -> {
+			provider.getEditor().setText("QCAA");
+			year.getSelectionModel().select(Integer.valueOf(2025));
+			assessment.getEditor().setText("Saved compact-control Exam");
+		});
+		assertFalse(saveNewExam.isDisabled());
+		robot.interact(saveNewExam::fire);
+		assertFalse(legacyImport.isDisabled());
+		assertEquals("State: ACTIVE", state.getText());
+
+		// Both lifecycle values retain their full preferred width when the containing
+		// stage is reduced.
+		robot.interact(() -> stage.setWidth(560));
+		assertEquals("State: ACTIVE", state.getText());
+		assertTrue(state.getWidth() + 0.5 >= state.prefWidth(-1));
+		Exam completedExam = new Exam(exam.getId(), exam.getSubject(), exam.getProvider(), exam.getYear(), exam.getName(),
+				ExamCaptureState.COMPLETE);
+		ExamAssetsPane.ExamSnapshot completedSnapshot = new ExamAssetsPane.ExamSnapshot(completedExam,
+				new ExamAssetExpectations(null, 0, null, 0), List.of(), List.of());
+		robot.interact(() -> examAssetsPane
+				.applySubjectSnapshot(new ExamAssetsPane.SubjectSnapshot(workingSubject, List.of(completedExam),
+						completedSnapshot)));
+		assertEquals("State: COMPLETE", state.getText());
+		assertTrue(state.getWidth() + 0.5 >= state.prefWidth(-1));
+	}
+
 	@Start
 	void start(Stage stage) throws Exception {
+		this.stage = stage;
 		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("exam-assets-preview.db"));
 		database.initialiseSchema();
 		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
-		Subject chemistry = curriculumWriter.insertSubject("Chemistry");
+		workingSubject = curriculumWriter.insertSubject("Chemistry");
 		examWriter = new SqliteExamWriter(database);
 		answerWriter = new SqliteAnswerWriter(database, examWriter);
 		ExamProvider provider = examWriter.insertExamProvider("QCAA");
-		exam = examWriter.insertExam(chemistry, provider, 2026, "External Assessment");
+		exam = examWriter.insertExam(workingSubject, provider, 2026,
+				"A deliberately long External Assessment identity");
 		SourceDocument questionSource = examWriter.insertSourceDocument("subjects/Chemistry/question.pdf");
 		booklet = examWriter.insertExamBooklet(exam, questionSource, "Paper 1",
 				ExamBookletQuestionFormat.WRITTEN_RESPONSE, 10);
@@ -159,7 +256,8 @@ class ExamAssetsPanePreviewTest {
 					return null;
 				}, _ -> false, () -> {
 				}, (_, _, _, _, _, _, _) -> null);
-		examAssetsPane.refresh(chemistry);
+		examAssetsPane.setLegacyQuestionImportHandler(legacyImportRequests::incrementAndGet);
+		examAssetsPane.refresh(workingSubject);
 
 		BorderPane root = new BorderPane();
 		root.setLeft(examAssetsPane);

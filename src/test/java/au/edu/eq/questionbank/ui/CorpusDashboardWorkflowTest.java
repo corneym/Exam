@@ -67,6 +67,7 @@ import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBase;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
@@ -538,7 +539,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void dashboardLegacyImportDialogCancelReturnsHome(FxRobot robot) throws Exception {
+	void dashboardDoesNotExposeLegacyImportAction(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1",
 				ExamBookletQuestionFormat.MIXED);
 		WaitForAsyncUtils.asyncFx(() -> {
@@ -549,26 +550,13 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 			return null;
 		}).get();
 		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
-				() -> robot.lookup("#corpus-dashboard-import-legacy-questions").tryQuery().isPresent());
-		Button importLegacy = lookup(robot, "#corpus-dashboard-import-legacy-questions", Button.class);
-		assertFalse(importLegacy.isDisabled());
-
-		// The import dialog is modal, so schedule the semantic action and keep the test
-		// thread free to close the real DialogPane.
-		Platform.runLater(importLegacy::fire);
-		waitForDialogShowing(robot, "Import Legacy Question Metadata");
-		fireDialogButton(robot, "Cancel");
-		waitForDialogHidden(robot, "Import Legacy Question Metadata");
-
-		// Cancelling a Dashboard-owned intake restores the Dashboard rather than
-		// stranding the user in Exam/Assets.
-		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
 		assertTrue(robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
+		assertTrue(robot.lookup("#corpus-dashboard-import-legacy-questions").tryQuery().isEmpty());
 	}
 
 	@Test
-	void dashboardLegacyImportEntersExamAssetsOwnedWorkflow(FxRobot robot) throws Exception {
+	void examAssetsLegacyImportActionUsesExistingDialogAndStaysInWorkspaceOnCancel(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1",
 				ExamBookletQuestionFormat.MIXED);
 		WaitForAsyncUtils.asyncFx(() -> {
@@ -577,25 +565,26 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		}).get();
 		Node applicationRoot = primaryStage.getScene().getRoot();
 
-		// The workspace changes asynchronously. Every scene-graph
-		// lookup must execute on the JavaFX Application Thread.
 		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
-				() -> nodePresentOnFx(robot, applicationRoot, "#corpus-dashboard-import-legacy-questions"));
-		Button importLegacy = lookupOnFx(robot, applicationRoot, "#corpus-dashboard-import-legacy-questions",
+				() -> nodePresentOnFx(robot, applicationRoot, "#corpus-dashboard-manage-exam-assets"));
+		Button manageExamAssets = lookupOnFx(robot, applicationRoot, "#corpus-dashboard-manage-exam-assets",
 				Button.class);
-		assertFalse(evaluateOnFx(robot, importLegacy::isDisabled));
+		robot.interact(manageExamAssets::fire);
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
+				() -> nodePresentOnFx(robot, applicationRoot, "#exam-assets-workspace"));
+		CheckBox legacyImport = lookupOnFx(robot, applicationRoot, "#exam-assets-legacy-import", CheckBox.class);
+		Button addExam = lookupOnFx(robot, applicationRoot, "#exam-assets-add-new-exam", Button.class);
+
+		// Selecting legacy mode alone is passive and leaves the existing structural
+		// workspace unchanged.
+		robot.interact(legacyImport::fire);
+		assertTrue(evaluateOnFx(robot, legacyImport::isSelected));
+		assertTrue(nodePresentOnFx(robot, applicationRoot, "#exam-assets-workspace"));
 
 		// The import dialog is modal; schedule its opening so
 		// the test thread remains available to inspect and close it.
-		Platform.runLater(importLegacy::fire);
+		Platform.runLater(addExam::fire);
 		waitForDialogShowing(robot, "Import Legacy Question Metadata");
-		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
-				() -> nodePresentOnFx(robot, applicationRoot, "#exam-assets-workspace"));
-		Node examAssetsWorkspace = lookupOnFx(robot, applicationRoot, "#exam-assets-workspace", Node.class);
-		assertTrue(evaluateOnFx(robot, examAssetsWorkspace::isVisible));
-		assertFalse(nodePresentOnFx(robot, applicationRoot, "#exam-assets-import-legacy-questions"));
-		Button returnDashboard = lookupOnFx(robot, applicationRoot, "#exam-assets-return-dashboard", Button.class);
-		assertTrue(evaluateOnFx(robot, () -> returnDashboard.isVisible() && returnDashboard.isManaged()));
 
 		// Inspect the actual showing dialog rather than searching
 		// the application scene during a modal transition.
@@ -606,11 +595,11 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.interact(((Button) cancelNode)::fire);
 		waitForDialogHidden(robot, "Import Legacy Question Metadata");
 
-		// Cancellation returns to Dashboard and removes the
-		// temporary Exam/Assets workspace.
-		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
-				() -> nodePresentOnFx(robot, applicationRoot, "#corpus-dashboard-home"));
-		assertFalse(nodePresentOnFx(robot, applicationRoot, "#exam-assets-workspace"));
+		// The launch point is now Exam/Assets, so cancelling the chooser retains that
+		// workspace and its Dashboard return route.
+		assertTrue(nodePresentOnFx(robot, applicationRoot, "#exam-assets-workspace"));
+		Button returnDashboard = lookupOnFx(robot, applicationRoot, "#exam-assets-return-dashboard", Button.class);
+		assertTrue(evaluateOnFx(robot, () -> returnDashboard.isVisible() && returnDashboard.isManaged()));
 	}
 
 	@Test
