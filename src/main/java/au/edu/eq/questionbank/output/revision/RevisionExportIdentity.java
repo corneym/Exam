@@ -19,7 +19,7 @@ import java.util.Objects;
 public final class RevisionExportIdentity {
 
 	private static final DateTimeFormatter DISPLAY_FORMAT = DateTimeFormatter
-			.ofPattern("d MMM uuuu, HH:mm:ss.SSS z", Locale.ENGLISH);
+			.ofPattern("d MMM uuuu", Locale.ENGLISH);
 	private static final DateTimeFormatter TECHNICAL_FORMAT = DateTimeFormatter
 			.ofPattern("uuuuMMdd'T'HHmmssSSS'Z'", Locale.ENGLISH).withZone(ZoneOffset.UTC);
 
@@ -39,7 +39,7 @@ public final class RevisionExportIdentity {
 	/**
 	 * Returns the human-readable identity suffix.
 	 *
-	 * @return generation date and time with millisecond precision
+	 * @return generation date for human-readable presentation
 	 */
 	public String getDisplayText() {
 		return DISPLAY_FORMAT.format(generatedAt);

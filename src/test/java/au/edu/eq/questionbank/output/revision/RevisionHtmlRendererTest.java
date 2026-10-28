@@ -64,7 +64,7 @@ class RevisionHtmlRendererTest {
 				List.of(questionAsset), List.of());
 		Path outputRoot = tempDir.resolve("identified-output");
 		List<Path> htmlFiles = renderer.render(corpus, outputRoot);
-		String exportTitle = "Chemistry Revision \u2014 24 Sep 2026, 21:18:00.000 AEST";
+		String exportTitle = "Chemistry Revision \u2014 24 Sep 2026";
 
 		assertTrue(Files.readString(outputRoot.resolve("index.html")).contains("<h1>" + exportTitle + "</h1>"));
 		for (Path htmlFile : htmlFiles) {
@@ -311,7 +311,7 @@ class RevisionHtmlRendererTest {
 
 		// Resource metadata uses the single export identity rather than the time at
 		// which this particular page happened to be written.
-		assertTrue(subjectHtml.contains("Generated 24 Sep 2026, 21:18:00.000 AEST"));
+		assertTrue(subjectHtml.contains("Generated 24 Sep 2026"));
 		assertTrue(subjectHtml.contains("href=\"units/unit-10/index.html\""));
 		assertTrue(subjectHtml.contains("1 revision question"));
 		assertTrue(subjectHtml.contains("Revision question"));

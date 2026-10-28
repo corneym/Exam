@@ -99,7 +99,7 @@ class ScormExportServiceIntegrationTest {
 			assertTrue(zip.getEntry("imsmd_rootv1p2p1.xsd") != null);
 			String manifest = new String(zip.getInputStream(zip.getEntry("imsmanifest.xml")).readAllBytes(),
 					StandardCharsets.UTF_8);
-			String exportTitle = "Chemistry Revision \u2014 24 Sep 2026, 21:18:00.000 AEST";
+			String exportTitle = "Chemistry Revision \u2014 24 Sep 2026";
 			assertTrue(manifest.contains("identifier=\"eq-question-bank-subject-1-export-20260924T111800000Z\""));
 			assertTrue(manifest.contains("<imsmd:langstring xml:lang=\"en\">" + exportTitle
 					+ "</imsmd:langstring>"));

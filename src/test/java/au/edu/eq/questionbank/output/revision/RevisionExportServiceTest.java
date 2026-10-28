@@ -39,17 +39,17 @@ class RevisionExportServiceTest {
 	Path tempDir;
 
 	@Test
-	void assignsDistinctIdentitiesWhenTheClockDoesNotAdvance() throws Exception {
+	void assignsDistinctTechnicalIdentitiesWhenTheClockDoesNotAdvance() throws Exception {
 		Fixture fixture = new Fixture(tempDir);
 		RevisionExportResult first = fixture.service
 				.export(new RevisionExportRequest(fixture.chemistry, tempDir.resolve("first-export")));
 		RevisionExportResult second = fixture.service
 				.export(new RevisionExportRequest(fixture.chemistry, tempDir.resolve("second-export")));
 
-		assertNotEquals(first.getExportIdentity().getDisplayText(), second.getExportIdentity().getDisplayText());
+		assertEquals(first.getExportIdentity().getDisplayText(), second.getExportIdentity().getDisplayText());
 		assertNotEquals(first.getExportIdentity().getTechnicalToken(), second.getExportIdentity().getTechnicalToken());
-		assertEquals("24 Sep 2026, 21:18:00.000 AEST", first.getExportIdentity().getDisplayText());
-		assertEquals("24 Sep 2026, 21:18:00.001 AEST", second.getExportIdentity().getDisplayText());
+		assertEquals("24 Sep 2026", first.getExportIdentity().getDisplayText());
+		assertEquals("24 Sep 2026", second.getExportIdentity().getDisplayText());
 	}
 
 	@Test
@@ -61,8 +61,8 @@ class RevisionExportServiceTest {
 		assertTrue(Files.isDirectory(destination));
 		assertTrue(Files.isRegularFile(destination.resolve("index.html")));
 		String subjectHtml = Files.readString(destination.resolve("index.html"));
-		assertTrue(subjectHtml.contains("Generated 24 Sep 2026, 21:18:00.000 AEST"));
-		assertTrue(subjectHtml.contains("<title>Chemistry Revision \u2014 24 Sep 2026, 21:18:00.000 AEST</title>"));
+		assertTrue(subjectHtml.contains("Generated 24 Sep 2026"));
+		assertTrue(subjectHtml.contains("<title>Chemistry Revision \u2014 24 Sep 2026</title>"));
 		assertEquals("20260924T111800000Z", result.getExportIdentity().getTechnicalToken());
 		assertTrue(Files.isRegularFile(destination.resolve(Path.of("assets", "revision.css"))));
 		assertEquals(0, result.getStatistics().getUniqueApplicableQuestions());
