@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.ui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -2393,6 +2394,8 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		prepareExamAndClassification(robot);
 		TextField search = lookup(robot, "#curriculum-descriptor-search", TextField.class);
 		ListView<DescriptorMatch> results = listView(robot, "#curriculum-descriptor-search-results");
+		ComboBox<CurriculumNode> units = comboBox(robot, "#curriculum-unit");
+		ComboBox<CurriculumNode> topics = comboBox(robot, "#curriculum-topic");
 		CurriculumSelectionModel model = field(application, "curriculumSelectionModel", CurriculumSelectionModel.class);
 
 		// Choose the actual Descriptor through Search descriptors first.
@@ -2424,6 +2427,24 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Question persisted = repository.findById(saved.getId()).orElseThrow();
 		assertEquals(selected, saved.getClassification());
 		assertEquals(selected, persisted.getClassification());
+
+		// Successful Save deliberately resets classification for the next Question. The
+		// Unit must clear both visually and in its selection model; otherwise Topic is
+		// disabled while a stale Unit remains visible.
+		assertNull(units.getValue());
+		assertNull(units.getSelectionModel().getSelectedItem());
+		assertNull(model.getUnit());
+		assertTrue(topics.getItems().isEmpty());
+		assertTrue(topics.isDisabled());
+
+		// The next Question can begin with a legitimate partial Unit selection, which
+		// must immediately make its Topic choices usable again.
+		robot.interact(() -> units.getSelectionModel().selectFirst());
+		assertEquals(units.getValue(), model.getUnit());
+		assertFalse(topics.isDisabled());
+		assertFalse(topics.getItems().isEmpty());
+		robot.interact(() -> topics.getSelectionModel().selectFirst());
+		assertEquals(topics.getValue(), model.getTopic());
 	}
 
 	@Test

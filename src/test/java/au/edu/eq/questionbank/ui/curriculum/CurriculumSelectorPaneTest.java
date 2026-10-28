@@ -63,16 +63,59 @@ public class CurriculumSelectorPaneTest {
 	private Unit unit3;
 
 	@Test
+	public void classificationResetClearsVisibleUnitAndRestoresTopicCascade(FxRobot robot) {
+		@SuppressWarnings("unchecked")
+		ComboBox<Unit> units = robot.lookup("#curriculum-unit").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Topic> topics = robot.lookup("#curriculum-topic").queryAs(ComboBox.class);
+
+		// Repeat the reported transition because a stale ComboBox value depended on
+		// JavaFX selection/value synchronisation rather than persisted classification.
+		for (int attempt = 0; attempt < 3; attempt++) {
+			robot.interact(() -> pane.selectClassificationPath(descriptor3111));
+			assertEquals(unit3, units.getValue());
+			assertEquals(topic31, topics.getValue());
+
+			robot.interact(pane::clearClassificationBelowSubject);
+			assertNull(units.getValue());
+			assertNull(units.getSelectionModel().getSelectedItem());
+			assertNull(model.getUnit());
+			assertTrue(topics.getItems().isEmpty());
+			assertTrue(topics.isDisabled());
+			assertNull(model.getClassification());
+
+			// A new partial Unit selection is valid and must immediately repopulate the
+			// dependent Topic control for the next Question.
+			robot.interact(() -> units.getSelectionModel().select(unit3));
+			assertEquals(unit3, units.getValue());
+			assertEquals(unit3, model.getUnit());
+			assertFalse(topics.isDisabled());
+			assertTrue(topics.getItems().contains(topic31));
+			robot.interact(() -> topics.getSelectionModel().select(topic31));
+			assertEquals(topic31, topics.getValue());
+			assertEquals(topic31, model.getTopic());
+		}
+	}
+
+	@Test
 	public void changingSyllabusClearsCodeAndClassificationButRetainsSubject(FxRobot robot) {
 		TextField codeField = robot.lookup("#curriculum-code").queryAs(TextField.class);
 		@SuppressWarnings("unchecked")
 		ComboBox<SyllabusVersion> syllabuses = robot.lookup("#curriculum-syllabus").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Unit> units = robot.lookup("#curriculum-unit").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Topic> topics = robot.lookup("#curriculum-topic").queryAs(ComboBox.class);
 		robot.clickOn(codeField).write("3.1.1.1");
 		robot.interact(() -> syllabuses.setValue(syllabus2019));
 		assertEquals(chemistry, model.getSubject());
 		assertEquals(syllabus2019, model.getSyllabusVersion());
 		assertEquals("", codeField.getText());
+		assertNull(units.getValue());
+		assertNull(units.getSelectionModel().getSelectedItem());
 		assertNull(model.getUnit());
+		assertTrue(topics.getItems().isEmpty());
+		assertTrue(topics.isDisabled());
 		assertNull(model.getClassification());
 		assertFalse(pane.classificationSelectedProperty().get());
 	}
