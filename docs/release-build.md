@@ -1,311 +1,178 @@
-````markdown
-# Windows Release Build
+# Windows Release Build and Upgrade
 
-> **Current published release:** 0.2  
-> **Release source:** Sprint 12 / PR #88  
-> **Release entry point:** `scripts/build-release.ps1`  
-> **Packaging platform:** Windows  
-> **Updated:** 5 October 2026
+> **Latest published release (28 October 2026):** [v0.7](https://github.com/corneym/Exam/releases/tag/v0.7)
+>
+> **Current Maven version:** `0.7`
+>
+> **Release entry point:** `scripts/build-release.ps1` (Windows)
+>
+> **Status of 1.0:** Planned, not yet built, tagged or published
 
-This document describes the repeatable Exam Question Bank Windows release process. The scripts and `pom.xml` remain authoritative if this document and implementation ever disagree.
+This guide describes the current Windows MSI release process and the specific checks for the planned 1.0 release. For current release availability, use [GitHub Releases](https://github.com/corneym/Exam/releases/latest). Source code, the Maven POM and the scripts are authoritative if a document becomes outdated.
 
 ## 1. Release architecture
 
-```text
-Maven project
+The release pipeline is:
+
+~~~text
+Maven source and dependencies
     ↓
-release gates
+Spotless, non-UI tests, headless JavaFX tests, strict Javadoc
     ↓
-application JAR + runtime dependencies
+application JAR and dependencies
     ↓
-jpackage application image + private Java runtime
+Java 25 jpackage app image with private Java runtime
     ↓
-per-user Windows MSI
+per-user Windows MSI (currently unsigned)
     ↓
-local immutable release archive
+immutable local version archive
     ↓
-GitHub Release asset
-```
+manual verification, tag and GitHub Release
+~~~
 
-The final distributable artefact is the MSI, not the development JAR.
+The final distributable is the MSI, not the development JAR. The release does not contain examination PDFs, curriculum source documents, user databases or collected Questions.
 
-Packaging scripts:
+| File | Role |
+| --- | --- |
+| `scripts/build-release.ps1` | Formal release gates, version and archive management |
+| `scripts/package-windows-app-image.ps1` | Fresh Java 25 application image |
+| `scripts/package-windows-installer.ps1` | MSI from the app image; may reuse an existing image |
+| `.github/workflows/ci.yml` | Ubuntu non-UI and partitioned headless JavaFX tests |
+| `.github/workflows/codeql.yml` | CodeQL Java security and quality scan |
+| `.github/workflows/windows-msi-check.yml` | Manually triggered **unsigned** Windows MSI packaging test |
 
-```text
-scripts/build-release.ps1
-scripts/package-windows-app-image.ps1
-scripts/package-windows-installer.ps1
-```
+The unsigned Windows CI workflow preserves the Maven version, checks that the application launcher remains byte-for-byte unchanged during MSI packaging, checks the version and signing status, and records SHA-256 hashes and the source commit. Its build artefacts are temporary (three-day retention); they are **not** official GitHub Releases.
 
-`build-release.ps1` is the normal formal entry point. Lower-level scripts are for packaging development and diagnosis.
+## 2. Release prerequisites
 
-## 2. Prerequisites
+- Windows with Git and the repository Maven Wrapper.
+- Java 25 JDK with `jpackage` and jmods.
+- WiX available to `jpackage` (`wix.exe` or the supported `candle.exe` / `light.exe` toolchain). The Windows CI test pins WiX 7.0.0 and its Util extension.
+- A clean Git working tree on the intended release source commit, with the relevant PRs merged and GitHub CI reviewed.
+- An independently retained **manual full backup** of the authoritative data, plus a separate, isolated data copy for installation and upgrade checks.
 
-The tested Windows packaging architecture uses:
+Do not point Eclipse/development and production installations at the same active data root. Do not run unverified release candidates against the authoritative production data.
 
-- JDK 25 with `jpackage`;
-- repository Maven Wrapper;
-- WiX Toolset 7.0.0;
-- `WixToolset.Util.wixext` 7.0.0 where required by the installed WiX distribution;
-- Git.
+## 3. Version, source and upgrade identity
 
-The package scripts reject a non-Java-25 `jpackage`.
+The top-level Maven version in `pom.xml` is the version source for the application, About dialog, backup metadata and generated installer. The version scheme accepted by `build-release.ps1` is `major.minor` (for example, `0.7` or `1.0`), **not** `1.0-rc1`.
 
-## 3. Authoritative version
+When `-Version` is omitted, the release script increments the *minor* part of the version already in the POM. Thus, from `0.7` it would select `0.8`; after the POM is changed to `1.0`, it would select `1.1`. **Always pass `-Version 1.0` explicitly when making version 1.0.**
 
-The top-level Maven version in `pom.xml` is authoritative. Maven filters the same value into the packaged application properties; About, Version Information, backup metadata, application-image metadata and MSI metadata therefore share one source.
+For 1.0, first put the agreed version change through a separate PR, merge it and verify that `main` records `1.0`. Then run the formal build from that exact clean revision:
 
-After the successful Release 0.2 gate, `pom.xml` records:
-
-```xml
-<version>0.2</version>
-```
-
-Maven, the application and the successfully produced MSI use **0.2**. PR #88 merged to protected `main` as `8ba714e2ef7ff07eebb2375021e1e751d4876e47`; post-merge CI and CodeQL passed, and Release 0.2 was subsequently published through GitHub Releases.
-
-Release versions use `major.minor`, for example `0.1`, `0.10`, `1.0`.
-
-When `build-release.ps1` runs without `-Version`, it treats the current Maven version as the previous successful release identity and increments the minor component:
-
-```text
-0.1 → 0.2
-0.9 → 0.10
-1.4 → 1.5
-```
-
-Major transitions are explicit:
-
-```powershell
+~~~powershell
 .\scripts\build-release.ps1 -Version 1.0
-```
+~~~
 
-If the release script changes `pom.xml` and a later gate fails, it restores the original POM/version.
+A failed release gate restores the original POM if the script changed it. A successful gate leaves the selected release version in the POM. The formal release should not depend on an uncommitted version change; the future `v1.0` tag must identify source whose POM already records `1.0`.
 
-## 4. Clean-tree rule
+The Windows MSI has a fixed upgrade UUID:
 
-A formal release requires a clean Git working tree.
+~~~text
+29eeeeb7-cbe8-5d98-a67f-36240572d76c
+~~~
 
-Normal command:
+Do **not** change that identity between versions. The installer uses `--win-per-user-install` and creates a Start Menu entry.
 
-```powershell
-.\scripts\build-release.ps1
-```
+## 4. Formal release gates
 
-`-AllowDirty` exists for development and validation of release infrastructure and is not the normal release procedure.
-
-## 5. Release archive protection
-
-Successful installers are preserved outside Maven's disposable `target` directory.
-
-The archive structure is:
-
-```text
-release-artifacts\
-    0.1\
-        Exam Question Bank-0.1.msi
-    0.2\
-        Exam Question Bank-0.2.msi
-    0.3\
-        Exam Question Bank-0.3.msi
-```
-
-`release-artifacts` is deliberately excluded from Git by `.gitignore`.
-
-The release script creates the required archive and version directories automatically. No manual directory creation is required for a normal release.
-
-Before changing `pom.xml` or running any release gates, `build-release.ps1` checks whether the requested version already contains an archived MSI. If one exists, the script fails immediately.
-
-For example:
-
-```text
-Release archive already contains an MSI for version 0.2:
-D:\git\Exam\release-artifacts\0.2\Exam Question Bank-0.2.msi.
-Use a new release version.
-```
-
-An archived release installer is immutable. Do not overwrite an archived MSI with a later rebuild of the same version.
-
-Testing demonstrated that MSI output is not byte-for-byte reproducible across equivalent builds, so a newly generated MSI must not silently replace the historical artefact for an already released version.
-
-## 6. Release gates
-
-For a version that is not already archived, the release script runs these gates in order:
+`build-release.ps1` performs, in this order:
 
 1. `spotless:check`;
-2. non-UI tests;
-3. headless UI tests;
-4. strict Javadoc;
-5. Windows installer packaging.
+2. the non-UI Maven test suite;
+3. the `-Pheadless-ui-tests` suite;
+4. strict Javadoc, with `failOnWarnings=true`;
+5. the Windows MSI packaging process.
 
-Equivalent commands for the first four gates include:
+The corresponding Maven commands are:
 
-```powershell
+~~~powershell
 .\mvnw.cmd spotless:check
 .\mvnw.cmd "-Dsurefire.skipAfterFailureCount=1" test
 .\mvnw.cmd -Pheadless-ui-tests "-Dsurefire.skipAfterFailureCount=1" test
 .\mvnw.cmd javadoc:javadoc
-```
+~~~
 
-Javadoc runs with doclint and `failOnWarnings=true`; warnings are release failures, not advisory output.
+The build rejects a dirty working tree unless `-AllowDirty` is explicitly used for development of the build process. Do **not** use `-AllowDirty` for a published release.
 
-No MSI is accepted unless all preceding gates pass.
+The app-image script builds the JAR, collects runtime dependencies and packages `au.edu.eq.questionbank.Launcher` with Java 25 `jpackage --type app-image`. The MSI script packages that app image with `jpackage --type msi` and verifies that the launcher hash is unchanged.
 
-## 7. Application-image packaging
+By default, the MSI script creates a fresh app image. `-UseExistingAppImage` can package an already-built image of the same Maven version without rebuilding it. This preserves a future executable-signing boundary but **does not sign** anything today.
 
-`package-windows-app-image.ps1` performs a fresh package build, collects runtime dependencies and invokes Java 25 `jpackage --type app-image`.
+## 5. Immutable archives and provenance
 
-Packaged main class:
+The final MSI under `target/installer/` is copied after successful gates to:
 
-```text
-au.edu.eq.questionbank.Launcher
-```
+~~~text
+release-artifacts/<version>/<generated MSI filename>
+~~~
 
-The application is packaged as a class-path application with its own stripped Java runtime.
+The `release-artifacts/` directory is ignored by Git and lies outside Maven's disposable `target/` tree.
 
-Output:
+An archived MSI for a version prevents another formal build of that version. Never silently replace a historical MSI. MSI bytes are not guaranteed to be reproducible even from equivalent source.
 
-```text
-target\package\Exam Question Bank\Exam Question Bank.exe
-```
+Inspect the *actual generated filename*: previously published assets have sometimes used dots instead of spaces in their names. The release script checks that the filename ends in `-<version>.msi`.
 
-Everything beneath `target` is generated build output and may be removed by Maven `clean`.
+From PowerShell, calculate the SHA-256 digest of the archived 1.0 MSI (after it has been built):
 
-## 8. MSI packaging and local archival
+~~~powershell
+Get-ChildItem -LiteralPath '.\release-artifacts\1.0' -Filter '*.msi' |
+    Get-FileHash -Algorithm SHA256 |
+    Format-List Path, Hash
+~~~
 
-`package-windows-installer.ps1` rebuilds a fresh app image and creates a per-user Start-menu MSI.
+Record the exact digest and release-source commit. Confirm that the subsequently uploaded GitHub Release asset has the same bytes. A checksum detects mismatch when compared with an independently obtained expected value; it does **not** provide a trusted publisher identity.
 
-The Windows Installer upgrade UUID is:
+### Rejected unpublished candidate
 
-```text
-29eeeeb7-cbe8-5d98-a67f-36240572d76c
-```
+`build-release.ps1` has no special release-candidate version suffix or candidate-archive lifecycle. An unsuccessful *manual acceptance test after a successful build* does not automatically undo or remove its archive. **Do not rebuild over the same archive or publish a failed candidate.** Resolve the defect and make an explicit archive/version decision before generating another candidate; never overwrite an already published release.
 
-Do not change this UUID for later releases.
+## 6. Writable data, backup and recovery
 
-Temporary build output follows this pattern:
+The installed application keeps writable data separate from its program files. Default Windows paths are:
 
-```text
-target\installer\Exam Question Bank-<version>.msi
-```
-
-After every release gate and installer-version check succeeds, `build-release.ps1` copies the installer to:
-
-```text
-release-artifacts\<version>\Exam Question Bank-<version>.msi
-```
-
-For Release 0.2:
-
-```text
-release-artifacts\0.2\Exam Question Bank-0.2.msi
-```
-
-The local archived copy is the durable local release artefact. The copy under `target` remains disposable.
-
-## 9. GitHub Releases
-
-Published installers belong in **GitHub Releases**, not as committed binary files in the Git repository.
-
-Each formal release should have:
-
-```text
-Git tag:        v<version>
-Release title:  Exam Question Bank <version>
-Release asset:  Exam Question Bank-<version>.msi
-```
-
-For example:
-
-```text
-Tag:            v0.2
-Release title:  Exam Question Bank 0.2
-Asset:          Exam Question Bank-0.2.msi
-```
-
-The tag must identify the source for that release rather than whatever happens to be the current `main` commit when the GitHub Release is created.
-
-After the local release build and installed-MSI verification succeed:
-
-1. ensure the appropriate `v<version>` Git tag identifies the release source;
-2. create or open the corresponding GitHub Release;
-3. upload the archived MSI from `release-artifacts\<version>`;
-4. publish the Release;
-5. confirm the MSI appears under the Release's downloadable assets.
-
-The script does not currently create the Git tag, GitHub Release or upload the MSI automatically. Those remain explicit release-management steps.
-
-GitHub Releases for **0.1** and **0.2** have been created and their reconstructed/preserved MSI installers have been uploaded.
-
-## 10. Reconstructing a historical installer
-
-If a historical installer has been lost but its release source remains in Git, it may be reconstructed from a detached worktree without changing the current development checkout.
-
-For example, Release 0.2 may be rebuilt from its historical release source in a separate worktree and the resulting MSI copied into:
-
-```text
-release-artifacts\0.2\
-```
-
-A reconstructed MSI represents the same application source and release version, but it must not be assumed to have the same binary hash as the originally generated installer. MSI packaging has been observed to produce different bytes across equivalent builds.
-
-Once a historical version has been archived and published through GitHub Releases, later rebuilds must not replace that preserved artefact.
-
-## 11. Writable configuration and application data
-
-Installed program files do not own mutable user configuration or bank data.
-
-Windows configuration:
-
-```text
+~~~text
 %LOCALAPPDATA%\Exam Question Bank Data\questionbank.properties
-```
-
-Default first-run data root:
-
-```text
 %LOCALAPPDATA%\Exam Question Bank Data\data
-```
+~~~
 
-The writable directory remains a sibling of the installer-owned application directory so uninstall cannot remove user-owned configuration or data.
+The data root is configurable, and `ApplicationPaths` provides a user-home fallback if `LOCALAPPDATA` is unavailable.
 
-If `LOCALAPPDATA` is unavailable, `ApplicationPaths` falls back beneath the user home directory.
+- **Automatic backups on normal application exit** are *database-only*. They contain no managed PDFs or curriculum assets, and the default retention policy keeps the ten newest automatic backups in the data root's `backups/automatic/` directory.
+- **Manual full backups** created using **File → Backup Now...** contain the database and complete managed `subjects/` hierarchy, including stored Exam/Answer PDFs, curriculum source files and other Subject-managed assets.
+- A full backup does **not** include the separate `questionbank.properties` configuration file, unmanaged files outside `subjects/`, or other unrelated files beneath the data root. Preserve any required settings and independently sourced originals separately.
+- Before a destructive restore, the application creates a full pre-restore safety backup at `backups/pre-restore/`; it attempts rollback if replacement fails. Abrupt interruption cannot be assumed to trigger that rollback. Keep an independent full backup outside the active data root.
 
-## 12. Post-build smoke test
+The source of truth remains the SQLite database together with its referenced managed assets. Do not treat synchronisation between computers as an alternative to independently retained backups. The installed Help provides user-facing backup and recovery guidance.
 
-After the release gate produces and archives the intended MSI, install and launch it outside Eclipse.
+## 7. Version 1.0 acceptance — planned, not yet performed
 
-Verify at minimum:
+Existing operational evidence is already substantial: the maintainer has used HTML and SCORM outputs through QLearn, exercised the core workflows extensively, upgraded and uninstalled releases 0.2–0.7 on two Windows computers, and repeatedly transferred a growing corpus using backup and restore. These are accepted historical checks; do not repeat the entire programme simply to publish 1.0.
 
-- application starts normally;
-- expected existing bank data is visible with an existing configured data root;
-- Corpus Dashboard opens as the normal application home for the selected Working Subject;
-- Help opens;
-- About reports the intended release version;
-- application closes normally.
+For the **exact** 1.0 MSI, complete the following additional checks:
 
-Then uninstall and verify the user configuration and configured data root survive unchanged.
+1. Confirm successful release gates on the intended release-source commit, and save the archived MSI's SHA-256.
+2. With **0.7** installed on a test computer and an **isolated restored corpus**, close the application and install the 1.0 MSI over it.
+3. Confirm About reports 1.0, the Dashboard displays the expected Subjects/Exams, representative Question and Answer PDFs load, and the application closes normally.
+4. Uninstall the test installation and confirm that the test configuration and user data remain intact. Test fresh installation if the release package or installation procedure changed materially.
+5. Verify the exact archived MSI and the eventual published asset share a digest. Record results and any known limitations.
 
-Only after these checks should the archived MSI be treated as the release artefact to publish through GitHub Releases.
+Never use the authoritative production corpus for a candidate upgrade check. No new tests, features or migration code are implied unless a concrete failure is found.
 
-Release 0.1 passed the install/launch/uninstall/configuration-survival check.
+## 8. Publication
 
-Release 0.2 also passed manual installed-MSI verification outside Eclipse: Dashboard startup, existing persisted data readable, Help opens, About reports 0.2, normal shutdown, successful uninstall, and configuration/data survival.
+After the exact archived MSI passes acceptance:
 
-## 13. Release 0.2 closeout
+1. Confirm `v1.0` will refer to the source commit actually used for the build and that `pom.xml` at that commit records `1.0`.
+2. Create the `v1.0` tag and GitHub Release manually. The build script does not tag, publish or upload artefacts.
+3. Upload the **unchanged archived MSI**. Publish its SHA-256, source commit, a brief version history, install/upgrade guidance and known limitations.
+4. Verify the public download's digest matches the accepted archive. Keep the original archive immutable.
 
-Release 0.2 closeout is complete.
+### Unsigned installer limitation
 
-Sprint 12 merged through PR #88. The merge commit was `8ba714e2ef7ff07eebb2375021e1e751d4876e47`. Final PR-head CI was green before merge, and post-merge CI and CodeQL passed.
+As of 28 October 2026 the published 0.7 MSI and existing release packaging process are **unsigned**; 1.0 must also be described as unsigned unless independently implemented signing has been verified. Windows may show unknown-publisher, reputation or organisation-policy warnings. No trusted free signing mechanism has been approved. Do not tell recipients to disable Windows security controls or bypass an employer's policies.
 
-`scripts/build-release.ps1` completed all automated release gates and produced the Release 0.2 MSI. Maven, the application and the MSI all reported version **0.2**.
+See [Code signing policy](code-signing-policy.md) and [Issue #217](https://github.com/corneym/Exam/issues/217). Zero-cost signing remains a constraint and Microsoft Store/MSIX is not planned.
 
-The installed-MSI checks in section 12 passed, including uninstall and configuration/data survival.
-
-The formal gate exposed hard-coded Release 0.1 expectations in `ApplicationVersionTest` and the About-dialog `ApplicationLifecycleWorkflowTest`; both release-independent test defects were fixed before the successful Release 0.2 gate.
-
-Release 0.2 is now preserved both locally under `release-artifacts\0.2` and as a downloadable GitHub Release asset.
-
-Release 0.1 has also been reconstructed/preserved and published as a GitHub Release.
-
-Preserve `docs/design/sprint-12-release-0.2.md` as the detailed historical Release 0.2 record.
-````
+For historical Release 0.2 details, retain [Sprint 12 release record](design/sprint-12-release-0.2.md) rather than treating those older instructions as the active release procedure.
