@@ -16,8 +16,10 @@ class RevisionExportIdentityTest {
 				123_000_000, ZoneId.of("Australia/Brisbane")));
 
 		assertEquals("24 Sep 2026", identity.getDisplayText());
-		assertEquals("Chemistry Revision \u2014 24 Sep 2026", identity.titleFor("Chemistry"));
+		assertEquals("Chemistry Exam Question Corpus (24 Sep 2026)", identity.titleFor("Chemistry"));
 		assertEquals("20260924T111800123Z", identity.getTechnicalToken());
+		assertEquals("04 Oct 2026", new RevisionExportIdentity(ZonedDateTime.of(2026, 10, 4, 9, 0, 0, 0,
+				ZoneId.of("Australia/Brisbane"))).getDisplayText());
 	}
 
 	@Test

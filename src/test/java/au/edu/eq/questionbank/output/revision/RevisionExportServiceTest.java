@@ -62,7 +62,7 @@ class RevisionExportServiceTest {
 		assertTrue(Files.isRegularFile(destination.resolve("index.html")));
 		String subjectHtml = Files.readString(destination.resolve("index.html"));
 		assertTrue(subjectHtml.contains("Generated 24 Sep 2026"));
-		assertTrue(subjectHtml.contains("<title>Chemistry Revision \u2014 24 Sep 2026</title>"));
+		assertTrue(subjectHtml.contains("<title>Chemistry Exam Question Corpus (24 Sep 2026)</title>"));
 		assertEquals("20260924T111800000Z", result.getExportIdentity().getTechnicalToken());
 		assertTrue(Files.isRegularFile(destination.resolve(Path.of("assets", "revision.css"))));
 		assertEquals(0, result.getStatistics().getUniqueApplicableQuestions());

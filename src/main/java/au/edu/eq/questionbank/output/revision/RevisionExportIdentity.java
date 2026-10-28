@@ -19,7 +19,7 @@ import java.util.Objects;
 public final class RevisionExportIdentity {
 
 	private static final DateTimeFormatter DISPLAY_FORMAT = DateTimeFormatter
-			.ofPattern("d MMM uuuu", Locale.ENGLISH);
+			.ofPattern("dd MMM uuuu", Locale.ENGLISH);
 	private static final DateTimeFormatter TECHNICAL_FORMAT = DateTimeFormatter
 			.ofPattern("uuuuMMdd'T'HHmmssSSS'Z'", Locale.ENGLISH).withZone(ZoneOffset.UTC);
 
@@ -67,7 +67,7 @@ public final class RevisionExportIdentity {
 	 * Builds the subject-based revision title for this export.
 	 *
 	 * @param subjectName exported Subject name
-	 * @return Subject revision title followed by this identity
+	 * @return Subject Exam Question Corpus title including the export date
 	 * @throws NullPointerException     if {@code subjectName} is null
 	 * @throws IllegalArgumentException if {@code subjectName} is blank
 	 */
@@ -76,6 +76,6 @@ public final class RevisionExportIdentity {
 		if (subjectName.isBlank()) {
 			throw new IllegalArgumentException("subjectName must not be blank");
 		}
-		return subjectName + " Revision \u2014 " + getDisplayText();
+		return subjectName + " Exam Question Corpus (" + getDisplayText() + ")";
 	}
 }
