@@ -49,8 +49,31 @@ class RevisionHtmlRendererTest {
 
 	private static final ZonedDateTime GENERATED_AT = ZonedDateTime.of(2026, 9, 24, 21, 18, 0, 0,
 			ZoneId.of("Australia/Brisbane"));
+	private static final RevisionExportIdentity EXPORT_IDENTITY = new RevisionExportIdentity(GENERATED_AT);
 	@TempDir
 	Path tempDir;
+
+	@Test
+	void rendersOneReadableIdentityInEveryHtmlTitleAndVisiblePageHeader() throws Exception {
+		Fixture fixture = new Fixture();
+		RevisionCorpus corpus = fixture.createCorpus(
+				_ -> List.of(new QuestionApplicabilityMatch(fixture.noAnswerQuestion, fixture.nestedDescriptor)));
+		RevisionQuestionAsset questionAsset = new RevisionQuestionAsset(fixture.noAnswerQuestion,
+				Path.of("assets", "questions", "question-2.png"));
+		RevisionHtmlRenderer renderer = fixture.createRenderer(corpus, RevisionGroupingMode.SUBTOPIC,
+				List.of(questionAsset), List.of());
+		Path outputRoot = tempDir.resolve("identified-output");
+		List<Path> htmlFiles = renderer.render(corpus, outputRoot);
+		String exportTitle = "Chemistry Revision \u2014 24 Sep 2026, 21:18:00.000 AEST";
+
+		assertTrue(Files.readString(outputRoot.resolve("index.html")).contains("<h1>" + exportTitle + "</h1>"));
+		for (Path htmlFile : htmlFiles) {
+			String html = Files.readString(htmlFile);
+			assertTrue(html.contains("<title>") && html.contains(exportTitle + "</title>"),
+					() -> "Missing export identity from document title: " + htmlFile);
+			assertTrue(html.contains(exportTitle), () -> "Missing visible export identity: " + htmlFile);
+		}
+	}
 
 	@Test
 	void descriptorModeRendersDescriptorHeadingInsideSubtopicPage() throws Exception {
@@ -286,9 +309,9 @@ class RevisionHtmlRendererTest {
 		assertTrue(htmlFiles.contains(descriptorTopic.toAbsolutePath().normalize()));
 		String subjectHtml = Files.readString(subjectIndex);
 
-		// Resource metadata uses the single export timestamp rather than the time at
+		// Resource metadata uses the single export identity rather than the time at
 		// which this particular page happened to be written.
-		assertTrue(subjectHtml.contains("Generated 24 Sep 2026, 21:18 AEST"));
+		assertTrue(subjectHtml.contains("Generated 24 Sep 2026, 21:18:00.000 AEST"));
 		assertTrue(subjectHtml.contains("href=\"units/unit-10/index.html\""));
 		assertTrue(subjectHtml.contains("1 revision question"));
 		assertTrue(subjectHtml.contains("Revision question"));
@@ -519,14 +542,14 @@ class RevisionHtmlRendererTest {
 		private RevisionHtmlRenderer createRenderer(RevisionCorpus corpus, List<RevisionQuestionAsset> questionAssets,
 				List<RevisionAnswerAsset> answerAssets, List<RevisionSharedContextAsset> sharedContextAssets) {
 			return new RevisionHtmlRenderer(new RevisionPresentationPlanner().plan(corpus), questionAssets,
-					answerAssets, sharedContextAssets, GENERATED_AT);
+					answerAssets, sharedContextAssets, EXPORT_IDENTITY);
 		}
 
 		private RevisionHtmlRenderer createRenderer(RevisionCorpus corpus, RevisionGroupingMode groupingMode,
 				List<RevisionQuestionAsset> questionAssets, List<RevisionAnswerAsset> answerAssets) {
 			RevisionPresentationPlanner planner = new RevisionPresentationPlanner();
 			return new RevisionHtmlRenderer(planner.plan(corpus, groupingMode), questionAssets, answerAssets, List.of(),
-					GENERATED_AT);
+					EXPORT_IDENTITY);
 		}
 	}
 }

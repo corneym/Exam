@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
+import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilderFactory;
 
 import org.junit.jupiter.api.Test;
@@ -83,6 +84,9 @@ class ScormManifestWriterTest {
 		assertEquals("1", manifest.getAttribute("version"));
 		assertEquals("ADL SCORM", text(document, "schema"));
 		assertEquals("1.2", text(document, "schemaversion"));
+		Element metadataTitle = firstMetadataElement(document, "langstring");
+		assertEquals("Chemistry Revision", metadataTitle.getTextContent());
+		assertEquals("en", metadataTitle.getAttributeNS(XMLConstants.XML_NS_URI, "lang"));
 		Element organizations = firstElement(document, "organizations");
 		assertEquals("organization_1", organizations.getAttribute("default"));
 		Element organization = firstElement(document, "organization");
@@ -109,6 +113,11 @@ class ScormManifestWriterTest {
 	private Element firstElement(Document document, String localName) {
 		NodeList nodes = document.getElementsByTagNameNS(ScormManifestWriter.IMS_CONTENT_PACKAGING_NAMESPACE,
 				localName);
+		return (Element) nodes.item(0);
+	}
+
+	private Element firstMetadataElement(Document document, String localName) {
+		NodeList nodes = document.getElementsByTagNameNS(ScormManifestWriter.IMS_METADATA_NAMESPACE, localName);
 		return (Element) nodes.item(0);
 	}
 

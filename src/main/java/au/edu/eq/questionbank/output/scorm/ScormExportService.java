@@ -12,6 +12,7 @@ import java.util.stream.Stream;
 
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.output.revision.RevisionExportIdentity;
 import au.edu.eq.questionbank.output.revision.RevisionExportProgressListener;
 import au.edu.eq.questionbank.output.revision.RevisionExportRequest;
 import au.edu.eq.questionbank.output.revision.RevisionExportResult;
@@ -133,8 +134,10 @@ public final class ScormExportService {
 			progress.update("Adding SCORM support files...", 0, 0);
 			schemaSupport.copyTo(revisionRoot);
 			progress.update("Writing SCORM manifest...", 0, 0);
-			String manifestIdentifier = "eq-question-bank-subject-" + request.getSubject().getId();
-			String title = request.getSubject().getName() + " Revision";
+			RevisionExportIdentity exportIdentity = revisionResult.getExportIdentity();
+			String manifestIdentifier = "eq-question-bank-subject-" + request.getSubject().getId() + "-export-"
+					+ exportIdentity.getTechnicalToken();
+			String title = exportIdentity.titleFor(request.getSubject().getName());
 			manifestWriter.write(revisionRoot, manifestIdentifier, title, Path.of("index.html"), contentFiles);
 			progress.update("Validating SCORM package...", 0, 0);
 

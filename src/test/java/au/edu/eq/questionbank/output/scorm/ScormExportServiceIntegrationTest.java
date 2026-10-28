@@ -10,6 +10,9 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.zip.ZipFile;
 
@@ -51,8 +54,25 @@ import au.edu.eq.questionbank.service.revision.RevisionPresentationPlanner;
 
 class ScormExportServiceIntegrationTest {
 
+	private static final Clock FIXED_CLOCK = Clock.fixed(Instant.parse("2026-09-24T11:18:00Z"),
+			ZoneId.of("Australia/Brisbane"));
 	@TempDir
 	Path tempDir;
+
+	@Test
+	void assignsDistinctPackageIdentitiesWhenTheClockDoesNotAdvance() throws Exception {
+		Fixture fixture = new Fixture(tempDir);
+		Path firstDestination = tempDir.resolve("Chemistry-first.zip");
+		Path secondDestination = tempDir.resolve("Chemistry-second.zip");
+		fixture.service.export(new ScormExportRequest(fixture.chemistry, firstDestination));
+		fixture.service.export(new ScormExportRequest(fixture.chemistry, secondDestination));
+
+		String firstManifest = readZipEntry(firstDestination, "imsmanifest.xml");
+		String secondManifest = readZipEntry(secondDestination, "imsmanifest.xml");
+		assertTrue(firstManifest.contains("identifier=\"eq-question-bank-subject-1-export-20260924T111800000Z\""));
+		assertTrue(secondManifest.contains("identifier=\"eq-question-bank-subject-1-export-20260924T111800001Z\""));
+		assertFalse(firstManifest.equals(secondManifest));
+	}
 
 	@Test
 	void exportsCompleteScormZipFromStoredPdfRegions() throws Exception {
@@ -79,6 +99,11 @@ class ScormExportServiceIntegrationTest {
 			assertTrue(zip.getEntry("imsmd_rootv1p2p1.xsd") != null);
 			String manifest = new String(zip.getInputStream(zip.getEntry("imsmanifest.xml")).readAllBytes(),
 					StandardCharsets.UTF_8);
+			String exportTitle = "Chemistry Revision \u2014 24 Sep 2026, 21:18:00.000 AEST";
+			assertTrue(manifest.contains("identifier=\"eq-question-bank-subject-1-export-20260924T111800000Z\""));
+			assertTrue(manifest.contains("<imsmd:langstring xml:lang=\"en\">" + exportTitle
+					+ "</imsmd:langstring>"));
+			assertTrue(manifest.contains("<title>" + exportTitle + "</title>"));
 			assertTrue(manifest.contains("<schemaversion>1.2</schemaversion>"));
 			assertTrue(manifest.contains("href=\"index.html\""));
 			assertTrue(manifest.contains("<file href=\"index.html\""));
@@ -88,6 +113,17 @@ class ScormExportServiceIntegrationTest {
 			assertTrue(manifest.contains("<file href=\"units/unit-10/topic-11.html\""));
 			assertFalse(manifest.contains("<file href=\"adlcp_rootv1p2.xsd\""));
 			assertFalse(manifest.contains("<file href=\"ims_xml.xsd\""));
+			for (String htmlPath : List.of("index.html", "units/unit-10/index.html",
+					"units/unit-10/topic-11.html")) {
+				String html = new String(zip.getInputStream(zip.getEntry(htmlPath)).readAllBytes(),
+						StandardCharsets.UTF_8);
+				assertTrue(html.contains(exportTitle), () -> "Missing consistent export identity from " + htmlPath);
+			}
+			String topicHtml = new String(zip.getInputStream(zip.getEntry("units/unit-10/topic-11.html")).readAllBytes(),
+					StandardCharsets.UTF_8);
+			assertTrue(topicHtml.contains("Reveal answer"));
+			assertTrue(topicHtml.contains("Worked solution"));
+			assertFalse(manifest.contains(tempDir.toString()));
 		}
 		assertFalse(hasScormWorkspace());
 	}
@@ -117,6 +153,12 @@ class ScormExportServiceIntegrationTest {
 	private boolean hasScormWorkspace() throws IOException {
 		try (java.util.stream.Stream<Path> children = Files.list(tempDir)) {
 			return children.anyMatch(path -> path.getFileName().toString().startsWith(".scorm-work-"));
+		}
+	}
+
+	private String readZipEntry(Path zipPath, String entryName) throws IOException {
+		try (ZipFile zip = new ZipFile(zipPath.toFile(), StandardCharsets.UTF_8)) {
+			return new String(zip.getInputStream(zip.getEntry(entryName)).readAllBytes(), StandardCharsets.UTF_8);
 		}
 	}
 
@@ -170,7 +212,7 @@ class ScormExportServiceIntegrationTest {
 			RevisionExportService revisionExportService = new RevisionExportService(corpusBuilder,
 					new RevisionPresentationPlanner(), new RevisionQuestionAssetRenderer(pdfStore, extractor),
 					new RevisionSharedContextAssetRenderer(pdfStore, extractor),
-					new RevisionAnswerAssetRenderer(pdfStore, extractor), new RevisionExportValidator());
+					new RevisionAnswerAssetRenderer(pdfStore, extractor), new RevisionExportValidator(), FIXED_CLOCK);
 			service = new ScormExportService(revisionExportService, new ScormManifestWriter(), new ScormSchemaSupport(),
 					new ScormPackageValidator(), new ScormZipWriter());
 		}

@@ -6,11 +6,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Clock;
-import java.time.ZonedDateTime;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.Unit;
@@ -32,6 +34,7 @@ public final class RevisionExportService {
 	private final RevisionAnswerAssetRenderer answerAssetRenderer;
 	private final Clock clock;
 	private final RevisionCorpusBuilder corpusBuilder;
+	private final AtomicReference<Instant> lastGeneratedInstant = new AtomicReference<>();
 	private final RevisionPresentationPlanner presentationPlanner;
 	private final RevisionQuestionAssetRenderer questionAssetRenderer;
 	private final RevisionSharedContextAssetRenderer sharedContextAssetRenderer;
@@ -59,7 +62,20 @@ public final class RevisionExportService {
 				validator, Clock.systemDefaultZone());
 	}
 
-	RevisionExportService(RevisionCorpusBuilder corpusBuilder, RevisionPresentationPlanner presentationPlanner,
+	/**
+	 * Creates an exporter using an explicit clock for deterministic generation
+	 * identities.
+	 *
+	 * @param corpusBuilder              the subject corpus builder
+	 * @param presentationPlanner        multipart grouping and numbering planner
+	 * @param questionAssetRenderer      the question image renderer
+	 * @param sharedContextAssetRenderer the reusable shared context image renderer
+	 * @param answerAssetRenderer        the answer image renderer
+	 * @param validator                  the generated-site validator
+	 * @param clock                      clock and display time zone for export identities
+	 * @throws NullPointerException if any dependency is null
+	 */
+	public RevisionExportService(RevisionCorpusBuilder corpusBuilder, RevisionPresentationPlanner presentationPlanner,
 			RevisionQuestionAssetRenderer questionAssetRenderer,
 			RevisionSharedContextAssetRenderer sharedContextAssetRenderer,
 			RevisionAnswerAssetRenderer answerAssetRenderer, RevisionExportValidator validator, Clock clock) {
@@ -126,9 +142,10 @@ public final class RevisionExportService {
 			throw new NullPointerException("progress");
 		}
 
-		// Capture one timestamp for the whole export. Page generation must not obtain
-		// separate wall-clock values as a long-running export progresses.
-		ZonedDateTime generatedAt = ZonedDateTime.now(clock);
+		// Capture one identity for the whole export. Page generation and SCORM
+		// packaging must not obtain separate wall-clock values as a long-running
+		// export progresses.
+		RevisionExportIdentity exportIdentity = nextExportIdentity();
 		Path destination = request.getDestination().toAbsolutePath().normalize();
 		validateDestination(destination);
 		Path parent = destination.getParent();
@@ -175,7 +192,7 @@ public final class RevisionExportService {
 							completed.intValue(), total.intValue()));
 			progress.update("Writing HTML...", 0, 0);
 			RevisionHtmlRenderer htmlRenderer = new RevisionHtmlRenderer(presentationPlan, questionAssets, answerAssets,
-					sharedContextAssets, generatedAt);
+					sharedContextAssets, exportIdentity);
 			List<Path> htmlFiles = htmlRenderer.render(corpus, staging);
 			progress.update("Validating export...", 0, 0);
 
@@ -185,7 +202,7 @@ public final class RevisionExportService {
 			promote(staging, destination);
 			promoted = true;
 			progress.update("Export complete.", 1, 1);
-			return new RevisionExportResult(destination, corpus.getStatistics());
+			return new RevisionExportResult(destination, corpus.getStatistics(), exportIdentity);
 		} finally {
 
 			// Only unfinished staging belongs to cleanup; successful publication retains
@@ -259,6 +276,14 @@ public final class RevisionExportService {
 				Files.deleteIfExists(path);
 			}
 		}
+	}
+
+	private RevisionExportIdentity nextExportIdentity() {
+		Instant observed = clock.instant().truncatedTo(ChronoUnit.MILLIS);
+		Instant generatedAt = lastGeneratedInstant.updateAndGet(previous -> previous == null || observed.isAfter(previous)
+				? observed
+				: previous.plusMillis(1));
+		return new RevisionExportIdentity(generatedAt.atZone(clock.getZone()));
 	}
 
 	private void promote(Path staging, Path destination) throws IOException {
