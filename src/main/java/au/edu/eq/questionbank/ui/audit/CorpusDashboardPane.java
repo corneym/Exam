@@ -180,7 +180,6 @@ public final class CorpusDashboardPane extends VBox {
 	private final Button mapCurriculumButton = new Button("Map Curriculum");
 	private Runnable mapCurriculumHandler = () -> {
 	};
-
 	private final Button examLifecycleButton = new Button("Mark Complete");
 	private BiConsumer<Exam, ExamCaptureState> examLifecycleHandler = (_, _) -> {
 	};
@@ -472,8 +471,8 @@ public final class CorpusDashboardPane extends VBox {
 	 * Supplies the Search workflow for the missing-Descriptor Questions currently
 	 * displayed in QUESTION WORK, potentially spanning several Exams and booklets.
 	 *
-	 * @param handler operation receiving an immutable snapshot of displayed Questions
-	 *                that need Descriptors, independent of row selection
+	 * @param handler operation receiving an immutable snapshot of displayed
+	 *                Questions that need Descriptors, independent of row selection
 	 * @throws NullPointerException if handler is null
 	 */
 	public void setQuestionWorkDescriptorAssignmentHandler(Consumer<List<Question>> handler) {
@@ -822,16 +821,14 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private SplitPane buildHierarchyRow() {
-
-		HBox examFilterRow = new HBox(SPACING, createBoldLabel("Provider"), providerBox, createBoldLabel("Year"), yearBox,
-				createBoldLabel("Exam state"), examStateBox, clearFiltersButton);
+		HBox examFilterRow = new HBox(SPACING, createBoldLabel("Provider"), providerBox, createBoldLabel("Year"),
+				yearBox, createBoldLabel("Exam state"), examStateBox, clearFiltersButton);
 		examFilterRow.setId("corpus-dashboard-exam-filter-row");
 		examFilterRow.setAlignment(Pos.CENTER_LEFT);
 		ScrollPane examFilterScroll = createHorizontalScrollRow("corpus-dashboard-exam-filters-scroll", examFilterRow);
 		HBox examEmptyStateRow = new HBox(SPACING, noExamsLabel, addExamButton);
 		examEmptyStateRow.setId("corpus-dashboard-exam-empty-state");
 		examEmptyStateRow.setAlignment(Pos.CENTER_LEFT);
-
 		examEmptyStateScroll = createHorizontalScrollRow("corpus-dashboard-empty-exam-scroll", examEmptyStateRow);
 		HBox selectedExamTitleRow = new HBox(SPACING, selectedExamLabel, declaredExamStateLabel, manageExamAssetsButton,
 				inspectExamQuestionsButton, examLifecycleButton);
@@ -2055,7 +2052,6 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private void refreshCurriculumMappingSummary() {
-
 		if (!curriculumAvailable) {
 
 			// No syllabus version exists for this Subject yet. Distinguish that onboarding

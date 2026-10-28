@@ -543,8 +543,8 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertFalse(assign.isDisabled());
 		fireControlLater(assign);
 		waitForDialogShowing(robot, "Search Questions");
-		ListView<Object> results = lookupInShowingDialog(robot, "Search Questions",
-				"#question-search-results", ListView.class);
+		ListView<Object> results = lookupInShowingDialog(robot, "Search Questions", "#question-search-results",
+				ListView.class);
 		Label status = lookupInShowingDialog(robot, "Search Questions", "#question-search-status", Label.class);
 		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> evaluateOnFx(robot,
 				() -> results.getItems().size() == 3 && results.getSelectionModel().getSelectedItem() != null));
@@ -564,7 +564,6 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(2, exams.getItems().stream().mapToInt(exam -> exam.bookletStatuses().stream()
 				.mapToInt(BookletCorpusStatus::questionsWithoutDescriptorCount).sum()).sum());
 		assertEquals(Integer.valueOf(2025), years.getValue());
-
 		assign = lookup(robot, "#corpus-dashboard-question-work-assign-descriptors", Button.class);
 		fireControlLater(assign);
 		waitForDialogShowing(robot, "Search Questions");
@@ -605,7 +604,8 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 			assertEquals("A", persisted.getAnswer().getAnswerText());
 		}
 		assertEquals(subtopic.getId(), repository.findById(excluded.getId()).orElseThrow().getClassification().getId());
-		assertEquals(physicsSubtopic.getId(), repository.findById(foreign.getId()).orElseThrow().getClassification().getId());
+		assertEquals(physicsSubtopic.getId(),
+				repository.findById(foreign.getId()).orElseThrow().getClassification().getId());
 		robot.interact(() -> years.setValue(null));
 		waitForDashboardDescriptorCount(robot, 1);
 	}
@@ -615,8 +615,8 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 				exam.getProvider().getName(), exam.getYear(), exam.getName());
 		Files.createDirectories(directory);
 		Path pdf = Files.copy(examPdf, directory.resolve(name + ".pdf"));
-		return writer.insertExamBooklet(exam, writer.insertSourceDocument(pdfDataRoot.relativize(pdf).toString()),
-				name, ExamBookletQuestionFormat.MIXED);
+		return writer.insertExamBooklet(exam, writer.insertSourceDocument(pdfDataRoot.relativize(pdf).toString()), name,
+				ExamBookletQuestionFormat.MIXED);
 	}
 
 	private Question persistDescriptorQueueQuestion(SqliteQuestionRepository repository, ExamBooklet booklet,
@@ -631,14 +631,16 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 	@SuppressWarnings("unchecked")
 	private long saveNextDescriptorQueueQuestion(FxRobot robot, Descriptor descriptor, int remaining) throws Exception {
-		ListView<Object> results = lookupInShowingDialog(robot, "Search Questions",
-				"#question-search-results", ListView.class);
+		ListView<Object> results = lookupInShowingDialog(robot, "Search Questions", "#question-search-results",
+				ListView.class);
 		ComboBox<CurriculumNode> choices = lookupInShowingDialog(robot, "Search Questions",
 				"#question-search-selected-descriptor", ComboBox.class);
-		Button save = lookupInShowingDialog(robot, "Search Questions", "#question-search-save-classification", Button.class);
+		Button save = lookupInShowingDialog(robot, "Search Questions", "#question-search-save-classification",
+				Button.class);
 		Label status = lookupInShowingDialog(robot, "Search Questions", "#question-search-status", Label.class);
-		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> evaluateOnFx(robot,
-				() -> results.getItems().size() == remaining + 1 && results.getSelectionModel().getSelectedItem() != null
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot, () -> results.getItems().size() == remaining + 1
+						&& results.getSelectionModel().getSelectedItem() != null
 						&& choices.getItems().stream().anyMatch(choice -> choice.getId() == descriptor.getId())));
 		long questionId = descriptorQueueQuestionId(results.getSelectionModel().getSelectedItem());
 		List<Long> nextIds = results.getItems().stream().map(this::descriptorQueueQuestionId)
@@ -647,12 +649,14 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 				.filter(choice -> choice.getId() == descriptor.getId()).findFirst().orElseThrow()));
 		assertFalse(save.isDisabled());
 		fireControl(robot, save);
-		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> evaluateOnFx(robot,
-				() -> results.getItems().size() == remaining && (remaining == 0
-						? status.getText().contains("Descriptor assignment complete")
-						: results.getSelectionModel().getSelectedItem() != null
-								&& descriptorQueueQuestionId(results.getSelectionModel().getSelectedItem()) == nextIds.getFirst()
-								&& status.getText().startsWith(Integer.toString(remaining)))));
+		WaitForAsyncUtils
+				.waitFor(TIMEOUT, TimeUnit.SECONDS,
+						() -> evaluateOnFx(robot, () -> results.getItems().size() == remaining && (remaining == 0
+								? status.getText().contains("Descriptor assignment complete")
+								: results.getSelectionModel().getSelectedItem() != null
+										&& descriptorQueueQuestionId(
+												results.getSelectionModel().getSelectedItem()) == nextIds.getFirst()
+										&& status.getText().startsWith(Integer.toString(remaining)))));
 		assertEquals(nextIds, results.getItems().stream().map(this::descriptorQueueQuestionId).toList());
 		return questionId;
 	}
@@ -766,7 +770,6 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 			return null;
 		}).get();
 		Node applicationRoot = primaryStage.getScene().getRoot();
-
 		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 				() -> nodePresentOnFx(robot, applicationRoot, "#corpus-dashboard-manage-exam-assets"));
 		Button manageExamAssets = lookupOnFx(robot, applicationRoot, "#corpus-dashboard-manage-exam-assets",

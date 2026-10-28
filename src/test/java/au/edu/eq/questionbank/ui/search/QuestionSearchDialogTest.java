@@ -215,7 +215,8 @@ class QuestionSearchDialogTest {
 		Question otherExamQuestion = new Question(25, otherBooklet, "5", "", 1, List.of(), subtopic, false);
 		List<Question> questions = List.of(first, second, classified, siblingQuestion, otherExamQuestion);
 		QuestionSearchNarrowing narrowing = dashboardQueue
-				? QuestionSearchNarrowing.forQuestionWork(List.of(first, siblingQuestion, otherExamQuestion, classified))
+				? QuestionSearchNarrowing
+						.forQuestionWork(List.of(first, siblingQuestion, otherExamQuestion, classified))
 				: QuestionSearchNarrowing.forMissingDescriptors(booklet);
 		List<Long> expectedIds = dashboardQueue ? List.of(21L, 24L, 25L) : List.of(21L, 22L);
 		QuestionRetrievalRepository retrievalRepository = _ -> List.of();
@@ -244,14 +245,16 @@ class QuestionSearchDialogTest {
 		ComboBox<?> scope = (ComboBox<?>) dialog.getDialogPane().lookup("#question-search-scope");
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> onFx(robot,
-						() -> results.getItems().size() == expectedIds.size() && results.getSelectionModel().getSelectedItem() != null
+						() -> results.getItems().size() == expectedIds.size()
+								&& results.getSelectionModel().getSelectedItem() != null
 								&& descriptorBox.getItems().contains(descriptor)));
 
 		// Exact queue membership survives either the booklet or displayed-ID route.
-		assertEquals(expectedIds, results.getItems().stream().map(result -> result.question().getId()).sorted().toList());
+		assertEquals(expectedIds,
+				results.getItems().stream().map(result -> result.question().getId()).sorted().toList());
 		assertTrue(onFx(robot,
-				() -> results.getItems().stream()
-						.allMatch(result -> (dashboardQueue || result.question().getBooklet().getId() == booklet.getId())
+				() -> results.getItems().stream().allMatch(
+						result -> (dashboardQueue || result.question().getBooklet().getId() == booklet.getId())
 								&& result.question().getClassification().getLevel() == CurriculumLevel.SUBTOPIC)));
 		assertTrue(onFx(robot, scope::isDisable));
 		long selectedQuestionId = results.getSelectionModel().getSelectedItem().question().getId();
@@ -302,7 +305,8 @@ class QuestionSearchDialogTest {
 		assertEquals(booklet, first.getBooklet());
 		assertEquals(sibling, siblingQuestion.getBooklet());
 		assertEquals(otherExam, otherExamQuestion.getExam());
-		assertEquals(expectedIds, results.getItems().stream().map(result -> result.question().getId()).sorted().toList());
+		assertEquals(expectedIds,
+				results.getItems().stream().map(result -> result.question().getId()).sorted().toList());
 		robot.interact(dialog::dispose);
 	}
 

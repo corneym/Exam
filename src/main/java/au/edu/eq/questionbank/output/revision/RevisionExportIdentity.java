@@ -18,11 +18,9 @@ import java.util.Objects;
  */
 public final class RevisionExportIdentity {
 
-	private static final DateTimeFormatter DISPLAY_FORMAT = DateTimeFormatter
-			.ofPattern("dd MMM uuuu", Locale.ENGLISH);
+	private static final DateTimeFormatter DISPLAY_FORMAT = DateTimeFormatter.ofPattern("dd MMM uuuu", Locale.ENGLISH);
 	private static final DateTimeFormatter TECHNICAL_FORMAT = DateTimeFormatter
 			.ofPattern("uuuuMMdd'T'HHmmssSSS'Z'", Locale.ENGLISH).withZone(ZoneOffset.UTC);
-
 	private final ZonedDateTime generatedAt;
 
 	/**

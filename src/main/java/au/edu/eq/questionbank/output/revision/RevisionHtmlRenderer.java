@@ -702,7 +702,6 @@ public final class RevisionHtmlRenderer {
 		String stylesheetSource = relativeUrl(outputFile, outputRoot, Path.of("assets", "revision.css"));
 		int revisionQuestionCount = countStudentFacingPresentations(corpus);
 		String revisionQuestionLabel = revisionQuestionCount == 1 ? "Revision question" : "Revision questions";
-
 		String exportTitle = exportIdentity.titleFor(corpus.getSubject().getName());
 		StringBuilder html = new StringBuilder();
 		html.append("""
@@ -798,8 +797,8 @@ public final class RevisionHtmlRenderer {
 				    </header>
 				""".formatted(escapeText(subtopic.getName()),
 				escapeText(exportIdentity.titleFor(corpus.getSubject().getName())), stylesheetSource, subjectHref,
-				escapeText(corpus.getSubject().getName()), unitHref,
-				escapeText(nodeLabel(unit)), topicHref, escapeText(nodeLabel(topic)), escapeText(nodeLabel(subtopic)),
+				escapeText(corpus.getSubject().getName()), unitHref, escapeText(nodeLabel(unit)), topicHref,
+				escapeText(nodeLabel(topic)), escapeText(nodeLabel(subtopic)),
 				escapeText(corpus.getSubject().getName()), escapeText(corpus.getSyllabusVersion().getName()),
 				escapeText(nodeLabel(subtopic)), escapeText(exportIdentity.titleFor(corpus.getSubject().getName()))));
 		int renderedQuestions;

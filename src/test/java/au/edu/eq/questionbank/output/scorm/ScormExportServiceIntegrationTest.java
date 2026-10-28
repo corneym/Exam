@@ -66,7 +66,6 @@ class ScormExportServiceIntegrationTest {
 		Path secondDestination = tempDir.resolve("Chemistry-second.zip");
 		fixture.service.export(new ScormExportRequest(fixture.chemistry, firstDestination));
 		fixture.service.export(new ScormExportRequest(fixture.chemistry, secondDestination));
-
 		String firstManifest = readZipEntry(firstDestination, "imsmanifest.xml");
 		String secondManifest = readZipEntry(secondDestination, "imsmanifest.xml");
 		assertTrue(firstManifest.contains("identifier=\"eq-question-bank-subject-1-export-20260924T111800000Z\""));
@@ -101,8 +100,7 @@ class ScormExportServiceIntegrationTest {
 					StandardCharsets.UTF_8);
 			String exportTitle = "Chemistry Exam Question Corpus (24 Sep 2026)";
 			assertTrue(manifest.contains("identifier=\"eq-question-bank-subject-1-export-20260924T111800000Z\""));
-			assertTrue(manifest.contains("<imsmd:langstring xml:lang=\"en\">" + exportTitle
-					+ "</imsmd:langstring>"));
+			assertTrue(manifest.contains("<imsmd:langstring xml:lang=\"en\">" + exportTitle + "</imsmd:langstring>"));
 			assertTrue(manifest.contains("<title>" + exportTitle + "</title>"));
 			assertTrue(manifest.contains("<schemaversion>1.2</schemaversion>"));
 			assertTrue(manifest.contains("href=\"index.html\""));
@@ -113,13 +111,13 @@ class ScormExportServiceIntegrationTest {
 			assertTrue(manifest.contains("<file href=\"units/unit-10/topic-11.html\""));
 			assertFalse(manifest.contains("<file href=\"adlcp_rootv1p2.xsd\""));
 			assertFalse(manifest.contains("<file href=\"ims_xml.xsd\""));
-			for (String htmlPath : List.of("index.html", "units/unit-10/index.html",
-					"units/unit-10/topic-11.html")) {
+			for (String htmlPath : List.of("index.html", "units/unit-10/index.html", "units/unit-10/topic-11.html")) {
 				String html = new String(zip.getInputStream(zip.getEntry(htmlPath)).readAllBytes(),
 						StandardCharsets.UTF_8);
 				assertTrue(html.contains(exportTitle), () -> "Missing consistent export identity from " + htmlPath);
 			}
-			String topicHtml = new String(zip.getInputStream(zip.getEntry("units/unit-10/topic-11.html")).readAllBytes(),
+			String topicHtml = new String(
+					zip.getInputStream(zip.getEntry("units/unit-10/topic-11.html")).readAllBytes(),
 					StandardCharsets.UTF_8);
 			assertTrue(topicHtml.contains("Reveal answer"));
 			assertTrue(topicHtml.contains("Worked solution"));

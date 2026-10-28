@@ -1085,10 +1085,10 @@ public class QuestionSearchPane extends BorderPane {
 				.setValue(assignmentQueue ? QuestionSearchScope.ALL_QUESTIONS : QuestionSearchScope.CURRENT_SYLLABUS);
 		searchScopeBox.setMaxWidth(Double.MAX_VALUE);
 		searchScopeBox.setDisable(assignmentQueue);
-		searchScopeBox.setTooltip(new Tooltip(assignmentQueue
-				? "Descriptor assignment examines the outstanding Questions in this queue."
-				: "Current Syllabus searches by current curriculum; " + "All Questions searches all stored Questions "
-						+ "for the Working Subject."));
+		searchScopeBox.setTooltip(
+				new Tooltip(assignmentQueue ? "Descriptor assignment examines the outstanding Questions in this queue."
+						: "Current Syllabus searches by current curriculum; "
+								+ "All Questions searches all stored Questions " + "for the Working Subject."));
 		searchScopeBox.setButtonCell(new DisplayListCell<>(QuestionSearchScope::displayText));
 		searchScopeBox.setCellFactory(_ -> new DisplayListCell<>(QuestionSearchScope::displayText));
 	}

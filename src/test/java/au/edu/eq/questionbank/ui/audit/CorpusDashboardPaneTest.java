@@ -104,7 +104,8 @@ class CorpusDashboardPaneTest {
 		Button allQuestions = robot.lookup("#corpus-dashboard-summary-total").queryButton();
 		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
 		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
-		TableView<QuestionCorpusWorkItem> work = robot.lookup("#corpus-dashboard-question-work").queryAs(TableView.class);
+		TableView<QuestionCorpusWorkItem> work = robot.lookup("#corpus-dashboard-question-work")
+				.queryAs(TableView.class);
 		ComboBox<ExamProvider> providers = robot.lookup("#corpus-dashboard-filter-provider").queryAs(ComboBox.class);
 		ComboBox<Integer> years = robot.lookup("#corpus-dashboard-filter-year").queryAs(ComboBox.class);
 		ComboBox<ExamCaptureState> states = robot.lookup("#corpus-dashboard-filter-exam-state").queryAs(ComboBox.class);
@@ -166,7 +167,6 @@ class CorpusDashboardPaneTest {
 		assertNotNull(action, "QUESTION WORK must offer its own Descriptor assignment action");
 		assertTrue(action instanceof Button);
 		assertFalse(action.isDisabled());
-
 		ScrollPane actions = (ScrollPane) section.lookup("#corpus-dashboard-question-actions-scroll");
 		assertNotNull(actions, "Question actions must remain accessible through horizontal scrolling");
 		HBox row = (HBox) actions.getContent();
@@ -177,19 +177,18 @@ class CorpusDashboardPaneTest {
 				section.lookup("#corpus-dashboard-set-written-response")), row.getChildren());
 		Node table = section.lookup("#corpus-dashboard-question-work");
 		assertEquals(table.getParent(), actions.getParent());
-		assertTrue(table.getParent().getChildrenUnmodifiable().indexOf(table)
-				< table.getParent().getChildrenUnmodifiable().indexOf(actions),
+		assertTrue(table.getParent().getChildrenUnmodifiable().indexOf(table) < table.getParent()
+				.getChildrenUnmodifiable().indexOf(actions),
 				"The shared action row must follow the Question Work table");
 		assertEquals(ScrollPane.ScrollBarPolicy.AS_NEEDED, actions.getHbarPolicy());
 		assertEquals(ScrollPane.ScrollBarPolicy.NEVER, actions.getVbarPolicy());
-
 		robot.interact(() -> pane.getScene().getWindow().setWidth(820));
 		WaitForAsyncUtils.waitForFxEvents();
 		robot.interact(() -> {
 			pane.applyCss();
 			pane.layout();
-			assertTrue(actions.localToScene(actions.getBoundsInLocal()).getMinY()
-					>= table.localToScene(table.getBoundsInLocal()).getMaxY());
+			assertTrue(actions.localToScene(actions.getBoundsInLocal()).getMinY() >= table
+					.localToScene(table.getBoundsInLocal()).getMaxY());
 			double viewportWidth = actions.getViewportBounds().getWidth();
 			double overflow = row.getWidth() - viewportWidth;
 			assertTrue(viewportWidth > 0);
@@ -200,15 +199,18 @@ class CorpusDashboardPaneTest {
 				assertTrue(button.isVisible() && button.isManaged());
 				assertTrue(button.getWidth() >= button.prefWidth(-1) - 1,
 						button.getText() + " must retain its natural width");
-				// Scroll each button into view using layout coordinates, not pointer hit-testing.
+
+				// Scroll each button into view using layout coordinates, not pointer
+				// hit-testing.
 				double offset = button.getBoundsInParent().getMinX();
-				actions.setHvalue(actions.getHmin() + Math.min(1, offset / overflow)
-						* (actions.getHmax() - actions.getHmin()));
+				actions.setHvalue(
+						actions.getHmin() + Math.min(1, offset / overflow) * (actions.getHmax() - actions.getHmin()));
 				actions.layout();
-				assertTrue(button.localToScene(button.getBoundsInLocal()).getMinX()
-						>= viewport.localToScene(viewport.getBoundsInLocal()).getMinX() - 1);
-				assertTrue(button.localToScene(button.getBoundsInLocal()).getMaxX()
-						<= viewport.localToScene(viewport.getBoundsInLocal()).getMaxX() + 1,
+				assertTrue(button.localToScene(button.getBoundsInLocal())
+						.getMinX() >= viewport.localToScene(viewport.getBoundsInLocal()).getMinX() - 1);
+				assertTrue(
+						button.localToScene(button.getBoundsInLocal())
+								.getMaxX() <= viewport.localToScene(viewport.getBoundsInLocal()).getMaxX() + 1,
 						button.getText() + " must be reachable within the viewport");
 			}
 		});
@@ -1392,7 +1394,6 @@ class CorpusDashboardPaneTest {
 	@Test
 	void legacyQuestionImportControlIsAbsentFromDashboard(FxRobot robot) {
 		assertTrue(robot.lookup("#corpus-dashboard-import-legacy-questions").tryQuery().isEmpty());
-
 		robot.interact(() -> pane.replaceData(List.of(), List.of(), List.of(), false, -1L));
 		assertTrue(robot.lookup("#corpus-dashboard-import-legacy-questions").tryQuery().isEmpty());
 	}
