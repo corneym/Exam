@@ -19,24 +19,32 @@
 		<section>
 			<h2>Backup</h2>
 			<p>
-				Choose <strong>File → Backup Now...</strong> to create a manual full
-				backup of application data.
+				Choose <strong>File → Backup Now...</strong> to create a manual
+				<strong>full backup</strong>. It contains the Question Bank database
+				and the complete managed Subject data tree, including imported Exam
+				and Answer PDFs, curriculum assets and retained legacy workbooks.
+			</p>
+			<p class="warning">
+				A full backup is needed to recover both the database and its managed
+				source files. It does not include the separate
+				<code>questionbank.properties</code> settings file, documents held
+				outside the managed Subject tree, or unrelated files elsewhere in
+				the data root. Preserve those separately if you need them.
 			</p>
 			<p>
-				A full backup contains the Question Bank database and the complete
-				managed Subject data tree, including Exam and Answer sources,
-				curriculum assets and retained legacy source workbooks.
+				Normal application shutdown creates an <strong>automatic
+				database-only backup</strong>, without source PDFs or other managed
+				assets. The ten newest automatic database backups are retained.
+				These are useful for database recovery but are not a substitute
+				for full backups.
 			</p>
 			<p>
-				Automatic backups created during normal application shutdown contain
-				the database only.
-			</p>
-			<p>
-				Keep important backups somewhere independent of the active application
-				data directory.
+				Keep independent full backups outside the active data directory,
+				preferably in more than one location. Synchronising a data root
+				between computers is not by itself a replacement for saved backups,
+				because unwanted changes may be synchronised too.
 			</p>
 		</section>
-
 		<section>
 			<h2>Restore</h2>
 			<p>
@@ -54,6 +62,19 @@
 				selected backup. Read the confirmation information carefully before
 				proceeding. A successful restore requires the application to restart
 				before the restored data is used.
+			</p>
+			<p>
+				Before replacing data, the application creates a full safety backup
+				of the current database and managed Subject files. If replacement
+				fails, it attempts to restore the previous data from that backup.
+				An unexpected power loss or forced termination cannot be assumed
+				to complete this recovery.
+			</p>
+			<p class="warning">
+				If a restore reports that rollback also failed, do not continue
+				using the affected data root. Preserve the safety backup and any
+				independent full backups, and recover into a separate data root
+				before resuming normal use.
 			</p>
 		</section>
 
