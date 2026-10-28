@@ -1086,7 +1086,7 @@ public class QuestionSearchPane extends BorderPane {
 		searchScopeBox.setMaxWidth(Double.MAX_VALUE);
 		searchScopeBox.setDisable(assignmentQueue);
 		searchScopeBox.setTooltip(new Tooltip(assignmentQueue
-				? "Descriptor assignment always examines all unclassified " + "Questions in the selected booklet."
+				? "Descriptor assignment examines the outstanding Questions in this queue."
 				: "Current Syllabus searches by current curriculum; " + "All Questions searches all stored Questions "
 						+ "for the Working Subject."));
 		searchScopeBox.setButtonCell(new DisplayListCell<>(QuestionSearchScope::displayText));
@@ -1744,7 +1744,7 @@ public class QuestionSearchPane extends BorderPane {
 		if (searchNarrowing.isDescriptorAssignmentQueue()) {
 
 			// Prevent even programmatic scope changes from replacing the
-			// complete outstanding booklet queue with an applicability subset.
+			// complete outstanding queue with an applicability subset.
 			updatingControls = true;
 			try {
 				searchScopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS);
@@ -2984,12 +2984,11 @@ public class QuestionSearchPane extends BorderPane {
 		int resultCount = resultsList.getItems().size();
 		if (searchNarrowing.isDescriptorAssignmentQueue()) {
 			if (resultCount == 0) {
-				statusLabel
-						.setText("Descriptor assignment complete: all Questions " + "in this booklet are classified.");
+				statusLabel.setText("Descriptor assignment complete.");
 			} else if (resultCount == 1) {
-				statusLabel.setText("1 Question still needs a Descriptor in this booklet.");
+				statusLabel.setText("1 Question still needs a Descriptor in this queue.");
 			} else {
-				statusLabel.setText(resultCount + " Questions still need a Descriptor in this booklet.");
+				statusLabel.setText(resultCount + " Questions still need a Descriptor in this queue.");
 			}
 			return;
 		}

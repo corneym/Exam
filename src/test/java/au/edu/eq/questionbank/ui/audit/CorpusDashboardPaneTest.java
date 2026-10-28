@@ -88,6 +88,88 @@ class CorpusDashboardPaneTest {
 
 	@Test
 	@SuppressWarnings("unchecked")
+	void questionWorkDescriptorAssignmentUsesDisplayedScopeAndDisablesAtZero(FxRobot robot) {
+		Question first = questionWithoutDescriptor(980, fixture.paper1, "Q98");
+		Question sibling = questionWithoutDescriptor(981, fixture.paper2, "Q99");
+		Question otherExam = questionWithoutDescriptor(982, fixture.activePaper, "Q100");
+		List<Question> corpus = new ArrayList<>(fixture.questions());
+		corpus.addAll(List.of(first, sibling, otherExam));
+		AtomicReference<List<Question>> requested = new AtomicReference<>();
+		robot.interact(() -> {
+			pane.replaceData(List.of(fixture.completeExamStatus, fixture.activeExamStatus), corpus);
+			pane.setQuestionWorkDescriptorAssignmentHandler(requested::set);
+		});
+		Button assign = robot.lookup("#corpus-dashboard-question-work-assign-descriptors").queryButton();
+		Button headline = robot.lookup("#corpus-dashboard-summary-missing-descriptors").queryButton();
+		Button allQuestions = robot.lookup("#corpus-dashboard-summary-total").queryButton();
+		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		TableView<QuestionCorpusWorkItem> work = robot.lookup("#corpus-dashboard-question-work").queryAs(TableView.class);
+		ComboBox<ExamProvider> providers = robot.lookup("#corpus-dashboard-filter-provider").queryAs(ComboBox.class);
+		ComboBox<Integer> years = robot.lookup("#corpus-dashboard-filter-year").queryAs(ComboBox.class);
+		ComboBox<ExamCaptureState> states = robot.lookup("#corpus-dashboard-filter-exam-state").queryAs(ComboBox.class);
+
+		// Displaying classified rows alongside missing Descriptors must only enqueue
+		// the latter. A single row selection must not narrow the displayed work set.
+		robot.interact(allQuestions::fire);
+		assertTrue(work.getItems().size() > 3);
+		robot.interact(() -> work.getSelectionModel().selectFirst());
+		assertDescriptorAssignment(robot, assign, requested, List.of(980L, 981L, 982L));
+		List<Question> originalSnapshot = requested.get();
+		robot.interact(headline::fire);
+		assertDescriptorAssignment(robot, assign, requested, List.of(980L, 981L, 982L));
+
+		// Structural filters are inherited from the actual displayed work rows.
+		robot.interact(() -> years.getSelectionModel().select(Integer.valueOf(2024)));
+		assertDescriptorAssignment(robot, assign, requested, List.of(982L));
+		robot.interact(() -> states.getSelectionModel().select(ExamCaptureState.COMPLETE));
+		assertDescriptorAssignment(robot, assign, requested, List.of());
+		robot.interact(() -> years.setValue(null));
+		assertDescriptorAssignment(robot, assign, requested, List.of(980L, 981L));
+		robot.interact(() -> states.setValue(null));
+		robot.interact(() -> providers.setValue(new ExamProvider(998, "Other provider")));
+		assertDescriptorAssignment(robot, assign, requested, List.of());
+		robot.interact(() -> providers.getSelectionModel().select(fixture.qcaa));
+		assertDescriptorAssignment(robot, assign, requested, List.of(980L, 981L, 982L));
+
+		// Explicit Exam and booklet selections narrow the next invocation only.
+		robot.interact(() -> exams.getSelectionModel().select(fixture.completeExamStatus));
+		assertDescriptorAssignment(robot, assign, requested, List.of(980L, 981L));
+		robot.interact(() -> booklets.getSelectionModel().select(fixture.paper2Status));
+		assertDescriptorAssignment(robot, assign, requested, List.of(981L));
+		assertEquals(List.of(980L, 981L, 982L), originalSnapshot.stream().map(Question::getId).sorted().toList());
+		robot.interact(() -> pane.replaceData(List.of(fixture.completeExamStatus), fixture.questions()));
+		assertDescriptorAssignment(robot, assign, requested, List.of());
+	}
+
+	private void assertDescriptorAssignment(FxRobot robot, Button action, AtomicReference<List<Question>> requested,
+			List<Long> expectedIds) {
+		requested.set(null);
+		assertEquals(expectedIds.isEmpty(), action.isDisabled());
+		robot.interact(action::fire);
+		if (expectedIds.isEmpty()) {
+			assertNull(requested.get());
+		} else {
+			assertNotNull(requested.get());
+			assertEquals(expectedIds, requested.get().stream().map(Question::getId).sorted().toList());
+		}
+	}
+
+	@Test
+	void questionWorkOffersDescriptorAssignmentAfterHeadlineDrillDown(FxRobot robot) {
+		Question missing = questionWithoutDescriptor(980, fixture.paper2, "Q98");
+		robot.interact(() -> pane.replaceData(List.of(fixture.completeExamStatus), List.of(missing)));
+		Button headline = robot.lookup("#corpus-dashboard-summary-missing-descriptors").queryButton();
+		robot.interact(headline::fire);
+		Node section = robot.lookup("#corpus-dashboard-question-work-section").query();
+		Node action = section.lookup("#corpus-dashboard-question-work-assign-descriptors");
+		assertNotNull(action, "QUESTION WORK must offer its own Descriptor assignment action");
+		assertTrue(action instanceof Button);
+		assertFalse(action.isDisabled());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
 	void assignDescriptorsRequiresSelectedBookletWithOutstandingClassification(FxRobot robot) {
 		Button assign = robot.lookup("#corpus-dashboard-assign-descriptors").queryButton();
 		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
