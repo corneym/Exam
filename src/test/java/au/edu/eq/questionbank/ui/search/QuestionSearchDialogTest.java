@@ -18,6 +18,8 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.testfx.api.FxRobot;
 import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
@@ -188,8 +190,10 @@ class QuestionSearchDialogTest {
 		});
 	}
 
-	@Test
-	void descriptorQueueRetainsQuestionsAfterFailedSaveAndCancelledClose(FxRobot robot) throws TimeoutException {
+	@ParameterizedTest
+	@ValueSource(booleans = { false, true })
+	void descriptorQueueRetainsQuestionsAfterFailedSaveAndCancelledClose(boolean dashboardQueue, FxRobot robot)
+			throws TimeoutException {
 		Subject chemistry = new Subject(1, "Chemistry");
 		SyllabusVersion syllabus = new SyllabusVersion(2, chemistry, "2025", true);
 		Unit unit = new Unit(3, syllabus, "1", "Unit one", 1);
@@ -210,6 +214,10 @@ class QuestionSearchDialogTest {
 		Question siblingQuestion = new Question(24, sibling, "4", "", 1, List.of(), subtopic, false);
 		Question otherExamQuestion = new Question(25, otherBooklet, "5", "", 1, List.of(), subtopic, false);
 		List<Question> questions = List.of(first, second, classified, siblingQuestion, otherExamQuestion);
+		QuestionSearchNarrowing narrowing = dashboardQueue
+				? QuestionSearchNarrowing.forQuestionWork(List.of(first, siblingQuestion, otherExamQuestion, classified))
+				: QuestionSearchNarrowing.forMissingDescriptors(booklet);
+		List<Long> expectedIds = dashboardQueue ? List.of(21L, 24L, 25L) : List.of(21L, 22L);
 		QuestionRetrievalRepository retrievalRepository = _ -> List.of();
 		QuestionRetrievalService retrieval = new QuestionRetrievalService(retrievalRepository,
 				new CurriculumSearchNodeExpansionService(curriculum));
@@ -222,7 +230,7 @@ class QuestionSearchDialogTest {
 					new InMemoryQuestionOutputApplicabilityRepository(), (_, _) -> {
 						attemptedWrites.incrementAndGet();
 						throw new IllegalStateException("Simulated classification write failure");
-					}, QuestionSearchNarrowing.forMissingDescriptors(booklet));
+					}, narrowing);
 		});
 		QuestionSearchDialog dialog = holder[0];
 		robot.interact(dialog::show);
@@ -236,13 +244,14 @@ class QuestionSearchDialogTest {
 		ComboBox<?> scope = (ComboBox<?>) dialog.getDialogPane().lookup("#question-search-scope");
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> onFx(robot,
-						() -> results.getItems().size() == 2 && results.getSelectionModel().getSelectedItem() != null
+						() -> results.getItems().size() == expectedIds.size() && results.getSelectionModel().getSelectedItem() != null
 								&& descriptorBox.getItems().contains(descriptor)));
 
-		// Only the two outstanding Questions in Paper 1 may appear.
+		// Exact queue membership survives either the booklet or displayed-ID route.
+		assertEquals(expectedIds, results.getItems().stream().map(result -> result.question().getId()).sorted().toList());
 		assertTrue(onFx(robot,
 				() -> results.getItems().stream()
-						.allMatch(result -> result.question().getBooklet().getId() == booklet.getId()
+						.allMatch(result -> (dashboardQueue || result.question().getBooklet().getId() == booklet.getId())
 								&& result.question().getClassification().getLevel() == CurriculumLevel.SUBTOPIC)));
 		assertTrue(onFx(robot, scope::isDisable));
 		long selectedQuestionId = results.getSelectionModel().getSelectedItem().question().getId();
@@ -263,7 +272,7 @@ class QuestionSearchDialogTest {
 		assertEquals(1, attemptedWrites.get());
 		assertFalse(dialog.consumePersistedClassificationChange());
 		assertTrue(onFx(robot,
-				() -> results.getItems().size() == 2
+				() -> results.getItems().size() == expectedIds.size()
 						&& results.getSelectionModel().getSelectedItem().question().getId() == selectedQuestionId
 						&& descriptor.equals(descriptorBox.getValue())));
 		Button close = (Button) dialog.getDialogPane().lookupButton(ButtonType.CLOSE);
@@ -274,7 +283,7 @@ class QuestionSearchDialogTest {
 		fireShowingAlertButton(robot, "Unsaved Question", ButtonBar.ButtonData.CANCEL_CLOSE);
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> showingAlertPane(robot, "Unsaved Question") == null);
 		assertTrue(onFx(robot, dialog::isShowing));
-		assertTrue(onFx(robot, () -> results.getItems().size() == 2
+		assertTrue(onFx(robot, () -> results.getItems().size() == expectedIds.size()
 				&& results.getSelectionModel().getSelectedItem().question().getId() == selectedQuestionId));
 		assertFalse(onFx(robot, save::isDisable));
 
@@ -288,6 +297,12 @@ class QuestionSearchDialogTest {
 		assertEquals(1, attemptedWrites.get());
 		assertEquals(CurriculumLevel.SUBTOPIC, first.getClassification().getLevel());
 		assertEquals(CurriculumLevel.SUBTOPIC, second.getClassification().getLevel());
+		assertEquals(CurriculumLevel.SUBTOPIC, siblingQuestion.getClassification().getLevel());
+		assertEquals(CurriculumLevel.SUBTOPIC, otherExamQuestion.getClassification().getLevel());
+		assertEquals(booklet, first.getBooklet());
+		assertEquals(sibling, siblingQuestion.getBooklet());
+		assertEquals(otherExam, otherExamQuestion.getExam());
+		assertEquals(expectedIds, results.getItems().stream().map(result -> result.question().getId()).sorted().toList());
 		robot.interact(dialog::dispose);
 	}
 

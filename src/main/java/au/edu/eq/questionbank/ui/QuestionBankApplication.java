@@ -4466,6 +4466,7 @@ public class QuestionBankApplication extends Application {
 		dashboard.setQuestionCorrectionHandler(this::showCorpusDashboardQuestionCorrection);
 		dashboard.setBookletQuestionCorrectionHandler(this::showCorpusDashboardBookletQuestionCorrection);
 		dashboard.setDescriptorAssignmentHandler(this::showDashboardDescriptorAssignment);
+		dashboard.setQuestionWorkDescriptorAssignmentHandler(this::showDashboardQuestionWorkDescriptorAssignment);
 		dashboard.setQuestionInspectionHandler(this::showDashboardQuestionInspection);
 		corpusDashboardPane = dashboard;
 		corpusDashboardHost.getChildren().setAll(dashboard);
@@ -4573,6 +4574,21 @@ public class QuestionBankApplication extends Application {
 		// Search close already triggers an authoritative Dashboard refresh
 		// when at least one classification change was persisted.
 		showQuestionSearch(primaryStage(), applicationConfig, narrowing);
+	}
+
+	private void showDashboardQuestionWorkDescriptorAssignment(List<Question> questions) {
+		Objects.requireNonNull(questions, "questions");
+		if (questions.isEmpty()) {
+			return;
+		}
+		if (workingSubject == null || questions.stream()
+				.anyMatch(question -> question.getExam().getSubject().getId() != workingSubject.getId())) {
+			throw new IllegalArgumentException("The displayed Questions do not belong to the Working Subject");
+		}
+
+		// Keep the displayed IDs across Search refreshes, including work from other
+		// Exams/booklets. Reuse the existing Save, discard and Dashboard-return path.
+		showQuestionSearch(primaryStage(), applicationConfig, QuestionSearchNarrowing.forQuestionWork(questions));
 	}
 
 	private boolean showDashboardMcqExplanationCapture(Question question, Runnable returnHandler) {

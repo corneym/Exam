@@ -1,7 +1,10 @@
 package au.edu.eq.questionbank.ui.search;
 
+import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
 
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.Exam;
@@ -79,6 +82,29 @@ public final class QuestionSearchNarrowing {
 	}
 
 	/**
+	 * Creates a Descriptor-assignment queue from the displayed Dashboard work set.
+	 * <p>
+	 * Only Questions missing a Descriptor at invocation are included. Their IDs are
+	 * copied so later Dashboard filter changes cannot widen the queue. Search still
+	 * retrieves current stored classifications, removing successfully classified
+	 * Questions on refresh without retaining stale Question objects.
+	 *
+	 * @param displayedQuestions Questions currently displayed in QUESTION WORK
+	 * @return immutable queue constraint that may span several Exams and booklets
+	 * @throws NullPointerException if the list or one of its Questions is null
+	 */
+	public static QuestionSearchNarrowing forQuestionWork(List<Question> displayedQuestions) {
+		Objects.requireNonNull(displayedQuestions, "displayedQuestions");
+		Set<Long> questionIds = displayedQuestions.stream()
+				.filter(question -> question.getClassification().getLevel() != CurriculumLevel.DESCRIPTOR)
+				.map(Question::getId).collect(Collectors.toUnmodifiableSet());
+		return new QuestionSearchNarrowing("Assign Descriptors — Dashboard Question Work",
+				question -> questionIds.contains(question.getId())
+						&& question.getClassification().getLevel() != CurriculumLevel.DESCRIPTOR,
+				true);
+	}
+
+	/**
 	 * Returns the normal unrestricted Search context.
 	 *
 	 * @return shared unrestricted narrowing
@@ -111,7 +137,7 @@ public final class QuestionSearchNarrowing {
 	 * Indicates whether Search is operating as a shrinking Descriptor queue rather
 	 * than an ordinary inspection workflow.
 	 *
-	 * @return true for the booklet-scoped Descriptor-assignment queue
+	 * @return true for a Descriptor-assignment queue
 	 */
 	public boolean isDescriptorAssignmentQueue() {
 		return descriptorAssignmentQueue;

@@ -168,7 +168,10 @@ public final class CorpusDashboardPane extends VBox {
 	};
 	private Set<Long> reviewedBookletIds = Set.of();
 	private final Button assignDescriptorsButton = new Button("Assign Descriptors");
+	private final Button assignQuestionWorkDescriptorsButton = new Button("Assign Descriptors");
 	private Consumer<ExamBooklet> descriptorAssignmentHandler = _ -> {
+	};
+	private Consumer<List<Question>> questionWorkDescriptorAssignmentHandler = _ -> {
 	};
 	private final Label curriculumMappingSummaryLabel = new Label();
 	private final Button addCurriculumButton = new Button("+");
@@ -466,6 +469,18 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	/**
+	 * Supplies the Search workflow for the missing-Descriptor Questions currently
+	 * displayed in QUESTION WORK, potentially spanning several Exams and booklets.
+	 *
+	 * @param handler operation receiving an immutable snapshot of displayed Questions
+	 *                that need Descriptors, independent of row selection
+	 * @throws NullPointerException if handler is null
+	 */
+	public void setQuestionWorkDescriptorAssignmentHandler(Consumer<List<Question>> handler) {
+		questionWorkDescriptorAssignmentHandler = Objects.requireNonNull(handler, "handler");
+	}
+
+	/**
 	 * Supplies the application-owned route into Exam / Assets for the selected Exam
 	 * and optional Question booklet.
 	 *
@@ -699,6 +714,16 @@ public final class CorpusDashboardPane extends VBox {
 		refreshDashboard();
 	}
 
+	private void assignQuestionWorkDescriptors() {
+		List<Question> outstanding = missingDescriptorQuestionsShown();
+		if (!outstanding.isEmpty()) {
+
+			// The rendered work list already applies every Dashboard scope and filter.
+			// Snapshot it at invocation rather than rebuilding a booklet-only query.
+			questionWorkDescriptorAssignmentHandler.accept(outstanding);
+		}
+	}
+
 	private void assignSelectedBookletDescriptors() {
 		BookletCorpusStatus selected = bookletTable.getSelectionModel().getSelectedItem();
 		if (selected == null || selected.questionsWithoutDescriptorCount() == 0) {
@@ -868,14 +893,18 @@ public final class CorpusDashboardPane extends VBox {
 		examLifecycleProgressRow.setAlignment(Pos.CENTER_LEFT);
 
 		// Selected Question work exposes direct Question and Answer completion together
-		// with the existing bulk response-type actions.
+		// with Descriptor assignment and the existing bulk response-type actions.
 		HBox questionActionsRow = new HBox(SPACING, completeSelectedQuestionButton, completeSelectedAnswerButton,
-				selectAllUnknownButton, setSelectedMultipleChoiceButton, setSelectedWrittenResponseButton);
+				assignQuestionWorkDescriptorsButton, selectAllUnknownButton, setSelectedMultipleChoiceButton,
+				setSelectedWrittenResponseButton);
 		questionActionsRow.setAlignment(Pos.CENTER_LEFT);
+		questionActionsRow.setMinWidth(Region.USE_PREF_SIZE);
+		ScrollPane questionActionsScroll = createHorizontalScrollRow("corpus-dashboard-question-actions-scroll",
+				questionActionsRow);
 		mcqExplanationCoverageLabel.setWrapText(true);
 		setVisibleAndManaged(mcqExplanationCoverageLabel, false);
 		questionWorkSection = createTitledSection("corpus-dashboard-question-work-section", "QUESTION WORK",
-				questionFilterRow, examLifecycleProgressRow, questionTable, questionActionsRow,
+				questionFilterRow, examLifecycleProgressRow, questionTable, questionActionsScroll,
 				mcqExplanationCoverageLabel);
 		return questionWorkSection;
 	}
@@ -1167,6 +1196,11 @@ public final class CorpusDashboardPane extends VBox {
 		assignDescriptorsButton.setTooltip(
 				new Tooltip("Open the remaining Questions without Descriptors " + "in the selected booklet."));
 		assignDescriptorsButton.setDisable(true);
+		assignQuestionWorkDescriptorsButton.setId("corpus-dashboard-question-work-assign-descriptors");
+		assignQuestionWorkDescriptorsButton.setTooltip(new Tooltip(
+				"Assign Descriptors to the Questions currently shown in QUESTION WORK that still need one."));
+		assignQuestionWorkDescriptorsButton.setMinWidth(Region.USE_PREF_SIZE);
+		assignQuestionWorkDescriptorsButton.setDisable(true);
 		inspectBookletQuestionsButton.setId("corpus-dashboard-inspect-booklet-questions");
 		inspectBookletQuestionsButton
 				.setTooltip(new Tooltip("Open Question Search narrowed to the selected Question booklet."));
@@ -1212,6 +1246,7 @@ public final class CorpusDashboardPane extends VBox {
 	private void configureCommandActions() {
 		addExamButton.setOnAction(_ -> addExamHandler.run());
 		assignDescriptorsButton.setOnAction(_ -> assignSelectedBookletDescriptors());
+		assignQuestionWorkDescriptorsButton.setOnAction(_ -> assignQuestionWorkDescriptors());
 		inspectBookletQuestionsButton.setOnAction(_ -> inspectSelectedBookletQuestions());
 		inspectExamQuestionsButton.setOnAction(_ -> inspectSelectedExamQuestions());
 		manageExamAssetsButton.setOnAction(_ -> manageSelectedExamAssets());
@@ -1966,6 +2001,12 @@ public final class CorpusDashboardPane extends VBox {
 				expectations.expectedQuestionBookletCount());
 	}
 
+	private List<Question> missingDescriptorQuestionsShown() {
+		return questionTable.getItems().stream()
+				.filter(item -> item.status().hasProblem(QuestionCorpusProblem.MISSING_DESCRIPTOR))
+				.map(QuestionCorpusWorkItem::question).toList();
+	}
+
 	private List<Question> questionsForSelectedScope() {
 		ExamCorpusStatus selectedExam = examTable.getSelectionModel().getSelectedItem();
 		if (selectedExam == null) {
@@ -2129,6 +2170,7 @@ public final class CorpusDashboardPane extends VBox {
 		// where the same row index could represent another Question.
 		questionTable.getSelectionModel().clearSelection();
 		questionResultCountLabel.setText(String.format("Showing %d Questions", workItems.size()));
+		assignQuestionWorkDescriptorsButton.setDisable(missingDescriptorQuestionsShown().isEmpty());
 		updateBulkActionState();
 		updateCaptureActionState();
 		updateQuestionActionState();
