@@ -152,7 +152,7 @@ Existing operational evidence is already substantial: the maintainer has used HT
 
 For the **exact** 1.0 MSI, complete the following additional checks:
 
-1. Confirm successful release gates on the tagged-source candidate, and save its SHA-256.
+1. Confirm successful release gates on the intended release-source commit, and save the archived MSI's SHA-256.
 2. With **0.7** installed on a test computer and an **isolated restored corpus**, close the application and install the 1.0 MSI over it.
 3. Confirm About reports 1.0, the Dashboard displays the expected Subjects/Exams, representative Question and Answer PDFs load, and the application closes normally.
 4. Uninstall the test installation and confirm that the test configuration and user data remain intact. Test fresh installation if the release package or installation procedure changed materially.
