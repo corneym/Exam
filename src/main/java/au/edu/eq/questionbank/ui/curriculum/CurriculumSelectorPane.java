@@ -629,8 +629,8 @@ public class CurriculumSelectorPane extends VBox {
 	}
 
 	private void clearHierarchySelection() {
-		unitBox.getSelectionModel().clearSelection();
-		topicBox.getSelectionModel().clearSelection();
+		clearComboBoxValue(unitBox);
+		clearComboBoxValue(topicBox);
 		subtopicBox.getSelectionModel().clearSelection();
 		descriptorBox.getSelectionModel().clearSelection();
 		topicBox.getItems().clear();
