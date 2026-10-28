@@ -166,6 +166,52 @@ class CorpusDashboardPaneTest {
 		assertNotNull(action, "QUESTION WORK must offer its own Descriptor assignment action");
 		assertTrue(action instanceof Button);
 		assertFalse(action.isDisabled());
+
+		ScrollPane actions = (ScrollPane) section.lookup("#corpus-dashboard-question-actions-scroll");
+		assertNotNull(actions, "Question actions must remain accessible through horizontal scrolling");
+		HBox row = (HBox) actions.getContent();
+		assertEquals(List.of(section.lookup("#corpus-dashboard-complete-question"),
+				section.lookup("#corpus-dashboard-complete-answer"), action,
+				section.lookup("#corpus-dashboard-select-all-unknown"),
+				section.lookup("#corpus-dashboard-set-multiple-choice"),
+				section.lookup("#corpus-dashboard-set-written-response")), row.getChildren());
+		Node table = section.lookup("#corpus-dashboard-question-work");
+		assertEquals(table.getParent(), actions.getParent());
+		assertTrue(table.getParent().getChildrenUnmodifiable().indexOf(table)
+				< table.getParent().getChildrenUnmodifiable().indexOf(actions),
+				"The shared action row must follow the Question Work table");
+		assertEquals(ScrollPane.ScrollBarPolicy.AS_NEEDED, actions.getHbarPolicy());
+		assertEquals(ScrollPane.ScrollBarPolicy.NEVER, actions.getVbarPolicy());
+
+		robot.interact(() -> pane.getScene().getWindow().setWidth(820));
+		WaitForAsyncUtils.waitForFxEvents();
+		robot.interact(() -> {
+			pane.applyCss();
+			pane.layout();
+			assertTrue(actions.localToScene(actions.getBoundsInLocal()).getMinY()
+					>= table.localToScene(table.getBoundsInLocal()).getMaxY());
+			double viewportWidth = actions.getViewportBounds().getWidth();
+			double overflow = row.getWidth() - viewportWidth;
+			assertTrue(viewportWidth > 0);
+			assertTrue(overflow > 5, "The narrow Question Work action row must scroll");
+			Node viewport = actions.lookup(".viewport");
+			for (Node control : row.getChildren()) {
+				Button button = (Button) control;
+				assertTrue(button.isVisible() && button.isManaged());
+				assertTrue(button.getWidth() >= button.prefWidth(-1) - 1,
+						button.getText() + " must retain its natural width");
+				// Scroll each button into view using layout coordinates, not pointer hit-testing.
+				double offset = button.getBoundsInParent().getMinX();
+				actions.setHvalue(actions.getHmin() + Math.min(1, offset / overflow)
+						* (actions.getHmax() - actions.getHmin()));
+				actions.layout();
+				assertTrue(button.localToScene(button.getBoundsInLocal()).getMinX()
+						>= viewport.localToScene(viewport.getBoundsInLocal()).getMinX() - 1);
+				assertTrue(button.localToScene(button.getBoundsInLocal()).getMaxX()
+						<= viewport.localToScene(viewport.getBoundsInLocal()).getMaxX() + 1,
+						button.getText() + " must be reachable within the viewport");
+			}
+		});
 	}
 
 	@Test

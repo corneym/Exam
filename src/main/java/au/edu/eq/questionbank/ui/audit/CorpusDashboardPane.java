@@ -884,8 +884,7 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private StackPane buildQuestionWorkSection() {
-		HBox questionFilterRow = new HBox(SPACING, createBoldLabel("Show"), questionViewBox, questionResultCountLabel,
-				assignQuestionWorkDescriptorsButton);
+		HBox questionFilterRow = new HBox(SPACING, createBoldLabel("Show"), questionViewBox, questionResultCountLabel);
 		questionFilterRow.setAlignment(Pos.CENTER_LEFT);
 
 		// Lifecycle progress remains visible even when Question Work contains no rows,
@@ -894,14 +893,18 @@ public final class CorpusDashboardPane extends VBox {
 		examLifecycleProgressRow.setAlignment(Pos.CENTER_LEFT);
 
 		// Selected Question work exposes direct Question and Answer completion together
-		// with the existing bulk response-type actions.
+		// with Descriptor assignment and the existing bulk response-type actions.
 		HBox questionActionsRow = new HBox(SPACING, completeSelectedQuestionButton, completeSelectedAnswerButton,
-				selectAllUnknownButton, setSelectedMultipleChoiceButton, setSelectedWrittenResponseButton);
+				assignQuestionWorkDescriptorsButton, selectAllUnknownButton, setSelectedMultipleChoiceButton,
+				setSelectedWrittenResponseButton);
 		questionActionsRow.setAlignment(Pos.CENTER_LEFT);
+		questionActionsRow.setMinWidth(Region.USE_PREF_SIZE);
+		ScrollPane questionActionsScroll = createHorizontalScrollRow("corpus-dashboard-question-actions-scroll",
+				questionActionsRow);
 		mcqExplanationCoverageLabel.setWrapText(true);
 		setVisibleAndManaged(mcqExplanationCoverageLabel, false);
 		questionWorkSection = createTitledSection("corpus-dashboard-question-work-section", "QUESTION WORK",
-				questionFilterRow, examLifecycleProgressRow, questionTable, questionActionsRow,
+				questionFilterRow, examLifecycleProgressRow, questionTable, questionActionsScroll,
 				mcqExplanationCoverageLabel);
 		return questionWorkSection;
 	}
