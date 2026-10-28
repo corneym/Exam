@@ -130,11 +130,12 @@ public final class ScormManifestWriter {
 		xml.writeStartElement("", "manifest", IMS_CONTENT_PACKAGING_NAMESPACE);
 		xml.writeDefaultNamespace(IMS_CONTENT_PACKAGING_NAMESPACE);
 		xml.writeNamespace("adlcp", ADL_CONTENT_PACKAGING_NAMESPACE);
+		xml.writeNamespace("imsmd", IMS_METADATA_NAMESPACE);
 		xml.writeNamespace("xsi", XMLConstants.W3C_XML_SCHEMA_INSTANCE_NS_URI);
 		xml.writeAttribute("identifier", manifestIdentifier);
 		xml.writeAttribute("version", "1");
 		xml.writeAttribute("xsi", XMLConstants.W3C_XML_SCHEMA_INSTANCE_NS_URI, "schemaLocation", SCHEMA_LOCATION);
-		writeMetadata(xml);
+		writeMetadata(xml, title);
 
 		// The single organization item refers to the single SCO resource written
 		// immediately afterwards.
@@ -146,13 +147,30 @@ public final class ScormManifestWriter {
 		xml.writeEndDocument();
 	}
 
-	private void writeMetadata(XMLStreamWriter xml) throws XMLStreamException {
+	private void writeMetadata(XMLStreamWriter xml, String title) throws XMLStreamException {
 		writeIndent(xml, 1);
 		xml.writeStartElement("", "metadata", IMS_CONTENT_PACKAGING_NAMESPACE);
 		writeIndent(xml, 2);
 		writeTextElement(xml, "schema", "ADL SCORM");
 		writeIndent(xml, 2);
 		writeTextElement(xml, "schemaversion", "1.2");
+		writeIndent(xml, 2);
+		xml.writeStartElement("imsmd", "lom", IMS_METADATA_NAMESPACE);
+		writeIndent(xml, 3);
+		xml.writeStartElement("imsmd", "general", IMS_METADATA_NAMESPACE);
+		writeIndent(xml, 4);
+		xml.writeStartElement("imsmd", "title", IMS_METADATA_NAMESPACE);
+		writeIndent(xml, 5);
+		xml.writeStartElement("imsmd", "langstring", IMS_METADATA_NAMESPACE);
+		xml.writeAttribute("xml", XMLConstants.XML_NS_URI, "lang", "en");
+		xml.writeCharacters(title);
+		xml.writeEndElement();
+		writeIndent(xml, 4);
+		xml.writeEndElement();
+		writeIndent(xml, 3);
+		xml.writeEndElement();
+		writeIndent(xml, 2);
+		xml.writeEndElement();
 		writeIndent(xml, 1);
 		xml.writeEndElement();
 	}

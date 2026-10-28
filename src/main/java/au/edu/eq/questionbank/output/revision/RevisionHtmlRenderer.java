@@ -5,13 +5,11 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.ZonedDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 import au.edu.eq.questionbank.model.Answer;
@@ -34,12 +32,10 @@ import au.edu.eq.questionbank.service.revision.RevisionQuestionPresentation;
  */
 public final class RevisionHtmlRenderer {
 
-	private static final DateTimeFormatter GENERATED_AT_FORMAT = DateTimeFormatter.ofPattern("d MMM uuuu, HH:mm z",
-			Locale.ENGLISH);
 	private static final String STYLESHEET_RESOURCE = "/au/edu/eq/questionbank/output/revision/revision.css";
 
-	// Presentation plan and generated timestamp.
-	private final ZonedDateTime generatedAt;
+	// Presentation plan and shared export identity.
+	private final RevisionExportIdentity exportIdentity;
 	private final Map<Long, RevisionPresentationNode> presentationNodesByCurriculumNodeId;
 	private final RevisionPresentationPlan presentationPlan;
 
@@ -60,12 +56,13 @@ public final class RevisionHtmlRenderer {
 	 */
 	public RevisionHtmlRenderer(RevisionPresentationPlan presentationPlan, List<RevisionQuestionAsset> questionAssets,
 			List<RevisionAnswerAsset> answerAssets, List<RevisionSharedContextAsset> sharedContextAssets) {
-		this(presentationPlan, questionAssets, answerAssets, sharedContextAssets, ZonedDateTime.now());
+		this(presentationPlan, questionAssets, answerAssets, sharedContextAssets,
+				new RevisionExportIdentity(ZonedDateTime.now()));
 	}
 
 	RevisionHtmlRenderer(RevisionPresentationPlan presentationPlan, List<RevisionQuestionAsset> questionAssets,
 			List<RevisionAnswerAsset> answerAssets, List<RevisionSharedContextAsset> sharedContextAssets,
-			ZonedDateTime generatedAt) {
+			RevisionExportIdentity exportIdentity) {
 		if (presentationPlan == null) {
 			throw new NullPointerException("presentationPlan");
 		}
@@ -78,11 +75,11 @@ public final class RevisionHtmlRenderer {
 		if (sharedContextAssets == null) {
 			throw new NullPointerException("sharedContextAssets");
 		}
-		if (generatedAt == null) {
-			throw new NullPointerException("generatedAt");
+		if (exportIdentity == null) {
+			throw new NullPointerException("exportIdentity");
 		}
 		this.presentationPlan = presentationPlan;
-		this.generatedAt = generatedAt;
+		this.exportIdentity = exportIdentity;
 		questionAssetsByQuestionId = indexQuestionAssets(questionAssets);
 		answerAssetsByQuestionId = indexAnswerAssets(answerAssets);
 		sharedContextAssetsByContextId = indexSharedContextAssets(sharedContextAssets);
@@ -706,9 +703,7 @@ public final class RevisionHtmlRenderer {
 		int revisionQuestionCount = countStudentFacingPresentations(corpus);
 		String revisionQuestionLabel = revisionQuestionCount == 1 ? "Revision question" : "Revision questions";
 
-		// The timestamp belongs to this generated resource rather than the stored
-		// Question bank. It is captured once for the export and reused here verbatim.
-		String generatedAtText = GENERATED_AT_FORMAT.format(generatedAt);
+		String exportTitle = exportIdentity.titleFor(corpus.getSubject().getName());
 		StringBuilder html = new StringBuilder();
 		html.append("""
 				<!DOCTYPE html>
@@ -716,14 +711,14 @@ public final class RevisionHtmlRenderer {
 				<head>
 				    <meta charset="UTF-8">
 				    <meta name="viewport" content="width=device-width, initial-scale=1">
-				    <title>%s Revision</title>
+				    <title>%s</title>
 				    <link rel="stylesheet" href="%s">
 				</head>
 				<body>
 				<main class="page">
 				    <header class="page-header">
 				        <p class="eyebrow">%s syllabus</p>
-				        <h1>%s Revision</h1>
+				        <h1>%s</h1>
 				        <p class="generated-at">Generated %s</p>
 				    </header>
 
@@ -736,9 +731,9 @@ public final class RevisionHtmlRenderer {
 
 				    <h2>Units</h2>
 				    <ul class="navigation-list">
-				""".formatted(escapeText(corpus.getSubject().getName()), stylesheetSource,
-				escapeText(corpus.getSyllabusVersion().getName()), escapeText(corpus.getSubject().getName()),
-				escapeText(generatedAtText), revisionQuestionCount, escapeText(revisionQuestionLabel)));
+				""".formatted(escapeText(exportTitle), stylesheetSource,
+				escapeText(corpus.getSyllabusVersion().getName()), escapeText(exportTitle),
+				escapeText(exportIdentity.getDisplayText()), revisionQuestionCount, escapeText(revisionQuestionLabel)));
 		for (RevisionCorpusNode unitNode : corpus.getRootNodes()) {
 			int questionCount = countPresentations(unitNode);
 
@@ -781,7 +776,7 @@ public final class RevisionHtmlRenderer {
 				<head>
 				    <meta charset="UTF-8">
 				    <meta name="viewport" content="width=device-width, initial-scale=1">
-				    <title>%s — %s Revision</title>
+				    <title>%s — %s</title>
 				    <link rel="stylesheet" href="%s">
 				</head>
 				<body>
@@ -799,12 +794,14 @@ public final class RevisionHtmlRenderer {
 				    <header class="page-header">
 				        <p class="eyebrow">%s · %s</p>
 				        <h1>%s</h1>
+				        <p class="generated-at">%s</p>
 				    </header>
-				""".formatted(escapeText(subtopic.getName()), escapeText(corpus.getSubject().getName()),
-				stylesheetSource, subjectHref, escapeText(corpus.getSubject().getName()), unitHref,
+				""".formatted(escapeText(subtopic.getName()),
+				escapeText(exportIdentity.titleFor(corpus.getSubject().getName())), stylesheetSource, subjectHref,
+				escapeText(corpus.getSubject().getName()), unitHref,
 				escapeText(nodeLabel(unit)), topicHref, escapeText(nodeLabel(topic)), escapeText(nodeLabel(subtopic)),
 				escapeText(corpus.getSubject().getName()), escapeText(corpus.getSyllabusVersion().getName()),
-				escapeText(nodeLabel(subtopic))));
+				escapeText(nodeLabel(subtopic)), escapeText(exportIdentity.titleFor(corpus.getSubject().getName()))));
 		int renderedQuestions;
 		if (presentationPlan.getGroupingMode() == RevisionGroupingMode.SUBTOPIC) {
 			renderedQuestions = appendQuestionTypeSections(html, List.of(subtopicNode), false, outputRoot, outputFile);
@@ -845,7 +842,7 @@ public final class RevisionHtmlRenderer {
 				<head>
 				    <meta charset="UTF-8">
 				    <meta name="viewport" content="width=device-width, initial-scale=1">
-				    <title>%s — %s Revision</title>
+				    <title>%s — %s</title>
 				    <link rel="stylesheet" href="%s">
 				</head>
 				<body>
@@ -860,11 +857,14 @@ public final class RevisionHtmlRenderer {
 				    <header class="page-header">
 				        <p class="eyebrow">%s · %s</p>
 				        <h1>%s</h1>
+				        <p class="generated-at">%s</p>
 				    </header>
-				""".formatted(escapeText(topic.getName()), escapeText(corpus.getSubject().getName()), stylesheetSource,
-				subjectHref, escapeText(corpus.getSubject().getName()), unitHref, escapeText(nodeLabel(unit)),
+				""".formatted(escapeText(topic.getName()),
+				escapeText(exportIdentity.titleFor(corpus.getSubject().getName())), stylesheetSource, subjectHref,
+				escapeText(corpus.getSubject().getName()), unitHref, escapeText(nodeLabel(unit)),
 				escapeText(nodeLabel(topic)), escapeText(corpus.getSubject().getName()),
-				escapeText(corpus.getSyllabusVersion().getName()), escapeText(nodeLabel(topic))));
+				escapeText(corpus.getSyllabusVersion().getName()), escapeText(nodeLabel(topic)),
+				escapeText(exportIdentity.titleFor(corpus.getSubject().getName()))));
 		appendTopicContent(html, unitNode, topicNode, outputRoot, outputFile);
 		html.append("""
 				</main>
@@ -887,7 +887,7 @@ public final class RevisionHtmlRenderer {
 				<head>
 				    <meta charset="UTF-8">
 				    <meta name="viewport" content="width=device-width, initial-scale=1">
-				    <title>%s — %s Revision</title>
+				    <title>%s — %s</title>
 				    <link rel="stylesheet" href="%s">
 				</head>
 				<body>
@@ -901,14 +901,16 @@ public final class RevisionHtmlRenderer {
 				    <header class="page-header">
 				        <p class="eyebrow">%s · %s</p>
 				        <h1>%s</h1>
+				        <p class="generated-at">%s</p>
 				    </header>
 
 				    <h2>Topics</h2>
 				    <ul class="navigation-list">
-				""".formatted(escapeText(unit.getName()), escapeText(corpus.getSubject().getName()), stylesheetSource,
-				subjectHref, escapeText(corpus.getSubject().getName()), escapeText(nodeLabel(unit)),
+				""".formatted(escapeText(unit.getName()),
+				escapeText(exportIdentity.titleFor(corpus.getSubject().getName())), stylesheetSource, subjectHref,
+				escapeText(corpus.getSubject().getName()), escapeText(nodeLabel(unit)),
 				escapeText(corpus.getSubject().getName()), escapeText(corpus.getSyllabusVersion().getName()),
-				escapeText(nodeLabel(unit))));
+				escapeText(nodeLabel(unit)), escapeText(exportIdentity.titleFor(corpus.getSubject().getName()))));
 		for (RevisionCorpusNode topicNode : unitNode.getChildren()) {
 			if (topicNode.getCurriculumNode().getLevel() != CurriculumLevel.TOPIC) {
 				throw new IllegalStateException("Unit corpus children must be Topic nodes");
