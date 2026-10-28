@@ -45,7 +45,6 @@ class RevisionExportServiceTest {
 				.export(new RevisionExportRequest(fixture.chemistry, tempDir.resolve("first-export")));
 		RevisionExportResult second = fixture.service
 				.export(new RevisionExportRequest(fixture.chemistry, tempDir.resolve("second-export")));
-
 		assertEquals(first.getExportIdentity().getDisplayText(), second.getExportIdentity().getDisplayText());
 		assertNotEquals(first.getExportIdentity().getTechnicalToken(), second.getExportIdentity().getTechnicalToken());
 		assertEquals("24 Sep 2026", first.getExportIdentity().getDisplayText());

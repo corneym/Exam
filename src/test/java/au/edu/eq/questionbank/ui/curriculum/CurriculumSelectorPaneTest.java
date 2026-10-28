@@ -75,7 +75,6 @@ public class CurriculumSelectorPaneTest {
 			robot.interact(() -> pane.selectClassificationPath(descriptor3111));
 			assertEquals(unit3, units.getValue());
 			assertEquals(topic31, topics.getValue());
-
 			robot.interact(pane::clearClassificationBelowSubject);
 			assertNull(units.getValue());
 			assertNull(units.getSelectionModel().getSelectedItem());
@@ -406,13 +405,13 @@ public class CurriculumSelectorPaneTest {
 	}
 
 	@Test
-	public void descriptorLookupUsesCompactNaturalLabelsAndSelectsSimilarlyWordedResult(FxRobot robot) throws Exception {
+	public void descriptorLookupUsesCompactNaturalLabelsAndSelectsSimilarlyWordedResult(FxRobot robot)
+			throws Exception {
 		TextField search = robot.lookup("#curriculum-descriptor-search").queryAs(TextField.class);
 		TextField code = robot.lookup("#curriculum-code").queryAs(TextField.class);
 		ListView<DescriptorMatch> results = robot.lookup("#curriculum-descriptor-search-results").queryListView();
 		robot.interact(() -> search.setText("shared wording"));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
-
 		assertEquals(List.of(descriptor3112, descriptor31110),
 				results.getItems().stream().map(DescriptorMatch::descriptor).toList());
 		assertEquals("4.1.1.2 — Shared wording learning outcome", results.getItems().getFirst().displayLabel());
@@ -779,11 +778,11 @@ public class CurriculumSelectorPaneTest {
 		Topic topic41 = new Topic(8, syllabus2025, unit4, "4.1", "Topic 4.1", 1);
 		Subtopic subtopic411 = new Subtopic(9, syllabus2025, topic41, "4.1.1", "Subtopic 4.1.1", 1);
 		descriptor3112 = new Descriptor(10, syllabus2025, subtopic411, "4.1.1.2", "Shared wording learning outcome", 1);
-		descriptor31110 = new Descriptor(11, syllabus2025, subtopic411, "4.1.1.10", "Shared wording learning outcome", 2);
+		descriptor31110 = new Descriptor(11, syllabus2025, subtopic411, "4.1.1.10", "Shared wording learning outcome",
+				2);
 		InMemoryCurriculumRepository repository = new InMemoryCurriculumRepository(List.of(chemistry),
-				List.of(syllabus2019, syllabus2025),
-				List.of(unit3, topic31, subtopic311, descriptor3111, descriptor3112, descriptor31110, topic32,
-						descriptor321, unit4, topic41, subtopic411));
+				List.of(syllabus2019, syllabus2025), List.of(unit3, topic31, subtopic311, descriptor3111,
+						descriptor3112, descriptor31110, topic32, descriptor321, unit4, topic41, subtopic411));
 		model = new CurriculumSelectionModel(repository);
 		pane = new CurriculumSelectorPane(model);
 		pane.selectSubject(chemistry);

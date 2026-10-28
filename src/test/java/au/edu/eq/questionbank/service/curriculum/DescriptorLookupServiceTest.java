@@ -130,11 +130,9 @@ class DescriptorLookupServiceTest {
 		Descriptor nonNumericCode = new Descriptor(205, current, ratesSubtopic, "A.1", "Natural descriptor", 6);
 		List<CurriculumNode> candidates = List.of(codeTen, nonNumericCode, duplicateCodeBeta, deeperCodeTwo, codeTwo,
 				duplicateCodeAlpha);
-
 		List<DescriptorMatch> matches = service.findMatches(current, candidates, "natural", 4);
 		assertEquals(List.of(codeTwo, deeperCodeTwo, duplicateCodeAlpha, duplicateCodeBeta),
 				matches.stream().map(DescriptorMatch::descriptor).toList());
-
 		List<DescriptorMatch> allMatches = service.findMatches(current, candidates, "natural", 10);
 		assertEquals(nonNumericCode, allMatches.getLast().descriptor());
 	}

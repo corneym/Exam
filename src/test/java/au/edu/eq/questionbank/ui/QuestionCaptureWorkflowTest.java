@@ -1981,7 +1981,6 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Label duplicateStatus = lookup(robot, "#question-code-status", Label.class);
 		Label regionCount = lookup(robot, "#question-region-count", Label.class);
 		RadioButton writtenResponse = lookup(robot, "#question-response-type-written", RadioButton.class);
-
 		assertEquals("Saved 4 (1 mark(s), 1 content part(s))", saveStatus.getText());
 		assertEquals("Content parts: 0", regionCount.getText());
 		selectFirst(robot, "#curriculum-unit");
@@ -1993,7 +1992,6 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.interact(() -> code.setText("5"));
 		assertEquals("", saveStatus.getText());
 		assertEquals("Content parts: 0", regionCount.getText());
-
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-question-region");
 		assertEquals("Pending 5 — 1 content part(s) accepted", saveStatus.getText());
@@ -2010,7 +2008,6 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		robot.interact(() -> code.setText("5"));
 		assertEquals("Pending 5 — 1 content part(s) accepted", saveStatus.getText());
 		assertEquals("Content parts: 1", regionCount.getText());
-
 		robot.interact(() -> marks.setText("1"));
 		fireControl(robot, writtenResponse);
 		assertFalse(lookup(robot, "#save-question", Button.class).isDisabled());
@@ -2020,7 +2017,6 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 				() -> repository.findAll().stream().anyMatch(question -> "5".equals(question.getQuestionCode())));
 		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
 				() -> "Saved 5 (1 mark(s), 1 content part(s))".equals(saveStatus.getText()));
-
 		Question savedFive = repository.findAll().stream().filter(question -> "5".equals(question.getQuestionCode()))
 				.findFirst().orElseThrow();
 		boolean[] editStarted = { false };
@@ -2047,7 +2043,6 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		fireControl(robot, writtenResponse);
 		dragRegionOnDisplayedPage(robot);
 		fireControl(robot, "#add-question-region");
-
 		QuestionCapturePane pane = questionCapturePane();
 		SqliteQuestionRepository stored = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
 		CountDownLatch refreshEntered = new CountDownLatch(1);
@@ -2078,7 +2073,6 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 					() -> stored.findAll().stream().anyMatch(question -> "6".equals(question.getQuestionCode())));
 			WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> !pane.isSaveInProgress());
 			WaitForAsyncUtils.waitForFxEvents();
-
 			assertEquals("", saveStatus.getText());
 			assertFalse(saveStatus.getText().contains("6"));
 			assertEquals(1, stored.findAll().size());

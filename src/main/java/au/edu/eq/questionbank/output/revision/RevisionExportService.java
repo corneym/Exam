@@ -72,7 +72,8 @@ public final class RevisionExportService {
 	 * @param sharedContextAssetRenderer the reusable shared context image renderer
 	 * @param answerAssetRenderer        the answer image renderer
 	 * @param validator                  the generated-site validator
-	 * @param clock                      clock and display time zone for export identities
+	 * @param clock                      clock and display time zone for export
+	 *                                   identities
 	 * @throws NullPointerException if any dependency is null
 	 */
 	public RevisionExportService(RevisionCorpusBuilder corpusBuilder, RevisionPresentationPlanner presentationPlanner,
@@ -280,9 +281,8 @@ public final class RevisionExportService {
 
 	private RevisionExportIdentity nextExportIdentity() {
 		Instant observed = clock.instant().truncatedTo(ChronoUnit.MILLIS);
-		Instant generatedAt = lastGeneratedInstant.updateAndGet(previous -> previous == null || observed.isAfter(previous)
-				? observed
-				: previous.plusMillis(1));
+		Instant generatedAt = lastGeneratedInstant.updateAndGet(
+				previous -> previous == null || observed.isAfter(previous) ? observed : previous.plusMillis(1));
 		return new RevisionExportIdentity(generatedAt.atZone(clock.getZone()));
 	}
 

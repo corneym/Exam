@@ -86,7 +86,8 @@ class ExamAssetsPanePreviewTest {
 		Path answerPreview = createPdf("answer-preview.pdf");
 
 		// Exercise every Question/Answer preview-to-add combination. The chooser
-		// returns null so each action also proves that cancellation does not restore the
+		// returns null so each action also proves that cancellation does not restore
+		// the
 		// old preview or start a structural transaction.
 		assertAddClearsPreview(robot, questionPreview, "#exam-assets-add-question-booklet",
 				questionChooserSawClearedPreview);
@@ -94,8 +95,7 @@ class ExamAssetsPanePreviewTest {
 				questionChooserSawClearedPreview);
 		assertAddClearsPreview(robot, questionPreview, "#exam-assets-add-answer-booklet",
 				answerChooserSawClearedPreview);
-		assertAddClearsPreview(robot, answerPreview, "#exam-assets-add-answer-booklet",
-				answerChooserSawClearedPreview);
+		assertAddClearsPreview(robot, answerPreview, "#exam-assets-add-answer-booklet", answerChooserSawClearedPreview);
 
 		// The clear operation must not delete, replace or unassign any saved asset.
 		assertEquals(1, examWriter.findExamBooklets(exam).size());
@@ -112,7 +112,6 @@ class ExamAssetsPanePreviewTest {
 		CountDownLatch loadCompleted = new CountDownLatch(1);
 		AtomicReference<Throwable> loadFailure = new AtomicReference<>();
 		Button addAnswer = robot.lookup("#exam-assets-add-answer-booklet").queryAs(Button.class);
-
 		robot.interact(() -> {
 			pdfWorkspace.openAnswerPdfAsync(stalePreview, failure -> {
 				loadFailure.set(failure);
@@ -124,13 +123,13 @@ class ExamAssetsPanePreviewTest {
 			answerChooserSawClearedPreview.set(false);
 			addAnswer.fire();
 		});
-
 		assertTrue(loadCompleted.await(10, TimeUnit.SECONDS), "Pending PDF load did not complete");
 		assertInstanceOf(CancellationException.class, loadFailure.get());
 		assertTrue(answerChooserSawClearedPreview.get(), "Preview must clear before source selection");
 		assertPdfWorkspaceCleared();
 
-		// The stale worker must release its file and a later explicit preview must still
+		// The stale worker must release its file and a later explicit preview must
+		// still
 		// open normally.
 		Files.delete(stalePreview);
 		robot.interact(() -> pdfWorkspace.openViewerPdf(laterPreview));
@@ -153,7 +152,6 @@ class ExamAssetsPanePreviewTest {
 		Label state = robot.lookup("#exam-assets-state").queryAs(Label.class);
 		HBox existingExamControls = robot.lookup("#exam-assets-existing-exam-controls").queryAs(HBox.class);
 		HBox examCreationControls = robot.lookup("#exam-assets-exam-creation-controls").queryAs(HBox.class);
-
 		assertEquals("+", addExam.getText());
 		assertEquals("Add Exam", addExam.getAccessibleText());
 		assertNotNull(addExam.getTooltip());
@@ -165,8 +163,7 @@ class ExamAssetsPanePreviewTest {
 		// forcing the EXAM row to consume the available workspace width.
 		assertTrue(examSelector.getWidth() <= 240.5);
 		assertNotNull(examSelector.getTooltip());
-		assertEquals("2026 QCAA A deliberately long External Assessment identity",
-				examSelector.getTooltip().getText());
+		assertEquals("2026 QCAA A deliberately long External Assessment identity", examSelector.getTooltip().getText());
 
 		// Unchecked + starts the ordinary New Exam transaction.
 		robot.interact(addExam::fire);
@@ -211,13 +208,12 @@ class ExamAssetsPanePreviewTest {
 		robot.interact(() -> stage.setWidth(560));
 		assertEquals("State: ACTIVE", state.getText());
 		assertTrue(state.getWidth() + 0.5 >= state.prefWidth(-1));
-		Exam completedExam = new Exam(exam.getId(), exam.getSubject(), exam.getProvider(), exam.getYear(), exam.getName(),
-				ExamCaptureState.COMPLETE);
+		Exam completedExam = new Exam(exam.getId(), exam.getSubject(), exam.getProvider(), exam.getYear(),
+				exam.getName(), ExamCaptureState.COMPLETE);
 		ExamAssetsPane.ExamSnapshot completedSnapshot = new ExamAssetsPane.ExamSnapshot(completedExam,
 				new ExamAssetExpectations(null, 0, null, 0), List.of(), List.of());
-		robot.interact(() -> examAssetsPane
-				.applySubjectSnapshot(new ExamAssetsPane.SubjectSnapshot(workingSubject, List.of(completedExam),
-						completedSnapshot)));
+		robot.interact(() -> examAssetsPane.applySubjectSnapshot(
+				new ExamAssetsPane.SubjectSnapshot(workingSubject, List.of(completedExam), completedSnapshot)));
 		assertEquals("State: COMPLETE", state.getText());
 		assertTrue(state.getWidth() + 0.5 >= state.prefWidth(-1));
 	}
@@ -237,9 +233,7 @@ class ExamAssetsPanePreviewTest {
 		SourceDocument questionSource = examWriter.insertSourceDocument("subjects/Chemistry/question.pdf");
 		booklet = examWriter.insertExamBooklet(exam, questionSource, "Paper 1",
 				ExamBookletQuestionFormat.WRITTEN_RESPONSE, 10);
-		answerFile = answerWriter.findOrCreateAnswerFile(booklet, "Marking guide",
-				"subjects/Chemistry/answer.pdf");
-
+		answerFile = answerWriter.findOrCreateAnswerFile(booklet, "Marking guide", "subjects/Chemistry/answer.pdf");
 		pdfWorkspace = new PdfWorkspacePane();
 		examAssetsPane = new ExamAssetsPane(examWriter, answerWriter, new ExamMetadataOptionsRepository(),
 				(currentExam, _, _, _) -> currentExam, _ -> {
@@ -258,7 +252,6 @@ class ExamAssetsPanePreviewTest {
 				}, (_, _, _, _, _, _, _) -> null);
 		examAssetsPane.setLegacyQuestionImportHandler(legacyImportRequests::incrementAndGet);
 		examAssetsPane.refresh(workingSubject);
-
 		BorderPane root = new BorderPane();
 		root.setLeft(examAssetsPane);
 		root.setCenter(pdfWorkspace);
@@ -275,7 +268,8 @@ class ExamAssetsPanePreviewTest {
 		});
 		assertEquals(PdfWorkspacePane.DocumentMode.VIEWER, pdfWorkspace.getDisplayedDocument());
 
-		// The workflow test exercises the control's semantic action; pointer hit-testing
+		// The workflow test exercises the control's semantic action; pointer
+		// hit-testing
 		// is unrelated to the reported defect.
 		robot.interact(addButton::fire);
 		assertTrue(chooserObservation.get(), "Preview must clear before source selection");

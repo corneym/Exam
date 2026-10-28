@@ -13,8 +13,7 @@ public final class RevisionExportResult {
 	private final RevisionExportIdentity exportIdentity;
 	private final RevisionCorpusStatistics statistics;
 
-	RevisionExportResult(Path destination, RevisionCorpusStatistics statistics,
-			RevisionExportIdentity exportIdentity) {
+	RevisionExportResult(Path destination, RevisionCorpusStatistics statistics, RevisionExportIdentity exportIdentity) {
 		if (destination == null) {
 			throw new NullPointerException("destination");
 		}

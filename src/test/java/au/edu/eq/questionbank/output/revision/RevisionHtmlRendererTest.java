@@ -65,7 +65,6 @@ class RevisionHtmlRendererTest {
 		Path outputRoot = tempDir.resolve("identified-output");
 		List<Path> htmlFiles = renderer.render(corpus, outputRoot);
 		String exportTitle = "Chemistry Exam Question Corpus (24 Sep 2026)";
-
 		assertTrue(Files.readString(outputRoot.resolve("index.html")).contains("<h1>" + exportTitle + "</h1>"));
 		for (Path htmlFile : htmlFiles) {
 			String html = Files.readString(htmlFile);

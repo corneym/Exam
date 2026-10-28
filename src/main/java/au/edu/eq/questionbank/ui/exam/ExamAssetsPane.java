@@ -1232,8 +1232,8 @@ public final class ExamAssetsPane extends VBox {
 		addNewExamButton.setMinWidth(Region.USE_PREF_SIZE);
 		addNewExamButton.setMaxWidth(Region.USE_PREF_SIZE);
 		addNewExamButton.setPadding(new Insets(2, 7, 2, 7));
-		addNewExamButton.setTooltip(
-				new Tooltip("Add a new Exam, or start legacy import when Legacy import is selected."));
+		addNewExamButton
+				.setTooltip(new Tooltip("Add a new Exam, or start legacy import when Legacy import is selected."));
 		addNewExamButton.setOnAction(_ -> beginSelectedExamCreationAction());
 		legacyImportCheckBox.setId("exam-assets-legacy-import");
 		legacyImportCheckBox.setMinWidth(Region.USE_PREF_SIZE);
