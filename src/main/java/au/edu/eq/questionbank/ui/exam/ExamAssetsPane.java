@@ -527,8 +527,8 @@ public final class ExamAssetsPane extends VBox {
 	}
 
 	/**
-	 * Opens Exam / Assets directly in its existing New Exam transaction for one
-	 * authoritative application Subject.
+	 * Opens Exam / Assets with ordinary creation and Legacy import available for
+	 * one authoritative Subject. The compact + control starts the chosen workflow.
 	 *
 	 * @param subject Subject that will own the new Exam
 	 * @throws SQLException          if the Subject's existing Exam hierarchy cannot
@@ -541,14 +541,13 @@ public final class ExamAssetsPane extends VBox {
 			throw new NullPointerException("subject");
 		}
 
-		// Load authoritative persisted state first. The ordinary New Exam transaction
-		// then owns all metadata validation and persistence exactly as it does when
-		// entered from inside Exam / Assets.
+		// Dashboard onboarding must not acquire the ordinary creation transaction
+		// before the user can choose Legacy import, including for an empty Subject.
 		refresh(subject);
 		if (!canBeginNewExam()) {
 			throw new IllegalStateException("A new Exam cannot be started while structural work is pending.");
 		}
-		beginNewExam();
+		legacyImportCheckBox.setSelected(false);
 	}
 
 	/**
