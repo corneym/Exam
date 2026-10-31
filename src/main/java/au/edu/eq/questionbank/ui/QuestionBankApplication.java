@@ -354,6 +354,7 @@ public class QuestionBankApplication extends Application {
 	private PerformanceCorpusCheckpointRecorder performanceCorpusCheckpointRecorder;
 	private PerformanceFxStallProbe performanceFxStallProbe;
 	private PerformanceRuntimeSampler performanceRuntimeSampler;
+	private ScreenAwareWindows screenAwareWindows;
 
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
@@ -372,6 +373,7 @@ public class QuestionBankApplication extends Application {
 
 	@Override
 	public void start(Stage stage) throws Exception {
+		screenAwareWindows = new ScreenAwareWindows();
 		Path propertiesFile = ApplicationPaths.propertiesFile();
 		ApplicationConfig config;
 		try {
@@ -457,6 +459,9 @@ public class QuestionBankApplication extends Application {
 
 	@Override
 	public void stop() throws Exception {
+		if (screenAwareWindows != null) {
+			screenAwareWindows.close();
+		}
 		try {
 			if (!resourcesClosedForRestore && (shutdownCoordinator == null || !shutdownCoordinator.isReadyToExit())) {
 				pdfWorkspace.close();

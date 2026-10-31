@@ -6,6 +6,7 @@ import java.util.function.BiFunction;
 import java.util.function.Supplier;
 
 import au.edu.eq.questionbank.ApplicationPaths;
+import au.edu.eq.questionbank.ui.ScreenAwareWindows;
 import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Question;
@@ -309,11 +310,10 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 
 		// Prefer the agreed large-desktop workspace, but do not choose an
 		// initial preferred size larger than the available primary display.
-		Rectangle2D visualBounds = Screen.getPrimary().getVisualBounds();
-		double preferredWidth = Math.max(DIALOG_WIDTH,
-				Math.min(DIALOG_PREFERRED_WIDTH, visualBounds.getWidth() - 32.0));
-		double preferredHeight = Math.max(700.0, Math.min(DIALOG_HEIGHT, visualBounds.getHeight() - 48.0));
-		getDialogPane().setMinWidth(DIALOG_WIDTH);
+		Rectangle2D visualBounds = ScreenAwareWindows.visualBounds(getOwner());
+		double preferredWidth = Math.min(DIALOG_PREFERRED_WIDTH, visualBounds.getWidth() - 32.0);
+		double preferredHeight = Math.min(DIALOG_HEIGHT, visualBounds.getHeight() - 48.0);
+		getDialogPane().setMinWidth(Math.min(DIALOG_WIDTH, visualBounds.getWidth() - 32.0));
 		getDialogPane().setPrefWidth(preferredWidth);
 		getDialogPane().setPrefHeight(preferredHeight);
 
@@ -459,13 +459,15 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	}
 
 	private void enforceMinimumWidth() {
-		if (!isShowing() || getWidth() >= DIALOG_WIDTH) {
+		double minimum = Math.min(DIALOG_WIDTH, ScreenAwareWindows.visualBounds(
+				getDialogPane().getScene() == null ? getOwner() : getDialogPane().getScene().getWindow()).getWidth());
+		if (!isShowing() || getWidth() >= minimum) {
 			return;
 		}
 
 		// Search has a functional minimum width independent of whether the resize
 		// originated from the native window manager, restored geometry or code.
-		setWidth(DIALOG_WIDTH);
+		setWidth(minimum);
 	}
 
 	private boolean isRememberedPositionVisible() {
@@ -520,7 +522,7 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 
 			// DialogPane minimum size controls layout, while Stage minimum width
 			// prevents the native window itself from being dragged below that limit.
-			dialogStage.setMinWidth(DIALOG_WIDTH);
+			dialogStage.setMinWidth(Math.min(DIALOG_WIDTH, ScreenAwareWindows.visualBounds(dialogStage).getWidth()));
 		}
 		if (Double.isFinite(rememberedWidth) && rememberedWidth > 0) {
 
@@ -550,6 +552,9 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 			if (isRememberedPositionVisible()) {
 				setX(rememberedX);
 				setY(rememberedY);
+			}
+			if (currentScene.getWindow() instanceof Stage dialogStage) {
+				ScreenAwareWindows.fit(dialogStage);
 			}
 		});
 	}
