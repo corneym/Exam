@@ -158,6 +158,7 @@ public final class ExamAssetsPane extends VBox {
 	private final TextField expectedAnswerBookletsField = new TextField();
 	private final TextField expectedQuestionBookletsField = new TextField();
 	private final List<Button> answerFileDeleteButtons = new ArrayList<>();
+	private Consumer<ExamBooklet> questionPdfReplacementHandler = _ -> { };
 	private final Label legacyImportProgressLabel = new Label();
 	private List<LegacyMappedBookletRequirement> legacyRequiredPapers = List.of();
 	private Map<Long, String> selectedLegacyPaperCodes = Map.of();
@@ -422,6 +423,14 @@ public final class ExamAssetsPane extends VBox {
 		// Expose only the navigation decision; ownership of the actual transaction
 		// remains inside ExamAssetsPane.
 		return structuralTransactionActive();
+	}
+
+	/**
+	 * Supplies replacement for the explicitly chosen saved Question booklet.
+	 * @param handler application-owned safe replacement workflow
+	 */
+	public void setQuestionPdfReplacementHandler(Consumer<ExamBooklet> handler) {
+		questionPdfReplacementHandler = Objects.requireNonNull(handler, "handler");
 	}
 
 	/**
@@ -2775,6 +2784,7 @@ public final class ExamAssetsPane extends VBox {
 		private final RadioButton bothButton = new RadioButton("Both");
 		private final TextField expectedField = new TextField();
 		private final Button viewButton = new Button("View");
+		private final Button replacePdfButton = new Button("Replace PDF");
 		private final Button editButton = new Button("Edit");
 		private final Button cancelButton = new Button("Cancel");
 		private final Button saveButton = new Button("Save");
@@ -2920,6 +2930,13 @@ public final class ExamAssetsPane extends VBox {
 			viewButton.setId("exam-assets-question-view-" + bookletId);
 			viewButton.setMinWidth(Region.USE_PREF_SIZE);
 			viewButton.setOnAction(_ -> questionBookletViewHandler.accept(booklet));
+			replacePdfButton.setId("exam-assets-question-replace-" + bookletId);
+			replacePdfButton.setMinWidth(Region.USE_PREF_SIZE);
+			replacePdfButton.setOnAction(_ -> {
+				if (!structuralTransactionActive() && !booklet.getExam().isComplete()) {
+					questionPdfReplacementHandler.accept(booklet);
+				}
+			});
 			deleteButton.setId("exam-assets-question-delete-" + bookletId);
 			deleteButton.setMinWidth(Region.USE_PREF_SIZE);
 			deleteButton.setOnAction(_ -> {
@@ -2967,7 +2984,7 @@ public final class ExamAssetsPane extends VBox {
 			source.setMaxWidth(Double.MAX_VALUE);
 			source.setTooltip(new Tooltip(source.getText()));
 			HBox.setHgrow(source, Priority.ALWAYS);
-			HBox headingRow = new HBox(SPACING, selectionButton, heading, source, viewButton, deleteButton);
+			HBox headingRow = new HBox(SPACING, selectionButton, heading, source, viewButton, replacePdfButton, deleteButton);
 			headingRow.setId("exam-assets-question-heading-row-" + booklet.getId());
 			HBox formatControls = new HBox(SPACING, mcqButton, writtenButton, bothButton);
 			formatControls.setId("exam-assets-question-format-row-" + booklet.getId());
@@ -3172,6 +3189,7 @@ public final class ExamAssetsPane extends VBox {
 					|| pendingAnswerBookletEditor != null
 					|| (editingBookletEditor != null && editingBookletEditor != this);
 			editButton.setDisable(editing || booklet.getExam().isComplete() || anotherStructuralTransaction);
+			replacePdfButton.setDisable(structuralTransactionActive() || booklet.getExam().isComplete());
 
 			// Extra booklets may need to be removed during legacy
 			// preflight. Do not treat the pending workbook itself
