@@ -848,6 +848,10 @@ public final class ExamAssetsPane extends VBox {
 		if (!canBeginNewExam()) {
 			return;
 		}
+
+		// A new Exam has no source document. Also invalidate any pending preview
+		// load before entering the transaction, including when it is later cancelled.
+		examAssetPdfClearHandler.run();
 		Exam selectedExam = examBox.getValue();
 		newExamReturnExamId = selectedExam == null ? null : Long.valueOf(selectedExam.getId());
 		creatingNewExam = true;
