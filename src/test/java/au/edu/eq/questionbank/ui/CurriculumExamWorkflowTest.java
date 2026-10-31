@@ -849,6 +849,7 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertFalse(addExam.isDisable());
 		robot.interact(addExam::fire);
 		WaitForAsyncUtils.waitForFxEvents();
+		fireControl(robot, "#exam-assets-add-new-exam");
 		Label examState = lookup(robot, "#exam-assets-state", Label.class);
 		Label readOnlySubject = lookup(robot, "#working-subject-value", Label.class);
 		Button cancelNewExam = lookup(robot, "#exam-assets-new-exam-cancel", Button.class);
@@ -1494,6 +1495,7 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Button addExam = lookup(robot, "#corpus-dashboard-add-exam", Button.class);
 		robot.interact(addExam::fire);
 		WaitForAsyncUtils.waitForFxEvents();
+		fireControl(robot, "#exam-assets-add-new-exam");
 		ComboBox<String> provider = comboBox(robot, "#exam-assets-provider");
 		ComboBox<Integer> year = comboBox(robot, "#exam-assets-year");
 		ComboBox<String> assessment = comboBox(robot, "#exam-assets-assessment");
