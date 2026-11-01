@@ -14,9 +14,10 @@ public final class WindowGeometry {
 	 * Fits a requested rectangle to the screen with greatest overlap, falling back
 	 * to the supplied screen when the saved position is no longer visible.
 	 *
-	 * @param requested requested window bounds, possibly containing invalid coordinates
-	 * @param screens current usable screen bounds
-	 * @param fallback owner or primary screen bounds
+	 * @param requested requested window bounds, possibly containing invalid
+	 *                  coordinates
+	 * @param screens   current usable screen bounds
+	 * @param fallback  owner or primary screen bounds
 	 * @return a fully visible rectangle without enlarging a valid requested size
 	 */
 	public static Rectangle2D constrain(Rectangle2D requested, List<Rectangle2D> screens, Rectangle2D fallback) {
@@ -32,10 +33,10 @@ public final class WindowGeometry {
 		Rectangle2D selected = fallback;
 		double greatestOverlap = 0;
 		for (Rectangle2D screen : screens) {
-			double width = Math.max(0, Math.min(requested.getMaxX(), screen.getMaxX())
-					- Math.max(requested.getMinX(), screen.getMinX()));
-			double height = Math.max(0, Math.min(requested.getMaxY(), screen.getMaxY())
-					- Math.max(requested.getMinY(), screen.getMinY()));
+			double width = Math.max(0,
+					Math.min(requested.getMaxX(), screen.getMaxX()) - Math.max(requested.getMinX(), screen.getMinX()));
+			double height = Math.max(0,
+					Math.min(requested.getMaxY(), screen.getMaxY()) - Math.max(requested.getMinY(), screen.getMinY()));
 			if (width * height > greatestOverlap) {
 				greatestOverlap = width * height;
 				selected = screen;

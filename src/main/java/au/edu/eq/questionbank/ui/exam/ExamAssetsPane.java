@@ -1181,9 +1181,11 @@ public final class ExamAssetsPane extends VBox {
 		yearField.setTooltip(new Tooltip("Choose a suggested year or enter another four-digit year."));
 		yearValidation.setId("exam-assets-year-validation");
 		yearValidation.setWrapText(true);
-		yearValidation.visibleProperty().bind(yearField.disabledProperty().not().and(Bindings.createBooleanBinding(
-				() -> ExamYearConverter.parse(yearField.getEditor().getText()) == null,
-				yearField.getEditor().textProperty())));
+		yearValidation.visibleProperty()
+				.bind(yearField.disabledProperty().not()
+						.and(Bindings.createBooleanBinding(
+								() -> ExamYearConverter.parse(yearField.getEditor().getText()) == null,
+								yearField.getEditor().textProperty())));
 		yearValidation.managedProperty().bind(yearValidation.visibleProperty());
 
 		// Exam-level expectations are compact nullable whole-number planning fields.
@@ -2234,7 +2236,8 @@ public final class ExamAssetsPane extends VBox {
 
 		// Save represents a real persistence operation, so it remains unavailable
 		// until the staged Exam Details differ from authoritative persistence.
-		saveButton.setDisable(!isExamDetailsDirty() || ExamYearConverter.parse(yearField.getEditor().getText()) == null);
+		saveButton
+				.setDisable(!isExamDetailsDirty() || ExamYearConverter.parse(yearField.getEditor().getText()) == null);
 	}
 
 	private void updateExamMetadataActionStates() {

@@ -1922,23 +1922,6 @@ public class QuestionBankApplication extends Application {
 		return selectorPane;
 	}
 
-	private Menu createExamMenu(Stage primaryStage, ApplicationConfig config) {
-		Menu examMenu = createMenu("_Exam");
-		MenuItem replaceQuestionPdfItem = createMenuItem("_Replace Active Question PDF...",
-				() -> replaceActiveQuestionPdf(primaryStage, config));
-		replaceQuestionPdfItem.setId("replace-active-question-pdf");
-		MenuItem replaceAnswerPdfItem = createMenuItem("Replace Active _Answer PDF...",
-				() -> replaceActiveAnswerPdf(primaryStage, config));
-		replaceAnswerPdfItem.setId("replace-active-answer-pdf");
-
-		// Exam lifecycle now belongs to the explicitly selected Dashboard Exam. The
-		// Exam
-		// menu retains only operations that genuinely require an active capture
-		// booklet.
-		examMenu.getItems().addAll(replaceQuestionPdfItem, replaceAnswerPdfItem);
-		return examMenu;
-	}
-
 	private PdfStore createExamPdfStore(ApplicationConfig config) {
 		if (config == null) {
 			throw new NullPointerException("config");
@@ -2011,9 +1994,9 @@ public class QuestionBankApplication extends Application {
 
 	private MenuBar createMenuBar(Stage primaryStage, ApplicationConfig config) {
 		MenuBar menuBar = new MenuBar();
-		menuBar.getMenus().addAll(createFileMenu(primaryStage, config), createExamMenu(primaryStage, config),
-				createCurriculumMenu(primaryStage, config), createQuestionMenu(primaryStage, config),
-				createExportMenu(primaryStage, config), createHelpMenu(config));
+		menuBar.getMenus().addAll(createFileMenu(primaryStage, config), createCurriculumMenu(primaryStage, config),
+				createQuestionMenu(primaryStage, config), createExportMenu(primaryStage, config),
+				createHelpMenu(config));
 		return menuBar;
 	}
 
@@ -4581,21 +4564,6 @@ public class QuestionBankApplication extends Application {
 		showQuestionSearch(primaryStage(), applicationConfig, narrowing);
 	}
 
-	private void showDashboardQuestionWorkDescriptorAssignment(List<Question> questions) {
-		Objects.requireNonNull(questions, "questions");
-		if (questions.isEmpty()) {
-			return;
-		}
-		if (workingSubject == null || questions.stream()
-				.anyMatch(question -> question.getExam().getSubject().getId() != workingSubject.getId())) {
-			throw new IllegalArgumentException("The displayed Questions do not belong to the Working Subject");
-		}
-
-		// Keep the displayed IDs across Search refreshes, including work from other
-		// Exams/booklets. Reuse the existing Save, discard and Dashboard-return path.
-		showQuestionSearch(primaryStage(), applicationConfig, QuestionSearchNarrowing.forQuestionWork(questions));
-	}
-
 	private boolean showDashboardMcqExplanationCapture(Question question, Runnable returnHandler) {
 		if (question == null) {
 			throw new NullPointerException("question");
@@ -4721,6 +4689,21 @@ public class QuestionBankApplication extends Application {
 			narrowing = QuestionSearchNarrowing.forBooklet(booklet);
 		}
 		showQuestionSearch(primaryStage(), applicationConfig, narrowing);
+	}
+
+	private void showDashboardQuestionWorkDescriptorAssignment(List<Question> questions) {
+		Objects.requireNonNull(questions, "questions");
+		if (questions.isEmpty()) {
+			return;
+		}
+		if (workingSubject == null || questions.stream()
+				.anyMatch(question -> question.getExam().getSubject().getId() != workingSubject.getId())) {
+			throw new IllegalArgumentException("The displayed Questions do not belong to the Working Subject");
+		}
+
+		// Keep the displayed IDs across Search refreshes, including work from other
+		// Exams/booklets. Reuse the existing Save, discard and Dashboard-return path.
+		showQuestionSearch(primaryStage(), applicationConfig, QuestionSearchNarrowing.forQuestionWork(questions));
 	}
 
 	private void showExamAssetsMode() {

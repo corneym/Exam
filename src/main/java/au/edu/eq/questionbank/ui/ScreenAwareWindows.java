@@ -13,13 +13,17 @@ import javafx.stage.Screen;
 import javafx.stage.Stage;
 import javafx.stage.Window;
 
-/** Applies one fit-to-screen policy to application stages, including dialog stages. */
+/**
+ * Applies one fit-to-screen policy to application stages, including dialog
+ * stages.
+ */
 public final class ScreenAwareWindows implements AutoCloseable {
 
 	private final ListChangeListener<Window> listener = change -> {
 		while (change.next()) {
 			for (Window window : change.getAddedSubList()) {
 				if (window instanceof Stage stage) {
+
 					// Native decorations and Dialog preferred sizing settle after showing.
 					Platform.runLater(() -> fit(stage));
 				}
@@ -27,7 +31,10 @@ public final class ScreenAwareWindows implements AutoCloseable {
 		}
 	};
 
-	/** Registers the policy before the first application or startup-error window opens. */
+	/**
+	 * Registers the policy before the first application or startup-error window
+	 * opens.
+	 */
 	public ScreenAwareWindows() {
 		Window.getWindows().addListener(listener);
 	}
@@ -37,7 +44,10 @@ public final class ScreenAwareWindows implements AutoCloseable {
 		Window.getWindows().removeListener(listener);
 	}
 
-	/** Fits a showing stage using current visual bounds, including taskbar and scaling. */
+	/**
+	 * Fits a showing stage using current visual bounds, including taskbar and
+	 * scaling.
+	 */
 	public static void fit(Stage stage) {
 		if (!stage.isShowing() || stage.getScene() == null) {
 			return;
@@ -50,11 +60,15 @@ public final class ScreenAwareWindows implements AutoCloseable {
 		fit(stage, screens, fallback);
 	}
 
-	/** Returns the usable monitor bounds for a window, or the primary screen if absent. */
+	/**
+	 * Returns the usable monitor bounds for a window, or the primary screen if
+	 * absent.
+	 */
 	public static Rectangle2D visualBounds(Window window) {
 		Rectangle2D primary = Screen.getPrimary().getVisualBounds();
-		return window == null ? primary : WindowGeometry.screenFor(bounds(window),
-				Screen.getScreens().stream().map(Screen::getVisualBounds).toList(), primary);
+		return window == null ? primary
+				: WindowGeometry.screenFor(bounds(window),
+						Screen.getScreens().stream().map(Screen::getVisualBounds).toList(), primary);
 	}
 
 	static void fit(Stage stage, List<Rectangle2D> screens, Rectangle2D fallback) {
@@ -87,6 +101,7 @@ public final class ScreenAwareWindows implements AutoCloseable {
 		viewport.setFitToWidth(true);
 		viewport.setFitToHeight(true);
 		viewport.setMinSize(0, 0);
+
 		// Keep the existing content and its functional minimum sizes. Scrollbars
 		// expose controls when a small screen cannot accommodate that minimum.
 		scene.setRoot(viewport);

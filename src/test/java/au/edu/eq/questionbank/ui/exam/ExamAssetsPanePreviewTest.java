@@ -172,6 +172,7 @@ class ExamAssetsPanePreviewTest {
 				failure.set(result);
 				completed.countDown();
 			});
+
 			// The worker cannot publish between these actions in the same FX turn.
 			add.fire();
 			cancel.fire();

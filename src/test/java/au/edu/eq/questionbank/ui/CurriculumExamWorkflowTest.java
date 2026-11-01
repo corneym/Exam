@@ -1545,7 +1545,9 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> robot.lookup("#corpus-dashboard-add-exam").tryQuery().isPresent());
 		fireControl(robot, "#corpus-dashboard-add-exam");
-		// Explicitly start ordinary creation when Dashboard entry offers the mode chooser.
+
+		// Explicitly start ordinary creation when Dashboard entry offers the mode
+		// chooser.
 		fireControl(robot, "#exam-assets-add-new-exam");
 		ComboBox<String> provider = comboBox(robot, "#exam-assets-provider");
 		ComboBox<Integer> year = comboBox(robot, "#exam-assets-year");

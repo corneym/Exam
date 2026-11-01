@@ -7,6 +7,7 @@ import javafx.scene.control.OverrunStyle;
 
 /** Variable-height popup row with space reserved for the vertical scrollbar. */
 final class WrappingDescriptorCell extends ListCell<CurriculumNode> {
+
 	WrappingDescriptorCell(ListView<CurriculumNode> list) {
 		setWrapText(true);
 		setTextOverrun(OverrunStyle.CLIP);

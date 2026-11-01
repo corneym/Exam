@@ -48,6 +48,23 @@ class HelpResourcesTest {
 	}
 
 	@Test
+	void gettingStartedHelpOmitsRetiredExamMenu() throws IOException {
+		String html = readResource("getting-started.html");
+
+		// The maintained Help must not advertise a menu or
+		// replacement commands that no longer exist.
+		assertFalse(html.contains("<dt>Exam</dt>"));
+		assertFalse(html.contains("Replace the Question or Answer PDF"));
+
+		// The remaining application menus must still be documented.
+		assertTrue(html.contains("<dt>File</dt>"));
+		assertTrue(html.contains("<dt>Curriculum</dt>"));
+		assertTrue(html.contains("<dt>Questions</dt>"));
+		assertTrue(html.contains("<dt>Export</dt>"));
+		assertTrue(html.contains("<dt>Help</dt>"));
+	}
+
+	@Test
 	void helpIndexLinksToEveryTopicAndSharedStylesheet() throws IOException {
 		String html = readResource("index.html");
 
