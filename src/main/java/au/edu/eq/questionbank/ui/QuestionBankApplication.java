@@ -692,6 +692,15 @@ public class QuestionBankApplication extends Application {
 		return false;
 	}
 
+	private boolean allowAssetPdfReplacement() {
+		if (examAssetsPane.hasPendingStructuralWork()) {
+			showAlert(Alert.AlertType.WARNING, "\u21C4", "Exam / Assets edits are in progress",
+					"Save or cancel the current Exam / Assets work before replacing a PDF.");
+			return false;
+		}
+		return allowQuestionPdfReplacement();
+	}
+
 	private boolean allowCorpusDashboardReturn() {
 		boolean blockingAnswerEdit = answerCapturePane.isEditingAnswer()
 				&& !answerCapturePane.canAbandonMcqExplanationCapture();
@@ -1089,6 +1098,17 @@ public class QuestionBankApplication extends Application {
 	private Path chooseQuestionBookletSource(Stage primaryStage, PdfFilePicker bookletPicker) {
 		seedLegacyBookletPdfDirectory(bookletPicker);
 		return bookletPicker.chooseAnyPdf(primaryStage, "Choose Question booklet PDF");
+	}
+
+	private void chooseQuestionPdfReplacement(Stage primaryStage, ApplicationConfig config, ExamBooklet booklet) {
+		if (!allowAssetPdfReplacement()) {
+			return;
+		}
+		Path replacement = new PdfFilePicker(config.pdfDataRoot()).chooseAnyPdf(primaryStage,
+				"Choose replacement Question PDF");
+		if (replacement != null) {
+			replaceQuestionPdf(primaryStage, config, booklet, replacement, true);
+		}
 	}
 
 	/**
@@ -1496,7 +1516,7 @@ public class QuestionBankApplication extends Application {
 
 	private boolean confirmQuestionPdfReplacement(Stage primaryStage, ExamBooklet booklet,
 			QuestionBookletPdfReplacementService.Impact impact) {
-		ButtonType replaceButton = new ButtonType("Replace PDF", ButtonBar.ButtonData.OK_DONE);
+		ButtonType replaceButton = new ButtonType("\u21C4", ButtonBar.ButtonData.OK_DONE);
 		ButtonType cancelButton = new ButtonType("Cancel", ButtonBar.ButtonData.CANCEL_CLOSE);
 		Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
 		alert.initOwner(primaryStage);
@@ -3100,7 +3120,8 @@ public class QuestionBankApplication extends Application {
 						answerFile) -> importQuestionBookletFromExamAssets(exam, sourcePath, name, questionFormat,
 								expectedQuestionCount, legacyPaperCode, answerFile, config));
 		examAssetsPane.setLegacyQuestionImportHandler(this::showLegacyQuestionImportFromExamAssets);
-		examAssetsPane.setQuestionPdfReplacementHandler(booklet -> chooseQuestionPdfReplacement(primaryStage, config, booklet));
+		examAssetsPane.setQuestionPdfReplacementHandler(
+				booklet -> chooseQuestionPdfReplacement(primaryStage, config, booklet));
 		workingSubjectExamAssetsSnapshotLoader = subject -> {
 			try {
 
@@ -3791,26 +3812,6 @@ public class QuestionBankApplication extends Application {
 		replaceQuestionPdf(primaryStage, config, examMetadataPane.getBooklet(), replacementPath, false);
 	}
 
-	private boolean allowAssetPdfReplacement() {
-		if (examAssetsPane.hasPendingStructuralWork()) {
-			showAlert(Alert.AlertType.WARNING, "Replace PDF", "Exam / Assets edits are in progress",
-					"Save or cancel the current Exam / Assets work before replacing a PDF.");
-			return false;
-		}
-		return allowQuestionPdfReplacement();
-	}
-
-	private void chooseQuestionPdfReplacement(Stage primaryStage, ApplicationConfig config, ExamBooklet booklet) {
-		if (!allowAssetPdfReplacement()) {
-			return;
-		}
-		Path replacement = new PdfFilePicker(config.pdfDataRoot()).chooseAnyPdf(primaryStage,
-				"Choose replacement Question PDF");
-		if (replacement != null) {
-			replaceQuestionPdf(primaryStage, config, booklet, replacement, true);
-		}
-	}
-
 	private void replaceQuestionPdf(Stage primaryStage, ApplicationConfig config, ExamBooklet activeBooklet,
 			Path replacementPath, boolean fromAssets) {
 		if (replacementPath == null) {
@@ -3879,7 +3880,8 @@ public class QuestionBankApplication extends Application {
 				answerCapturePane.refreshQuestions();
 			}
 			if (fromAssets) {
-				examAssetsPane.showForCorrection(workingSubject, result.booklet().getExam().getId(), result.booklet().getId());
+				examAssetsPane.showForCorrection(workingSubject, result.booklet().getExam().getId(),
+						result.booklet().getId());
 				viewQuestionBookletFromExamAssets(result.booklet(), config);
 			}
 			if (!result.contentChanged()) {
@@ -4626,21 +4628,6 @@ public class QuestionBankApplication extends Application {
 		showQuestionSearch(primaryStage(), applicationConfig, narrowing);
 	}
 
-	private void showDashboardQuestionWorkDescriptorAssignment(List<Question> questions) {
-		Objects.requireNonNull(questions, "questions");
-		if (questions.isEmpty()) {
-			return;
-		}
-		if (workingSubject == null || questions.stream()
-				.anyMatch(question -> question.getExam().getSubject().getId() != workingSubject.getId())) {
-			throw new IllegalArgumentException("The displayed Questions do not belong to the Working Subject");
-		}
-
-		// Keep the displayed IDs across Search refreshes, including work from other
-		// Exams/booklets. Reuse the existing Save, discard and Dashboard-return path.
-		showQuestionSearch(primaryStage(), applicationConfig, QuestionSearchNarrowing.forQuestionWork(questions));
-	}
-
 	private boolean showDashboardMcqExplanationCapture(Question question, Runnable returnHandler) {
 		if (question == null) {
 			throw new NullPointerException("question");
@@ -4766,6 +4753,21 @@ public class QuestionBankApplication extends Application {
 			narrowing = QuestionSearchNarrowing.forBooklet(booklet);
 		}
 		showQuestionSearch(primaryStage(), applicationConfig, narrowing);
+	}
+
+	private void showDashboardQuestionWorkDescriptorAssignment(List<Question> questions) {
+		Objects.requireNonNull(questions, "questions");
+		if (questions.isEmpty()) {
+			return;
+		}
+		if (workingSubject == null || questions.stream()
+				.anyMatch(question -> question.getExam().getSubject().getId() != workingSubject.getId())) {
+			throw new IllegalArgumentException("The displayed Questions do not belong to the Working Subject");
+		}
+
+		// Keep the displayed IDs across Search refreshes, including work from other
+		// Exams/booklets. Reuse the existing Save, discard and Dashboard-return path.
+		showQuestionSearch(primaryStage(), applicationConfig, QuestionSearchNarrowing.forQuestionWork(questions));
 	}
 
 	private void showExamAssetsMode() {

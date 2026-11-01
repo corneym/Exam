@@ -24,8 +24,8 @@ import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
-import javafx.event.EventHandler;
 import javafx.beans.binding.Bindings;
+import javafx.event.EventHandler;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
@@ -159,7 +159,8 @@ public final class ExamAssetsPane extends VBox {
 	private final TextField expectedAnswerBookletsField = new TextField();
 	private final TextField expectedQuestionBookletsField = new TextField();
 	private final List<Button> answerFileDeleteButtons = new ArrayList<>();
-	private Consumer<ExamBooklet> questionPdfReplacementHandler = _ -> { };
+	private Consumer<ExamBooklet> questionPdfReplacementHandler = _ -> {
+	};
 	private final Label legacyImportProgressLabel = new Label();
 	private List<LegacyMappedBookletRequirement> legacyRequiredPapers = List.of();
 	private Map<Long, String> selectedLegacyPaperCodes = Map.of();
@@ -427,14 +428,6 @@ public final class ExamAssetsPane extends VBox {
 	}
 
 	/**
-	 * Supplies replacement for the explicitly chosen saved Question booklet.
-	 * @param handler application-owned safe replacement workflow
-	 */
-	public void setQuestionPdfReplacementHandler(Consumer<ExamBooklet> handler) {
-		questionPdfReplacementHandler = Objects.requireNonNull(handler, "handler");
-	}
-
-	/**
 	 * Loads all persistence data needed for the initial Exam/Assets presentation of
 	 * one Subject without touching JavaFX controls.
 	 *
@@ -494,6 +487,15 @@ public final class ExamAssetsPane extends VBox {
 			throw new NullPointerException("handler");
 		}
 		legacyQuestionImportHandler = handler;
+	}
+
+	/**
+	 * Supplies replacement for the explicitly chosen saved Question booklet.
+	 *
+	 * @param handler application-owned safe replacement workflow
+	 */
+	public void setQuestionPdfReplacementHandler(Consumer<ExamBooklet> handler) {
+		questionPdfReplacementHandler = Objects.requireNonNull(handler, "handler");
 	}
 
 	/**
@@ -878,17 +880,6 @@ public final class ExamAssetsPane extends VBox {
 		updateCorpusDashboardReturnState();
 	}
 
-	private void beginSelectedExamCreationAction() {
-		if (!canBeginNewExam()) {
-			return;
-		}
-		if (legacyImportCheckBox.isSelected()) {
-			legacyQuestionImportHandler.run();
-		} else {
-			beginNewExam();
-		}
-	}
-
 	private void beginQuestionBookletAdd() {
 		Exam exam = examBox.getValue();
 		if (!canBeginQuestionBookletAdd(exam)) {
@@ -935,6 +926,17 @@ public final class ExamAssetsPane extends VBox {
 		// enter the total Expected Questions while looking at the actual PDF. This is
 		// preview-only; the source does not become a persisted Exam asset until Save.
 		pendingQuestionBookletPreviewOpen = questionBookletSourcePreviewHandler.test(sourcePath);
+	}
+
+	private void beginSelectedExamCreationAction() {
+		if (!canBeginNewExam()) {
+			return;
+		}
+		if (legacyImportCheckBox.isSelected()) {
+			legacyQuestionImportHandler.run();
+		} else {
+			beginNewExam();
+		}
 	}
 
 	private void buildContent() {
@@ -1190,9 +1192,11 @@ public final class ExamAssetsPane extends VBox {
 		yearField.setTooltip(new Tooltip("Choose a suggested year or enter another four-digit year."));
 		yearValidation.setId("exam-assets-year-validation");
 		yearValidation.setWrapText(true);
-		yearValidation.visibleProperty().bind(yearField.disabledProperty().not().and(Bindings.createBooleanBinding(
-				() -> ExamYearConverter.parse(yearField.getEditor().getText()) == null,
-				yearField.getEditor().textProperty())));
+		yearValidation.visibleProperty()
+				.bind(yearField.disabledProperty().not()
+						.and(Bindings.createBooleanBinding(
+								() -> ExamYearConverter.parse(yearField.getEditor().getText()) == null,
+								yearField.getEditor().textProperty())));
 		yearValidation.managedProperty().bind(yearValidation.visibleProperty());
 
 		// Exam-level expectations are compact nullable whole-number planning fields.
@@ -1348,19 +1352,6 @@ public final class ExamAssetsPane extends VBox {
 		field.getEditor().setOnContextMenuRequested(showRemovalMenu);
 	}
 
-	private ListCell<Exam> createExamCell() {
-		return new ListCell<>() {
-
-			@Override
-			protected void updateItem(Exam exam, boolean empty) {
-				super.updateItem(exam, empty);
-				String identity = empty || exam == null ? null : formatExam(exam);
-				setText(identity);
-				setTooltip(identity == null ? null : new Tooltip(identity));
-			}
-		};
-	}
-
 	private VBox createAnswerBookletsSection() {
 
 		// The Add action creates an asset owned by this section, so present it directly
@@ -1410,6 +1401,19 @@ public final class ExamAssetsPane extends VBox {
 		row.setPadding(SECTION_PADDING);
 		row.setStyle(BORDER_STYLE);
 		return row;
+	}
+
+	private ListCell<Exam> createExamCell() {
+		return new ListCell<>() {
+
+			@Override
+			protected void updateItem(Exam exam, boolean empty) {
+				super.updateItem(exam, empty);
+				String identity = empty || exam == null ? null : formatExam(exam);
+				setText(identity);
+				setTooltip(identity == null ? null : new Tooltip(identity));
+			}
+		};
 	}
 
 	private VBox createExamDetailsSection() {
@@ -2243,7 +2247,8 @@ public final class ExamAssetsPane extends VBox {
 
 		// Save represents a real persistence operation, so it remains unavailable
 		// until the staged Exam Details differ from authoritative persistence.
-		saveButton.setDisable(!isExamDetailsDirty() || ExamYearConverter.parse(yearField.getEditor().getText()) == null);
+		saveButton
+				.setDisable(!isExamDetailsDirty() || ExamYearConverter.parse(yearField.getEditor().getText()) == null);
 	}
 
 	private void updateExamMetadataActionStates() {
@@ -2794,7 +2799,7 @@ public final class ExamAssetsPane extends VBox {
 		private final RadioButton bothButton = new RadioButton("Both");
 		private final TextField expectedField = new TextField();
 		private final Button viewButton = new Button("View");
-		private final Button replacePdfButton = new Button("Replace PDF");
+		private final Button replacePdfButton = new Button("\u21C4");
 		private final Button editButton = new Button("Edit");
 		private final Button cancelButton = new Button("Cancel");
 		private final Button saveButton = new Button("Save");
@@ -2994,7 +2999,8 @@ public final class ExamAssetsPane extends VBox {
 			source.setMaxWidth(Double.MAX_VALUE);
 			source.setTooltip(new Tooltip(source.getText()));
 			HBox.setHgrow(source, Priority.ALWAYS);
-			HBox headingRow = new HBox(SPACING, selectionButton, heading, source, viewButton, replacePdfButton, deleteButton);
+			HBox headingRow = new HBox(SPACING, selectionButton, heading, source, viewButton, replacePdfButton,
+					deleteButton);
 			headingRow.setId("exam-assets-question-heading-row-" + booklet.getId());
 			HBox formatControls = new HBox(SPACING, mcqButton, writtenButton, bothButton);
 			formatControls.setId("exam-assets-question-format-row-" + booklet.getId());
