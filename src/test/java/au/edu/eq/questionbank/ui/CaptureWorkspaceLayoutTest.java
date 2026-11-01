@@ -2525,6 +2525,7 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		Label heading = lookup(robot, "#exam-assets-question-heading-" + id, Label.class);
 		Label filename = lookup(robot, "#exam-assets-question-source-" + id, Label.class);
 		Button view = lookup(robot, "#exam-assets-question-view-" + id, Button.class);
+		Button replace = lookup(robot, "#exam-assets-question-replace-" + id, Button.class);
 		Button delete = lookup(robot, "#exam-assets-question-delete-" + id, Button.class);
 		@SuppressWarnings("unchecked")
 		ComboBox<String> name = lookup(robot, "#exam-assets-question-name-" + id, ComboBox.class);
@@ -2534,9 +2535,10 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		Button cancel = lookup(robot, "#exam-assets-question-cancel-" + id, Button.class);
 		Button save = lookup(robot, "#exam-assets-question-save-" + id, Button.class);
 
-		// First visible line: selection, booklet label, PDF filename, View and
-		// Delete, in that order.
-		assertEquals(List.of(selection, heading, filename, view, delete), top.getChildren());
+		// First visible line: selection, booklet label, PDF filename,
+		// View, Replace PDF and Delete, in that order.
+		assertEquals(List.of(selection, heading, filename, view, replace, delete), top.getChildren());
+		assertEquals("\u21C4", replace.getText());
 		assertEquals(booklet.getName(), heading.getText());
 		assertEquals(booklet.getSourceDocument().getRelativePath().replace('\\', '/').replaceAll("^.*/", ""),
 				filename.getText());
