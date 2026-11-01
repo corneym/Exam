@@ -10,6 +10,7 @@ import java.time.ZoneOffset;
 import org.junit.jupiter.api.Test;
 
 class ExamYearConverterTest {
+
 	@Test
 	void suggestedYearsStartAt2020AndAdvanceAcrossCalendarRollover() {
 		var before = ExamYearConverter.defaultYears(Clock.fixed(Instant.parse("2026-12-31T23:59:59Z"), ZoneOffset.UTC));
@@ -29,7 +30,7 @@ class ExamYearConverterTest {
 	@Test
 	void rejectsBlankMalformedAndNonFourDigitYearsWithoutThrowing() {
 		assertNull(ExamYearConverter.parse(null));
-		for (String text : new String[] {"", " ", "year", "203", "0203", "20300", "20.30", "+2030", "-2030"}) {
+		for (String text : new String[] { "", " ", "year", "203", "0203", "20300", "20.30", "+2030", "-2030" }) {
 			assertNull(new ExamYearConverter().fromString(text), text);
 		}
 	}

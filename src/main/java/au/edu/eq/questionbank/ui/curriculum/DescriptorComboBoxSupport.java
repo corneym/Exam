@@ -4,14 +4,19 @@ import au.edu.eq.questionbank.model.CurriculumNode;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Tooltip;
 
-/** Shared presentation for classification selectors that can contain long Descriptors. */
+/**
+ * Shared presentation for classification selectors that can contain long
+ * Descriptors.
+ */
 public final class DescriptorComboBoxSupport {
+
 	private DescriptorComboBoxSupport() {
 	}
 
 	/**
 	 * Keeps the selected control compact and supplies a bounded, wrapping popup.
-	 * Existing selection handlers and hierarchy filtering remain owned by the caller.
+	 * Existing selection handlers and hierarchy filtering remain owned by the
+	 * caller.
 	 *
 	 * @param box classification selector to configure
 	 */

@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import javafx.geometry.Rectangle2D;
 
 class WindowGeometryTest {
+
 	@Test
 	void preservesPreferredSizeAndPositionOnLargeDisplay() {
 		Rectangle2D screen = new Rectangle2D(0, 0, 2560, 1400);
@@ -19,10 +20,9 @@ class WindowGeometryTest {
 
 	@Test
 	void fitsSmallAndScaledLogicalDisplaysIncludingTaskbar() {
-		for (Rectangle2D screen : List.of(new Rectangle2D(0, 0, 1024, 728),
-				new Rectangle2D(0, 40, 800, 560))) {
-			assertEquals(screen, WindowGeometry.constrain(new Rectangle2D(100, 100, 1600, 1000),
-					List.of(screen), screen));
+		for (Rectangle2D screen : List.of(new Rectangle2D(0, 0, 1024, 728), new Rectangle2D(0, 40, 800, 560))) {
+			assertEquals(screen,
+					WindowGeometry.constrain(new Rectangle2D(100, 100, 1600, 1000), List.of(screen), screen));
 		}
 	}
 
@@ -30,8 +30,8 @@ class WindowGeometryTest {
 	void choosesGreatestOverlapIncludingNegativeMonitorCoordinates() {
 		Rectangle2D primary = new Rectangle2D(0, 0, 1920, 1040);
 		Rectangle2D left = new Rectangle2D(-1280, 0, 1280, 984);
-		assertEquals(new Rectangle2D(-600, 0, 600, 800), WindowGeometry.constrain(
-				new Rectangle2D(-500, -10, 600, 800), List.of(primary, left), primary));
+		assertEquals(new Rectangle2D(-600, 0, 600, 800),
+				WindowGeometry.constrain(new Rectangle2D(-500, -10, 600, 800), List.of(primary, left), primary));
 	}
 
 	@Test

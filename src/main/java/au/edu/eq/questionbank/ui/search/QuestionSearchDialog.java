@@ -459,8 +459,10 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	}
 
 	private void enforceMinimumWidth() {
-		double minimum = Math.min(DIALOG_WIDTH, ScreenAwareWindows.visualBounds(
-				getDialogPane().getScene() == null ? getOwner() : getDialogPane().getScene().getWindow()).getWidth());
+		double minimum = Math.min(DIALOG_WIDTH,
+				ScreenAwareWindows.visualBounds(
+						getDialogPane().getScene() == null ? getOwner() : getDialogPane().getScene().getWindow())
+						.getWidth());
 		if (!isShowing() || getWidth() >= minimum) {
 			return;
 		}

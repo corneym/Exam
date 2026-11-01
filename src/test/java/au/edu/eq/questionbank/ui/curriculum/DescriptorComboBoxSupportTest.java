@@ -29,6 +29,7 @@ import javafx.stage.Stage;
 @Tag("ui")
 @ExtendWith(ApplicationExtension.class)
 class DescriptorComboBoxSupportTest {
+
 	private ComboBox<CurriculumNode> box;
 	private Stage stage;
 
@@ -52,19 +53,20 @@ class DescriptorComboBoxSupportTest {
 	@Test
 	@SuppressWarnings("unchecked")
 	void popupWrapsLongRowsAtNormalAndReducedWidthsWithoutResizingParent(FxRobot robot) {
-		for (double width : new double[] {720, 360}) {
+		for (double width : new double[] { 720, 360 }) {
 			robot.interact(() -> stage.setWidth(width));
 			WaitForAsyncUtils.waitForFxEvents();
 			robot.interact(box::show);
 			WaitForAsyncUtils.waitForFxEvents();
 			robot.interact(() -> {
-				ListView<CurriculumNode> list = (ListView<CurriculumNode>)
-						((DescriptorComboBoxSkin) box.getSkin()).getPopupContent();
+				ListView<CurriculumNode> list = (ListView<CurriculumNode>) ((DescriptorComboBoxSkin) box.getSkin())
+						.getPopupContent();
 				assertTrue(list.getWidth() <= Math.min(600, stage.getScene().getWidth() - 24) + 1,
 						"Popup width " + list.getWidth() + " for scene " + stage.getScene().getWidth());
 				ListCell<?> cell = list.lookupAll(".list-cell").stream().filter(ListCell.class::isInstance)
-						.map(ListCell.class::cast).filter(candidate -> candidate.getItem() != null && candidate.isVisible())
-						.findFirst().orElseThrow();
+						.map(ListCell.class::cast)
+						.filter(candidate -> candidate.getItem() != null && candidate.isVisible()).findFirst()
+						.orElseThrow();
 				assertTrue(cell.isWrapText());
 				assertTrue(cell.getHeight() > 60, "Long text must produce a multi-line row");
 				assertTrue(cell.getHeight() >= cell.prefHeight(cell.getWidth()) - 1);

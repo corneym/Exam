@@ -27,6 +27,7 @@ import javafx.stage.Stage;
 @Tag("ui")
 @ExtendWith(ApplicationExtension.class)
 class ScreenAwareWindowsTest {
+
 	private Stage stage;
 
 	@Start
@@ -48,7 +49,8 @@ class ScreenAwareWindowsTest {
 			assertTrue(stage.getMinWidth() <= 800);
 			assertTrue(stage.getMinHeight() <= 560);
 			ScrollPane viewport = assertInstanceOf(ScrollPane.class, stage.getScene().getRoot());
-			assertEquals("Essential action", ((Button) ((StackPane) viewport.getContent()).getChildren().getFirst()).getText());
+			assertEquals("Essential action",
+					((Button) ((StackPane) viewport.getContent()).getChildren().getFirst()).getText());
 			ScreenAwareWindows.fit(stage, List.of(screen), screen);
 			assertSame(viewport, stage.getScene().getRoot());
 		});

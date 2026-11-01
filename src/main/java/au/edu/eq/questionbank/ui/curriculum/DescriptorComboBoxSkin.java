@@ -9,6 +9,7 @@ import javafx.stage.Screen;
 
 /** Sizes the popup before showing it, without resizing the enclosing window. */
 final class DescriptorComboBoxSkin extends ComboBoxListViewSkin<CurriculumNode> {
+
 	private final ComboBox<CurriculumNode> box;
 	private final ListView<CurriculumNode> list;
 
@@ -25,8 +26,8 @@ final class DescriptorComboBoxSkin extends ComboBoxListViewSkin<CurriculumNode> 
 	public void show() {
 		Bounds bounds = box.localToScreen(box.getBoundsInLocal());
 		Screen screen = bounds == null ? Screen.getPrimary()
-				: Screen.getScreensForRectangle(bounds.getMinX(), bounds.getMinY(), bounds.getWidth(), bounds.getHeight())
-						.stream().findFirst().orElse(Screen.getPrimary());
+				: Screen.getScreensForRectangle(bounds.getMinX(), bounds.getMinY(), bounds.getWidth(),
+						bounds.getHeight()).stream().findFirst().orElse(Screen.getPrimary());
 		double windowWidth = box.getScene() == null ? 600 : box.getScene().getWidth();
 		double width = Math.max(1, Math.min(600, Math.min(windowWidth - 24, screen.getVisualBounds().getWidth() - 24)));
 		list.setMinWidth(width);
