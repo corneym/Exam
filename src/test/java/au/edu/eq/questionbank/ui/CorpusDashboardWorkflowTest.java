@@ -186,6 +186,7 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 			setField(application, "performanceRecorder", measured);
 			try {
 				fireControl(robot, "#corpus-dashboard-add-exam");
+				fireControl(robot, "#exam-assets-add-new-exam");
 				WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
 						() -> robot.lookup("#exam-assets-state").tryQuery().filter(Label.class::isInstance)
 								.map(Label.class::cast).map(label -> "NEW EXAM".equals(label.getText())).orElse(false));
@@ -805,6 +806,39 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(nodePresentOnFx(robot, applicationRoot, "#exam-assets-workspace"));
 		Button returnDashboard = lookupOnFx(robot, applicationRoot, "#exam-assets-return-dashboard", Button.class);
 		assertTrue(evaluateOnFx(robot, () -> returnDashboard.isVisible() && returnDashboard.isManaged()));
+	}
+
+	@Test
+	void emptyDashboardAllowsLegacyImportBeforeAnyExamAndCancellationPreservesEmptyCorpus(FxRobot robot)
+			throws Exception {
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		robot.interact(() -> subjects.getSelectionModel().selectFirst());
+		SqliteExamWriter writer = new SqliteExamWriter(new SqliteDatabase(databasePath));
+		Subject subject = WaitForAsyncUtils.asyncFx(subjects::getValue).get();
+		assertTrue(writer.findExamsForSubject(subject).isEmpty());
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-add-exam").tryQuery().isPresent());
+		fireControl(robot, "#corpus-dashboard-add-exam");
+		CheckBox legacy = lookup(robot, "#exam-assets-legacy-import", CheckBox.class);
+		Button add = lookup(robot, "#exam-assets-add-new-exam", Button.class);
+		assertFalse(evaluateOnFx(robot, legacy::isDisabled));
+		robot.interact(legacy::fire);
+		Platform.runLater(add::fire);
+		waitForDialogShowing(robot, "Import Legacy Question Metadata");
+		DialogPane dialog = showingDialogPane(robot, "Import Legacy Question Metadata");
+		robot.interact(((Button) dialog.lookupButton(ButtonType.CANCEL))::fire);
+		waitForDialogHidden(robot, "Import Legacy Question Metadata");
+		assertTrue(writer.findExamsForSubject(subject).isEmpty());
+		assertFalse(evaluateOnFx(robot, legacy::isDisabled));
+		fireControl(robot, "#exam-assets-return-dashboard");
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-add-exam").tryQuery().isPresent());
+		fireControl(robot, "#corpus-dashboard-add-exam");
+		assertFalse(evaluateOnFx(robot, legacy::isSelected));
+		robot.interact(add::fire);
+		assertEquals("NEW EXAM", lookup(robot, "#exam-assets-state", Label.class).getText());
+		fireControl(robot, "#exam-assets-new-exam-cancel");
+		assertTrue(writer.findExamsForSubject(subject).isEmpty());
 	}
 
 	@Test

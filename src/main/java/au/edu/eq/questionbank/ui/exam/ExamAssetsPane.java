@@ -3,7 +3,7 @@ package au.edu.eq.questionbank.ui.exam;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.sql.SQLException;
-import java.time.Year;
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -25,6 +25,7 @@ import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import javafx.event.EventHandler;
+import javafx.beans.binding.Bindings;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
@@ -66,7 +67,6 @@ public final class ExamAssetsPane extends VBox {
 	private static final Insets SECTION_PADDING = new Insets(8);
 	private static final String BORDER_STYLE = "-fx-border-color: #b0b0b0;-fx-border-width: 1;-fx-border-radius: 3;";
 	private static final String HEADING_STYLE = "-fx-font-weight: bold;";
-	private static final int YEAR_LOOKBACK_YEARS = 15;
 	private static final List<String> DEFAULT_BOOKLET_NAME_SUGGESTIONS = List.of("MCQ", "Paper 1", "Paper 2",
 			"Topic Test");
 	private static final String NO_ANSWER_BOOKLET = "No Answer Booklet";
@@ -130,6 +130,7 @@ public final class ExamAssetsPane extends VBox {
 	private final Label stateLabel = new Label("State: —");
 	private final ComboBox<String> providerField = new ComboBox<>();
 	private final ComboBox<Integer> yearField = new ComboBox<>();
+	private final Label yearValidation = new Label("Enter a four-digit year (1000–9999).");
 	private final ComboBox<String> assessmentField = new ComboBox<>();
 	private final VBox questionBookletsBox = new VBox(ROW_SPACING);
 	private final VBox answerBookletsBox = new VBox(ROW_SPACING);
@@ -536,8 +537,8 @@ public final class ExamAssetsPane extends VBox {
 	}
 
 	/**
-	 * Opens Exam / Assets directly in its existing New Exam transaction for one
-	 * authoritative application Subject.
+	 * Opens Exam / Assets with ordinary creation and Legacy import available for
+	 * one authoritative Subject. The compact + control starts the chosen workflow.
 	 *
 	 * @param subject Subject that will own the new Exam
 	 * @throws SQLException          if the Subject's existing Exam hierarchy cannot
@@ -550,14 +551,13 @@ public final class ExamAssetsPane extends VBox {
 			throw new NullPointerException("subject");
 		}
 
-		// Load authoritative persisted state first. The ordinary New Exam transaction
-		// then owns all metadata validation and persistence exactly as it does when
-		// entered from inside Exam / Assets.
+		// Dashboard onboarding must not acquire the ordinary creation transaction
+		// before the user can choose Legacy import, including for an empty Subject.
 		refresh(subject);
 		if (!canBeginNewExam()) {
 			throw new IllegalStateException("A new Exam cannot be started while structural work is pending.");
 		}
-		beginNewExam();
+		legacyImportCheckBox.setSelected(false);
 	}
 
 	/**
@@ -857,6 +857,10 @@ public final class ExamAssetsPane extends VBox {
 		if (!canBeginNewExam()) {
 			return;
 		}
+
+		// A new Exam has no source document. Also invalidate any pending preview
+		// load before entering the transaction, including when it is later cancelled.
+		examAssetPdfClearHandler.run();
 		Exam selectedExam = examBox.getValue();
 		newExamReturnExamId = selectedExam == null ? null : Long.valueOf(selectedExam.getId());
 		creatingNewExam = true;
@@ -1180,10 +1184,16 @@ public final class ExamAssetsPane extends VBox {
 		configureSuggestionRemoval(assessmentField, optionsRepository::removeAssessment);
 		yearField.setId("exam-assets-year");
 		yearField.setMaxWidth(Double.MAX_VALUE);
-		int currentYear = Year.now().getValue();
-		for (int year = currentYear; year >= currentYear - YEAR_LOOKBACK_YEARS; year--) {
-			yearField.getItems().add(year);
-		}
+		yearField.setEditable(true);
+		yearField.setConverter(new ExamYearConverter());
+		yearField.getItems().setAll(ExamYearConverter.defaultYears(Clock.systemDefaultZone()));
+		yearField.setTooltip(new Tooltip("Choose a suggested year or enter another four-digit year."));
+		yearValidation.setId("exam-assets-year-validation");
+		yearValidation.setWrapText(true);
+		yearValidation.visibleProperty().bind(yearField.disabledProperty().not().and(Bindings.createBooleanBinding(
+				() -> ExamYearConverter.parse(yearField.getEditor().getText()) == null,
+				yearField.getEditor().textProperty())));
+		yearValidation.managedProperty().bind(yearValidation.visibleProperty());
 
 		// Exam-level expectations are compact nullable whole-number planning fields.
 		// They deliberately do not duplicate per-booklet Expected Questions.
@@ -1198,6 +1208,7 @@ public final class ExamAssetsPane extends VBox {
 		// metadata rather than merely the fact that Edit mode is active.
 		providerField.getEditor().textProperty().addListener((_, _, _) -> updateExamMetadataActionStates());
 		yearField.valueProperty().addListener((_, _, _) -> updateExamMetadataActionStates());
+		yearField.getEditor().textProperty().addListener((_, _, _) -> updateExamMetadataActionStates());
 		assessmentField.getEditor().textProperty().addListener((_, _, _) -> updateExamMetadataActionStates());
 		expectedQuestionBookletsField.textProperty().addListener((_, _, _) -> updateExamMetadataActionStates());
 		expectedAnswerBookletsField.textProperty().addListener((_, _, _) -> updateExamMetadataActionStates());
@@ -1417,6 +1428,7 @@ public final class ExamAssetsPane extends VBox {
 		details.addRow(2, assessmentLabel, assessmentField);
 		details.addRow(3, expectedQuestionBookletsLabel, expectedQuestionBookletsField);
 		details.addRow(4, expectedAnswerBookletsLabel, expectedAnswerBookletsField);
+		details.add(yearValidation, 1, 5);
 		GridPane.setHgrow(providerField, Priority.ALWAYS);
 		GridPane.setHgrow(yearField, Priority.ALWAYS);
 		GridPane.setHgrow(assessmentField, Priority.ALWAYS);
@@ -1563,7 +1575,7 @@ public final class ExamAssetsPane extends VBox {
 
 	private boolean examIdentityChanged(Exam persistedExam) {
 		String providerName = editedText(providerField);
-		Integer year = yearField.getValue();
+		Integer year = ExamYearConverter.parse(yearField.getEditor().getText());
 		String assessmentName = editedText(assessmentField);
 
 		// Provider, Year and Assessment remain the filesystem-affecting Exam identity.
@@ -1599,7 +1611,8 @@ public final class ExamAssetsPane extends VBox {
 
 		// No persisted Exam can be created without its inherited Subject and complete
 		// Provider / Year / Assessment identity.
-		return workingSubject != null && !editedText(providerField).isBlank() && yearField.getValue() != null
+		return workingSubject != null && !editedText(providerField).isBlank()
+				&& ExamYearConverter.parse(yearField.getEditor().getText()) != null
 				&& !editedText(assessmentField).isBlank();
 	}
 
@@ -1924,7 +1937,7 @@ public final class ExamAssetsPane extends VBox {
 			return;
 		}
 		String providerName = editedText(providerField);
-		Integer year = yearField.getValue();
+		Integer year = ExamYearConverter.parse(yearField.getEditor().getText());
 		String assessmentName = editedText(assessmentField);
 		if (providerName.isBlank() || year == null || assessmentName.isBlank()) {
 			showCorrectionError("Complete Provider, Year and Assessment before saving.");
@@ -1980,7 +1993,7 @@ public final class ExamAssetsPane extends VBox {
 			return;
 		}
 		String providerName = editedText(providerField);
-		Integer year = yearField.getValue();
+		Integer year = ExamYearConverter.parse(yearField.getEditor().getText());
 		String assessmentName = editedText(assessmentField);
 		Integer expectedQuestionBooklets;
 		Integer expectedAnswerBooklets;
@@ -2230,7 +2243,7 @@ public final class ExamAssetsPane extends VBox {
 
 		// Save represents a real persistence operation, so it remains unavailable
 		// until the staged Exam Details differ from authoritative persistence.
-		saveButton.setDisable(!isExamDetailsDirty());
+		saveButton.setDisable(!isExamDetailsDirty() || ExamYearConverter.parse(yearField.getEditor().getText()) == null);
 	}
 
 	private void updateExamMetadataActionStates() {

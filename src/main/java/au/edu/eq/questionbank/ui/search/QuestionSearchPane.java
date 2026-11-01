@@ -1,5 +1,7 @@
 package au.edu.eq.questionbank.ui.search;
 
+import au.edu.eq.questionbank.ui.curriculum.DescriptorComboBoxSupport;
+
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.List;
@@ -1063,6 +1065,8 @@ public class QuestionSearchPane extends BorderPane {
 		configurePromptDisplay(topicBox);
 		configurePromptDisplay(classificationBox);
 		configurePromptDisplay(descriptorBox);
+		DescriptorComboBoxSupport.configure(descriptorBox);
+		DescriptorComboBoxSupport.configure(classificationBox);
 		unitBox.setMaxWidth(Double.MAX_VALUE);
 		topicBox.setMaxWidth(Double.MAX_VALUE);
 		classificationBox.setMaxWidth(Double.MAX_VALUE);

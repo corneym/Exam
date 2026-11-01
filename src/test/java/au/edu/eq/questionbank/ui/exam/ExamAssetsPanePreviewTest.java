@@ -139,6 +139,67 @@ class ExamAssetsPanePreviewTest {
 	}
 
 	@Test
+	void newExamClearsQuestionAndAnswerPreviewsAndCancellationDoesNotRestoreThem(FxRobot robot) throws Exception {
+		Button add = robot.lookup("#exam-assets-add-new-exam").queryAs(Button.class);
+		Button cancel = robot.lookup("#exam-assets-new-exam-cancel").queryAs(Button.class);
+		for (String name : List.of("question-preview.pdf", "answer-preview.pdf")) {
+			Path preview = createPdf(name);
+			robot.interact(() -> pdfWorkspace.openViewerPdf(preview));
+			assertNotNull(robot.lookup("#pdf-page-view").queryAs(ImageView.class).getImage());
+			robot.interact(add::fire);
+			assertPdfWorkspaceCleared();
+			assertNull(robot.lookup("#pdf-page-view").queryAs(ImageView.class).getImage());
+			robot.interact(cancel::fire);
+			assertPdfWorkspaceCleared();
+			assertTrue(Files.exists(preview));
+			robot.interact(() -> pdfWorkspace.openViewerPdf(preview));
+			assertNotNull(robot.lookup("#pdf-page-view").queryAs(ImageView.class).getImage());
+		}
+		assertEquals(1, examWriter.findExamsForSubject(workingSubject).size());
+		assertEquals(booklet.getId(), examWriter.findExamBooklets(exam).getFirst().getId());
+		assertEquals(answerFile.getId(), answerWriter.findAnswerFile(booklet).getId());
+	}
+
+	@Test
+	void newExamInvalidatesPendingPreviewBeforeCancellationAndAllowsLaterSelection(FxRobot robot) throws Exception {
+		Path stale = createPdf("pending-new-exam.pdf");
+		CountDownLatch completed = new CountDownLatch(1);
+		AtomicReference<Throwable> failure = new AtomicReference<>();
+		Button add = robot.lookup("#exam-assets-add-new-exam").queryAs(Button.class);
+		Button cancel = robot.lookup("#exam-assets-new-exam-cancel").queryAs(Button.class);
+		robot.interact(() -> {
+			pdfWorkspace.openAnswerPdfAsync(stale, result -> {
+				failure.set(result);
+				completed.countDown();
+			});
+			// The worker cannot publish between these actions in the same FX turn.
+			add.fire();
+			cancel.fire();
+		});
+		assertTrue(completed.await(10, TimeUnit.SECONDS));
+		assertInstanceOf(CancellationException.class, failure.get());
+		assertPdfWorkspaceCleared();
+		robot.interact(() -> pdfWorkspace.openViewerPdf(stale));
+		assertNotNull(robot.lookup("#pdf-page-view").queryAs(ImageView.class).getImage());
+	}
+
+	@Test
+	void legacyModeDoesNotEnterOrdinaryCreationOrClearItsPreview(FxRobot robot) throws Exception {
+		Path preview = createPdf("legacy-mode.pdf");
+		Button add = robot.lookup("#exam-assets-add-new-exam").queryAs(Button.class);
+		CheckBox legacy = robot.lookup("#exam-assets-legacy-import").queryAs(CheckBox.class);
+		robot.interact(() -> {
+			pdfWorkspace.openViewerPdf(preview);
+			legacy.fire();
+			add.fire();
+		});
+		assertEquals(1, legacyImportRequests.get());
+		assertEquals(PdfWorkspacePane.DocumentMode.VIEWER, pdfWorkspace.getDisplayedDocument());
+		assertNotNull(robot.lookup("#pdf-page-view").queryAs(ImageView.class).getImage());
+		assertEquals(1, examWriter.findExamsForSubject(workingSubject).size());
+	}
+
+	@Test
 	@SuppressWarnings("unchecked")
 	void compactExamActionsRouteByLegacySelectionAndKeepLifecycleStatesLegible(FxRobot robot) throws Exception {
 		Button addExam = robot.lookup("#exam-assets-add-new-exam").queryAs(Button.class);

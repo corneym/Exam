@@ -687,6 +687,7 @@ public class CurriculumSelectorPane extends VBox {
 		configureHierarchyBox(topicBox, "curriculum-topic", "Select topic");
 		configureHierarchyBox(subtopicBox, "curriculum-subtopic", "Select subtopic");
 		configureHierarchyBox(descriptorBox, "curriculum-descriptor", "Select descriptor");
+		DescriptorComboBoxSupport.configure(descriptorBox);
 
 		// Keep Subject creation as a compact one-character action on the existing
 		// Working Subject row rather than adding another row or long text button.
