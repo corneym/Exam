@@ -17,7 +17,7 @@ $pomPath =
 
 $installerScript =
     Join-Path $PSScriptRoot "package-windows-installer.ps1"
-
+	. (Join-Path $PSScriptRoot "release-version.ps1")
 Set-Location $repositoryRoot
 
 function Assert-ReleaseArchiveAvailable {
@@ -71,40 +71,6 @@ function Invoke-ReleaseCommand {
     }
 }
 
-function Test-ReleaseVersion {
-    param (
-        [Parameter(Mandatory = $true)]
-        [string] $Candidate
-    )
-
-    # Release versions use a deliberately simple major.minor scheme. Each
-    # component is either zero or a positive integer without leading zeroes.
-    return $Candidate -match '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
-}
-
-function Get-NextMinorVersion {
-    param (
-        [Parameter(Mandatory = $true)]
-        [string] $CurrentVersion
-    )
-
-    if (-not (Test-ReleaseVersion $CurrentVersion)) {
-        throw "Current Maven version is not a valid release version: $CurrentVersion"
-    }
-
-    $parts =
-        $CurrentVersion.Split(".")
-
-    $major =
-        [long] $parts[0]
-
-    $minor =
-        [long] $parts[1]
-
-    # Ordinary releases advance the minor component while retaining the current
-    # major version. Major-version changes are selected explicitly with -Version.
-    return "$major.$($minor + 1)"
-}
 
 function Set-ProjectVersion {
     param (
@@ -174,11 +140,11 @@ function Get-ProjectVersion {
     $currentVersion =
         $versionNode.InnerText.Trim()
 
-    if (-not (Test-ReleaseVersion $currentVersion)) {
-        throw "Maven project version is not a valid release version: $currentVersion"
-    }
+  if (-not (Test-ProjectVersion -Candidate $currentVersion)) {
+    throw "Maven project version is invalid: $currentVersion"
+  }
 
-    return $currentVersion
+  return $currentVersion
 }
 
 function Archive-ReleaseInstaller {
@@ -241,19 +207,37 @@ if (-not $AllowDirty) {
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
 
-    # Once a release has been completed, the next ordinary release advances its
-    # minor number automatically.
+    # Ordinary maintenance releases increment PATCH automatically.
     $releaseVersion =
-        Get-NextMinorVersion $currentVersion
+        Get-NextPatchVersion -CurrentVersion $currentVersion
 }
 else {
 
-    if (-not (Test-ReleaseVersion $Version)) {
-        throw "Invalid release version '$Version'. Expected major.minor, for example 0.2 or 1.0."
+    if (-not (Test-ReleaseVersion -Candidate $Version)) {
+        throw "Invalid release version '$Version'. Expected major.minor.patch, for example 1.0.1, 1.1.0 or 2.0.0."
     }
 
-    $releaseVersion =
-        $Version
+    $releaseVersion = $Version
+}
+
+$comparison =
+    Compare-ReleaseVersions `
+        -Left $releaseVersion `
+        -Right $currentVersion
+
+# Prevent downgrades and prevent renaming the historical 1.0 release
+# to an equivalent 1.0.0 package.
+#
+# An explicitly selected version identical to the current POM is allowed,
+# provided its MSI has not already been archived.
+if (
+    $comparison -lt 0 `
+    -or (
+        $comparison -eq 0 `
+        -and $releaseVersion -ne $currentVersion
+    )
+) {
+    throw "Release version $releaseVersion must be newer than the current Maven version $currentVersion, unless rebuilding that exact recorded version."
 }
 
 # Reject an already archived version before changing pom.xml or running any of
