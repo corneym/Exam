@@ -6,13 +6,13 @@ The application is written in Java 25 with JavaFX. It maintains a local SQLite q
 
 ## Download and installation
 
-Download the latest published Windows installer from [GitHub Releases](https://github.com/corneym/Exam/releases/latest).
+**Release 1.0 is complete** (maintainer confirmation, 1 November 2026). See [GitHub Releases](https://github.com/corneym/Exam/releases/latest) for the most recently published Windows installer and its release notes. The [v1.0 release](https://github.com/corneym/Exam/releases/tag/v1.0) is the first completed major version.
 
 The application is distributed as a per-user Windows MSI. You do not need to install Java separately to run the packaged application.
 
-**Current signing status:** The published v0.7 MSI is not digitally signed. Windows may display an unknown-publisher or application-reputation warning. A free, trusted signing route is being investigated in [Issue #217](https://github.com/corneym/Exam/issues/217). Do not disable Windows security controls or circumvent organisational security policies to install it.
+**Code signing status:** The Windows installer build currently has no trusted publisher-signing step. Windows may display an unknown-publisher or application-reputation warning. A free, trusted signing route is being investigated in [Issue #217](https://github.com/corneym/Exam/issues/217). Do not disable Windows security controls or circumvent organisational security policies to install it. Check the individual release notes for its actual signing and verification details.
 
-**Code signing policy:** See the [Code signing policy](docs/code-signing-policy.md) for maintainer responsibilities, privacy, release approval and verification requirements. Trusted signing is not yet active.
+**Code signing policy:** See the [Code signing policy](docs/code-signing-policy.md) for maintainer responsibilities, privacy, release approval and verification requirements. Trusted signing is not yet active in the build process.
 
 An installation contains the application and required runtime components, **not** examination papers, question-bank records, syllabus PDFs, curriculum workbooks or user databases. Users provide and manage their own source material.
 
@@ -60,7 +60,7 @@ From the repository root in Git Bash on Windows:
 ./mvnw.cmd javadoc:javadoc
 ```
 
-Windows release builds use the PowerShell entry point `scripts/build-release.ps1`, which applies additional validation and packaging gates. Consult [release-build documentation](docs/release-build.md) and the actual scripts before producing a release; some historical release examples in that document may lag the latest published version.
+Windows release builds use the PowerShell entry point `scripts/build-release.ps1`, which applies additional validation and packaging gates. Consult [release-build documentation](docs/release-build.md) and the actual scripts before producing a release. The current script uses two-component versions (`major.minor`); do not assume that it yet accepts a three-component semantic version such as `1.0.1`.
 
 ## Documentation and project tracking
 

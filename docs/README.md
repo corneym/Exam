@@ -10,7 +10,7 @@ This directory contains engineering and workflow documentation for [Exam Questio
 | --- | --- |
 | [`Working-Instructions.md`](Working-Instructions.md) | Mandatory working rules for repository-guided development and verification. |
 | [`code-signing-policy.md`](code-signing-policy.md) | Code signing policy, signing roles, privacy, verifiable build requirements and current unsigned-release status. |
-| [`release-build.md`](release-build.md) | Windows build, MSI packaging, versioning, archival and manual release checks. **Some version-specific examples are historical**; use current scripts and GitHub Releases for current behaviour. |
+| [`release-build.md`](release-build.md) | Windows build, MSI packaging, versioning, archival and manual release checks. Some version-specific instructions are historical; consult the scripts for current behaviour. |
 | [`data-layout-migration.md`](data-layout-migration.md) | Safeguarded migration of earlier data-root layouts to subject-first managed storage. |
 | [`performance-benchmarking.md`](performance-benchmarking.md) | Performance benchmarking approach and commands. |
 | [`performance-diagnostics.md`](performance-diagnostics.md) | Runtime diagnostics and performance investigation. |
@@ -20,9 +20,9 @@ This directory contains engineering and workflow documentation for [Exam Questio
 
 ## Current release and active work
 
-As verified on **26 October 2026**, the latest published Windows installer is [v0.7](https://github.com/corneym/Exam/releases/tag/v0.7). For the most recent version, always consult [GitHub Releases](https://github.com/corneym/Exam/releases/latest) rather than a version embedded in this document.
+**Release 1.0 is complete** (maintainer confirmation, 1 November 2026). See [v1.0](https://github.com/corneym/Exam/releases/tag/v1.0) and [GitHub Releases](https://github.com/corneym/Exam/releases/latest) for published assets, release notes and the most recent version. The authoritative project version on `main` is `1.0`.
 
-Feature requests, defects, implementation decisions and acceptance evidence are recorded in [GitHub Issues](https://github.com/corneym/Exam/issues). In particular, [Issue #217](https://github.com/corneym/Exam/issues/217) tracks investigation of zero-cost trusted Windows signing. The v0.7 MSI is unsigned, and no signed replacement of that historical release is authorised.
+Feature requests, defects, implementation decisions and acceptance evidence are recorded in [GitHub Issues](https://github.com/corneym/Exam/issues). [Issue #217](https://github.com/corneym/Exam/issues/217) tracks investigation of zero-cost trusted Windows signing. The existing installer build process has no trusted publisher-signing step; consult the applicable release notes for asset-specific status.
 
 ## Current architecture at a glance
 
