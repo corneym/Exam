@@ -19,7 +19,18 @@ final class ExamYearConverter extends StringConverter<Integer> {
 	}
 
 	static Integer parse(String text) {
-		return text != null && text.strip().matches("[1-9][0-9]{3}") ? Integer.valueOf(text.strip()) : null;
+		if (text == null) {
+			return null;
+		}
+		String stripped = text.strip();
+		if (!stripped.matches("[1-9][0-9]{3}")) {
+			return null;
+		}
+		try {
+			return Integer.valueOf(stripped);
+		} catch (NumberFormatException e) {
+			return null;
+		}
 	}
 
 	@Override
