@@ -39,14 +39,11 @@ public final class ScreenAwareWindows implements AutoCloseable {
 		Window.getWindows().addListener(listener);
 	}
 
-	@Override
-	public void close() {
-		Window.getWindows().removeListener(listener);
-	}
-
 	/**
 	 * Fits a showing stage using current visual bounds, including taskbar and
 	 * scaling.
+	 *
+	 * @param stage the stage to fit within the available screen bounds
 	 */
 	public static void fit(Stage stage) {
 		if (!stage.isShowing() || stage.getScene() == null) {
@@ -63,6 +60,10 @@ public final class ScreenAwareWindows implements AutoCloseable {
 	/**
 	 * Returns the usable monitor bounds for a window, or the primary screen if
 	 * absent.
+	 *
+	 * @param window the window whose monitor bounds are required, or null to select
+	 *               the primary screen
+	 * @return the usable visual bounds of the selected monitor
 	 */
 	public static Rectangle2D visualBounds(Window window) {
 		Rectangle2D primary = Screen.getPrimary().getVisualBounds();
@@ -109,5 +110,10 @@ public final class ScreenAwareWindows implements AutoCloseable {
 		if (content instanceof Region region) {
 			region.setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
 		}
+	}
+
+	@Override
+	public void close() {
+		Window.getWindows().removeListener(listener);
 	}
 }

@@ -6,7 +6,7 @@
 
 	<groupId>au.edu.eq</groupId>
 	<artifactId>exam-question-bank</artifactId>
-	<version>1.0</version>
+	<version>1.0.1</version>
 	<name>Exam Question Bank</name>
 
 	<properties>
