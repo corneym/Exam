@@ -586,8 +586,24 @@ abstract class QuestionBankApplicationUiTestBase {
 		applicationConfig = new ApplicationConfig(pdfDataRoot, curriculumDataRoot, databasePath);
 		primaryStage = stage;
 		application = new QuestionBankApplication();
-		invoke(application, "startApplication", new Class<?>[] { Stage.class, ApplicationConfig.class }, stage,
-				applicationConfig);
+
+		// Prevent ordinary TestFX sessions from recording performance data
+		// against their temporary, initially empty Question databases.
+		String previousDiagnosticsOverride = System.getProperty("eqb.performance.enabled");
+		try {
+			System.setProperty("eqb.performance.enabled", "false");
+			invoke(application, "startApplication", new Class<?>[] { Stage.class, ApplicationConfig.class }, stage,
+					applicationConfig);
+		} finally {
+
+			// Restore the original setting even if application startup fails.
+			// The application has already read its diagnostics preference.
+			if (previousDiagnosticsOverride == null) {
+				System.clearProperty("eqb.performance.enabled");
+			} else {
+				System.setProperty("eqb.performance.enabled", previousDiagnosticsOverride);
+			}
+		}
 		openExamPdfForTest();
 	}
 
