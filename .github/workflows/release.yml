@@ -178,6 +178,7 @@ jobs:
           SUITE: ${{ matrix.suite }}
         run: |
           & .\mvnw.cmd -Pheadless-ui-tests "-Dtest.suite=**/$env:SUITE" test
+          if ($LASTEXITCODE -ne 0) { throw "Windows UI suite failed: $env:SUITE" }
       - name: Upload failed Windows UI reports
         if: failure()
         uses: actions/upload-artifact@v7
@@ -210,7 +211,6 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           & .\scripts\test-release-version.ps1
-          if ($LASTEXITCODE -ne 0) { throw 'Release-version regression tests failed' }
 
       - name: Install pinned WiX Toolset 7
         shell: pwsh
