@@ -14,6 +14,5 @@ public class Constants {
 	 * No-arg constructor.
 	 */
 	public Constants() {
-
 	}
 }
