@@ -93,7 +93,8 @@ jobs:
       - name: Enforce formatting
         run: bash ./mvnw --batch-mode spotless:check
       - name: Generate strict Javadoc
-        run: bash ./mvnw --batch-mode javadoc:javadoc
+        # Compile first so the Javadoc plugin can identify the JPMS module.
+        run: bash ./mvnw --batch-mode compile javadoc:javadoc
 
   windows-ui:
     name: Windows UI - ${{ matrix.name }}
