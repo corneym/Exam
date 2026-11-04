@@ -157,6 +157,9 @@
 					<includes>
 						<include>${test.suite}</include>
 					</includes>
+					<systemPropertyVariables>
+						<eqb.performance.enabled>false</eqb.performance.enabled>
+					</systemPropertyVariables>
 
 					<argLine>
 						--add-opens
@@ -231,8 +234,9 @@
 			<id>headless-ui-tests</id>
 
 			<properties>
-				
-<test.suite>**/FastUITests.java,**/FastUISearchTests.java,**/FastUIDashboardTests.java,**/WorkflowCaptureTests.java,**/WorkflowCaptureQuestionTests.java,**/WorkflowStateEditingTests.java,**/WorkflowStateEditingSelectionTests.java,**/WorkflowApplicationTests.java,**/WorkflowApplicationLayoutTests.java,**/WorkflowApplicationCurriculumTests.java</test.suite>
+
+				<test.suite>
+					**/FastUITests.java,**/FastUISearchTests.java,**/FastUIDashboardTests.java,**/WorkflowCaptureTests.java,**/WorkflowCaptureQuestionTests.java,**/WorkflowStateEditingTests.java,**/WorkflowStateEditingSelectionTests.java,**/WorkflowApplicationTests.java,**/WorkflowApplicationLayoutTests.java,**/WorkflowApplicationCurriculumTests.java</test.suite>
 
 				<headless.test.jvm.args>
 					-Xmx4g
