@@ -1,0 +1,319 @@
+name: Release - Windows MSI
+
+# A maintainer creates vMAJOR.MINOR.PATCH on a merged commit in main.
+# No installer is published unless every gate succeeds.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release tag and source
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact tagged source and history
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check tag, POM and main ancestry
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import re
+          import xml.etree.ElementTree as ET
+
+          tag = os.environ['RELEASE_TAG']
+          match = re.fullmatch(r'v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', tag)
+          if match is None:
+              raise SystemExit(f'Invalid release tag: {tag}. Expected vMAJOR.MINOR.PATCH.')
+          major, minor, patch = (int(part) for part in match.groups())
+          if major > 255 or minor > 255 or patch > 65535:
+              raise SystemExit('Release version exceeds Windows Installer numeric limits.')
+
+          root = ET.parse('pom.xml').getroot()
+          ns = {'m': 'http://maven.apache.org/POM/4.0.0'}
+          pom_version = root.findtext('m:version', namespaces=ns)
+          if pom_version != tag[1:]:
+              raise SystemExit(f'Tag {tag} does not match pom.xml version {pom_version}.')
+          print(f'Validated release version {pom_version}')
+          PY
+
+          # Never publish a tag created on an unrelated or unmerged branch.
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo 'Release commit is not contained in origin/main' >&2
+            exit 1
+          fi
+
+      - name: Reject an already created release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; refusing to replace it." >&2
+            exit 1
+          fi
+
+  quality:
+    name: Existing partitioned CI (all tests)
+    needs: validate
+    # Execute the exact same 10 UI partitions and non-UI tests used for PRs.
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  static-checks:
+    name: Spotless and strict Javadoc
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+      - name: Enforce formatting
+        run: bash ./mvnw --batch-mode spotless:check
+      - name: Generate strict Javadoc
+        run: bash ./mvnw --batch-mode javadoc:javadoc
+
+  windows-ui:
+    name: Windows UI - ${{ matrix.name }}
+    needs: validate
+    runs-on: windows-2025
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      # Keep these test suites in step with the existing ci.yml matrix.
+      matrix:
+        include:
+          - name: fast-search
+            suite: FastUISearchTests.java
+          - name: fast-dashboard
+            suite: FastUIDashboardTests.java
+          - name: fast-remaining
+            suite: FastUITests.java
+          - name: capture-answers
+            suite: WorkflowCaptureTests.java
+          - name: capture-questions
+            suite: WorkflowCaptureQuestionTests.java
+          - name: state-context
+            suite: WorkflowStateEditingTests.java
+          - name: state-selection
+            suite: WorkflowStateEditingSelectionTests.java
+          - name: application-dashboard
+            suite: WorkflowApplicationTests.java
+          - name: application-layout
+            suite: WorkflowApplicationLayoutTests.java
+          - name: application-curriculum
+            suite: WorkflowApplicationCurriculumTests.java
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@v7
+      - name: Set up Java 25
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+      - name: Execute isolated Windows Monocle UI suite
+        shell: pwsh
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          & .\mvnw.cmd -Pheadless-ui-tests "-Dtest.suite=**/$env:SUITE" test
+          if ($LASTEXITCODE -ne 0) { throw "Windows UI suite failed: $env:SUITE" }
+      - name: Upload failed Windows UI reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-ui-${{ matrix.name }}-test-reports
+          path: target/surefire-reports/
+          retention-days: 7
+
+  build-msi:
+    name: Build and verify candidate Windows MSI
+    needs: [quality, windows-ui, static-checks]
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - name: Check out exact release source
+        uses: actions/checkout@v7
+
+      - name: Set up Java 25 with jmods
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+          java-package: 'jdk+jmods'
+          cache: maven
+
+      - name: Run release-version regression tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\scripts\test-release-version.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Release-version regression tests failed' }
+
+      - name: Install pinned WiX Toolset 7
+        shell: pwsh
+        env:
+          WIX7_EULA_ACCEPTED: ${{ vars.WIX7_EULA_ACCEPTED }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:WIX7_EULA_ACCEPTED -ne 'true') {
+            throw 'Review WiX 7 licence terms, then set repository variable WIX7_EULA_ACCEPTED=true.'
+          }
+          $wixDirectory = Join-Path $env:RUNNER_TEMP 'wix-tool'
+          dotnet tool install wix --version 7.0.0 --tool-path $wixDirectory
+          if ($LASTEXITCODE -ne 0) { throw 'Installing WiX 7.0.0 failed' }
+          $wix = Join-Path $wixDirectory 'wix.exe'
+          & $wix eula accept wix7
+          if ($LASTEXITCODE -ne 0) { throw 'WiX 7 licence acceptance failed' }
+          & $wix extension add -g WixToolset.Util.wixext/7.0.0
+          if ($LASTEXITCODE -ne 0) { throw 'Installing WiX Util extension failed' }
+          & $wix --version
+          if ($LASTEXITCODE -ne 0) { throw 'WiX version check failed' }
+          Add-Content -Path $env:GITHUB_PATH -Value $wixDirectory
+
+      - name: Build fresh Windows application image
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\scripts\package-windows-app-image.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Application-image build failed' }
+          $launcher = 'target/package/Exam Question Bank/Exam Question Bank.exe'
+          if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
+            throw 'Packaged application launcher is missing'
+          }
+          $hash = (Get-FileHash -LiteralPath $launcher -Algorithm SHA256).Hash.ToLowerInvariant()
+          Add-Content -Path $env:GITHUB_ENV -Value "EXPECTED_LAUNCHER_SHA256=$hash"
+
+      - name: Package the exact image into MSI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\scripts\package-windows-installer.ps1 -UseExistingAppImage
+          if ($LASTEXITCODE -ne 0) { throw 'Windows MSI packaging failed' }
+
+      - name: Verify release version, hashes and signing state
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          [xml] $pom = Get-Content 'pom.xml'
+          $pomVersion = $pom.SelectSingleNode("/*[local-name()='project']/*[local-name()='version']").InnerText.Trim()
+          if ($version -ne $pomVersion) { throw 'MSI version does not match POM and tag' }
+
+          $installers = @(Get-ChildItem 'target/installer' -Filter '*.msi' -File)
+          if ($installers.Count -ne 1) { throw "Expected exactly one MSI; found $($installers.Count)" }
+          $installer = $installers[0]
+          if (-not $installer.Name.EndsWith("-$version.msi", [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Installer filename does not contain release version'
+          }
+          $launcher = 'target/package/Exam Question Bank/Exam Question Bank.exe'
+          $jar = "target/package/Exam Question Bank/app/exam-question-bank-$version.jar"
+          if (-not (Test-Path -LiteralPath $launcher -PathType Leaf) -or
+              -not (Test-Path -LiteralPath $jar -PathType Leaf)) {
+            throw 'MSI application image contains no matching launcher or versioned JAR'
+          }
+          foreach ($file in @($installer.FullName, $launcher)) {
+            if ((Get-AuthenticodeSignature -LiteralPath $file).Status -ne 'NotSigned') {
+              throw "Unexpected signing state for $file; update signing policy before publishing"
+            }
+          }
+
+          $msiHash = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $launcherHash = (Get-FileHash -LiteralPath $launcher -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($launcherHash -ne $env:EXPECTED_LAUNCHER_SHA256) {
+            throw 'Application launcher changed during MSI packaging'
+          }
+          $checksumPath = Join-Path $installer.DirectoryName 'SHA256SUMS.txt'
+          "$msiHash  $($installer.Name)" | Set-Content -Path $checksumPath -Encoding utf8
+          @(
+            'Exam Question Bank - Windows MSI release provenance'
+            "Version: $version"
+            "Git tag: $env:GITHUB_REF_NAME"
+            "Source commit: $env:GITHUB_SHA"
+            "Repository: $env:GITHUB_REPOSITORY"
+            "Workflow: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+            "MSI: $($installer.Name)"
+            "MSI SHA-256: $msiHash"
+            "Launcher SHA-256: $launcherHash"
+            'Installer and launcher: UNSIGNED (no trusted publisher identity)'
+            'Application launcher unchanged during MSI packaging: true'
+          ) | Set-Content -Path (Join-Path $installer.DirectoryName 'RELEASE-PROVENANCE.txt') -Encoding utf8
+
+      - name: Retain candidate for isolated upgrade acceptance
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-candidate-${{ github.ref_name }}
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+          path: |
+            target/installer/*.msi
+            target/installer/SHA256SUMS.txt
+            target/installer/RELEASE-PROVENANCE.txt
+
+  publish:
+    name: Publish immutable GitHub Release after approval
+    needs: build-msi
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release-publication
+    permissions:
+      contents: write
+    steps:
+      - name: Download exact verified candidate
+        uses: actions/download-artifact@v8
+        with:
+          name: release-candidate-${{ github.ref_name }}
+          path: dist
+
+      - name: Check final candidate checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          msis=(dist/*.msi)
+          if (( ${#msis[@]} != 1 )); then
+            echo 'Expected exactly one candidate MSI' >&2
+            exit 1
+          fi
+          (cd dist && sha256sum --check SHA256SUMS.txt)
+          test -s dist/RELEASE-PROVENANCE.txt
+
+      - name: Publish all assets together as immutable release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" \
+            dist/*.msi dist/SHA256SUMS.txt dist/RELEASE-PROVENANCE.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --fail-on-no-commits \
+            --generate-notes \
+            --title "Exam Question Bank ${RELEASE_TAG#v}" \
+            --notes 'Windows MSI is unsigned. Before approving this release, upgrade-test the candidate on an isolated data copy; never test against authoritative production data.'
