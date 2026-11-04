@@ -35,6 +35,7 @@ import org.testfx.api.FxRobot;
 import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
+import au.edu.eq.questionbank.Constants;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.diagnostics.PerformanceCsvReader;
 import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
@@ -294,12 +295,13 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Button completeAnswer = lookup(robot, "#corpus-dashboard-complete-answer", Button.class);
 		fireControl(robot, completeAnswer);
 		try {
-			assertTrue(workerStarted.await(5, TimeUnit.SECONDS));
+			assertTrue(workerStarted.await(Constants.TIMEOUT, TimeUnit.SECONDS));
 
 			// The worker remains blocked longer than the visual
 			// display threshold. The JavaFX thread must still be
 			// able to display the window-wide overlay.
-			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> evaluateOnFx(robot, shield::isVisible));
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+					() -> evaluateOnFx(robot, shield::isVisible));
 			assertTrue(evaluateOnFx(robot, overlay::isBusy));
 		} finally {
 			releaseWorker.countDown();
@@ -490,201 +492,20 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	@SuppressWarnings("unchecked")
-	void questionWorkDescriptorQueueSavesAcrossExamsAndRefreshesDashboard(FxRobot robot) throws Exception {
+	void dashboardDoesNotExposeLegacyImportAction(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1",
 				ExamBookletQuestionFormat.MIXED);
-		ExamBooklet firstBooklet = examMetadataPane().getBooklet();
-		SqliteDatabase database = new SqliteDatabase(databasePath);
-		SqliteExamWriter examWriter = new SqliteExamWriter(database);
-		SqliteCurriculumRepository curriculum = new SqliteCurriculumRepository(database);
-		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
-		SyllabusVersion syllabus = curriculum.findVersionsForSubject(firstBooklet.getExam().getSubject()).stream()
-				.filter(SyllabusVersion::isCurrent).findFirst().orElseThrow();
-		Unit unit = (Unit) curriculum.findByCode(syllabus, "1").orElseThrow();
-		Topic topic = curriculumWriter.insertTopic(unit, "1.2", "Queue topic", 2);
-		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.2.1", "Queue classification", 1);
-		Descriptor descriptor = curriculumWriter.insertDescriptor(subtopic, "1.2.1.1", "Assigned Descriptor", 1);
-		ExamBooklet sibling = createDescriptorQueueBooklet(examWriter, firstBooklet.getExam(), "Paper 2");
-		Exam otherExam = examWriter.createExam(firstBooklet.getExam().getSubject(), "QCAA", 2025, "Practice Exam");
-		ExamBooklet otherBooklet = createDescriptorQueueBooklet(examWriter, otherExam, "Paper 1");
-		Exam excludedExam = examWriter.createExam(firstBooklet.getExam().getSubject(), "QCAA", 2024, "Prior Exam");
-		ExamBooklet excludedBooklet = createDescriptorQueueBooklet(examWriter, excludedExam, "Paper 1");
-		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
-		Question first = persistDescriptorQueueQuestion(repository, firstBooklet, "1", subtopic);
-		Question second = persistDescriptorQueueQuestion(repository, sibling, "2", subtopic);
-		Question third = persistDescriptorQueueQuestion(repository, otherBooklet, "3", subtopic);
-		Question excluded = persistDescriptorQueueQuestion(repository, excludedBooklet, "4", subtopic);
-		Question alreadyClassified = persistDescriptorQueueQuestion(repository, sibling, "5", descriptor);
-
-		// A second Subject in the same temporary database must never enter the queue.
-		Subject physics = curriculum.findAllSubjects().stream().filter(subject -> "Physics".equals(subject.getName()))
-				.findFirst().orElseThrow();
-		SyllabusVersion physicsSyllabus = curriculum.findVersionsForSubject(physics).getFirst();
-		CurriculumNode physicsSubtopic = curriculum.findByCode(physicsSyllabus, "1.1.1").orElseThrow();
-		Exam physicsExam = examWriter.createExam(physics, "QCAA", 2025, "External Assessment");
-		Question foreign = persistDescriptorQueueQuestion(repository,
-				createDescriptorQueueBooklet(examWriter, physicsExam, "Paper 1"), "1", physicsSubtopic);
 		WaitForAsyncUtils.asyncFx(() -> {
+
+			// Begin on the operational home surface because ownership of cancellation is
+			// the behaviour under test.
 			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
 			return null;
 		}).get();
-		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
-			Node node = primaryStage.getScene().getRoot().lookup("#corpus-dashboard-summary-missing-descriptors");
-			return node instanceof Button button && "4 Missing descriptors".equals(button.getText());
-		}));
-		ComboBox<Integer> years = lookup(robot, "#corpus-dashboard-filter-year", ComboBox.class);
-		robot.interact(() -> years.getSelectionModel().select(Integer.valueOf(2025)));
-		fireControl(robot, "#corpus-dashboard-summary-missing-descriptors");
-		TableView<QuestionCorpusWorkItem> work = lookup(robot, "#corpus-dashboard-question-work", TableView.class);
-		List<Long> displayedIds = List.of(first.getId(), second.getId(), third.getId());
-		assertEquals(displayedIds, work.getItems().stream().map(item -> item.question().getId()).sorted().toList());
-		writeDescriptorQueueSnapshot(robot, primaryStage.getScene().getRoot(), "dashboard");
-		Button assign = lookup(robot, "#corpus-dashboard-question-work-assign-descriptors", Button.class);
-		assertFalse(assign.isDisabled());
-		fireControlLater(assign);
-		waitForDialogShowing(robot, "Search Questions");
-		ListView<Object> results = lookupInShowingDialog(robot, "Search Questions", "#question-search-results",
-				ListView.class);
-		Label status = lookupInShowingDialog(robot, "Search Questions", "#question-search-status", Label.class);
-		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> evaluateOnFx(robot,
-				() -> results.getItems().size() == 3 && results.getSelectionModel().getSelectedItem() != null));
-		assertEquals(displayedIds, results.getItems().stream().map(this::descriptorQueueQuestionId).sorted().toList());
-		assertEquals("3 Questions still need a Descriptor in this queue.", status.getText());
-		writeDescriptorQueueSnapshot(robot, showingDialogPane(robot, "Search Questions"), "search");
-
-		// Save one Question, then return before completion. Both remaining Questions
-		// must still be available in QUESTION WORK after the authoritative refresh.
-		long savedId = saveNextDescriptorQueueQuestion(robot, descriptor, 2);
-		closeDialog(robot, "Search Questions");
-		waitForDashboardDescriptorCount(robot, 2);
-		work = lookup(robot, "#corpus-dashboard-question-work", TableView.class);
-		assertEquals(2, work.getItems().size());
-		assertTrue(work.getItems().stream().noneMatch(item -> item.question().getId() == savedId));
-		TableView<ExamCorpusStatus> exams = lookup(robot, "#corpus-dashboard-exams", TableView.class);
-		assertEquals(2, exams.getItems().stream().mapToInt(exam -> exam.bookletStatuses().stream()
-				.mapToInt(BookletCorpusStatus::questionsWithoutDescriptorCount).sum()).sum());
-		assertEquals(Integer.valueOf(2025), years.getValue());
-		assign = lookup(robot, "#corpus-dashboard-question-work-assign-descriptors", Button.class);
-		fireControlLater(assign);
-		waitForDialogShowing(robot, "Search Questions");
-		saveNextDescriptorQueueQuestion(robot, descriptor, 1);
-		saveNextDescriptorQueueQuestion(robot, descriptor, 0);
-		status = lookupInShowingDialog(robot, "Search Questions", "#question-search-status", Label.class);
-		assertEquals("Descriptor assignment complete.", status.getText());
-		writeDescriptorQueueSnapshot(robot, showingDialogPane(robot, "Search Questions"), "complete");
-		closeDialog(robot, "Search Questions");
-		waitForDashboardDescriptorCount(robot, 0);
-		work = lookup(robot, "#corpus-dashboard-question-work", TableView.class);
-		assign = lookup(robot, "#corpus-dashboard-question-work-assign-descriptors", Button.class);
-		assertTrue(work.getItems().isEmpty());
-		assertTrue(assign.isDisabled());
-
-		// Normal inspection still exposes the refreshed Exam/booklet counts.
-		fireControl(robot, "#corpus-dashboard-summary-total");
-		exams = lookup(robot, "#corpus-dashboard-exams", TableView.class);
-		assertEquals(2, exams.getItems().size());
-		assertTrue(exams.getItems().stream().flatMap(exam -> exam.bookletStatuses().stream())
-				.allMatch(booklet -> booklet.questionsWithoutDescriptorCount() == 0));
-		for (Question original : List.of(first, second, third, alreadyClassified)) {
-			Question persisted = repository.findById(original.getId()).orElseThrow();
-			assertEquals(descriptor.getId(), persisted.getClassification().getId());
-			assertEquals(original.getBooklet().getId(), persisted.getBooklet().getId());
-			assertEquals(original.getExam().getId(), persisted.getExam().getId());
-			assertEquals(original.getRegions().size(), persisted.getRegions().size());
-			for (int index = 0; index < original.getRegions().size(); index++) {
-				QuestionRegion before = original.getRegions().get(index);
-				QuestionRegion after = persisted.getRegions().get(index);
-				assertEquals(before.booklet().getId(), after.booklet().getId());
-				assertEquals(before.pageNumber(), after.pageNumber());
-				assertEquals(before.x(), after.x());
-				assertEquals(before.y(), after.y());
-				assertEquals(before.width(), after.width());
-				assertEquals(before.height(), after.height());
-			}
-			assertEquals("A", persisted.getAnswer().getAnswerText());
-		}
-		assertEquals(subtopic.getId(), repository.findById(excluded.getId()).orElseThrow().getClassification().getId());
-		assertEquals(physicsSubtopic.getId(),
-				repository.findById(foreign.getId()).orElseThrow().getClassification().getId());
-		robot.interact(() -> years.setValue(null));
-		waitForDashboardDescriptorCount(robot, 1);
-	}
-
-	private ExamBooklet createDescriptorQueueBooklet(SqliteExamWriter writer, Exam exam, String name) throws Exception {
-		Path directory = new ManagedDataLayout(pdfDataRoot).examDirectory(exam.getSubject().getName(),
-				exam.getProvider().getName(), exam.getYear(), exam.getName());
-		Files.createDirectories(directory);
-		Path pdf = Files.copy(examPdf, directory.resolve(name + ".pdf"));
-		return writer.insertExamBooklet(exam, writer.insertSourceDocument(pdfDataRoot.relativize(pdf).toString()), name,
-				ExamBookletQuestionFormat.MIXED);
-	}
-
-	private Question persistDescriptorQueueQuestion(SqliteQuestionRepository repository, ExamBooklet booklet,
-			String code, CurriculumNode classification) throws Exception {
-		Question question = repository.save(booklet, code, "", 1,
-				List.of(new QuestionRegion(booklet, 1, 0.1, 0.1, 0.7, 0.2)), classification, false, null, null,
-				QuestionResponseType.MULTIPLE_CHOICE);
-		SqliteDatabase database = new SqliteDatabase(databasePath);
-		new SqliteAnswerWriter(database, new SqliteExamWriter(database)).insertAnswer(question, "A", List.of());
-		return repository.findById(question.getId()).orElseThrow();
-	}
-
-	@SuppressWarnings("unchecked")
-	private long saveNextDescriptorQueueQuestion(FxRobot robot, Descriptor descriptor, int remaining) throws Exception {
-		ListView<Object> results = lookupInShowingDialog(robot, "Search Questions", "#question-search-results",
-				ListView.class);
-		ComboBox<CurriculumNode> choices = lookupInShowingDialog(robot, "Search Questions",
-				"#question-search-selected-descriptor", ComboBox.class);
-		Button save = lookupInShowingDialog(robot, "Search Questions", "#question-search-save-classification",
-				Button.class);
-		Label status = lookupInShowingDialog(robot, "Search Questions", "#question-search-status", Label.class);
 		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
-				() -> evaluateOnFx(robot, () -> results.getItems().size() == remaining + 1
-						&& results.getSelectionModel().getSelectedItem() != null
-						&& choices.getItems().stream().anyMatch(choice -> choice.getId() == descriptor.getId())));
-		long questionId = descriptorQueueQuestionId(results.getSelectionModel().getSelectedItem());
-		List<Long> nextIds = results.getItems().stream().map(this::descriptorQueueQuestionId)
-				.filter(id -> id != questionId).toList();
-		robot.interact(() -> choices.getSelectionModel().select(choices.getItems().stream()
-				.filter(choice -> choice.getId() == descriptor.getId()).findFirst().orElseThrow()));
-		assertFalse(save.isDisabled());
-		fireControl(robot, save);
-		WaitForAsyncUtils
-				.waitFor(TIMEOUT, TimeUnit.SECONDS,
-						() -> evaluateOnFx(robot, () -> results.getItems().size() == remaining && (remaining == 0
-								? status.getText().contains("Descriptor assignment complete")
-								: results.getSelectionModel().getSelectedItem() != null
-										&& descriptorQueueQuestionId(
-												results.getSelectionModel().getSelectedItem()) == nextIds.getFirst()
-										&& status.getText().startsWith(Integer.toString(remaining)))));
-		assertEquals(nextIds, results.getItems().stream().map(this::descriptorQueueQuestionId).toList());
-		return questionId;
-	}
-
-	private long descriptorQueueQuestionId(Object result) {
-		try {
-
-			// Search result rows are package-private. Inspect their persisted identity
-			// through the shared test reflection helper without widening production API.
-			return field(result, "question", Question.class).getId();
-		} catch (Exception exception) {
-			throw new AssertionError("Could not read Search Question identity", exception);
-		}
-	}
-
-	private void waitForDashboardDescriptorCount(FxRobot robot, int count) throws TimeoutException {
-		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
-			Node node = primaryStage.getScene().getRoot().lookup("#corpus-dashboard-summary-missing-descriptors");
-			return node instanceof Button button && (count + " Missing descriptors").equals(button.getText());
-		}));
-	}
-
-	private void writeDescriptorQueueSnapshot(FxRobot robot, Node node, String name) throws Exception {
-		AtomicReference<BufferedImage> snapshot = new AtomicReference<>();
-		robot.interact(() -> snapshot.set(SwingFXUtils.fromFXImage(node.snapshot(null, null), null)));
-		Path directory = Files.createDirectories(Path.of("target", "issue-219-ui"));
-		ImageIO.write(snapshot.get(), "png", directory.resolve(name + ".png").toFile());
+				() -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
+		assertTrue(robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
+		assertTrue(robot.lookup("#corpus-dashboard-import-legacy-questions").tryQuery().isEmpty());
 	}
 
 	@Test
@@ -743,102 +564,6 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Both Dashboard inspection routes are modal views over Dashboard Home and do
 		// not consume or replace its navigation state.
 		assertTrue(robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
-	}
-
-	@Test
-	void dashboardDoesNotExposeLegacyImportAction(FxRobot robot) throws Exception {
-		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1",
-				ExamBookletQuestionFormat.MIXED);
-		WaitForAsyncUtils.asyncFx(() -> {
-
-			// Begin on the operational home surface because ownership of cancellation is
-			// the behaviour under test.
-			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
-			return null;
-		}).get();
-		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
-				() -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
-		assertTrue(robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
-		assertTrue(robot.lookup("#corpus-dashboard-import-legacy-questions").tryQuery().isEmpty());
-	}
-
-	@Test
-	void examAssetsLegacyImportActionUsesExistingDialogAndStaysInWorkspaceOnCancel(FxRobot robot) throws Exception {
-		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1",
-				ExamBookletQuestionFormat.MIXED);
-		WaitForAsyncUtils.asyncFx(() -> {
-			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
-			return null;
-		}).get();
-		Node applicationRoot = primaryStage.getScene().getRoot();
-		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
-				() -> nodePresentOnFx(robot, applicationRoot, "#corpus-dashboard-manage-exam-assets"));
-		Button manageExamAssets = lookupOnFx(robot, applicationRoot, "#corpus-dashboard-manage-exam-assets",
-				Button.class);
-		robot.interact(manageExamAssets::fire);
-		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
-				() -> nodePresentOnFx(robot, applicationRoot, "#exam-assets-workspace"));
-		CheckBox legacyImport = lookupOnFx(robot, applicationRoot, "#exam-assets-legacy-import", CheckBox.class);
-		Button addExam = lookupOnFx(robot, applicationRoot, "#exam-assets-add-new-exam", Button.class);
-
-		// Selecting legacy mode alone is passive and leaves the existing structural
-		// workspace unchanged.
-		robot.interact(legacyImport::fire);
-		assertTrue(evaluateOnFx(robot, legacyImport::isSelected));
-		assertTrue(nodePresentOnFx(robot, applicationRoot, "#exam-assets-workspace"));
-
-		// The import dialog is modal; schedule its opening so
-		// the test thread remains available to inspect and close it.
-		Platform.runLater(addExam::fire);
-		waitForDialogShowing(robot, "Import Legacy Question Metadata");
-
-		// Inspect the actual showing dialog rather than searching
-		// the application scene during a modal transition.
-		DialogPane importDialog = showingDialogPane(robot, "Import Legacy Question Metadata");
-		assertNotNull(importDialog);
-		Node cancelNode = importDialog.lookupButton(ButtonType.CANCEL);
-		assertTrue(cancelNode instanceof Button);
-		robot.interact(((Button) cancelNode)::fire);
-		waitForDialogHidden(robot, "Import Legacy Question Metadata");
-
-		// The launch point is now Exam/Assets, so cancelling the chooser retains that
-		// workspace and its Dashboard return route.
-		assertTrue(nodePresentOnFx(robot, applicationRoot, "#exam-assets-workspace"));
-		Button returnDashboard = lookupOnFx(robot, applicationRoot, "#exam-assets-return-dashboard", Button.class);
-		assertTrue(evaluateOnFx(robot, () -> returnDashboard.isVisible() && returnDashboard.isManaged()));
-	}
-
-	@Test
-	void emptyDashboardAllowsLegacyImportBeforeAnyExamAndCancellationPreservesEmptyCorpus(FxRobot robot)
-			throws Exception {
-		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
-		robot.interact(() -> subjects.getSelectionModel().selectFirst());
-		SqliteExamWriter writer = new SqliteExamWriter(new SqliteDatabase(databasePath));
-		Subject subject = WaitForAsyncUtils.asyncFx(subjects::getValue).get();
-		assertTrue(writer.findExamsForSubject(subject).isEmpty());
-		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
-				() -> robot.lookup("#corpus-dashboard-add-exam").tryQuery().isPresent());
-		fireControl(robot, "#corpus-dashboard-add-exam");
-		CheckBox legacy = lookup(robot, "#exam-assets-legacy-import", CheckBox.class);
-		Button add = lookup(robot, "#exam-assets-add-new-exam", Button.class);
-		assertFalse(evaluateOnFx(robot, legacy::isDisabled));
-		robot.interact(legacy::fire);
-		Platform.runLater(add::fire);
-		waitForDialogShowing(robot, "Import Legacy Question Metadata");
-		DialogPane dialog = showingDialogPane(robot, "Import Legacy Question Metadata");
-		robot.interact(((Button) dialog.lookupButton(ButtonType.CANCEL))::fire);
-		waitForDialogHidden(robot, "Import Legacy Question Metadata");
-		assertTrue(writer.findExamsForSubject(subject).isEmpty());
-		assertFalse(evaluateOnFx(robot, legacy::isDisabled));
-		fireControl(robot, "#exam-assets-return-dashboard");
-		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
-				() -> robot.lookup("#corpus-dashboard-add-exam").tryQuery().isPresent());
-		fireControl(robot, "#corpus-dashboard-add-exam");
-		assertFalse(evaluateOnFx(robot, legacy::isSelected));
-		robot.interact(add::fire);
-		assertEquals("NEW EXAM", lookup(robot, "#exam-assets-state", Label.class).getText());
-		fireControl(robot, "#exam-assets-new-exam-cancel");
-		assertTrue(writer.findExamsForSubject(subject).isEmpty());
 	}
 
 	@Test
@@ -1239,6 +964,85 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void emptyDashboardAllowsLegacyImportBeforeAnyExamAndCancellationPreservesEmptyCorpus(FxRobot robot)
+			throws Exception {
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		robot.interact(() -> subjects.getSelectionModel().selectFirst());
+		SqliteExamWriter writer = new SqliteExamWriter(new SqliteDatabase(databasePath));
+		Subject subject = WaitForAsyncUtils.asyncFx(subjects::getValue).get();
+		assertTrue(writer.findExamsForSubject(subject).isEmpty());
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-add-exam").tryQuery().isPresent());
+		fireControl(robot, "#corpus-dashboard-add-exam");
+		CheckBox legacy = lookup(robot, "#exam-assets-legacy-import", CheckBox.class);
+		Button add = lookup(robot, "#exam-assets-add-new-exam", Button.class);
+		assertFalse(evaluateOnFx(robot, legacy::isDisabled));
+		robot.interact(legacy::fire);
+		Platform.runLater(add::fire);
+		waitForDialogShowing(robot, "Import Legacy Question Metadata");
+		DialogPane dialog = showingDialogPane(robot, "Import Legacy Question Metadata");
+		robot.interact(((Button) dialog.lookupButton(ButtonType.CANCEL))::fire);
+		waitForDialogHidden(robot, "Import Legacy Question Metadata");
+		assertTrue(writer.findExamsForSubject(subject).isEmpty());
+		assertFalse(evaluateOnFx(robot, legacy::isDisabled));
+		fireControl(robot, "#exam-assets-return-dashboard");
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-add-exam").tryQuery().isPresent());
+		fireControl(robot, "#corpus-dashboard-add-exam");
+		assertFalse(evaluateOnFx(robot, legacy::isSelected));
+		robot.interact(add::fire);
+		assertEquals("NEW EXAM", lookup(robot, "#exam-assets-state", Label.class).getText());
+		fireControl(robot, "#exam-assets-new-exam-cancel");
+		assertTrue(writer.findExamsForSubject(subject).isEmpty());
+	}
+
+	@Test
+	void examAssetsLegacyImportActionUsesExistingDialogAndStaysInWorkspaceOnCancel(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1",
+				ExamBookletQuestionFormat.MIXED);
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
+			return null;
+		}).get();
+		Node applicationRoot = primaryStage.getScene().getRoot();
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
+				() -> nodePresentOnFx(robot, applicationRoot, "#corpus-dashboard-manage-exam-assets"));
+		Button manageExamAssets = lookupOnFx(robot, applicationRoot, "#corpus-dashboard-manage-exam-assets",
+				Button.class);
+		robot.interact(manageExamAssets::fire);
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
+				() -> nodePresentOnFx(robot, applicationRoot, "#exam-assets-workspace"));
+		CheckBox legacyImport = lookupOnFx(robot, applicationRoot, "#exam-assets-legacy-import", CheckBox.class);
+		Button addExam = lookupOnFx(robot, applicationRoot, "#exam-assets-add-new-exam", Button.class);
+
+		// Selecting legacy mode alone is passive and leaves the existing structural
+		// workspace unchanged.
+		robot.interact(legacyImport::fire);
+		assertTrue(evaluateOnFx(robot, legacyImport::isSelected));
+		assertTrue(nodePresentOnFx(robot, applicationRoot, "#exam-assets-workspace"));
+
+		// The import dialog is modal; schedule its opening so
+		// the test thread remains available to inspect and close it.
+		Platform.runLater(addExam::fire);
+		waitForDialogShowing(robot, "Import Legacy Question Metadata");
+
+		// Inspect the actual showing dialog rather than searching
+		// the application scene during a modal transition.
+		DialogPane importDialog = showingDialogPane(robot, "Import Legacy Question Metadata");
+		assertNotNull(importDialog);
+		Node cancelNode = importDialog.lookupButton(ButtonType.CANCEL);
+		assertTrue(cancelNode instanceof Button);
+		robot.interact(((Button) cancelNode)::fire);
+		waitForDialogHidden(robot, "Import Legacy Question Metadata");
+
+		// The launch point is now Exam/Assets, so cancelling the chooser retains that
+		// workspace and its Dashboard return route.
+		assertTrue(nodePresentOnFx(robot, applicationRoot, "#exam-assets-workspace"));
+		Button returnDashboard = lookupOnFx(robot, applicationRoot, "#exam-assets-return-dashboard", Button.class);
+		assertTrue(evaluateOnFx(robot, () -> returnDashboard.isVisible() && returnDashboard.isManaged()));
+	}
+
+	@Test
 	void legacyIntakeSeedsFirstBookletPdfChooserAndPreservesDirectoryHistory() throws Exception {
 		Path testRoot = databasePath.getParent();
 		Path previousDirectory = Files.createDirectories(testRoot.resolve("previous-pdfs"));
@@ -1459,6 +1263,128 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		verifyPendingLegacyPaperBookletMapping(robot, true);
 	}
 
+	@Test
+	@SuppressWarnings("unchecked")
+	void questionWorkDescriptorQueueSavesAcrossExamsAndRefreshesDashboard(FxRobot robot) throws Exception {
+		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1",
+				ExamBookletQuestionFormat.MIXED);
+		ExamBooklet firstBooklet = examMetadataPane().getBooklet();
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteCurriculumRepository curriculum = new SqliteCurriculumRepository(database);
+		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
+		SyllabusVersion syllabus = curriculum.findVersionsForSubject(firstBooklet.getExam().getSubject()).stream()
+				.filter(SyllabusVersion::isCurrent).findFirst().orElseThrow();
+		Unit unit = (Unit) curriculum.findByCode(syllabus, "1").orElseThrow();
+		Topic topic = curriculumWriter.insertTopic(unit, "1.2", "Queue topic", 2);
+		Subtopic subtopic = curriculumWriter.insertSubtopic(topic, "1.2.1", "Queue classification", 1);
+		Descriptor descriptor = curriculumWriter.insertDescriptor(subtopic, "1.2.1.1", "Assigned Descriptor", 1);
+		ExamBooklet sibling = createDescriptorQueueBooklet(examWriter, firstBooklet.getExam(), "Paper 2");
+		Exam otherExam = examWriter.createExam(firstBooklet.getExam().getSubject(), "QCAA", 2025, "Practice Exam");
+		ExamBooklet otherBooklet = createDescriptorQueueBooklet(examWriter, otherExam, "Paper 1");
+		Exam excludedExam = examWriter.createExam(firstBooklet.getExam().getSubject(), "QCAA", 2024, "Prior Exam");
+		ExamBooklet excludedBooklet = createDescriptorQueueBooklet(examWriter, excludedExam, "Paper 1");
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		Question first = persistDescriptorQueueQuestion(repository, firstBooklet, "1", subtopic);
+		Question second = persistDescriptorQueueQuestion(repository, sibling, "2", subtopic);
+		Question third = persistDescriptorQueueQuestion(repository, otherBooklet, "3", subtopic);
+		Question excluded = persistDescriptorQueueQuestion(repository, excludedBooklet, "4", subtopic);
+		Question alreadyClassified = persistDescriptorQueueQuestion(repository, sibling, "5", descriptor);
+
+		// A second Subject in the same temporary database must never enter the queue.
+		Subject physics = curriculum.findAllSubjects().stream().filter(subject -> "Physics".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		SyllabusVersion physicsSyllabus = curriculum.findVersionsForSubject(physics).getFirst();
+		CurriculumNode physicsSubtopic = curriculum.findByCode(physicsSyllabus, "1.1.1").orElseThrow();
+		Exam physicsExam = examWriter.createExam(physics, "QCAA", 2025, "External Assessment");
+		Question foreign = persistDescriptorQueueQuestion(repository,
+				createDescriptorQueueBooklet(examWriter, physicsExam, "Paper 1"), "1", physicsSubtopic);
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
+			Node node = primaryStage.getScene().getRoot().lookup("#corpus-dashboard-summary-missing-descriptors");
+			return node instanceof Button button && "4 Missing descriptors".equals(button.getText());
+		}));
+		ComboBox<Integer> years = lookup(robot, "#corpus-dashboard-filter-year", ComboBox.class);
+		robot.interact(() -> years.getSelectionModel().select(Integer.valueOf(2025)));
+		fireControl(robot, "#corpus-dashboard-summary-missing-descriptors");
+		TableView<QuestionCorpusWorkItem> work = lookup(robot, "#corpus-dashboard-question-work", TableView.class);
+		List<Long> displayedIds = List.of(first.getId(), second.getId(), third.getId());
+		assertEquals(displayedIds, work.getItems().stream().map(item -> item.question().getId()).sorted().toList());
+		writeDescriptorQueueSnapshot(robot, primaryStage.getScene().getRoot(), "dashboard");
+		Button assign = lookup(robot, "#corpus-dashboard-question-work-assign-descriptors", Button.class);
+		assertFalse(assign.isDisabled());
+		fireControlLater(assign);
+		waitForDialogShowing(robot, "Search Questions");
+		ListView<Object> results = lookupInShowingDialog(robot, "Search Questions", "#question-search-results",
+				ListView.class);
+		Label status = lookupInShowingDialog(robot, "Search Questions", "#question-search-status", Label.class);
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> evaluateOnFx(robot,
+				() -> results.getItems().size() == 3 && results.getSelectionModel().getSelectedItem() != null));
+		assertEquals(displayedIds, results.getItems().stream().map(this::descriptorQueueQuestionId).sorted().toList());
+		assertEquals("3 Questions still need a Descriptor in this queue.", status.getText());
+		writeDescriptorQueueSnapshot(robot, showingDialogPane(robot, "Search Questions"), "search");
+
+		// Save one Question, then return before completion. Both remaining Questions
+		// must still be available in QUESTION WORK after the authoritative refresh.
+		long savedId = saveNextDescriptorQueueQuestion(robot, descriptor, 2);
+		closeDialog(robot, "Search Questions");
+		waitForDashboardDescriptorCount(robot, 2);
+		work = lookup(robot, "#corpus-dashboard-question-work", TableView.class);
+		assertEquals(2, work.getItems().size());
+		assertTrue(work.getItems().stream().noneMatch(item -> item.question().getId() == savedId));
+		TableView<ExamCorpusStatus> exams = lookup(robot, "#corpus-dashboard-exams", TableView.class);
+		assertEquals(2, exams.getItems().stream().mapToInt(exam -> exam.bookletStatuses().stream()
+				.mapToInt(BookletCorpusStatus::questionsWithoutDescriptorCount).sum()).sum());
+		assertEquals(Integer.valueOf(2025), years.getValue());
+		assign = lookup(robot, "#corpus-dashboard-question-work-assign-descriptors", Button.class);
+		fireControlLater(assign);
+		waitForDialogShowing(robot, "Search Questions");
+		saveNextDescriptorQueueQuestion(robot, descriptor, 1);
+		saveNextDescriptorQueueQuestion(robot, descriptor, 0);
+		status = lookupInShowingDialog(robot, "Search Questions", "#question-search-status", Label.class);
+		assertEquals("Descriptor assignment complete.", status.getText());
+		writeDescriptorQueueSnapshot(robot, showingDialogPane(robot, "Search Questions"), "complete");
+		closeDialog(robot, "Search Questions");
+		waitForDashboardDescriptorCount(robot, 0);
+		work = lookup(robot, "#corpus-dashboard-question-work", TableView.class);
+		assign = lookup(robot, "#corpus-dashboard-question-work-assign-descriptors", Button.class);
+		assertTrue(work.getItems().isEmpty());
+		assertTrue(assign.isDisabled());
+
+		// Normal inspection still exposes the refreshed Exam/booklet counts.
+		fireControl(robot, "#corpus-dashboard-summary-total");
+		exams = lookup(robot, "#corpus-dashboard-exams", TableView.class);
+		assertEquals(2, exams.getItems().size());
+		assertTrue(exams.getItems().stream().flatMap(exam -> exam.bookletStatuses().stream())
+				.allMatch(booklet -> booklet.questionsWithoutDescriptorCount() == 0));
+		for (Question original : List.of(first, second, third, alreadyClassified)) {
+			Question persisted = repository.findById(original.getId()).orElseThrow();
+			assertEquals(descriptor.getId(), persisted.getClassification().getId());
+			assertEquals(original.getBooklet().getId(), persisted.getBooklet().getId());
+			assertEquals(original.getExam().getId(), persisted.getExam().getId());
+			assertEquals(original.getRegions().size(), persisted.getRegions().size());
+			for (int index = 0; index < original.getRegions().size(); index++) {
+				QuestionRegion before = original.getRegions().get(index);
+				QuestionRegion after = persisted.getRegions().get(index);
+				assertEquals(before.booklet().getId(), after.booklet().getId());
+				assertEquals(before.pageNumber(), after.pageNumber());
+				assertEquals(before.x(), after.x());
+				assertEquals(before.y(), after.y());
+				assertEquals(before.width(), after.width());
+				assertEquals(before.height(), after.height());
+			}
+			assertEquals("A", persisted.getAnswer().getAnswerText());
+		}
+		assertEquals(subtopic.getId(), repository.findById(excluded.getId()).orElseThrow().getClassification().getId());
+		assertEquals(physicsSubtopic.getId(),
+				repository.findById(foreign.getId()).orElseThrow().getClassification().getId());
+		robot.interact(() -> years.setValue(null));
+		waitForDashboardDescriptorCount(robot, 1);
+	}
+
 	@Override
 	@Start
 	void start(Stage stage) throws Exception {
@@ -1481,6 +1407,15 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 				"Active imported Question correction must keep Working Subject locked");
 		assertFalse(evaluateOnFx(robot, subjects::isVisible),
 				"Working Subject editing must be hidden in the specialised capture workspace");
+	}
+
+	private ExamBooklet createDescriptorQueueBooklet(SqliteExamWriter writer, Exam exam, String name) throws Exception {
+		Path directory = new ManagedDataLayout(pdfDataRoot).examDirectory(exam.getSubject().getName(),
+				exam.getProvider().getName(), exam.getYear(), exam.getName());
+		Files.createDirectories(directory);
+		Path pdf = Files.copy(examPdf, directory.resolve(name + ".pdf"));
+		return writer.insertExamBooklet(exam, writer.insertSourceDocument(pdfDataRoot.relativize(pdf).toString()), name,
+				ExamBookletQuestionFormat.MIXED);
 	}
 
 	private Path createPendingLegacyWorkbook(Path path) throws Exception {
@@ -1513,6 +1448,27 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 			}
 		}
 		return path;
+	}
+
+	private long descriptorQueueQuestionId(Object result) {
+		try {
+
+			// Search result rows are package-private. Inspect their persisted identity
+			// through the shared test reflection helper without widening production API.
+			return field(result, "question", Question.class).getId();
+		} catch (Exception exception) {
+			throw new AssertionError("Could not read Search Question identity", exception);
+		}
+	}
+
+	private Question persistDescriptorQueueQuestion(SqliteQuestionRepository repository, ExamBooklet booklet,
+			String code, CurriculumNode classification) throws Exception {
+		Question question = repository.save(booklet, code, "", 1,
+				List.of(new QuestionRegion(booklet, 1, 0.1, 0.1, 0.7, 0.2)), classification, false, null, null,
+				QuestionResponseType.MULTIPLE_CHOICE);
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		new SqliteAnswerWriter(database, new SqliteExamWriter(database)).insertAnswer(question, "A", List.of());
+		return repository.findById(question.getId()).orElseThrow();
 	}
 
 	private Question persistUnfinishedQuestionForSubjectUnlock(FxRobot robot, String code) throws Exception {
@@ -1560,6 +1516,38 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertNotNull(selected);
 		assertEquals(physics.getId(), selected.getId());
 		assertFalse(evaluateOnFx(robot, subjects::isDisabled));
+	}
+
+	@SuppressWarnings("unchecked")
+	private long saveNextDescriptorQueueQuestion(FxRobot robot, Descriptor descriptor, int remaining) throws Exception {
+		ListView<Object> results = lookupInShowingDialog(robot, "Search Questions", "#question-search-results",
+				ListView.class);
+		ComboBox<CurriculumNode> choices = lookupInShowingDialog(robot, "Search Questions",
+				"#question-search-selected-descriptor", ComboBox.class);
+		Button save = lookupInShowingDialog(robot, "Search Questions", "#question-search-save-classification",
+				Button.class);
+		Label status = lookupInShowingDialog(robot, "Search Questions", "#question-search-status", Label.class);
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot, () -> results.getItems().size() == remaining + 1
+						&& results.getSelectionModel().getSelectedItem() != null
+						&& choices.getItems().stream().anyMatch(choice -> choice.getId() == descriptor.getId())));
+		long questionId = descriptorQueueQuestionId(results.getSelectionModel().getSelectedItem());
+		List<Long> nextIds = results.getItems().stream().map(this::descriptorQueueQuestionId)
+				.filter(id -> id != questionId).toList();
+		robot.interact(() -> choices.getSelectionModel().select(choices.getItems().stream()
+				.filter(choice -> choice.getId() == descriptor.getId()).findFirst().orElseThrow()));
+		assertFalse(save.isDisabled());
+		fireControl(robot, save);
+		WaitForAsyncUtils
+				.waitFor(TIMEOUT, TimeUnit.SECONDS,
+						() -> evaluateOnFx(robot, () -> results.getItems().size() == remaining && (remaining == 0
+								? status.getText().contains("Descriptor assignment complete")
+								: results.getSelectionModel().getSelectedItem() != null
+										&& descriptorQueueQuestionId(
+												results.getSelectionModel().getSelectedItem()) == nextIds.getFirst()
+										&& status.getText().startsWith(Integer.toString(remaining)))));
+		assertEquals(nextIds, results.getItems().stream().map(this::descriptorQueueQuestionId).toList());
+		return questionId;
 	}
 
 	private void verifyPendingLegacyPaperBookletMapping(FxRobot robot, boolean ambiguous) throws Exception {
@@ -1681,5 +1669,19 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(selectedBooklet.getSourceDocument().getRelativePath(),
 				imported.getBooklet().getSourceDocument().getRelativePath());
 		assertNull(field(application, "pendingLegacyQuestionImport", Object.class));
+	}
+
+	private void waitForDashboardDescriptorCount(FxRobot robot, int count) throws TimeoutException {
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
+			Node node = primaryStage.getScene().getRoot().lookup("#corpus-dashboard-summary-missing-descriptors");
+			return node instanceof Button button && (count + " Missing descriptors").equals(button.getText());
+		}));
+	}
+
+	private void writeDescriptorQueueSnapshot(FxRobot robot, Node node, String name) throws Exception {
+		AtomicReference<BufferedImage> snapshot = new AtomicReference<>();
+		robot.interact(() -> snapshot.set(SwingFXUtils.fromFXImage(node.snapshot(null, null), null)));
+		Path directory = Files.createDirectories(Path.of("target", "issue-219-ui"));
+		ImageIO.write(snapshot.get(), "png", directory.resolve(name + ".png").toFile());
 	}
 }

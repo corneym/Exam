@@ -15,6 +15,8 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import au.edu.eq.questionbank.Constants;
+
 class PerformanceSessionWriterTest {
 
 	@TempDir
@@ -29,7 +31,7 @@ class PerformanceSessionWriterTest {
 		PerformanceSessionWriter writer = new PerformanceSessionWriter(output, "operation", _ -> {
 			initialiserEntered.countDown();
 			try {
-				if (!releaseInitialiser.await(5, TimeUnit.SECONDS)) {
+				if (!releaseInitialiser.await(Constants.TIMEOUT, TimeUnit.SECONDS)) {
 					throw new IOException("Initialiser was not released");
 				}
 			} catch (InterruptedException interrupted) {
@@ -39,7 +41,7 @@ class PerformanceSessionWriterTest {
 		}, 2);
 		try {
 			writer.submit("first" + System.lineSeparator());
-			assertTrue(initialiserEntered.await(5, TimeUnit.SECONDS));
+			assertTrue(initialiserEntered.await(Constants.TIMEOUT, TimeUnit.SECONDS));
 
 			// The worker is blocked while opening the first file.
 			// The bounded queue can therefore hold only two more rows.

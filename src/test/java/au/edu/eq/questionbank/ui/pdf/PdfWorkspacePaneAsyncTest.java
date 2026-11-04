@@ -34,6 +34,7 @@ import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
+import au.edu.eq.questionbank.Constants;
 import javafx.event.ActionEvent;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
@@ -298,7 +299,7 @@ class PdfWorkspacePaneAsyncTest {
 
 		// Wait for a genuine tall-page layout and for the pending focus request to
 		// move the viewport; draining runLater callbacks alone does not imply a pulse.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> pageView.getBoundsInLocal().getHeight() > scrollPane.getViewportBounds().getHeight()
 						&& scrollPane.getVvalue() > 0);
 		Rectangle highlight = robot.lookup(".pdf-stored-region-highlight").queryAs(Rectangle.class);

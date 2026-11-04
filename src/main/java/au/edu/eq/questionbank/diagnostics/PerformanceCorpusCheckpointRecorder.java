@@ -15,6 +15,8 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
+import au.edu.eq.questionbank.Constants;
+
 /**
  * Samples routine corpus growth on a bounded background worker.
  *
@@ -137,7 +139,7 @@ public final class PerformanceCorpusCheckpointRecorder implements AutoCloseable 
 			worker.shutdown();
 		}
 		try {
-			if (!worker.awaitTermination(8, TimeUnit.SECONDS)) {
+			if (!worker.awaitTermination(Constants.TIMEOUT, TimeUnit.SECONDS)) {
 				failedCheckpoints.incrementAndGet();
 				warn("Performance corpus checkpoints did not finish " + "at shutdown");
 			}

@@ -26,6 +26,8 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import au.edu.eq.questionbank.Constants;
+
 class PerformanceRecorderTest {
 
 	@TempDir
@@ -131,10 +133,10 @@ class PerformanceRecorderTest {
 						return null;
 					}));
 				}
-				assertTrue(ready.await(5, TimeUnit.SECONDS));
+				assertTrue(ready.await(Constants.TIMEOUT, TimeUnit.SECONDS));
 				start.countDown();
 				for (Future<?> future : futures) {
-					future.get(5, TimeUnit.SECONDS);
+					future.get(Constants.TIMEOUT, TimeUnit.SECONDS);
 				}
 				List<String> lines = Files.readAllLines(output);
 				assertEquals(2, lines.size());

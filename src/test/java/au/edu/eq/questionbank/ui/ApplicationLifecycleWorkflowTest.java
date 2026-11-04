@@ -21,6 +21,7 @@ import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ApplicationVersion;
+import au.edu.eq.questionbank.Constants;
 import au.edu.eq.questionbank.diagnostics.PerformanceDiagnosticsPreferences;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.backup.BackupKind;
@@ -172,11 +173,12 @@ class ApplicationLifecycleWorkflowTest extends QuestionBankApplicationUiTestBase
 		try {
 			MenuItem exitItem = fileExitMenuItem();
 			Platform.runLater(exitItem::fire);
-			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 					() -> robot.lookup("Save in progress").tryQuery().isPresent());
 			assertEquals(0, exitCount.get());
 			assertEquals(0, automaticBackupCount());
-			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> robot.lookup("OK").tryQuery().isPresent());
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+					() -> robot.lookup("OK").tryQuery().isPresent());
 			Button okButton = robot.lookup("OK").queryButton();
 			robot.interact(okButton::fire);
 			WaitForAsyncUtils.waitForFxEvents();
@@ -192,7 +194,8 @@ class ApplicationLifecycleWorkflowTest extends QuestionBankApplicationUiTestBase
 		// The Help action uses showAndWait(). Queue it without blocking the JUnit
 		// thread so the test can interact with the modal dialog while it is open.
 		Platform.runLater(helpContents::fire);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> robot.lookup("#help-web-view").tryQuery().isPresent());
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> robot.lookup("#help-web-view").tryQuery().isPresent());
 		WebView helpWebView = robot.lookup("#help-web-view").queryAs(WebView.class);
 		AtomicReference<Worker.State> loadState = new AtomicReference<>();
 		robot.interact(() -> {
@@ -203,7 +206,7 @@ class ApplicationLifecycleWorkflowTest extends QuestionBankApplicationUiTestBase
 			loadState.set(loadWorker.getState());
 			loadWorker.stateProperty().addListener((_, _, newState) -> loadState.set(newState));
 		});
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> loadState.get() == Worker.State.SUCCEEDED
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> loadState.get() == Worker.State.SUCCEEDED
 				|| loadState.get() == Worker.State.FAILED || loadState.get() == Worker.State.CANCELLED);
 		assertEquals(Worker.State.SUCCEEDED, loadState.get());
 		robot.interact(() -> {
@@ -224,7 +227,7 @@ class ApplicationLifecycleWorkflowTest extends QuestionBankApplicationUiTestBase
 		try {
 			MenuItem restoreItem = fileRestoreMenuItem();
 			Platform.runLater(restoreItem::fire);
-			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 					() -> robot.lookup("Save in progress").tryQuery().isPresent());
 			assertEquals(0, exitCount.get());
 			fireDialogButton(robot, "OK");

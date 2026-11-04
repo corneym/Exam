@@ -45,6 +45,7 @@ import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
+import au.edu.eq.questionbank.Constants;
 import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
@@ -168,7 +169,7 @@ public class QuestionSearchPaneTest {
 		ListView<QuestionOutputApplicabilityRow> outputList = robot.lookup("#question-search-output-applicability")
 				.queryListView();
 		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
 
 		// All Questions stays within the workspace Working Subject but does not use
 		// current-syllabus hierarchy controls to filter those stored Questions.
@@ -183,7 +184,7 @@ public class QuestionSearchPaneTest {
 		// Empty applicability on the Search result means curriculum applicability was
 		// not evaluated as part of All Questions itself.
 		assertTrue(detailsArea.getText().contains("Not evaluated in All Questions scope."));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> outputList.getItems().size() == 1);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> outputList.getItems().size() == 1);
 		QuestionOutputApplicabilityRow outputRow = outputList.getItems().getFirst();
 
 		// Selecting the Question still performs the independent applicability lookup
@@ -224,7 +225,7 @@ public class QuestionSearchPaneTest {
 
 		// The pane was constructed with Chemistry as its Working Subject. The Physics
 		// Question must therefore remain outside Search even in All Questions scope.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1
 				&& resultsList.getItems().getFirst().question().getId() == historicalQuestion.getId());
 		assertEquals(historicalQuestion.getId(), resultsList.getItems().getFirst().question().getId());
 	}
@@ -478,7 +479,7 @@ public class QuestionSearchPaneTest {
 
 		// Establish a completed Search and initial catalogue
 		// before exercising the post-edit refresh.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> results.getItems().size() == 1 && provider.getItems().size() == 2
 						&& catalogueStatus.getText().isEmpty() && "1 question found.".equals(searchStatus.getText()));
 		WaitForAsyncUtils.waitForFxEvents();
@@ -494,7 +495,7 @@ public class QuestionSearchPaneTest {
 			// Search refresh and one catalogue reload.
 			pane.refreshAfterEdit(historicalQuestion.getId());
 		});
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> {
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> {
 			Question selected = pane.getSelectedQuestion();
 			return selected != null && selected.getId() == historicalQuestion.getId()
 					&& selected.getClassification().equals(currentDescriptor) && catalogueStatus.getText().isEmpty()
@@ -527,7 +528,7 @@ public class QuestionSearchPaneTest {
 		AtomicInteger saveRequests = new AtomicInteger();
 		robot.interact(() -> pane.setClassificationSaveHandler(saveRequests::incrementAndGet));
 		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1);
 		robot.interact(() -> results.getSelectionModel().selectFirst());
 		assertTrue(classificationPane.isVisible());
 		assertTrue(classificationPane.isManaged());
@@ -614,12 +615,14 @@ public class QuestionSearchPaneTest {
 		ComboBox<CurriculumNode> descriptor = robot.lookup("#question-search-selected-descriptor").queryComboBox();
 		ImageView preview = robot.lookup("#question-search-preview").queryAs(ImageView.class);
 		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == originalQuestions.size());
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> results.getItems().size() == originalQuestions.size());
 		QuestionSearchResult targetResult = results.getItems().stream()
 				.filter(result -> result.question().getId() == originalTarget.getId()).findFirst().orElseThrow();
 		QuestionSearchResult unaffectedResult = results.getItems().getFirst();
 		robot.interact(() -> results.getSelectionModel().select(targetResult));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> preview.getImage() != null && renderCount.get() == 1);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> preview.getImage() != null && renderCount.get() == 1);
 		Image originalImage = preview.getImage();
 		int selectedIndex = results.getSelectionModel().getSelectedIndex();
 		AtomicReference<ScrollBar> verticalScroll = new AtomicReference<>();
@@ -631,7 +634,7 @@ public class QuestionSearchPaneTest {
 					.orElseThrow());
 			results.scrollTo(selectedIndex);
 		});
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> verticalScroll.get().getValue() > verticalScroll.get().getMin());
 		AtomicReference<Double> originalScrollPosition = new AtomicReference<>();
 		robot.interact(() -> originalScrollPosition.set(verticalScroll.get().getValue()));
@@ -644,7 +647,7 @@ public class QuestionSearchPaneTest {
 			pane[0].classificationSaved(originalTarget.getId());
 			pane[0].refreshAfterEdit(originalTarget.getId());
 		});
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> pane[0].getSelectedQuestion() != null
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> pane[0].getSelectedQuestion() != null
 				&& pane[0].getSelectedQuestion().getClassification().equals(currentDescriptor));
 		WaitForAsyncUtils.waitForFxEvents();
 		assertEquals(originalTarget.getId(), pane[0].getSelectedQuestion().getId());
@@ -673,7 +676,7 @@ public class QuestionSearchPaneTest {
 		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
 		Label status = robot.lookup("#question-search-status").queryAs(Label.class);
 		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> results.getItems().size() == 2 && scope.getValue() == QuestionSearchScope.CURRENT_SYLLABUS);
 		QuestionSearchResult selectedResult = results.getItems().stream()
 				.filter(result -> result.question().getId() == removableQuestion.getId()).findFirst().orElseThrow();
@@ -685,7 +688,7 @@ public class QuestionSearchPaneTest {
 			matches.set(List.of(new QuestionApplicabilityMatch(historicalQuestion, currentDescriptor)));
 			pane.refreshAfterEdit(removableQuestion.getId());
 		});
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> results.getItems().size() == 1
 						&& results.getItems().getFirst().question().getId() == historicalQuestion.getId()
 						&& "1 question found.".equals(status.getText()));
@@ -710,7 +713,7 @@ public class QuestionSearchPaneTest {
 		ComboBox<CurriculumNode> descriptor = robot.lookup("#question-search-selected-descriptor").queryComboBox();
 		TextArea details = retainedDetailsArea();
 		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
 		QuestionSearchResult original = results.getItems().stream()
 				.filter(result -> result.question().getId() == subtopicQuestion.getId()).findFirst().orElseThrow();
 		QuestionSearchResult unaffected = results.getItems().stream()
@@ -738,7 +741,7 @@ public class QuestionSearchPaneTest {
 			pane.classificationSaved(subtopicQuestion.getId());
 			pane.refreshAfterEdit(subtopicQuestion.getId());
 		});
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> pane.getSelectedQuestion() != null
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> pane.getSelectedQuestion() != null
 				&& pane.getSelectedQuestion().getClassification().equals(currentDescriptor));
 		WaitForAsyncUtils.waitForFxEvents();
 		assertEquals(0, wholesaleReplacements.get());
@@ -763,13 +766,16 @@ public class QuestionSearchPaneTest {
 
 		// Working Subject navigation is established automatically before the test
 		// narrows Search through the current curriculum hierarchy.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
 		robot.interact(() -> unitBox.setValue(currentUnit));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> topicBox.getItems().contains(currentTopic));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> topicBox.getItems().contains(currentTopic));
 		robot.interact(() -> topicBox.setValue(currentTopic));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> classificationBox.getItems().contains(currentSubtopic));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> classificationBox.getItems().contains(currentSubtopic));
 		robot.interact(() -> classificationBox.setValue(currentSubtopic));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> descriptorBox.getItems().contains(currentDescriptor));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> descriptorBox.getItems().contains(currentDescriptor));
 		robot.interact(() -> descriptorBox.setValue(currentDescriptor));
 		assertEquals(currentDescriptor, descriptorBox.getValue());
 
@@ -807,7 +813,7 @@ public class QuestionSearchPaneTest {
 
 		// The initial outstanding queue must include only Subtopic-classified
 		// Questions in the selected booklet.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> results.getItems().size() == 3 && results.getSelectionModel().getSelectedItem() != null);
 		assertEquals(List.of(9911L, 9912L, 9913L),
 				results.getItems().stream().map(item -> item.question().getId()).toList());
@@ -839,7 +845,7 @@ public class QuestionSearchPaneTest {
 			pane.classificationSaved(second.getId());
 			pane.refreshAfterEdit(second.getId());
 		});
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 2
 				&& pane.getSelectedQuestion() != null && pane.getSelectedQuestion().getId() == third.getId());
 
 		// The removed middle row is replaced by the next outstanding row.
@@ -860,7 +866,7 @@ public class QuestionSearchPaneTest {
 			pane.classificationSaved(third.getId());
 			pane.refreshAfterEdit(third.getId());
 		});
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1
 				&& pane.getSelectedQuestion() != null && pane.getSelectedQuestion().getId() == first.getId());
 		assertTrue(status.getText().contains("1 Question still needs"));
 
@@ -875,7 +881,7 @@ public class QuestionSearchPaneTest {
 			pane.classificationSaved(first.getId());
 			pane.refreshAfterEdit(first.getId());
 		});
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> results.getItems().isEmpty() && status.getText().contains("Descriptor assignment complete"));
 		assertTrue(results.getItems().isEmpty());
 		assertNull(pane.getSelectedQuestion());
@@ -936,7 +942,7 @@ public class QuestionSearchPaneTest {
 		Button save = robot.lookup("#question-search-save-classification").queryButton();
 		ImageView preview = robot.lookup("#question-search-preview").queryAs(ImageView.class);
 		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1);
 		robot.interact(() -> results.getSelectionModel().selectFirst());
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> preview.getImage() != null && output.getItems().size() == 2 && renderCount.get() == 1);
@@ -982,15 +988,18 @@ public class QuestionSearchPaneTest {
 
 		// Working Subject navigation supplies the current hierarchy without a separate
 		// Subject-selection action inside Search.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
 		robot.interact(() -> unitBox.setValue(currentUnit));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> topicBox.getItems().contains(currentTopic));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> topicBox.getItems().contains(currentTopic));
 		robot.interact(() -> topicBox.setValue(currentTopic));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> classificationBox.getItems().contains(currentSubtopic));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> classificationBox.getItems().contains(currentSubtopic));
 		robot.interact(() -> classificationBox.setValue(currentSubtopic));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> descriptorBox.getItems().contains(currentDescriptor));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> descriptorBox.getItems().contains(currentDescriptor));
 		robot.interact(() -> descriptorBox.setValue(currentDescriptor));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
 		assertEquals(1, resultsList.getItems().size());
 		QuestionSearchResult result = resultsList.getItems().getFirst();
 		assertEquals(historicalQuestion.getId(), result.question().getId());
@@ -1016,7 +1025,7 @@ public class QuestionSearchPaneTest {
 		ComboBox<CurriculumNode> selectedDescriptorBox = robot.lookup("#question-search-selected-descriptor")
 				.queryComboBox();
 		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 2);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 2);
 		QuestionSearchResult subtopicResult = resultsList.getItems().stream()
 				.filter(result -> result.question().getId() == subtopicQuestion.getId()).findFirst().orElseThrow();
 		QuestionSearchResult otherResult = resultsList.getItems().stream()
@@ -1031,7 +1040,7 @@ public class QuestionSearchPaneTest {
 		// This regression deliberately uses the pointer because the production defect
 		// occurred while ListView was processing a real mouse-selection transaction.
 		robot.clickOn(otherResultCell);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> {
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> {
 			QuestionSearchResult selected = resultsList.getSelectionModel().getSelectedItem();
 			return selected != null && selected.question().getId() == subtopicQuestion.getId();
 		});
@@ -1056,7 +1065,7 @@ public class QuestionSearchPaneTest {
 			return true;
 		});
 		robot.interact(() -> resultsList.getSelectionModel().select(otherResult));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> {
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> {
 			QuestionSearchResult selected = resultsList.getSelectionModel().getSelectedItem();
 			return selected != null && selected.question().getId() == historicalQuestion.getId();
 		});
@@ -1073,10 +1082,10 @@ public class QuestionSearchPaneTest {
 
 		// Working Subject navigation is loaded automatically before a lower hierarchy
 		// request is deliberately held in flight.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
 		curriculumRepository.delayChildrenFor(currentUnit);
 		robot.interact(() -> unitBox.setValue(currentUnit));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, curriculumRepository::hasDelayStarted);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, curriculumRepository::hasDelayStarted);
 		robot.interact(() -> {
 
 			// Disposal is intentionally repeated to retain the idempotency coverage of
@@ -1085,7 +1094,7 @@ public class QuestionSearchPaneTest {
 			pane.dispose();
 		});
 		curriculumRepository.releaseDelayedChildren();
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, curriculumRepository::hasDelayFinished);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, curriculumRepository::hasDelayFinished);
 		WaitForAsyncUtils.waitForFxEvents();
 		assertTrue(topicBox.getItems().isEmpty());
 		assertTrue(resultsList.getItems().isEmpty());
@@ -1121,9 +1130,9 @@ public class QuestionSearchPaneTest {
 		TextArea detailsArea = retainedDetailsArea();
 
 		// The replacement Pane begins its Working Subject search automatically.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
 		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, extractor::hasDelayStarted);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, extractor::hasDelayStarted);
 		robot.interact(() -> {
 
 			// Repeated disposal must remain harmless while preview work is in flight.
@@ -1131,7 +1140,7 @@ public class QuestionSearchPaneTest {
 			pane.dispose();
 		});
 		extractor.releaseDelayedExtraction();
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, extractor::hasDelayFinished);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, extractor::hasDelayFinished);
 		WaitForAsyncUtils.waitForFxEvents();
 		assertEquals(null, preview.getImage());
 		assertEquals("", previewStatus.getText());
@@ -1151,19 +1160,22 @@ public class QuestionSearchPaneTest {
 
 		// Working Subject navigation is established automatically before narrowing to
 		// the Descriptor whose Search request will be deliberately delayed.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
 		robot.interact(() -> unitBox.setValue(currentUnit));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> topicBox.getItems().contains(currentTopic));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> topicBox.getItems().contains(currentTopic));
 		robot.interact(() -> topicBox.setValue(currentTopic));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> classificationBox.getItems().contains(currentSubtopic));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> classificationBox.getItems().contains(currentSubtopic));
 		robot.interact(() -> classificationBox.setValue(currentSubtopic));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> descriptorBox.getItems().contains(currentDescriptor));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> descriptorBox.getItems().contains(currentDescriptor));
 		retrievalRepository.delayNextRequestFor(currentDescriptor);
 		robot.interact(() -> descriptorBox.setValue(currentDescriptor));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, retrievalRepository::hasDelayStarted);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, retrievalRepository::hasDelayStarted);
 		robot.interact(pane::dispose);
 		retrievalRepository.releaseDelayedRequest();
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, retrievalRepository::hasDelayFinished);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, retrievalRepository::hasDelayFinished);
 		WaitForAsyncUtils.waitForFxEvents();
 		assertTrue(resultsList.getItems().isEmpty());
 		assertEquals("", statusLabel.getText());
@@ -1217,7 +1229,7 @@ public class QuestionSearchPaneTest {
 			verification.setOnFinished(_ -> verificationDelay.countDown());
 			verification.play();
 		});
-		assertTrue(verificationDelay.await(5, TimeUnit.SECONDS));
+		assertTrue(verificationDelay.await(Constants.TIMEOUT, TimeUnit.SECONDS));
 		assertEquals(0, renderCount.get());
 		assertEquals(null, preview.getImage());
 		assertTrue(results.getItems().isEmpty());
@@ -1268,14 +1280,14 @@ public class QuestionSearchPaneTest {
 
 		// Initial Working Subject navigation and Search should both complete before
 		// the lower hierarchy failure is introduced.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> resultsList.getItems().size() == 1 && unitBox.getItems().contains(currentUnit));
 		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
 		assertFalse(detailsArea.getText().isBlank());
 		assertEquals("No stored question image.", previewStatus.getText());
 		curriculumRepository.failChildrenFor(currentUnit);
 		robot.interact(() -> unitBox.setValue(currentUnit));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> statusLabel.getText().startsWith("Curriculum navigation failed:"));
 
 		// A failed hierarchy transition must not leave results or preview information
@@ -1306,14 +1318,14 @@ public class QuestionSearchPaneTest {
 
 		// Dashboard launch narrowing is visible and applies to the initial
 		// current-syllabus retrieval.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1);
 		assertTrue(narrowing.getText().contains("Paper 2"));
 		assertEquals(secondQuestion.getId(), results.getItems().getFirst().question().getId());
 
 		// Changing the ordinary Search scope must not escape the immutable launch
 		// narrowing.
 		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1
 				&& results.getItems().getFirst().scope() == QuestionSearchScope.ALL_QUESTIONS);
 		assertEquals(secondQuestion.getId(), results.getItems().getFirst().question().getId());
 	}
@@ -1351,33 +1363,33 @@ public class QuestionSearchPaneTest {
 		ComboBox<?> toYear = robot.lookup("#question-search-year-to-filter").queryComboBox();
 		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
 		Label status = robot.lookup("#question-search-status").queryAs(Label.class);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> provider.getItems().size() == 3 && results.getItems().size() == 3);
 		selectMetadataFilter(robot, provider, "QCAA");
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
 		assertFalse(exam.getItems().stream().anyMatch(item -> item.toString().contains("NEAP")));
 		selectMetadataFilter(robot, exam, "QCAA 2020 — External Assessment");
 		selectMetadataFilter(robot, booklet, "QCAA 2020 — External Assessment — Paper 2");
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1
 				&& results.getItems().getFirst().question().getId() == secondQuestion.getId());
 
 		// Switching provider invalidates the selected Exam
 		// and Booklet rather than leaving contradictory filters.
 		selectMetadataFilter(robot, provider, "NEAP");
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1
 				&& results.getItems().getFirst().question().getId() == neapQuestion.getId());
 		assertEquals("All exams", exam.getValue().toString());
 		assertEquals("All booklets", booklet.getValue().toString());
 		selectMetadataFilter(robot, fromYear, "2020");
 		selectMetadataFilter(robot, toYear, "2020");
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> results.getItems().isEmpty() && "No questions found.".equals(status.getText()));
 
 		// Moving From beyond To resets the incompatible To
 		// boundary and restores the 2022 Question.
 		selectMetadataFilter(robot, fromYear, "2022");
 		assertEquals("Any year", toYear.getValue().toString());
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1
 				&& results.getItems().getFirst().question().getId() == neapQuestion.getId());
 	}
 
@@ -1394,24 +1406,24 @@ public class QuestionSearchPaneTest {
 		ComboBox<?> response = robot.lookup("#question-search-response-type-filter").queryComboBox();
 		ComboBox<?> syllabus = robot.lookup("#question-search-original-syllabus-filter").queryComboBox();
 		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> syllabus.getItems().size() == 3 && results.getItems().size() == 2);
 		assertFalse(response.getItems().stream().anyMatch(item -> "Unknown".equals(item.toString())));
 		selectMetadataFilter(robot, response, "Written Response");
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1
 				&& results.getItems().getFirst().question().getId() == written.getId());
 		selectMetadataFilter(robot, syllabus, "2019");
 		Label status = robot.lookup("#question-search-status").queryAs(Label.class);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> results.getItems().isEmpty() && "No questions found.".equals(status.getText()));
 
 		// All response types must include UNKNOWN Questions.
 		selectMetadataFilter(robot, response, "All response types");
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1
 				&& results.getItems().getFirst().question().getId() == historicalQuestion.getId());
 		Button clear = robot.lookup("#question-search-clear-metadata-filters").queryButton();
 		robot.interact(clear::fire);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
 		assertEquals("All original syllabuses", syllabus.getValue().toString());
 		assertEquals("All response types", response.getValue().toString());
 	}
@@ -1439,17 +1451,17 @@ public class QuestionSearchPaneTest {
 		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
 
 		// Both Questions are applicable to the current syllabus.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
 		QuestionSearchMetadataFilter qcaaOnly = new QuestionSearchMetadataFilter(chemistry,
 				historicalQuestion.getExam().getProvider(), 2020, 2020, historicalQuestion.getExam(),
 				historicalQuestion.getBooklet(), null, historicalDescriptor.getSyllabusVersion());
 		robot.interact(() -> pane.setMetadataFilter(qcaaOnly));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1
 				&& results.getItems().getFirst().question().getId() == historicalQuestion.getId());
 
 		// The same metadata constraints apply to All Questions.
 		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1
 				&& results.getItems().getFirst().scope() == QuestionSearchScope.ALL_QUESTIONS);
 
 		// A new immutable filter selects the other provider,
@@ -1458,13 +1470,13 @@ public class QuestionSearchPaneTest {
 				secondExam, secondBooklet, QuestionResponseType.WRITTEN_RESPONSE,
 				historicalDescriptor.getSyllabusVersion());
 		robot.interact(() -> pane.setMetadataFilter(neapWritten));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1
 				&& results.getItems().getFirst().question().getId() == secondQuestion.getId());
 
 		// Clearing every metadata constraint restores all
 		// Questions within the original Working Subject.
 		robot.interact(() -> pane.setMetadataFilter(QuestionSearchMetadataFilter.unrestricted(chemistry)));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
 	}
 
 	@Test
@@ -1489,7 +1501,7 @@ public class QuestionSearchPaneTest {
 		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
 		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
 		Label status = robot.lookup("#question-search-status").queryAs(Label.class);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1
 				&& results.getItems().getFirst().question().getId() == historicalQuestion.getId());
 
 		// The Search-local filter asks for another Exam,
@@ -1497,19 +1509,19 @@ public class QuestionSearchPaneTest {
 		QuestionSearchMetadataFilter otherExamFilter = new QuestionSearchMetadataFilter(chemistry, neap, null, null,
 				otherExam, otherBooklet, null, null);
 		robot.interact(() -> pane.setMetadataFilter(otherExamFilter));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> results.getItems().isEmpty() && "No questions found.".equals(status.getText()));
 
 		// Switching to All Questions must not escape the
 		// Dashboard Booklet constraint.
 		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> results.getItems().isEmpty() && "No questions found.".equals(status.getText()));
 
 		// Removing the Search-local filter restores only the
 		// originally permitted Dashboard Booklet.
 		robot.interact(() -> pane.setMetadataFilter(QuestionSearchMetadataFilter.unrestricted(chemistry)));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1
 				&& results.getItems().getFirst().question().getId() == historicalQuestion.getId());
 	}
 
@@ -1547,17 +1559,17 @@ public class QuestionSearchPaneTest {
 
 		// Working Subject Search begins automatically and supplies both applicable
 		// Questions without requiring a Search-local Subject selection.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 2);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 2);
 		QuestionSearchResult missingResult = resultsList.getItems().stream()
 				.filter(result -> result.question().getId() == missingQuestion.getId()).findFirst().orElseThrow();
 		QuestionSearchResult corruptResult = resultsList.getItems().stream()
 				.filter(result -> result.question().getId() == corruptQuestion.getId()).findFirst().orElseThrow();
 		robot.interact(() -> resultsList.getSelectionModel().select(missingResult));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> previewStatus.getText().startsWith("Question preview unavailable:"));
 		assertEquals(null, preview.getImage());
 		robot.interact(() -> resultsList.getSelectionModel().select(corruptResult));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> previewStatus.getText().startsWith("Question preview unavailable:"));
 		assertEquals(null, preview.getImage());
 	}
@@ -1639,13 +1651,13 @@ public class QuestionSearchPaneTest {
 		ListView<QuestionOutputApplicabilityRow> output = robot.lookup("#question-search-output-applicability")
 				.queryListView();
 		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
 		QuestionSearchResult firstResult = results.getItems().stream()
 				.filter(result -> result.question().getId() == historicalQuestion.getId()).findFirst().orElseThrow();
 		QuestionSearchResult secondResult = results.getItems().stream()
 				.filter(result -> result.question().getId() == secondQuestion.getId()).findFirst().orElseThrow();
 		robot.interact(() -> results.getSelectionModel().select(firstResult));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> output.getItems().size() == 2 && output.getSelectionModel().getSelectedItem() != null);
 		assertEquals(currentDescriptor, output.getSelectionModel().getSelectedItem().currentNode());
 
@@ -1662,7 +1674,7 @@ public class QuestionSearchPaneTest {
 		});
 		int nextPublication = reloadPublications.get() + 1;
 		robot.interact(() -> pane.refreshAfterEdit(historicalQuestion.getId()));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> reloadPublications.get() >= nextPublication
 						&& output.getSelectionModel().getSelectedItem() != null
 						&& output.getSelectionModel().getSelectedItem().currentNode().equals(noMatchDescriptor));
@@ -1670,13 +1682,13 @@ public class QuestionSearchPaneTest {
 		// Switching Questions must not carry the old placement into
 		// the new Question's list.
 		robot.interact(() -> results.getSelectionModel().select(secondResult));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> output.getItems().size() == 1 && output.getSelectionModel().getSelectedItem() != null
 						&& output.getSelectionModel().getSelectedItem().currentNode().equals(currentDescriptor));
 
 		// Returning to the first Question starts with its first row.
 		robot.interact(() -> results.getSelectionModel().select(firstResult));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> output.getItems().size() == 2 && output.getSelectionModel().getSelectedItem() != null
 						&& output.getSelectionModel().getSelectedItem().currentNode().equals(currentDescriptor));
 		robot.interact(() -> output.getSelectionModel().select(1));
@@ -1687,8 +1699,9 @@ public class QuestionSearchPaneTest {
 				new QuestionApplicabilityMatch(secondQuestion, currentDescriptor)));
 		int expectedPublication = reloadPublications.get() + 1;
 		robot.interact(() -> pane.refreshAfterEdit(historicalQuestion.getId()));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> reloadPublications.get() >= expectedPublication
-				&& output.getItems().size() == 1 && output.getSelectionModel().getSelectedItem() != null);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> reloadPublications.get() >= expectedPublication && output.getItems().size() == 1
+						&& output.getSelectionModel().getSelectedItem() != null);
 		assertEquals(currentDescriptor, output.getSelectionModel().getSelectedItem().currentNode());
 	}
 
@@ -1709,7 +1722,7 @@ public class QuestionSearchPaneTest {
 		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		Label statusLabel = robot.lookup("#question-search-status").queryAs(Label.class);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> statusLabel.getText()
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> statusLabel.getText()
 				.equals("Curriculum navigation failed: Subject has multiple current syllabus versions"));
 		assertTrue(unitBox.getItems().isEmpty());
 		assertTrue(unitBox.isDisable());
@@ -1758,21 +1771,24 @@ public class QuestionSearchPaneTest {
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		ListView<QuestionOutputApplicabilityRow> outputList = robot.lookup("#question-search-output-applicability")
 				.queryListView();
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
 		robot.interact(() -> unitBox.setValue(currentUnit));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> topicBox.getItems().contains(currentTopic));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> topicBox.getItems().contains(currentTopic));
 		robot.interact(() -> topicBox.setValue(currentTopic));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> classificationBox.getItems().contains(currentSubtopic));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> classificationBox.getItems().contains(currentSubtopic));
 		robot.interact(() -> classificationBox.setValue(currentSubtopic));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> descriptorBox.getItems().contains(currentDescriptor));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> descriptorBox.getItems().contains(currentDescriptor));
 		robot.interact(() -> descriptorBox.setValue(currentDescriptor));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
 		QuestionSearchResult searchResult = resultsList.getItems().getFirst();
 
 		// The visible Search contains only the selected Descriptor.
 		assertEquals(List.of(currentDescriptor), searchResult.currentApplicability());
 		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> outputList.getItems().size() == 2);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> outputList.getItems().size() == 2);
 
 		// Revision Output must have used the selective Question API,
 		// without inheriting the visible Descriptor restriction.
@@ -1808,9 +1824,9 @@ public class QuestionSearchPaneTest {
 		ComboBox<CurriculumNode> selectedDescriptorBox = robot.from(pane).lookup("#question-search-selected-descriptor")
 				.queryComboBox();
 		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
 		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> selectedDescriptorBox.getItems().contains(currentDescriptor));
 		robot.interact(() -> selectedDescriptorBox.setValue(currentDescriptor));
 		assertTrue(pane.isClassificationDirty());
@@ -1827,7 +1843,7 @@ public class QuestionSearchPaneTest {
 		assertTrue(pane.isClassificationDirty());
 		Platform.runLater(dialog::close);
 		fireShowingDialogButton(robot, "Unsaved Question", "Discard Changes");
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> !dialog.isShowing());
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> !dialog.isShowing());
 
 		// Discard allows the same native close route to complete without
 		// persisting the Descriptor refinement.
@@ -1923,7 +1939,7 @@ public class QuestionSearchPaneTest {
 		});
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		ImageView preview = robot.lookup("#question-search-preview").queryAs(ImageView.class);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 2);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 2);
 		QuestionSearchResult firstResult = resultsList.getItems().stream()
 				.filter(result -> result.question().getId() == first.getId()).findFirst().orElseThrow();
 		QuestionSearchResult secondResult = resultsList.getItems().stream()
@@ -1931,18 +1947,18 @@ public class QuestionSearchPaneTest {
 
 		// Begin a preview that deliberately remains in flight.
 		robot.interact(() -> resultsList.getSelectionModel().select(firstResult));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, extractor::hasDelayStarted);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, extractor::hasDelayStarted);
 
 		// Supersede the first preview with a different Question.
 		robot.interact(() -> resultsList.getSelectionModel().select(secondResult));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> preview.getImage() != null && preview.getImage().getWidth() == 22.0);
 		extractor.releaseDelayedExtraction();
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, extractor::hasDelayFinished);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, extractor::hasDelayFinished);
 
 		// Wait for both background render records, not merely
 		// the earlier cancellation or JavaFX display update.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> {
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> {
 			try {
 				if (!Files.isRegularFile(csv)) {
 					return false;
@@ -2029,7 +2045,7 @@ public class QuestionSearchPaneTest {
 					actualRenderNanos.addAndGet(System.nanoTime() - startedAt);
 					actualRenders.incrementAndGet();
 					firstRendered.countDown();
-					if (!releaseFirst.await(15, TimeUnit.SECONDS)) {
+					if (!releaseFirst.await(Constants.TIMEOUT, TimeUnit.SECONDS)) {
 						throw new IllegalStateException("First PDF release timed out");
 					}
 					if (scheduler.isCurrent(firstQuestionId)) {
@@ -2040,7 +2056,7 @@ public class QuestionSearchPaneTest {
 					workerFailure.compareAndSet(null, failure);
 				}
 			});
-			assertTrue(firstRendered.await(15, TimeUnit.SECONDS));
+			assertTrue(firstRendered.await(Constants.TIMEOUT, TimeUnit.SECONDS));
 			long burstStartedAt = System.nanoTime();
 
 			// Rapidly replace pending work. These 20 requests
@@ -2072,7 +2088,7 @@ public class QuestionSearchPaneTest {
 			// The last preview must be available without requiring
 			// the first, already-rendered worker to finish.
 			try {
-				assertTrue(finalPublished.await(15, TimeUnit.SECONDS), "Final preview did not complete");
+				assertTrue(finalPublished.await(Constants.TIMEOUT, TimeUnit.SECONDS), "Final preview did not complete");
 			} finally {
 				releaseFirst.countDown();
 			}
@@ -2108,7 +2124,8 @@ public class QuestionSearchPaneTest {
 
 		// Wait until the ScrollPane skin has established a real viewport before
 		// comparing the image sizing contract.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> previewPane.getViewportBounds().getWidth() > 0);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> previewPane.getViewportBounds().getWidth() > 0);
 		assertEquals(previewPane.getViewportBounds().getWidth(), preview.getFitWidth(), 1.0);
 
 		// A wide Question must be scaled into the available column rather than
@@ -2259,7 +2276,7 @@ public class QuestionSearchPaneTest {
 		Label status = robot.lookup("#question-search-output-applicability-status").queryAs(Label.class);
 		try {
 			robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
-			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 3);
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 3);
 			QuestionSearchResult firstResult = results.getItems().stream()
 					.filter(result -> result.question().getId() == historicalQuestion.getId()).findFirst()
 					.orElseThrow();
@@ -2268,13 +2285,13 @@ public class QuestionSearchPaneTest {
 			QuestionSearchResult thirdResult = results.getItems().stream()
 					.filter(result -> result.question().getId() == third.getId()).findFirst().orElseThrow();
 			robot.interact(() -> results.getSelectionModel().select(firstResult));
-			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> firstStarted.getCount() == 0);
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> firstStarted.getCount() == 0);
 
 			// The first Question remains deliberately blocked while
 			// the next selection must complete independently.
 			long secondStarted = System.nanoTime();
 			robot.interact(() -> results.getSelectionModel().select(secondResult));
-			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 					() -> output.getItems().size() == 1
 							&& output.getItems().getFirst().currentNode().equals(currentSubtopic)
 							&& status.getText().equals("1 current placement: 1 included, 0 excluded."));
@@ -2286,7 +2303,7 @@ public class QuestionSearchPaneTest {
 			// slow retrieval. This placement is explicitly excluded.
 			long thirdStarted = System.nanoTime();
 			robot.interact(() -> results.getSelectionModel().select(thirdResult));
-			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 					() -> output.getItems().size() == 1
 							&& output.getItems().getFirst().currentNode().equals(noMatchDescriptor)
 							&& output.getItems().getFirst().excluded()
@@ -2299,7 +2316,7 @@ public class QuestionSearchPaneTest {
 			// The old retrieval now finishes after the third Question
 			// has already published its current applicability.
 			firstRelease.countDown();
-			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> firstFinished.getCount() == 0);
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> firstFinished.getCount() == 0);
 			WaitForAsyncUtils.waitForFxEvents();
 			assertEquals(third.getId(), results.getSelectionModel().getSelectedItem().question().getId());
 			assertEquals(1, output.getItems().size());
@@ -2627,7 +2644,7 @@ public class QuestionSearchPaneTest {
 		ComboBox<QuestionSearchScope> scopeBox = robot.lookup("#question-search-scope").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1
 				&& resultsList.getItems().getFirst().scope() == QuestionSearchScope.ALL_QUESTIONS);
 		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
 		Question editedQuestion = new Question(historicalQuestion.getId(), historicalQuestion.getBooklet(), "21b",
@@ -2641,14 +2658,14 @@ public class QuestionSearchPaneTest {
 		DelayedAllQuestionsSupplier delayedRefresh = new DelayedAllQuestionsSupplier(List.of(editedQuestion));
 		activeSupplier.set(delayedRefresh);
 		robot.interact(() -> pane.refreshAfterEdit(editedQuestion.getId()));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, delayedRefresh::hasDelayStarted);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, delayedRefresh::hasDelayStarted);
 
 		// Refreshing a saved edit must not blank the accepted Search generation while
 		// persistence is being queried in the background.
 		assertEquals(1, resultsList.getItems().size());
 		assertEquals(historicalQuestion.getId(), resultsList.getSelectionModel().getSelectedItem().question().getId());
 		delayedRefresh.release();
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> pane.getSelectedQuestion() != null && "21b".equals(pane.getSelectedQuestion().getQuestionCode()));
 
 		// The completed refresh preserves the scope the teacher was viewing and
@@ -2665,13 +2682,13 @@ public class QuestionSearchPaneTest {
 
 		// Initial Search runs automatically against the Working Subject's current
 		// syllabus.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1
 				&& resultsList.getItems().getFirst().scope() == QuestionSearchScope.CURRENT_SYLLABUS);
 		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1
 				&& resultsList.getItems().getFirst().scope() == QuestionSearchScope.ALL_QUESTIONS);
 		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.CURRENT_SYLLABUS));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1
 				&& resultsList.getItems().getFirst().scope() == QuestionSearchScope.CURRENT_SYLLABUS);
 
 		// Scope transitions must not recreate or require an independent Subject
@@ -2704,9 +2721,9 @@ public class QuestionSearchPaneTest {
 
 		// Initial Working Subject Search returns the Question without requiring a
 		// Search-local Subject-selection action.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
 		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> outputList.getItems().size() == 2);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> outputList.getItems().size() == 2);
 		QuestionOutputApplicabilityRow firstPlacement = outputList.getItems().stream()
 				.filter(row -> row.currentNode().equals(currentDescriptor)).findFirst().orElseThrow();
 		robot.interact(() -> outputList.getSelectionModel().select(firstPlacement));
@@ -2718,7 +2735,7 @@ public class QuestionSearchPaneTest {
 
 		// This is a semantic button action; pointer hit testing is not under test.
 		robot.interact(excludeButton::fire);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> outputList.getItems().stream().filter(row -> row.currentNode().equals(currentDescriptor))
 						.anyMatch(QuestionOutputApplicabilityRow::excluded));
 		assertEquals(Set.of(currentDescriptor.getId()),
@@ -2733,7 +2750,7 @@ public class QuestionSearchPaneTest {
 
 		// Restore the selected placement through the same semantic control path.
 		robot.interact(includeButton::fire);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> outputList.getItems().stream().filter(row -> row.currentNode().equals(currentDescriptor))
 						.noneMatch(QuestionOutputApplicabilityRow::excluded));
 
@@ -2770,33 +2787,33 @@ public class QuestionSearchPaneTest {
 		Button includeButton = robot.lookup("#question-search-output-include").queryButton();
 		Button excludeButton = robot.lookup("#question-search-output-exclude").queryButton();
 		Label status = robot.lookup("#question-search-status").queryAs(Label.class);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
 		robot.interact(() -> inclusion.setValue(QuestionSearchInclusionFilter.EXCLUDED));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1
 				&& results.getItems().getFirst().question().getId() == first.getId());
 		robot.interact(() -> results.getSelectionModel().selectFirst());
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> output.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> output.getItems().size() == 1
 				&& output.getItems().getFirst().excluded() && !includeButton.isDisable());
 
 		// Persisting Include removes the selected Question
 		// from the active Excluded search.
 		robot.interact(includeButton::fire);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> results.getItems().isEmpty() && "No questions found.".equals(status.getText()));
 		assertTrue(outputApplicabilityRepository.findExcludedCurrentNodeIds(first).isEmpty());
 
 		// Both Questions now match Included.
 		robot.interact(() -> inclusion.setValue(QuestionSearchInclusionFilter.INCLUDED));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
 		QuestionSearchResult secondResult = results.getItems().stream()
 				.filter(result -> result.question().getId() == second.getId()).findFirst().orElseThrow();
 		robot.interact(() -> results.getSelectionModel().select(secondResult));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> output.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> output.getItems().size() == 1
 				&& !output.getItems().getFirst().excluded() && !excludeButton.isDisable());
 
 		// Persisting Exclude removes second from Included.
 		robot.interact(excludeButton::fire);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1
 				&& results.getItems().getFirst().question().getId() == first.getId());
 		assertEquals(Set.of(currentDescriptor.getId()),
 				outputApplicabilityRepository.findExcludedCurrentNodeIds(second));
@@ -2835,7 +2852,7 @@ public class QuestionSearchPaneTest {
 		ComboBox<CurriculumNode> unit = robot.lookup("#question-search-unit").queryComboBox();
 		ComboBox<CurriculumNode> topic = robot.lookup("#question-search-topic").queryComboBox();
 		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> results.getItems().size() == 3 && unit.getItems().contains(currentUnit));
 		assertFalse(inclusion.isDisable());
 		assertEquals(QuestionSearchInclusionFilter.ALL, inclusion.getValue());
@@ -2843,7 +2860,7 @@ public class QuestionSearchPaneTest {
 		// Both mixed and excluded have at least one
 		// excluded placement in the complete current syllabus.
 		robot.interact(() -> inclusion.setValue(QuestionSearchInclusionFilter.EXCLUDED));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> results.getItems().size() == 2
 						&& results.getItems().stream().map(result -> result.question().getId())
 								.collect(Collectors.toSet()).equals(Set.of(mixed.getId(), excluded.getId())));
@@ -2851,25 +2868,25 @@ public class QuestionSearchPaneTest {
 		// Mixed also has an included placement.
 		// Included has no exclusions at all.
 		robot.interact(() -> inclusion.setValue(QuestionSearchInclusionFilter.INCLUDED));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> results.getItems().size() == 2
 						&& results.getItems().stream().map(result -> result.question().getId())
 								.collect(Collectors.toSet()).equals(Set.of(mixed.getId(), included.getId())));
 		robot.interact(() -> inclusion.setValue(QuestionSearchInclusionFilter.EXCLUDED));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
 
 		// Narrow to the first Topic.
 		// Mixed's excluded placement is in a different Topic,
 		// so it must no longer match Excluded.
 		robot.interact(() -> unit.setValue(currentUnit));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> topic.getItems().contains(currentTopic));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> topic.getItems().contains(currentTopic));
 		robot.interact(() -> topic.setValue(currentTopic));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1
 				&& results.getItems().getFirst().question().getId() == excluded.getId());
 
 		// All Questions must not retain the exclusion filter.
 		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 3
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 3
 				&& results.getItems().stream().allMatch(result -> result.scope() == QuestionSearchScope.ALL_QUESTIONS));
 		assertTrue(inclusion.isDisable());
 		assertEquals(QuestionSearchInclusionFilter.ALL, inclusion.getValue());
@@ -2877,8 +2894,8 @@ public class QuestionSearchPaneTest {
 		// Returning to Current syllabus begins unrestricted
 		// inclusion filtering, not the old Excluded setting.
 		robot.interact(() -> scope.setValue(QuestionSearchScope.CURRENT_SYLLABUS));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 3 && results.getItems()
-				.stream().allMatch(result -> result.scope() == QuestionSearchScope.CURRENT_SYLLABUS));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 3 && results
+				.getItems().stream().allMatch(result -> result.scope() == QuestionSearchScope.CURRENT_SYLLABUS));
 		assertFalse(inclusion.isDisable());
 		assertEquals(QuestionSearchInclusionFilter.ALL, inclusion.getValue());
 	}
@@ -2942,7 +2959,7 @@ public class QuestionSearchPaneTest {
 				.queryComboBox();
 
 		// Initial Working Subject Search supplies the stored Question automatically.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
 		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
 		assertEquals(historicalUnit, selectedUnitBox.getValue());
 		assertEquals(historicalDescriptor.getParent(), selectedTopicBox.getValue());
@@ -2962,9 +2979,9 @@ public class QuestionSearchPaneTest {
 
 		// Initial Working Subject Search supplies the Question whose output
 		// applicability contains the persisted exclusion.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
 		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> outputList.getItems().size() == 1);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> outputList.getItems().size() == 1);
 		QuestionOutputApplicabilityRow row = outputList.getItems().getFirst();
 		assertEquals(currentDescriptor, row.currentNode());
 		assertTrue(row.excluded());
@@ -2987,7 +3004,7 @@ public class QuestionSearchPaneTest {
 		ComboBox<CurriculumNode> selectedDescriptorBox = robot.lookup("#question-search-selected-descriptor")
 				.queryComboBox();
 		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
 		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
 		assertEquals(currentSubtopic, selectedSubtopicBox.getValue());
 		assertEquals(null, selectedDescriptorBox.getValue());
@@ -3027,9 +3044,9 @@ public class QuestionSearchPaneTest {
 				.queryListView();
 		Button include = robot.lookup("#question-search-output-include").queryButton();
 		Button exclude = robot.lookup("#question-search-output-exclude").queryButton();
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1);
 		robot.interact(() -> results.getSelectionModel().selectFirst());
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> output.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> output.getItems().size() == 1
 				&& output.getSelectionModel().getSelectedItem() != null && !include.isDisable());
 		QuestionOutputApplicabilityRow selected = output.getSelectionModel().getSelectedItem();
 		assertEquals(currentDescriptor, selected.currentNode());
@@ -3040,8 +3057,9 @@ public class QuestionSearchPaneTest {
 		assertEquals(Set.of(currentDescriptor.getId()),
 				outputApplicabilityRepository.findExcludedCurrentNodeIds(historicalQuestion));
 		robot.interact(include::fire);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> output.getSelectionModel().getSelectedItem() != null
-				&& !output.getSelectionModel().getSelectedItem().excluded() && !exclude.isDisable());
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> output.getSelectionModel().getSelectedItem() != null
+						&& !output.getSelectionModel().getSelectedItem().excluded() && !exclude.isDisable());
 		assertEquals(currentDescriptor, output.getSelectionModel().getSelectedItem().currentNode());
 		assertTrue(include.isDisable());
 		assertEquals(Set.of(), outputApplicabilityRepository.findExcludedCurrentNodeIds(historicalQuestion));
@@ -3057,18 +3075,18 @@ public class QuestionSearchPaneTest {
 
 		// Start an All Questions request that deliberately remains in flight.
 		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.ALL_QUESTIONS));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, allQuestions::hasDelayStarted);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, allQuestions::hasDelayStarted);
 
 		// Returning to Current Syllabus supersedes the outstanding All Questions
 		// request and restores Search directly from the fixed Working Subject.
 		robot.interact(() -> scopeBox.setValue(QuestionSearchScope.CURRENT_SYLLABUS));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1
 				&& resultsList.getItems().getFirst().scope() == QuestionSearchScope.CURRENT_SYLLABUS);
 
 		// Allow the cancelled All Questions task to complete late. Generation and task
 		// identity checks must prevent it from replacing the newer result.
 		allQuestions.release();
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, allQuestions::hasDelayFinished);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, allQuestions::hasDelayFinished);
 		WaitForAsyncUtils.waitForFxEvents();
 		assertEquals(QuestionSearchScope.CURRENT_SYLLABUS, scopeBox.getValue());
 		assertEquals(1, resultsList.getItems().size());
@@ -3085,10 +3103,10 @@ public class QuestionSearchPaneTest {
 
 		// Begin a delayed hierarchy request beneath the automatically loaded Working
 		// Subject.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
 		curriculumRepository.delayChildrenFor(currentUnit);
 		robot.interact(() -> unitBox.setValue(currentUnit));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, curriculumRepository::hasDelayStarted);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, curriculumRepository::hasDelayStarted);
 
 		// Changing Search scope invalidates the in-flight current-syllabus hierarchy
 		// request and disables its navigation controls.
@@ -3100,7 +3118,7 @@ public class QuestionSearchPaneTest {
 		// Complete the obsolete hierarchy request after the scope transition. Its late
 		// result must not restore Topic navigation into All Questions.
 		curriculumRepository.releaseDelayedChildren();
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, curriculumRepository::hasDelayFinished);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, curriculumRepository::hasDelayFinished);
 		WaitForAsyncUtils.waitForFxEvents();
 		assertEquals(QuestionSearchScope.ALL_QUESTIONS, scopeBox.getValue());
 		assertTrue(unitBox.isDisable());
@@ -3139,21 +3157,21 @@ public class QuestionSearchPaneTest {
 		ImageView preview = robot.lookup("#question-search-preview").queryAs(ImageView.class);
 
 		// Working Subject Search supplies both Questions automatically.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 2);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 2);
 		QuestionSearchResult firstResult = resultsList.getItems().stream()
 				.filter(result -> result.question().getId() == first.getId()).findFirst().orElseThrow();
 		QuestionSearchResult secondResult = resultsList.getItems().stream()
 				.filter(result -> result.question().getId() == second.getId()).findFirst().orElseThrow();
 		robot.interact(() -> resultsList.getSelectionModel().select(firstResult));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, extractor::hasDelayStarted);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, extractor::hasDelayStarted);
 
 		// Selecting the second Question supersedes the delayed preview belonging to the
 		// first Question.
 		robot.interact(() -> resultsList.getSelectionModel().select(secondResult));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> preview.getImage() != null && preview.getImage().getWidth() == 22.0);
 		extractor.releaseDelayedExtraction();
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, extractor::hasDelayFinished);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, extractor::hasDelayFinished);
 		WaitForAsyncUtils.waitForFxEvents();
 		assertEquals(22.0, preview.getImage().getWidth());
 	}
@@ -3170,29 +3188,34 @@ public class QuestionSearchPaneTest {
 		// Navigate from the automatically loaded Working Subject to the Descriptor
 		// whose
 		// Search request will be deliberately delayed.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
 		robot.interact(() -> unitBox.setValue(currentUnit));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> topicBox.getItems().contains(currentTopic));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> topicBox.getItems().contains(currentTopic));
 		robot.interact(() -> topicBox.setValue(currentTopic));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> classificationBox.getItems().contains(currentSubtopic));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> classificationBox.getItems().contains(currentSubtopic));
 		robot.interact(() -> classificationBox.setValue(currentSubtopic));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> descriptorBox.getItems().contains(currentDescriptor));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> descriptorBox.getItems().contains(currentDescriptor));
 		retrievalRepository.delayNextRequestFor(currentDescriptor);
 		robot.interact(() -> descriptorBox.setValue(currentDescriptor));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, retrievalRepository::hasDelayStarted);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, retrievalRepository::hasDelayStarted);
 
 		// Move to a different Topic and classification while the previous Descriptor
 		// Search is still outstanding.
 		robot.interact(() -> topicBox.setValue(noMatchTopic));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> classificationBox.getItems().contains(noMatchDescriptor));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> classificationBox.getItems().contains(noMatchDescriptor));
 		robot.interact(() -> classificationBox.setValue(noMatchDescriptor));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> "No questions found.".equals(statusLabel.getText()));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> "No questions found.".equals(statusLabel.getText()));
 		assertTrue(resultsList.getItems().isEmpty());
 
 		// The obsolete Descriptor Search may finish, but it must not replace the newer
 		// no-match state.
 		retrievalRepository.releaseDelayedRequest();
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, retrievalRepository::hasDelayFinished);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, retrievalRepository::hasDelayFinished);
 		WaitForAsyncUtils.waitForFxEvents();
 		assertTrue(resultsList.getItems().isEmpty());
 		assertEquals("No questions found.", statusLabel.getText());
@@ -3248,14 +3271,15 @@ public class QuestionSearchPaneTest {
 
 		// Working Subject navigation is loaded automatically before lower hierarchy
 		// selections are made.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
 		robot.interact(() -> unitBox.setValue(currentUnit));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> topicBox.getItems().contains(currentTopic));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> topicBox.getItems().contains(currentTopic));
 		robot.interact(() -> topicBox.setValue(currentTopic));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> classificationBox.getItems().equals(List.of(currentSubtopic)));
 		robot.interact(() -> classificationBox.setValue(currentSubtopic));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> descriptorBox.getItems().equals(List.of(currentDescriptor)));
 		assertFalse(descriptorBox.isDisable());
 	}
@@ -3266,9 +3290,9 @@ public class QuestionSearchPaneTest {
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 
 		// Wait for Working Subject navigation before narrowing Search to the Unit.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> unitBox.getItems().contains(currentUnit));
 		robot.interact(() -> unitBox.setValue(currentUnit));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
 		assertEquals(historicalQuestion.getId(), resultsList.getItems().getFirst().question().getId());
 	}
 
@@ -3278,7 +3302,7 @@ public class QuestionSearchPaneTest {
 
 		// Search must begin from the workspace Working Subject without exposing or
 		// requiring a second Subject selector.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
 		assertTrue(robot.lookup("#question-search-subject").tryQuery().isEmpty());
 		assertEquals(historicalQuestion.getId(), resultsList.getItems().getFirst().question().getId());
 	}
@@ -3289,7 +3313,7 @@ public class QuestionSearchPaneTest {
 
 		// Search loads the current-syllabus hierarchy directly from the authoritative
 		// workspace Working Subject.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> unitBox.getItems().size() == 1);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> unitBox.getItems().size() == 1);
 		assertEquals(currentUnit, unitBox.getItems().getFirst());
 		assertFalse(unitBox.getItems().contains(historicalUnit));
 		assertFalse(unitBox.isDisable());
@@ -3312,7 +3336,7 @@ public class QuestionSearchPaneTest {
 		ComboBox<CurriculumNode> unitBox = robot.lookup("#question-search-unit").queryComboBox();
 		ListView<QuestionSearchResult> resultsList = robot.lookup("#question-search-results").queryListView();
 		Label statusLabel = robot.lookup("#question-search-status").queryAs(Label.class);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> "No current syllabus available.".equals(statusLabel.getText()));
 		assertTrue(robot.lookup("#question-search-subject").tryQuery().isEmpty());
 		assertTrue(unitBox.getItems().isEmpty());
@@ -3334,9 +3358,9 @@ public class QuestionSearchPaneTest {
 		Button include = robot.lookup("#question-search-output-include").queryButton();
 		Button exclude = robot.lookup("#question-search-output-exclude").queryButton();
 		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1);
 		robot.interact(() -> results.getSelectionModel().selectFirst());
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> "No current revision applicability.".equals(status.getText()));
 		assertTrue(output.getItems().isEmpty());
 		assertEquals(null, output.getSelectionModel().getSelectedItem());
@@ -3352,9 +3376,9 @@ public class QuestionSearchPaneTest {
 
 		// The initial Working Subject search supplies the Question without requiring a
 		// separate Subject-selection action.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> resultsList.getItems().size() == 1);
 		robot.interact(() -> resultsList.getSelectionModel().selectFirst());
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> "No stored question image.".equals(previewStatus.getText()));
 		assertEquals(null, preview.getImage());
 	}
@@ -3445,7 +3469,7 @@ public class QuestionSearchPaneTest {
 
 	private void fireShowingDialogButton(FxRobot robot, String dialogTitle, String buttonText) throws TimeoutException {
 		AtomicReference<DialogPane> dialogPane = new AtomicReference<>();
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> {
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> {
 			dialogPane.set(null);
 			robot.interact(() -> linkPaneToWindow(dialogTitle, dialogPane));
 			return dialogPane.get() != null;
@@ -3521,7 +3545,7 @@ public class QuestionSearchPaneTest {
 		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
 		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
 		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1
 				&& results.getItems().getFirst().scope() == QuestionSearchScope.ALL_QUESTIONS);
 		robot.interact(() -> results.getSelectionModel().selectFirst());
 	}

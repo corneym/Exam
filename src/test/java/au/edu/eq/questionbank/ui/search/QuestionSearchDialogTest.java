@@ -25,6 +25,7 @@ import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
+import au.edu.eq.questionbank.Constants;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Descriptor;
@@ -146,8 +147,9 @@ class QuestionSearchDialogTest {
 		robot.interact(dialog::show);
 		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
 		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> scope.getValue() == QuestionSearchScope.ALL_QUESTIONS
-				&& results.getItems().size() == 1 && allQuestionsLoads.get() >= 1);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> scope.getValue() == QuestionSearchScope.ALL_QUESTIONS && results.getItems().size() == 1
+						&& allQuestionsLoads.get() >= 1);
 		assertEquals(QuestionSearchScope.ALL_QUESTIONS, scope.getValue());
 		assertEquals(chemistryQuestion.getId(), results.getItems().getFirst().question().getId());
 		assertEquals(QuestionSearchScope.ALL_QUESTIONS, results.getItems().getFirst().scope());
@@ -169,7 +171,7 @@ class QuestionSearchDialogTest {
 
 		// Reopening the SAME Dialog must not retain Current Syllabus.
 		robot.interact(dialog::show);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> scope.getValue() == QuestionSearchScope.ALL_QUESTIONS && results.getItems().size() == 1
 						&& results.getItems().getFirst().scope() == QuestionSearchScope.ALL_QUESTIONS
 						&& allQuestionsLoads.get() > previousLoads);
@@ -182,8 +184,9 @@ class QuestionSearchDialogTest {
 		WaitForAsyncUtils.waitForFxEvents();
 		int secondOpeningLoads = allQuestionsLoads.get();
 		robot.interact(dialog::show);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> allQuestionsLoads.get() > secondOpeningLoads
-				&& results.getItems().size() == 1 && scope.getValue() == QuestionSearchScope.ALL_QUESTIONS);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> allQuestionsLoads.get() > secondOpeningLoads && results.getItems().size() == 1
+						&& scope.getValue() == QuestionSearchScope.ALL_QUESTIONS);
 		robot.interact(() -> {
 			dialog.close();
 			dialog.dispose();
@@ -332,7 +335,7 @@ class QuestionSearchDialogTest {
 			ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
 			ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
 			Label narrowingLabel = robot.lookup("#question-search-narrowing").queryAs(Label.class);
-			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 					() -> scope.getValue() == QuestionSearchScope.ALL_QUESTIONS && results.getItems().size() == 1
 							&& results.getItems().getFirst().scope() == QuestionSearchScope.ALL_QUESTIONS);
 			assertEquals(narrowing.description(), narrowingLabel.getText());
@@ -345,7 +348,7 @@ class QuestionSearchDialogTest {
 			WaitForAsyncUtils.waitForFxEvents();
 			int previousLoads = allQuestionsLoads.get();
 			robot.interact(dialog::show);
-			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 					() -> scope.getValue() == QuestionSearchScope.ALL_QUESTIONS && results.getItems().size() == 1
 							&& results.getItems().getFirst().scope() == QuestionSearchScope.ALL_QUESTIONS
 							&& allQuestionsLoads.get() > previousLoads);

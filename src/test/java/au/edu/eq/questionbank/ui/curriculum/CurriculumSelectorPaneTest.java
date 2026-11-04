@@ -20,6 +20,7 @@ import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
+import au.edu.eq.questionbank.Constants;
 import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Subject;
@@ -63,6 +64,29 @@ public class CurriculumSelectorPaneTest {
 	private Unit unit3;
 
 	@Test
+	public void changingSyllabusClearsCodeAndClassificationButRetainsSubject(FxRobot robot) {
+		TextField codeField = robot.lookup("#curriculum-code").queryAs(TextField.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<SyllabusVersion> syllabuses = robot.lookup("#curriculum-syllabus").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Unit> units = robot.lookup("#curriculum-unit").queryAs(ComboBox.class);
+		@SuppressWarnings("unchecked")
+		ComboBox<Topic> topics = robot.lookup("#curriculum-topic").queryAs(ComboBox.class);
+		robot.clickOn(codeField).write("3.1.1.1");
+		robot.interact(() -> syllabuses.setValue(syllabus2019));
+		assertEquals(chemistry, model.getSubject());
+		assertEquals(syllabus2019, model.getSyllabusVersion());
+		assertEquals("", codeField.getText());
+		assertNull(units.getValue());
+		assertNull(units.getSelectionModel().getSelectedItem());
+		assertNull(model.getUnit());
+		assertTrue(topics.getItems().isEmpty());
+		assertTrue(topics.isDisabled());
+		assertNull(model.getClassification());
+		assertFalse(pane.classificationSelectedProperty().get());
+	}
+
+	@Test
 	public void classificationResetClearsVisibleUnitAndRestoresTopicCascade(FxRobot robot) {
 		@SuppressWarnings("unchecked")
 		ComboBox<Unit> units = robot.lookup("#curriculum-unit").queryAs(ComboBox.class);
@@ -97,29 +121,6 @@ public class CurriculumSelectorPaneTest {
 	}
 
 	@Test
-	public void changingSyllabusClearsCodeAndClassificationButRetainsSubject(FxRobot robot) {
-		TextField codeField = robot.lookup("#curriculum-code").queryAs(TextField.class);
-		@SuppressWarnings("unchecked")
-		ComboBox<SyllabusVersion> syllabuses = robot.lookup("#curriculum-syllabus").queryAs(ComboBox.class);
-		@SuppressWarnings("unchecked")
-		ComboBox<Unit> units = robot.lookup("#curriculum-unit").queryAs(ComboBox.class);
-		@SuppressWarnings("unchecked")
-		ComboBox<Topic> topics = robot.lookup("#curriculum-topic").queryAs(ComboBox.class);
-		robot.clickOn(codeField).write("3.1.1.1");
-		robot.interact(() -> syllabuses.setValue(syllabus2019));
-		assertEquals(chemistry, model.getSubject());
-		assertEquals(syllabus2019, model.getSyllabusVersion());
-		assertEquals("", codeField.getText());
-		assertNull(units.getValue());
-		assertNull(units.getSelectionModel().getSelectedItem());
-		assertNull(model.getUnit());
-		assertTrue(topics.getItems().isEmpty());
-		assertTrue(topics.isDisabled());
-		assertNull(model.getClassification());
-		assertFalse(pane.classificationSelectedProperty().get());
-	}
-
-	@Test
 	public void clearingDescriptorKeywordsRestoresHierarchyControls(FxRobot robot) throws Exception {
 		robot.interact(() -> pane.selectClassificationPath(descriptor3111));
 		TextField search = robot.lookup("#curriculum-descriptor-search").queryAs(TextField.class);
@@ -134,7 +135,8 @@ public class CurriculumSelectorPaneTest {
 		// existing Question editing.
 		robot.interact(() -> pane.setSyllabusContextLocked(true));
 		robot.interact(() -> search.setText("nonexistent keyword"));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> "No matching Descriptors.".equals(status.getText()));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> "No matching Descriptors.".equals(status.getText()));
 		robot.interact(search::clear);
 		assertEquals(descriptor3111, model.getClassification());
 		assertFalse(units.isDisabled());
@@ -300,28 +302,28 @@ public class CurriculumSelectorPaneTest {
 		ComboBox<Unit> units = robot.lookup("#curriculum-unit").queryComboBox();
 		ComboBox<Topic> topics = robot.lookup("#curriculum-topic").queryComboBox();
 		robot.interact(() -> search.setText("descriptor"));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
 
 		// A partial code restricts search to that Topic.
 		robot.interact(() -> code.setText("3.1"));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1
 				&& results.getItems().getFirst().descriptor().equals(descriptor3111));
 
 		// Changing only the Code must refresh active keywords.
 		robot.interact(() -> code.setText("3.2"));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1
 				&& results.getItems().getFirst().descriptor().equals(descriptor321));
 
 		// With no Code or Unit/Topic selection, the entire
 		// selected syllabus is available again.
 		robot.interact(code::clear);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
 
 		// Selecting Unit and Topic through the existing
 		// hierarchy has the same narrowing effect.
 		robot.interact(() -> units.getSelectionModel().select(unit3));
 		robot.interact(() -> topics.getSelectionModel().select(topic31));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1
 				&& results.getItems().getFirst().descriptor().equals(descriptor3111));
 
 		// Searching must not commit a classification.
@@ -346,7 +348,7 @@ public class CurriculumSelectorPaneTest {
 
 		// First select a descriptor beneath a Subtopic using lookup.
 		robot.interact(() -> search.setText("3.1.1.1"));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1
 				&& results.getItems().getFirst().descriptor().equals(descriptor3111));
 		robot.interact(() -> {
 			results.getSelectionModel().selectFirst();
@@ -376,7 +378,7 @@ public class CurriculumSelectorPaneTest {
 		// This one belongs directly to Topic 3.2.
 		robot.interact(() -> code.setText("3"));
 		robot.interact(() -> search.setText("3.2.1"));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1
 				&& results.getItems().getFirst().descriptor().equals(descriptor321));
 		robot.interact(() -> {
 			results.getSelectionModel().selectFirst();
@@ -405,30 +407,6 @@ public class CurriculumSelectorPaneTest {
 	}
 
 	@Test
-	public void descriptorLookupUsesCompactNaturalLabelsAndSelectsSimilarlyWordedResult(FxRobot robot)
-			throws Exception {
-		TextField search = robot.lookup("#curriculum-descriptor-search").queryAs(TextField.class);
-		TextField code = robot.lookup("#curriculum-code").queryAs(TextField.class);
-		ListView<DescriptorMatch> results = robot.lookup("#curriculum-descriptor-search-results").queryListView();
-		robot.interact(() -> search.setText("shared wording"));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
-		assertEquals(List.of(descriptor3112, descriptor31110),
-				results.getItems().stream().map(DescriptorMatch::descriptor).toList());
-		assertEquals("4.1.1.2 — Shared wording learning outcome", results.getItems().getFirst().displayLabel());
-
-		// Choosing the multi-digit sibling must select its authoritative hierarchy,
-		// even though the compact label does not display its parent path.
-		robot.interact(() -> {
-			results.getSelectionModel().select(1);
-			results.fireEvent(new KeyEvent(KeyEvent.KEY_PRESSED, "", "", KeyCode.ENTER, false, false, false, false));
-		});
-		assertEquals(descriptor31110, model.getClassification());
-		assertEquals(descriptor31110, pane.selectedClassificationProperty().get());
-		assertEquals("4.1.1.10", code.getText());
-		assertEquals("", search.getText());
-	}
-
-	@Test
 	public void descriptorLookupRespectsSyllabusSwitch(FxRobot robot) throws Exception {
 		TextField search = robot.lookup("#curriculum-descriptor-search").queryAs(TextField.class);
 		ComboBox<SyllabusVersion> syllabuses = robot.lookup("#curriculum-syllabus").queryComboBox();
@@ -443,7 +421,8 @@ public class CurriculumSelectorPaneTest {
 		assertTrue(results.getItems().isEmpty());
 		assertEquals(syllabus2019, model.getSyllabusVersion());
 		robot.interact(() -> search.setText("3.1.1.1"));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> "No matching Descriptors.".equals(status.getText()));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> "No matching Descriptors.".equals(status.getText()));
 		assertTrue(results.getItems().isEmpty());
 		assertNull(model.getClassification());
 	}
@@ -454,7 +433,7 @@ public class CurriculumSelectorPaneTest {
 		ListView<DescriptorMatch> results = robot.lookup("#curriculum-descriptor-search-results").queryListView();
 		TextField code = robot.lookup("#curriculum-code").queryAs(TextField.class);
 		robot.interact(() -> search.setText("3.1.1.1"));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> results.getItems().size() == 1);
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1);
 		assertNull(model.getClassification());
 		assertEquals(descriptor3111, results.getItems().getFirst().descriptor());
 
@@ -477,12 +456,37 @@ public class CurriculumSelectorPaneTest {
 		TextField search = robot.lookup("#curriculum-descriptor-search").queryAs(TextField.class);
 		Label status = robot.lookup("#curriculum-descriptor-search-status").queryAs(Label.class);
 		robot.interact(() -> search.setText("nonexistent keyword"));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> "No matching Descriptors.".equals(status.getText()));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> "No matching Descriptors.".equals(status.getText()));
 		assertEquals(descriptor3111, model.getClassification());
 		robot.interact(search::clear);
 		assertEquals(descriptor3111, model.getClassification());
 		assertEquals("3.1.1.1", robot.lookup("#curriculum-code").queryAs(TextField.class).getText());
 		assertFalse(status.isVisible());
+	}
+
+	@Test
+	public void descriptorLookupUsesCompactNaturalLabelsAndSelectsSimilarlyWordedResult(FxRobot robot)
+			throws Exception {
+		TextField search = robot.lookup("#curriculum-descriptor-search").queryAs(TextField.class);
+		TextField code = robot.lookup("#curriculum-code").queryAs(TextField.class);
+		ListView<DescriptorMatch> results = robot.lookup("#curriculum-descriptor-search-results").queryListView();
+		robot.interact(() -> search.setText("shared wording"));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+		assertEquals(List.of(descriptor3112, descriptor31110),
+				results.getItems().stream().map(DescriptorMatch::descriptor).toList());
+		assertEquals("4.1.1.2 — Shared wording learning outcome", results.getItems().getFirst().displayLabel());
+
+		// Choosing the multi-digit sibling must select its authoritative hierarchy,
+		// even though the compact label does not display its parent path.
+		robot.interact(() -> {
+			results.getSelectionModel().select(1);
+			results.fireEvent(new KeyEvent(KeyEvent.KEY_PRESSED, "", "", KeyCode.ENTER, false, false, false, false));
+		});
+		assertEquals(descriptor31110, model.getClassification());
+		assertEquals(descriptor31110, pane.selectedClassificationProperty().get());
+		assertEquals("4.1.1.10", code.getText());
+		assertEquals("", search.getText());
 	}
 
 	@Test

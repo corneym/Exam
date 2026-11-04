@@ -33,6 +33,7 @@ import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ApplicationConfig;
+import au.edu.eq.questionbank.Constants;
 import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.ExamBooklet;
@@ -312,7 +313,7 @@ class SharedContextWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Changing Working Subject would invalidate the booklet and curriculum context
 		// needed by the active shared-context workflow, so reject the transition.
 		Platform.runLater(() -> workingSubjectBox.setValue(physics));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("Capture work is in progress").tryQuery().isPresent());
 		fireDialogButton(robot, "OK");
 

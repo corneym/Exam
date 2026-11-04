@@ -29,6 +29,7 @@ import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ApplicationConfig;
+import au.edu.eq.questionbank.Constants;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.CurriculumLevel;
@@ -1538,55 +1539,6 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void typedFutureYearPersistsAndHistoricalExamRemainsEditable(FxRobot robot) throws Exception {
-		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
-		robot.interact(() -> subjects.getSelectionModel().selectFirst());
-		Subject subject = subjects.getValue();
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#corpus-dashboard-add-exam").tryQuery().isPresent());
-		fireControl(robot, "#corpus-dashboard-add-exam");
-
-		// Explicitly start ordinary creation when Dashboard entry offers the mode
-		// chooser.
-		fireControl(robot, "#exam-assets-add-new-exam");
-		ComboBox<String> provider = comboBox(robot, "#exam-assets-provider");
-		ComboBox<Integer> year = comboBox(robot, "#exam-assets-year");
-		ComboBox<String> assessment = comboBox(robot, "#exam-assets-assessment");
-		Button save = lookup(robot, "#exam-assets-new-exam-save", Button.class);
-		Label validation = lookup(robot, "#exam-assets-year-validation", Label.class);
-		assertEquals(2020, year.getItems().getFirst());
-		assertTrue(year.isEditable());
-		robot.interact(() -> {
-			provider.getEditor().setText("Future provider");
-			assessment.getEditor().setText("Future assessment");
-			for (String invalid : List.of("", "203", "20300", "tomorrow")) {
-				year.getEditor().setText(invalid);
-				assertTrue(save.isDisabled());
-				assertTrue(validation.isVisible());
-			}
-			year.getEditor().setText("2030");
-			assertFalse(save.isDisabled());
-			save.fire();
-		});
-		SqliteExamWriter writer = new SqliteExamWriter(new SqliteDatabase(databasePath));
-		assertEquals(2030, writer.findExamsForSubject(subject).getFirst().getYear());
-		ExamAssetsPane assets = field(application, "examAssetsPane", ExamAssetsPane.class);
-		Exam historical = writer.createExam(subject, "Historical provider", 1998, "Historical assessment", null, null);
-		WaitForAsyncUtils.asyncFx(() -> {
-			assets.showForCorrection(subject, historical.getId(), null);
-			return null;
-		}).get();
-		fireControl(robot, "#exam-assets-edit");
-		assertEquals("1998", year.getEditor().getText());
-		robot.interact(() -> assessment.getEditor().setText("Corrected historical assessment"));
-		fireControl(robot, "#exam-assets-save");
-		Exam restored = writer.findExamsForSubject(subject).stream().filter(exam -> exam.getId() == historical.getId())
-				.findFirst().orElseThrow();
-		assertEquals(1998, restored.getYear());
-		assertEquals("Corrected historical assessment", restored.getName());
-	}
-
-	@Test
 	void reactivatingCompletedExamRestoresStructuralEditing(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ExamBooklet originalBooklet = examMetadataPane().getBooklet();
@@ -1943,6 +1895,55 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void typedFutureYearPersistsAndHistoricalExamRemainsEditable(FxRobot robot) throws Exception {
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		robot.interact(() -> subjects.getSelectionModel().selectFirst());
+		Subject subject = subjects.getValue();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-add-exam").tryQuery().isPresent());
+		fireControl(robot, "#corpus-dashboard-add-exam");
+
+		// Explicitly start ordinary creation when Dashboard entry offers the mode
+		// chooser.
+		fireControl(robot, "#exam-assets-add-new-exam");
+		ComboBox<String> provider = comboBox(robot, "#exam-assets-provider");
+		ComboBox<Integer> year = comboBox(robot, "#exam-assets-year");
+		ComboBox<String> assessment = comboBox(robot, "#exam-assets-assessment");
+		Button save = lookup(robot, "#exam-assets-new-exam-save", Button.class);
+		Label validation = lookup(robot, "#exam-assets-year-validation", Label.class);
+		assertEquals(2020, year.getItems().getFirst());
+		assertTrue(year.isEditable());
+		robot.interact(() -> {
+			provider.getEditor().setText("Future provider");
+			assessment.getEditor().setText("Future assessment");
+			for (String invalid : List.of("", "203", "20300", "tomorrow")) {
+				year.getEditor().setText(invalid);
+				assertTrue(save.isDisabled());
+				assertTrue(validation.isVisible());
+			}
+			year.getEditor().setText("2030");
+			assertFalse(save.isDisabled());
+			save.fire();
+		});
+		SqliteExamWriter writer = new SqliteExamWriter(new SqliteDatabase(databasePath));
+		assertEquals(2030, writer.findExamsForSubject(subject).getFirst().getYear());
+		ExamAssetsPane assets = field(application, "examAssetsPane", ExamAssetsPane.class);
+		Exam historical = writer.createExam(subject, "Historical provider", 1998, "Historical assessment", null, null);
+		WaitForAsyncUtils.asyncFx(() -> {
+			assets.showForCorrection(subject, historical.getId(), null);
+			return null;
+		}).get();
+		fireControl(robot, "#exam-assets-edit");
+		assertEquals("1998", year.getEditor().getText());
+		robot.interact(() -> assessment.getEditor().setText("Corrected historical assessment"));
+		fireControl(robot, "#exam-assets-save");
+		Exam restored = writer.findExamsForSubject(subject).stream().filter(exam -> exam.getId() == historical.getId())
+				.findFirst().orElseThrow();
+		assertEquals(1998, restored.getYear());
+		assertEquals("Corrected historical assessment", restored.getName());
+	}
+
+	@Test
 	void workingSubjectLoadFailureLeavesNewSubjectVisibleButDependentStateEmpty(FxRobot robot) throws Exception {
 		prepareExamAndClassification(robot);
 		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
@@ -2009,7 +2010,7 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// The visual presentation must appear after the intentional
 		// 180 ms delay while the operation remains active.
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> evaluateOnFx(robot, overlay::isVisible));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> evaluateOnFx(robot, overlay::isVisible));
 		assertTrue(evaluateOnFx(robot, overlay::isManaged));
 		WaitForAsyncUtils.asyncFx(() -> {
 			invoke(application, "hideWorkspaceBusy", new Class<?>[0]);
