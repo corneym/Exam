@@ -1,17 +1,24 @@
 name: Release - Windows MSI
 
-# A maintainer creates vMAJOR.MINOR.PATCH on a merged commit in main.
-# No installer is published unless every gate succeeds.
+# A new release starts on a pushed tag. To recover a previously failed
+# release, manually dispatch the updated workflow from main with that tag.
+# All code and tests are pinned to the tag's original source commit.
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing annotated release tag (e.g. v1.0.1)'
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -19,19 +26,46 @@ jobs:
     name: Validate release tag and source
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      release_tag: ${{ steps.source.outputs.release_tag }}
+      source_sha: ${{ steps.source.outputs.source_sha }}
     steps:
-      - name: Check out exact tagged source and history
+      - name: Check out workflow revision and full history
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - name: Check tag, POM and main ancestry
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
+      - name: Validate existing tag, original source, and version
+        id: source
         shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          python3 - <<'PY'
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$GITHUB_REF" != refs/heads/main ]]; then
+            echo 'Manual release recovery must be dispatched from the main branch' >&2
+            exit 1
+          fi
+
+          # Resolve the exact release source; never build the workflow commit.
+          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Invalid release tag: $RELEASE_TAG (expected vMAJOR.MINOR.PATCH)" >&2
+            exit 1
+          fi
+          git fetch --force origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          git fetch --no-tags origin main
+          if [[ "$(git cat-file -t "refs/tags/$RELEASE_TAG")" != tag ]]; then
+            echo 'Release tag must be annotated' >&2
+            exit 1
+          fi
+          source_sha="$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")"
+          if ! git merge-base --is-ancestor "$source_sha" origin/main; then
+            echo 'Release commit is not contained in origin/main' >&2
+            exit 1
+          fi
+          git checkout --detach "$source_sha"
+
+          python3 - <<'PYCODE'
           import os
           import re
           import xml.etree.ElementTree as ET
@@ -39,32 +73,29 @@ jobs:
           tag = os.environ['RELEASE_TAG']
           match = re.fullmatch(r'v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', tag)
           if match is None:
-              raise SystemExit(f'Invalid release tag: {tag}. Expected vMAJOR.MINOR.PATCH.')
+              raise SystemExit(f'Invalid release tag: {tag}')
           major, minor, patch = (int(part) for part in match.groups())
           if major > 255 or minor > 255 or patch > 65535:
               raise SystemExit('Release version exceeds Windows Installer numeric limits.')
-
           root = ET.parse('pom.xml').getroot()
           ns = {'m': 'http://maven.apache.org/POM/4.0.0'}
           pom_version = root.findtext('m:version', namespaces=ns)
           if pom_version != tag[1:]:
               raise SystemExit(f'Tag {tag} does not match pom.xml version {pom_version}.')
           print(f'Validated release version {pom_version}')
-          PY
+          PYCODE
 
-          # Never publish a tag created on an unrelated or unmerged branch.
-          git fetch --no-tags origin main
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo 'Release commit is not contained in origin/main' >&2
-            exit 1
-          fi
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "Pinned source $RELEASE_TAG to $source_sha"
 
       - name: Reject an already created release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ steps.source.outputs.release_tag }}
         shell: bash
         run: |
+          set -euo pipefail
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Release $RELEASE_TAG already exists; refusing to replace it." >&2
             exit 1
@@ -75,6 +106,8 @@ jobs:
     needs: validate
     # Execute the exact same 10 UI partitions and non-UI tests used for PRs.
     uses: ./.github/workflows/ci.yml
+    with:
+      source_ref: ${{ needs.validate.outputs.source_sha }}
     permissions:
       contents: read
 
@@ -85,6 +118,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.validate.outputs.source_sha }}
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
@@ -93,7 +128,7 @@ jobs:
       - name: Enforce formatting
         run: bash ./mvnw --batch-mode spotless:check
       - name: Generate strict Javadoc
-        # Compile first so the Javadoc plugin can identify the JPMS module.
+        # A fresh Linux runner must compile the JPMS descriptor first.
         run: bash ./mvnw --batch-mode compile javadoc:javadoc
 
   windows-ui:
@@ -129,6 +164,8 @@ jobs:
     steps:
       - name: Check out release source
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.validate.outputs.source_sha }}
       - name: Set up Java 25
         uses: actions/setup-java@v6
         with:
@@ -152,12 +189,14 @@ jobs:
 
   build-msi:
     name: Build and verify candidate Windows MSI
-    needs: [quality, windows-ui, static-checks]
+    needs: [validate, quality, windows-ui, static-checks]
     runs-on: windows-2025
     timeout-minutes: 60
     steps:
       - name: Check out exact release source
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.validate.outputs.source_sha }}
 
       - name: Set up Java 25 with jmods
         uses: actions/setup-java@v6
@@ -217,9 +256,12 @@ jobs:
 
       - name: Verify release version, hashes and signing state
         shell: pwsh
+        env:
+          RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
+          RELEASE_SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $version = $env:GITHUB_REF_NAME.Substring(1)
+          $version = $env:RELEASE_TAG.Substring(1)
           [xml] $pom = Get-Content 'pom.xml'
           $pomVersion = $pom.SelectSingleNode("/*[local-name()='project']/*[local-name()='version']").InnerText.Trim()
           if ($version -ne $pomVersion) { throw 'MSI version does not match POM and tag' }
@@ -252,8 +294,8 @@ jobs:
           @(
             'Exam Question Bank - Windows MSI release provenance'
             "Version: $version"
-            "Git tag: $env:GITHUB_REF_NAME"
-            "Source commit: $env:GITHUB_SHA"
+            "Git tag: $env:RELEASE_TAG"
+            "Source commit: $env:RELEASE_SOURCE_SHA"
             "Repository: $env:GITHUB_REPOSITORY"
             "Workflow: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
             "MSI: $($installer.Name)"
@@ -266,7 +308,7 @@ jobs:
       - name: Retain candidate for isolated upgrade acceptance
         uses: actions/upload-artifact@v7
         with:
-          name: release-candidate-${{ github.ref_name }}
+          name: release-candidate-${{ needs.validate.outputs.release_tag }}
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
@@ -277,7 +319,7 @@ jobs:
 
   publish:
     name: Publish immutable GitHub Release after approval
-    needs: build-msi
+    needs: [validate, build-msi]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: release-publication
@@ -287,7 +329,7 @@ jobs:
       - name: Download exact verified candidate
         uses: actions/download-artifact@v8
         with:
-          name: release-candidate-${{ github.ref_name }}
+          name: release-candidate-${{ needs.validate.outputs.release_tag }}
           path: dist
 
       - name: Check final candidate checksum
@@ -307,7 +349,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
         run: |
           set -euo pipefail
           gh release create "$RELEASE_TAG" \
