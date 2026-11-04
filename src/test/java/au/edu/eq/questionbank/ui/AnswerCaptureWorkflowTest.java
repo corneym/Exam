@@ -28,6 +28,7 @@ import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ApplicationConfig;
+import au.edu.eq.questionbank.Constants;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.CurriculumLevel;
@@ -126,7 +127,7 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		AnswerCapturePane pane = answerCapturePane();
 		ScrollPane regions = field(pane, "answerRegionsScrollPane", ScrollPane.class);
 		VBox list = field(pane, "answerRegionListBox", VBox.class);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> !list.getChildren().isEmpty() && regions.getViewportBounds().getWidth() > 0.0);
 
 		// Reserving scrollbar width removes the appear/disappear threshold that could
@@ -231,7 +232,7 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(stored.hasAnswer(), "PDF loading follows the committed transaction");
 		Platform.runLater(() -> completeLoad.get().accept(new IOException("Simulated next-PDF failure")));
 		AtomicReference<DialogPane> failureDialog = new AtomicReference<>();
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> {
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> {
 			DialogPane dialog = robot.lookup(".dialog-pane").queryAll().stream().filter(DialogPane.class::isInstance)
 					.map(DialogPane.class::cast).filter(DialogPane::isVisible)
 					.filter(candidate -> "Answer saved, but the next question's PDF could not be loaded."
@@ -564,7 +565,7 @@ class AnswerCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 					"CREATE TRIGGER reject_answer BEFORE INSERT ON answers BEGIN SELECT RAISE(ABORT, 'Test write failure'); END");
 		}
 		fireControl(robot, "#save-answer");
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("Answer could not be saved.").tryQuery().isPresent());
 
 		// Resolve the action through the actual DialogPane rather than rendered text.

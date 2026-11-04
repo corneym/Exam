@@ -15,6 +15,7 @@ import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
+import au.edu.eq.questionbank.Constants;
 import javafx.concurrent.Worker;
 import javafx.scene.Scene;
 import javafx.scene.layout.StackPane;
@@ -44,7 +45,7 @@ class HelpDialogTest {
 			loadState.set(loadWorker.getState());
 			loadWorker.stateProperty().addListener((_, _, newState) -> loadState.set(newState));
 		});
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> loadState.get() == Worker.State.SUCCEEDED
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> loadState.get() == Worker.State.SUCCEEDED
 				|| loadState.get() == Worker.State.FAILED || loadState.get() == Worker.State.CANCELLED);
 		assertEquals(Worker.State.SUCCEEDED, loadState.get());
 		AtomicReference<String> title = new AtomicReference<>();

@@ -28,6 +28,7 @@ import org.testfx.api.FxRobot;
 import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
+import au.edu.eq.questionbank.Constants;
 import au.edu.eq.questionbank.diagnostics.FxPulseGapProbe;
 import au.edu.eq.questionbank.diagnostics.PerformanceCsvReader;
 import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
@@ -200,7 +201,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Attempting to leave Chemistry must be rejected because the accepted region
 		// still depends on the current Exam and curriculum context.
 		Platform.runLater(() -> workingSubjectBox.setValue(physics));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("Capture work is in progress").tryQuery().isPresent());
 		fireDialogButton(robot, "OK");
 		WaitForAsyncUtils.waitForFxEvents();
@@ -714,7 +715,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(1, stored.findAll().size());
 		assertEquals(1, completionAttempts.get());
 		fireDialogButton(robot, "OK");
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> !pane.isSaveInProgress());
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> !pane.isSaveInProgress());
 		Label status = lookup(robot, "#question-save-status", Label.class);
 		assertTrue(status.getText().contains("Saved 72"));
 		assertTrue(status.getText().contains("ID " + original.getId()));
@@ -764,7 +765,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		long savedId = persisted.getFirst().getId();
 		assertEquals(1, publicationAttempts.get());
 		fireDialogButton(robot, "OK");
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> !pane.isSaveInProgress());
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> !pane.isSaveInProgress());
 		Label status = lookup(robot, "#question-save-status", Label.class);
 		assertTrue(status.getText().contains("Saved 71"));
 		assertTrue(status.getText().contains("ID " + savedId));
@@ -809,7 +810,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertEquals(1, reads.get());
 		assertEquals(1, stored.findAll().size());
 		fireDialogButton(robot, "OK");
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> !pane.isSaveInProgress());
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> !pane.isSaveInProgress());
 		assertEquals("", lookup(robot, "#question-code", TextField.class).getText());
 		assertTrue(lookup(robot, "#question-save-status", Label.class).getText().contains("list refresh failed"));
 		assertEquals(1, unansweredQuestions(robot).getItems().size());
@@ -930,7 +931,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		});
 		try {
 			fireControl(robot, "#save-question");
-			assertTrue(refreshEntered.await(5, TimeUnit.SECONDS));
+			assertTrue(refreshEntered.await(Constants.TIMEOUT, TimeUnit.SECONDS));
 
 			// Model updates remain observable while the work area is disabled. This
 			// simulates a delayed callback racing a later number generation.
@@ -2036,7 +2037,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Schedule the Subject change without blocking the test thread because the
 		// rejection deliberately opens a modal warning dialog.
 		Platform.runLater(() -> workingSubjectBox.setValue(physics));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("Capture work is in progress").tryQuery().isPresent());
 
 		// Close the warning through its DialogPane-owned action so a retained or
@@ -2108,7 +2109,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		});
 		try {
 			fireControl(robot, "#save-question");
-			assertTrue(entered.await(5, TimeUnit.SECONDS), "Post-save refresh must begin");
+			assertTrue(entered.await(Constants.TIMEOUT, TimeUnit.SECONDS), "Post-save refresh must begin");
 
 			// The worker is deliberately blocked during its only
 			// full-corpus read. JavaFX must remain responsive.
@@ -2229,12 +2230,12 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 			// Begin a slow Physics refresh.
 			robot.interact(() -> workingSubjectBox.setValue(physics));
-			assertTrue(firstLoadEntered.await(5, TimeUnit.SECONDS));
+			assertTrue(firstLoadEntered.await(Constants.TIMEOUT, TimeUnit.SECONDS));
 
 			// Before Physics finishes, make Chemistry authoritative again. Its later
 			// generation is allowed to complete first.
 			robot.interact(() -> workingSubjectBox.setValue(chemistry));
-			assertTrue(secondLoadReturned.await(5, TimeUnit.SECONDS));
+			assertTrue(secondLoadReturned.await(Constants.TIMEOUT, TimeUnit.SECONDS));
 			WaitForAsyncUtils.waitForFxEvents();
 			assertEquals(chemistry, workingSubjectBox.getValue());
 			assertEquals(chemistry, field(questionCapturePane(), "workingSubject", Subject.class));
@@ -2245,7 +2246,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 			// Now allow the older Physics load to complete after Chemistry is already
 			// current.
 			releaseFirstLoad.countDown();
-			assertTrue(firstLoadReturned.await(5, TimeUnit.SECONDS));
+			assertTrue(firstLoadReturned.await(Constants.TIMEOUT, TimeUnit.SECONDS));
 			WaitForAsyncUtils.waitForFxEvents();
 
 			// The stale first generation must not repopulate either pane.
@@ -2307,7 +2308,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
 				() -> repository.findAll().stream().anyMatch(question -> "5".equals(question.getQuestionCode())));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> "Saved 5 (1 mark(s), 1 content part(s))".equals(saveStatus.getText()));
 		Question savedFive = repository.findAll().stream().filter(question -> "5".equals(question.getQuestionCode()))
 				.findFirst().orElseThrow();
@@ -2388,7 +2389,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Choose the actual Descriptor through Search descriptors first.
 		CurriculumNode initial = model.getClassification();
 		robot.interact(() -> search.setText(initial.getCode()));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> results.getItems().stream().anyMatch(match -> initial.equals(match.descriptor())));
 		robot.interact(() -> {
 			int index = -1;
@@ -2572,7 +2573,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 				throw new RuntimeException(exception);
 			}
 		});
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("Question is incomplete.").tryQuery().isPresent());
 		assertEquals("retain my keywords", search.getText());
 		assertEquals(original, model.getClassification());

@@ -31,6 +31,7 @@ import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ApplicationConfig;
+import au.edu.eq.questionbank.Constants;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
@@ -162,7 +163,7 @@ class CurriculumAuthoringApplicationRegressionTest {
 		fireDialogButton(robot, "Create a new Subject", "OK");
 		@SuppressWarnings("unchecked")
 		ComboBox<Subject> workingSubject = robot.lookup("#curriculum-subject").queryAs(ComboBox.class);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> workingSubject.getValue() != null && "Engineering".equals(workingSubject.getValue().getName()));
 
 		// Curriculum creation now inherits the Dashboard Subject and therefore offers
@@ -374,12 +375,12 @@ class CurriculumAuthoringApplicationRegressionTest {
 	}
 
 	private void awaitAuthoring(FxRobot robot) throws Exception {
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("#curriculum-draft-tree").tryQuery().isPresent());
 	}
 
 	private DialogPane awaitVisibleDialog(FxRobot robot, String headerText) throws Exception {
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup(".dialog-pane").queryAll().stream().filter(DialogPane.class::isInstance)
 						.map(DialogPane.class::cast)
 						.anyMatch(dialog -> dialog.isVisible() && headerText.equals(dialog.getHeaderText())));

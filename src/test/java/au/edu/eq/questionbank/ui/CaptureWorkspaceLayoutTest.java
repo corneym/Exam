@@ -32,6 +32,7 @@ import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ApplicationConfig;
+import au.edu.eq.questionbank.Constants;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.importer.legacy.LegacyBookletRequirement;
@@ -929,7 +930,7 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		// Modal warning: schedule the action rather than blocking
 		// the test thread with a nested JavaFX event loop.
 		Platform.runLater(returnDashboard::fire);
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS,
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
 				() -> robot.lookup("Capture work is in progress").tryQuery().isPresent());
 		DialogPane warning = robot.lookup(".dialog-pane").queryAs(DialogPane.class);
 		assertEquals("Capture work is in progress", warning.getHeaderText());
@@ -2618,8 +2619,9 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 			fireControl(robot, save);
 
 			// The only full-corpus read now occurs after commit.
-			assertTrue(readStarted.await(5, TimeUnit.SECONDS));
-			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> evaluateOnFx(robot, shield::isVisible));
+			assertTrue(readStarted.await(Constants.TIMEOUT, TimeUnit.SECONDS));
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+					() -> evaluateOnFx(robot, shield::isVisible));
 			assertTrue(evaluateOnFx(robot, overlay::isBusy));
 		} finally {
 			releaseRead.countDown();
@@ -2688,13 +2690,14 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		Button save = lookup(robot, "#save-question", Button.class);
 		try {
 			fireControl(robot, save);
-			assertTrue(readStarted.await(5, TimeUnit.SECONDS));
+			assertTrue(readStarted.await(Constants.TIMEOUT, TimeUnit.SECONDS));
 
 			// Logical busy protection starts before the delayed
 			// visual overlay becomes visible.
 			assertTrue(evaluateOnFx(robot, overlay::isBusy));
 			assertTrue(evaluateOnFx(robot, save::isDisabled));
-			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> evaluateOnFx(robot, shield::isVisible));
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+					() -> evaluateOnFx(robot, shield::isVisible));
 			assertEquals("Saving Question...", message.getText());
 
 			// A second activation cannot start another save.
@@ -2783,7 +2786,7 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 
 					// Hold the first Subject load so the second selection can complete
 					// first and exercise stale-result suppression deterministically.
-					if (!releasePhysics.await(5, TimeUnit.SECONDS)) {
+					if (!releasePhysics.await(Constants.TIMEOUT, TimeUnit.SECONDS)) {
 						throw new AssertionError("Timed out waiting to release Physics Exam/Assets load");
 					}
 				} catch (InterruptedException exception) {
@@ -2809,7 +2812,7 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		// Direct ComboBox selection is deterministic because pointer behaviour is not
 		// under test.
 		subjects.getSelectionModel().select(physics));
-		assertTrue(physicsStarted.await(5, TimeUnit.SECONDS));
+		assertTrue(physicsStarted.await(Constants.TIMEOUT, TimeUnit.SECONDS));
 		assertFalse(persistenceRanOnFxThread.get());
 		AtomicBoolean previousExamCleared = new AtomicBoolean();
 		robot.interact(() ->
@@ -2823,14 +2826,14 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		// A later accepted Subject selection must be able to proceed while the first
 		// persistence task is still blocked.
 		subjects.getSelectionModel().select(biology));
-		assertTrue(biologyFinished.await(5, TimeUnit.SECONDS));
+		assertTrue(biologyFinished.await(Constants.TIMEOUT, TimeUnit.SECONDS));
 		WaitForAsyncUtils.waitForFxEvents();
 		assertEquals(biologyExam.getId(), examSelector.getValue().getId());
 		assertEquals("Biology", examSelector.getValue().getSubject().getName());
 
 		// Let the older Physics task finish after Biology is already authoritative.
 		releasePhysics.countDown();
-		assertTrue(physicsFinished.await(5, TimeUnit.SECONDS));
+		assertTrue(physicsFinished.await(Constants.TIMEOUT, TimeUnit.SECONDS));
 		WaitForAsyncUtils.waitForFxEvents();
 		assertFalse(persistenceRanOnFxThread.get());
 
@@ -2945,7 +2948,7 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 		// Direct selection exercises Working Subject semantics rather than ComboBox
 		// pointer behaviour.
 		subjects.getSelectionModel().select(physics));
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> !status.isManaged());
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> !status.isManaged());
 
 		// Requirements derived from Chemistry must not survive after Physics becomes
 		// the authoritative application Subject.
@@ -3011,7 +3014,7 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 				try {
 
 					// Hold the older Subject so Biology can become authoritative first.
-					if (!releasePhysics.await(5, TimeUnit.SECONDS)) {
+					if (!releasePhysics.await(Constants.TIMEOUT, TimeUnit.SECONDS)) {
 						throw new AssertionError("Timed out waiting to release Physics curriculum load");
 					}
 				} catch (InterruptedException exception) {
@@ -3033,7 +3036,7 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 
 			// Direct selection tests application state rather than mouse hit-testing.
 			subjects.getSelectionModel().select(physics));
-			assertTrue(physicsStarted.await(5, TimeUnit.SECONDS));
+			assertTrue(physicsStarted.await(Constants.TIMEOUT, TimeUnit.SECONDS));
 			assertFalse(persistenceRanOnFxThread.get());
 			AtomicBoolean previousCurriculumCleared = new AtomicBoolean();
 			robot.interact(() ->
@@ -3047,8 +3050,8 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 
 			// The later Biology selection must proceed while Physics is still blocked.
 			subjects.getSelectionModel().select(biology));
-			assertTrue(biologyFinished.await(5, TimeUnit.SECONDS));
-			WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> {
+			assertTrue(biologyFinished.await(Constants.TIMEOUT, TimeUnit.SECONDS));
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> {
 				AtomicBoolean biologyApplied = new AtomicBoolean();
 				robot.interact(() ->
 
@@ -3063,7 +3066,7 @@ class CaptureWorkspaceLayoutTest extends QuestionBankApplicationUiTestBase {
 
 			// Now let the obsolete Physics worker complete.
 			releasePhysics.countDown();
-			assertTrue(physicsFinished.await(5, TimeUnit.SECONDS));
+			assertTrue(physicsFinished.await(Constants.TIMEOUT, TimeUnit.SECONDS));
 			WaitForAsyncUtils.waitForFxEvents();
 			assertFalse(persistenceRanOnFxThread.get());
 

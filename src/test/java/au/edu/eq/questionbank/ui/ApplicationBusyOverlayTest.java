@@ -16,6 +16,7 @@ import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
+import au.edu.eq.questionbank.Constants;
 import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.Label;
@@ -50,7 +51,7 @@ class ApplicationBusyOverlayTest {
 		assertTrue(overlay.isBusy());
 		assertTrue(content.isDisabled());
 		assertEquals("Preparing Question Capture...", status.getText());
-		WaitForAsyncUtils.waitFor(5, TimeUnit.SECONDS, () -> visibleOnFx(robot, shield));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> visibleOnFx(robot, shield));
 		assertTrue(shield.isManaged());
 
 		// The shield belongs to the complete Scene root,
