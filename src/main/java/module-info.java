@@ -20,6 +20,7 @@ module au.edu.eq.questionbank {
 	requires javafx.graphics;
 	requires javafx.swing;
 	requires javafx.web;
+	requires org.apache.commons.compress;
 	requires org.apache.logging.log4j.core;
 	requires org.apache.pdfbox;
 	requires org.apache.poi.ooxml;
