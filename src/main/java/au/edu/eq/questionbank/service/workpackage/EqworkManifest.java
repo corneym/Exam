@@ -146,7 +146,12 @@ public record EqworkManifest(int formatVersion, UUID packageId, EqworkPackageTyp
 	 * Identifies the granularity of the exported records.
 	 */
 	public enum ScopeLevel {
-		SUBJECT, EXAMS, BOOKLETS
+		/** The entire Subject. */
+		SUBJECT,
+		/** One or more specified Exams. */
+		EXAMS,
+		/** One or more specified Exam Booklets. */
+		BOOKLETS
 	}
 
 	/**
@@ -178,10 +183,19 @@ public record EqworkManifest(int formatVersion, UUID packageId, EqworkPackageTyp
 	}
 
 	/**
-	 * Identifies the role of an indexed archive entry.
+	 * Identifies the responsibility of an indexed archive entry.
 	 */
 	public enum EntryRole {
-		RECORDS, ASSET, BASELINE, INDEX, RECEIPT
+		/** Structured JSONL domain records. */
+		RECORDS,
+		/** Immutable binary assets addressed by SHA-256. */
+		ASSET,
+		/** Immutable baseline data for contribution reconciliation. */
+		BASELINE,
+		/** Structured indexes describing package content. */
+		INDEX,
+		/** Import acknowledgement and reconciliation outcomes. */
+		RECEIPT
 	}
 
 	/**

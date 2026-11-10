@@ -3657,6 +3657,7 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	@SuppressWarnings("unused")
 	private void replaceActiveAnswerPdf(Stage primaryStage, ApplicationConfig config) {
 		if (!allowAnswerPdfReplacement()) {
 			return;
@@ -3747,6 +3748,7 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	@SuppressWarnings("unused")
 	private void replaceActiveQuestionPdf(Stage primaryStage, ApplicationConfig config) {
 		if (!allowQuestionPdfReplacement()) {
 			return;

@@ -32,7 +32,7 @@ class ScreenAwareWindowsTest {
 
 	@Test
 	void dialogRemainsUsableAfterFitAndReopening(FxRobot robot) {
-		Dialog<Void>[] holder = new Dialog[1];
+		Dialog<?>[] holder = new Dialog<?>[1];
 		robot.interact(() -> {
 			Dialog<Void> dialog = new Dialog<>();
 			holder[0] = dialog;

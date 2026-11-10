@@ -17,6 +17,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 /**
@@ -39,14 +40,15 @@ public final class EqworkManifestCodec {
 				.streamReadConstraints(
 						StreamReadConstraints.builder().maxNestingDepth(16).maxStringLength(MAX_MANIFEST_BYTES).build())
 				.enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build();
-		mapper = new ObjectMapper(factory);
-		mapper.registerModule(new JavaTimeModule());
-		mapper.configure(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY, true);
-		mapper.configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
-		mapper.configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
-		mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, true);
-		mapper.configure(DeserializationFeature.FAIL_ON_TRAILING_TOKENS, true);
-		mapper.setSerializationInclusion(JsonInclude.Include.NON_NULL);
+		mapper = JsonMapper.builder(factory).addModule(new JavaTimeModule())
+				.configure(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY, true)
+				.configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true)
+				.configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false)
+				.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, true)
+				.configure(DeserializationFeature.FAIL_ON_TRAILING_TOKENS, true)
+				.defaultPropertyInclusion(
+						JsonInclude.Value.construct(JsonInclude.Include.NON_NULL, JsonInclude.Include.NON_NULL))
+				.build();
 	}
 
 	/**
