@@ -30,32 +30,6 @@ class ScreenAwareWindowsTest {
 
 	private Stage stage;
 
-	@Start
-	void start(Stage stage) {
-		this.stage = stage;
-		stage.setScene(new Scene(new StackPane(new Button("Essential action")), 1400, 900));
-		stage.show();
-	}
-
-	@Test
-	void oversizedStageGetsReachableScrollableContentAndReducedMinimum(FxRobot robot) {
-		robot.interact(() -> {
-			stage.setMinWidth(1200);
-			stage.setMinHeight(800);
-			Rectangle2D screen = new Rectangle2D(0, 0, 800, 560);
-			ScreenAwareWindows.fit(stage, List.of(screen), screen);
-			assertTrue(stage.getWidth() <= 800);
-			assertTrue(stage.getHeight() <= 560);
-			assertTrue(stage.getMinWidth() <= 800);
-			assertTrue(stage.getMinHeight() <= 560);
-			ScrollPane viewport = assertInstanceOf(ScrollPane.class, stage.getScene().getRoot());
-			assertEquals("Essential action",
-					((Button) ((StackPane) viewport.getContent()).getChildren().getFirst()).getText());
-			ScreenAwareWindows.fit(stage, List.of(screen), screen);
-			assertSame(viewport, stage.getScene().getRoot());
-		});
-	}
-
 	@Test
 	void dialogRemainsUsableAfterFitAndReopening(FxRobot robot) {
 		Dialog<Void>[] holder = new Dialog[1];
@@ -78,5 +52,31 @@ class ScreenAwareWindowsTest {
 			assertTrue(holder[0].isShowing());
 			holder[0].close();
 		});
+	}
+
+	@Test
+	void oversizedStageGetsReachableScrollableContentAndReducedMinimum(FxRobot robot) {
+		robot.interact(() -> {
+			stage.setMinWidth(1200);
+			stage.setMinHeight(800);
+			Rectangle2D screen = new Rectangle2D(0, 0, 800, 560);
+			ScreenAwareWindows.fit(stage, List.of(screen), screen);
+			assertTrue(stage.getWidth() <= 800);
+			assertTrue(stage.getHeight() <= 560);
+			assertTrue(stage.getMinWidth() <= 800);
+			assertTrue(stage.getMinHeight() <= 560);
+			ScrollPane viewport = assertInstanceOf(ScrollPane.class, stage.getScene().getRoot());
+			assertEquals("Essential action",
+					((Button) ((StackPane) viewport.getContent()).getChildren().getFirst()).getText());
+			ScreenAwareWindows.fit(stage, List.of(screen), screen);
+			assertSame(viewport, stage.getScene().getRoot());
+		});
+	}
+
+	@Start
+	void start(Stage stage) {
+		this.stage = stage;
+		stage.setScene(new Scene(new StackPane(new Button("Essential action")), 1400, 900));
+		stage.show();
 	}
 }

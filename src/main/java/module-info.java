@@ -12,6 +12,9 @@ module au.edu.eq.questionbank {
 	requires java.prefs;
 	requires java.sql;
 	requires java.xml;
+	requires com.fasterxml.jackson.core;
+	requires com.fasterxml.jackson.databind;
+	requires com.fasterxml.jackson.datatype.jsr310;
 	requires javafx.base;
 	requires javafx.controls;
 	requires javafx.graphics;
@@ -45,6 +48,7 @@ module au.edu.eq.questionbank {
 	opens au.edu.eq.questionbank.service.render;
 	opens au.edu.eq.questionbank.service.retrieval;
 	opens au.edu.eq.questionbank.service.revision;
+	opens au.edu.eq.questionbank.service.workpackage;
 	opens au.edu.eq.questionbank.ui;
 	opens au.edu.eq.questionbank.ui.audit;
 	opens au.edu.eq.questionbank.ui.capture;
