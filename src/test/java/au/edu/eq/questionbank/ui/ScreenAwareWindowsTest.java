@@ -30,11 +30,28 @@ class ScreenAwareWindowsTest {
 
 	private Stage stage;
 
-	@Start
-	void start(Stage stage) {
-		this.stage = stage;
-		stage.setScene(new Scene(new StackPane(new Button("Essential action")), 1400, 900));
-		stage.show();
+	@Test
+	void dialogRemainsUsableAfterFitAndReopening(FxRobot robot) {
+		Dialog<?>[] holder = new Dialog<?>[1];
+		robot.interact(() -> {
+			Dialog<Void> dialog = new Dialog<>();
+			holder[0] = dialog;
+			dialog.initOwner(stage);
+			dialog.getDialogPane().setPrefSize(1400, 900);
+			dialog.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
+			dialog.show();
+			Rectangle2D screen = new Rectangle2D(0, 0, 800, 560);
+			ScreenAwareWindows.fit((Stage) dialog.getDialogPane().getScene().getWindow(), List.of(screen), screen);
+			assertTrue(dialog.getWidth() <= 800);
+			assertTrue(dialog.getHeight() <= 560);
+			((Button) dialog.getDialogPane().lookupButton(ButtonType.CLOSE)).fire();
+		});
+		WaitForAsyncUtils.waitForFxEvents();
+		robot.interact(() -> {
+			holder[0].show();
+			assertTrue(holder[0].isShowing());
+			holder[0].close();
+		});
 	}
 
 	@Test
@@ -56,27 +73,10 @@ class ScreenAwareWindowsTest {
 		});
 	}
 
-	@Test
-	void dialogRemainsUsableAfterFitAndReopening(FxRobot robot) {
-		Dialog<Void>[] holder = new Dialog[1];
-		robot.interact(() -> {
-			Dialog<Void> dialog = new Dialog<>();
-			holder[0] = dialog;
-			dialog.initOwner(stage);
-			dialog.getDialogPane().setPrefSize(1400, 900);
-			dialog.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
-			dialog.show();
-			Rectangle2D screen = new Rectangle2D(0, 0, 800, 560);
-			ScreenAwareWindows.fit((Stage) dialog.getDialogPane().getScene().getWindow(), List.of(screen), screen);
-			assertTrue(dialog.getWidth() <= 800);
-			assertTrue(dialog.getHeight() <= 560);
-			((Button) dialog.getDialogPane().lookupButton(ButtonType.CLOSE)).fire();
-		});
-		WaitForAsyncUtils.waitForFxEvents();
-		robot.interact(() -> {
-			holder[0].show();
-			assertTrue(holder[0].isShowing());
-			holder[0].close();
-		});
+	@Start
+	void start(Stage stage) {
+		this.stage = stage;
+		stage.setScene(new Scene(new StackPane(new Button("Essential action")), 1400, 900));
+		stage.show();
 	}
 }

@@ -1,7 +1,5 @@
 package au.edu.eq.questionbank.ui.search;
 
-import au.edu.eq.questionbank.ui.curriculum.DescriptorComboBoxSupport;
-
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.List;
@@ -34,6 +32,7 @@ import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
 import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalResult;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
+import au.edu.eq.questionbank.ui.curriculum.DescriptorComboBoxSupport;
 import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
@@ -1238,6 +1237,7 @@ public class QuestionSearchPane extends BorderPane {
 		return pane;
 	}
 
+	@SuppressWarnings("unused")
 	private VBox createQuestionDetailsPane() {
 		Label detailsLabel = new Label("Question details");
 		detailsLabel.setStyle("-fx-font-weight: bold;");
