@@ -113,33 +113,26 @@ public final class EqworkArchiveWriter {
 		Objects.requireNonNull(manifest, "manifest");
 		Objects.requireNonNull(sources, "sources");
 		Objects.requireNonNull(output, "output");
-
 		if (manifest.entries().size() + 1 > MAX_ENTRIES) {
 			throw new EqworkFormatException(".eqwork archive exceeds maximum entry count");
 		}
-
 		Set<String> requiredPaths = new HashSet<>();
 		long declaredTotal = 0;
-
 		for (Entry entry : manifest.entries()) {
 			requireRoleAndPath(entry);
 			requiredPaths.add(entry.path());
-
 			long maximum = entry.role() == EntryRole.ASSET ? MAX_ASSET_BYTES : MAX_STRUCTURED_BYTES;
 			if (entry.size() > maximum) {
 				throw new EqworkFormatException("Archive entry exceeds maximum size: " + entry.path());
 			}
-
 			declaredTotal += entry.size();
 			if (declaredTotal > MAX_TOTAL_BYTES) {
 				throw new EqworkFormatException("Archive exceeds maximum uncompressed size");
 			}
 		}
-
 		if (!sources.keySet().equals(requiredPaths)) {
 			throw new EqworkFormatException("Supplied package content disagrees with manifest entries");
 		}
-
 		for (String path : requiredPaths) {
 			if (sources.get(path) == null) {
 				throw new EqworkFormatException("Missing archive content source: " + path);
@@ -151,7 +144,6 @@ public final class EqworkArchiveWriter {
 		if (indexSource == null) {
 			throw new EqworkFormatException("Missing required asset-reference index");
 		}
-
 		try (InputStream input = Objects.requireNonNull(indexSource.open(), "asset index stream")) {
 			EqworkAssetIndex index = jsonlCodec.readAssetIndex(input);
 			index.requireMatchingManifest(manifest);
@@ -159,18 +151,15 @@ public final class EqworkArchiveWriter {
 
 		// Check canonical structured content and cross-file identities.
 		Set<String> currentStateIdentities = new HashSet<>();
-
 		for (Entry entry : manifest.entries()) {
 			if (entry.role() != EntryRole.RECORDS && entry.role() != EntryRole.BASELINE
 					&& entry.role() != EntryRole.RECEIPT) {
 				continue;
 			}
-
 			try (InputStream input = Objects.requireNonNull(sources.get(entry.path()).open(), "JSONL stream")) {
 				for (EqworkRecord record : jsonlCodec.readRecords(input)) {
 					if (entry.role() == EntryRole.RECORDS) {
 						String identity = record.recordType() + "\0" + record.recordId();
-
 						if (!currentStateIdentities.add(identity)) {
 							throw new EqworkFormatException("Duplicate current-state record identity: " + identity);
 						}
@@ -178,20 +167,15 @@ public final class EqworkArchiveWriter {
 				}
 			}
 		}
-
 		ByteArrayOutputStream manifestBytes = new ByteArrayOutputStream();
 		manifestCodec.write(manifest, manifestBytes);
-
 		ZipArchiveOutputStream zip = new ZipArchiveOutputStream(output);
 		zip.setEncoding("UTF-8");
 		zip.setUseZip64(Zip64Mode.AsNeeded);
-
 		writeEntry(zip, "manifest.json", manifestBytes.toByteArray());
-
 		for (Entry entry : manifest.entries()) {
 			writeEntry(zip, entry, sources.get(entry.path()));
 		}
-
 		zip.finish();
 
 		// Check the complete physical archive, including ZIP headers and
@@ -204,11 +188,9 @@ public final class EqworkArchiveWriter {
 	private void writeEntry(ZipArchiveOutputStream zip, Entry entry, EntrySource source) throws IOException {
 		ZipArchiveEntry archiveEntry = zipEntry(entry.path());
 		zip.putArchiveEntry(archiveEntry);
-
 		MessageDigest digest = newDigest();
 		long count = 0;
 		byte[] buffer = new byte[8192];
-
 		try (InputStream input = Objects.requireNonNull(source.open(), "archive content stream")) {
 			int length;
 			while ((length = input.read(buffer)) != -1) {
@@ -218,16 +200,13 @@ public final class EqworkArchiveWriter {
 				if (count > entry.size()) {
 					throw new EqworkFormatException("Archive source exceeds declared size: " + entry.path());
 				}
-
 				digest.update(buffer, 0, length);
 				zip.write(buffer, 0, length);
 			}
 		}
-
 		if (count != entry.size() || !HexFormat.of().formatHex(digest.digest()).equals(entry.sha256())) {
 			throw new EqworkFormatException("Archive source length or SHA-256 mismatch: " + entry.path());
 		}
-
 		zip.closeArchiveEntry();
 
 		// Commons Compress updates the entry's compressed size when the

@@ -24,6 +24,7 @@ import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
+import au.edu.eq.questionbank.repository.sqlite.HistoricalSchemaFixture;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 class SqliteSharedQuestionContextRepositoryTest {
@@ -44,6 +45,7 @@ class SqliteSharedQuestionContextRepositoryTest {
 		// Reconstruct the pre-migration v23 schema using an isolated
 		// temporary database. The existing PDF region rows remain intact.
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			HistoricalSchemaFixture.removeVersion25Objects(statement);
 			statement.execute("DROP TABLE shared_question_context_content_parts");
 			statement.execute("DROP TABLE shared_question_context_images");
 			statement.execute("UPDATE schema_version SET version = 23");
@@ -119,7 +121,7 @@ class SqliteSharedQuestionContextRepositoryTest {
 
 		// Retrying on the same database must now succeed.
 		database.initialiseSchema();
-		assertEquals(24, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		assertTrue(tableExists(database, "shared_question_context_images"));
 		assertTrue(tableExists(database, "shared_question_context_content_parts"));
 		SharedQuestionContext migrated = fixture.repository().findByBooklet(fixture.firstBooklet()).getFirst();
@@ -132,7 +134,7 @@ class SqliteSharedQuestionContextRepositoryTest {
 
 		// Reinitialisation must be idempotent.
 		database.initialiseSchema();
-		assertEquals(24, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		assertEquals(2, rowCount(database, "shared_question_context_regions"));
 		assertEquals(2, rowCount(database, "shared_question_context_content_parts"));
 		assertEquals(0, rowCount(database, "shared_question_context_images"));
