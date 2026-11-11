@@ -24,6 +24,7 @@ import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.model.SourceQuestionCodeParser;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 
 /**
  * Persists one complete question-capture workflow in a single SQLite
@@ -254,7 +255,7 @@ public final class SqliteQuestionCaptureService {
 
 			// Capture only operates on persisted booklets. A missing row indicates stale
 			// or inconsistent application state rather than an ordinary empty value.
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new IllegalStateException("Capture booklet could not be found: " + booklet.getId());
 			}
 		}
@@ -584,7 +585,7 @@ public final class SqliteQuestionCaptureService {
 
 			// Persist exactly one continuation owner. The foreign key ensures the
 			// referenced context itself exists.
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new IllegalStateException("Capture booklet could not be found: " + booklet.getId());
 			}
 		}

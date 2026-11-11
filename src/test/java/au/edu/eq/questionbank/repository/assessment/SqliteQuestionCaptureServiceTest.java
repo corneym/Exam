@@ -36,6 +36,7 @@ import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 import au.edu.eq.questionbank.repository.sqlite.SqliteReadProbe;
 
 class SqliteQuestionCaptureServiceTest {
@@ -345,7 +346,7 @@ class SqliteQuestionCaptureServiceTest {
 						.prepareStatement("UPDATE questions SET shared_context_id = ? WHERE id = ?")) {
 			statement.setLong(1, conflictingContext.getId());
 			statement.setLong(2, second.getId());
-			assertEquals(1, statement.executeUpdate());
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement));
 		}
 		SqliteQuestionCaptureService service = new SqliteQuestionCaptureService(database);
 		IllegalStateException failure = assertThrows(IllegalStateException.class,

@@ -15,6 +15,7 @@ import au.edu.eq.questionbank.model.SharedContextContentPart;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 
 /**
  * SQLite persistence for reusable shared question context and its ordered
@@ -113,7 +114,7 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 					statement.setString(1, label);
 					statement.setLong(2, context.getId());
 					statement.setLong(3, booklet.getId());
-					if (statement.executeUpdate() != 1) {
+					if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 						throw new IllegalArgumentException("Shared context does not exist for booklet");
 					}
 				}
@@ -172,7 +173,7 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 					statement.setString(1, label);
 					statement.setLong(2, context.getId());
 					statement.setLong(3, booklet.getId());
-					if (statement.executeUpdate() != 1) {
+					if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 						throw new IllegalArgumentException("Shared context does not exist for booklet");
 					}
 				}
@@ -301,7 +302,7 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 				""")) {
 			statement.setLong(1, contextId);
 			statement.setLong(2, bookletId);
-			return statement.executeUpdate() == 1;
+			return SqliteDirectChanges.executeUpdate(statement) == 1;
 		}
 	}
 

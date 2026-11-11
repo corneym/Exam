@@ -28,7 +28,8 @@ class SqliteDatabaseReadOnlyTest {
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		database.initialiseSchema();
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
-			assertEquals(1, statement.executeUpdate("INSERT INTO subjects (subject_name) " + "VALUES ('Chemistry')"));
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement,
+					"INSERT INTO subjects (subject_name) " + "VALUES ('Chemistry')"));
 		}
 	}
 

@@ -56,7 +56,7 @@ final class SqlitePortableIdentitySchema {
 				SET version = 25
 				WHERE version = 24
 				""")) {
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new SQLException("Portable identity migration requires schema v24");
 			}
 		}
@@ -146,7 +146,7 @@ final class SqlitePortableIdentitySchema {
 				VALUES (1, ?)
 				""")) {
 			statement.setString(1, UUID.randomUUID().toString());
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new SQLException("Could not create installation identity");
 			}
 		}

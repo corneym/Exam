@@ -177,12 +177,14 @@ class SqliteSharedQuestionContextRepositoryTest {
 		// Construct a representative v23 database using the established
 		// schema and data, but without the newly introduced v24 tables.
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
-			statement.execute("DROP TABLE shared_question_context_content_parts");
-			statement.execute("DROP TABLE shared_question_context_images");
+
+			// Remove v26 triggers, v25 identity structures and
+			// v24 mixed-content tables before reconstructing v23.
+			HistoricalSchemaFixture.removeVersion24Objects(statement);
 			statement.execute("UPDATE schema_version SET version = 23");
 		}
 		database.initialiseSchema();
-		assertEquals(24, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		SharedQuestionContext migrated = fixture.repository().findByBooklet(fixture.firstBooklet()).getFirst();
 		assertEquals(original.getId(), migrated.getId());
 		assertEquals(original.getLabel(), migrated.getLabel());

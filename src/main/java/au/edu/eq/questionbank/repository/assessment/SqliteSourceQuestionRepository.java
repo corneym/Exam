@@ -12,6 +12,7 @@ import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 
 /**
  * SQLite persistence for source-question identities.
@@ -137,7 +138,7 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 				""")) {
 			statement.setLong(1, sourceQuestion.getId());
 			statement.setLong(2, sourceQuestion.getBooklet().getId());
-			return statement.executeUpdate() == 1;
+			return SqliteDirectChanges.executeUpdate(statement) == 1;
 		}
 	}
 
@@ -222,7 +223,7 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 			statement.setString(1, sharedContextStatus.name());
 			statement.setLong(2, sourceQuestion.getId());
 			statement.setLong(3, sourceQuestion.getBooklet().getId());
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new IllegalStateException("Source question could not be updated: " + sourceQuestion.getId());
 			}
 		}

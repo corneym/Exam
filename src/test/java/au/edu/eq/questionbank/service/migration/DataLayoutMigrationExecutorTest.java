@@ -24,6 +24,7 @@ import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumSourcePdfRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 
 class DataLayoutMigrationExecutorTest {
 
@@ -171,7 +172,7 @@ class DataLayoutMigrationExecutorTest {
 						""")) {
 			statement.setString(1, relativePath);
 			statement.setLong(2, fixture.syllabus().getId());
-			assertEquals(1, statement.executeUpdate());
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement));
 		}
 	}
 

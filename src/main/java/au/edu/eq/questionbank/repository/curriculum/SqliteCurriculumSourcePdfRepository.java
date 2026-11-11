@@ -7,6 +7,7 @@ import java.sql.SQLException;
 import au.edu.eq.questionbank.model.CurriculumStatus;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 
 /**
  * SQLite persistence for managed curriculum source-PDF metadata.
@@ -50,7 +51,7 @@ public final class SqliteCurriculumSourcePdfRepository implements CurriculumSour
 						""")) {
 			statement.setString(1, relativePath);
 			statement.setLong(2, syllabusVersion.getId());
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new IllegalStateException(
 						"Syllabus version is not available for source-PDF update: " + syllabusVersion.getId());
 			}

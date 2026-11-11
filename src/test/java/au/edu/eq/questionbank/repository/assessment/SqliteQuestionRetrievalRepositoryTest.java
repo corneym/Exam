@@ -33,6 +33,7 @@ import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumMappingWrite
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 import au.edu.eq.questionbank.repository.sqlite.SqliteReadProbe;
 
 class SqliteQuestionRetrievalRepositoryTest {
@@ -166,7 +167,7 @@ class SqliteQuestionRetrievalRepositoryTest {
 						WHERE id = ?
 						""")) {
 			statement.setLong(1, fixture.currentVersionId());
-			assertEquals(1, statement.executeUpdate());
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement));
 		}
 		SqliteDatabase reopenedDatabase = new SqliteDatabase(fixture.databasePath());
 		reopenedDatabase.initialiseSchema();

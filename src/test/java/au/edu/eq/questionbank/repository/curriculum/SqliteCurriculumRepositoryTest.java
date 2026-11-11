@@ -25,6 +25,7 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 
 class SqliteCurriculumRepositoryTest {
 
@@ -259,7 +260,7 @@ class SqliteCurriculumRepositoryTest {
 			statement.setString(1, finalisedAt.toString());
 			statement.setString(2, sourcePdfPath);
 			statement.setLong(3, syllabus.getId());
-			assertEquals(1, statement.executeUpdate());
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement));
 		}
 		SqliteCurriculumRepository repository = new SqliteCurriculumRepository(database);
 		SyllabusVersion reloaded = repository.findVersionById(syllabus.getId()).orElseThrow();

@@ -16,6 +16,7 @@ import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 
 /**
  * Persists answer source files, answers, and ordered answer regions in SQLite.
@@ -554,7 +555,7 @@ public final class SqliteAnswerWriter {
 			statement.setLong(3, booklet.getExam().getId());
 			statement.setLong(4, answerFile.getId());
 			statement.setLong(5, booklet.getExam().getId());
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new IllegalArgumentException(
 						"Answer file and booklet must both exist and belong to the same exam");
 			}
@@ -841,7 +842,7 @@ public final class SqliteAnswerWriter {
 			statement.setBoolean(1, containsAnswerExplanations);
 			statement.setLong(2, answerFile.getId());
 			statement.setLong(3, answerFile.getExam().getId());
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new IllegalArgumentException("Answer file does not exist for its stored Exam");
 			}
 		}
@@ -863,7 +864,7 @@ public final class SqliteAnswerWriter {
 			statement.setLong(2, booklet.getExam().getId());
 
 			// Clearing an assignment must target the exact persisted booklet.
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new IllegalArgumentException("Exam booklet does not exist for its stored Exam");
 			}
 		}
@@ -877,7 +878,7 @@ public final class SqliteAnswerWriter {
 				""")) {
 			statement.setString(1, answerText);
 			statement.setLong(2, answerId);
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new SQLException("Answer update affected an unexpected number of rows");
 			}
 		}

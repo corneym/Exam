@@ -6,6 +6,7 @@ import java.sql.SQLException;
 
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 
 /**
  * Constructs historical COMPLETE-state fixtures for persistence tests.
@@ -32,7 +33,7 @@ final class HistoricalCompleteExamFixture {
 						""")) {
 			statement.setLong(1, exam.getId());
 			statement.setLong(2, exam.getSubject().getId());
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new IllegalStateException("Historical Exam fixture was not persisted");
 			}
 		}

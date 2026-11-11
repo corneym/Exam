@@ -2272,12 +2272,12 @@ class SqliteConnectionTest {
 			}
 
 			// Link the existing booklet, retaining its ID and PDF.
-			assertEquals(1, statement.executeUpdate("""
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
 					UPDATE exam_booklets
 					SET legacy_paper_code = 'MCQ'
 					WHERE id = 10
 					"""));
-			assertEquals(1, statement.executeUpdate("""
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
 					UPDATE exam_booklets
 					SET booklet_name = 'Renamed Sample MCQ'
 					WHERE id = 10
@@ -2304,14 +2304,14 @@ class SqliteConnectionTest {
 					"""));
 
 			// Different Papers may belong to the same Exam.
-			assertEquals(1, statement.executeUpdate("""
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
 					UPDATE exam_booklets
 					SET legacy_paper_code = '1'
 					WHERE id = 11
 					"""));
 
 			// The same Paper code is valid in a different Exam.
-			assertEquals(1, statement.executeUpdate("""
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
 					UPDATE exam_booklets
 					SET legacy_paper_code = 'MCQ'
 					WHERE id = 13

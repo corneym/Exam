@@ -19,6 +19,7 @@ import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 
 /**
  * Inserts examination metadata and source-document references into SQLite,
@@ -81,7 +82,7 @@ public final class SqliteExamWriter {
 				statement.setLong(2, booklet.getId());
 
 				// Only an existing legacy row may be classified by this operation.
-				if (statement.executeUpdate() != 1) {
+				if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 					throw new IllegalStateException(
 							"Legacy booklet question format could not be updated: " + booklet.getId());
 				}
@@ -1076,7 +1077,7 @@ public final class SqliteExamWriter {
 					statement.setString(1, captureState.name());
 					statement.setLong(2, exam.getId());
 					statement.setLong(3, exam.getSubject().getId());
-					if (statement.executeUpdate() != 1) {
+					if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 						throw new IllegalArgumentException("Exam does not exist for its stored subject");
 					}
 				}
@@ -1182,7 +1183,7 @@ public final class SqliteExamWriter {
 				statement.setObject(2, expectedAnswerFileCount);
 				statement.setLong(3, exam.getId());
 				statement.setLong(4, exam.getSubject().getId());
-				if (statement.executeUpdate() != 1) {
+				if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 					throw new IllegalArgumentException("Exam does not exist for its stored subject");
 				}
 			}
@@ -1695,7 +1696,7 @@ public final class SqliteExamWriter {
 
 			// Match both persistent identities so a stale booklet object cannot update a
 			// row belonging to another Exam.
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new IllegalArgumentException("Exam booklet does not exist for its stored Exam");
 			}
 		}
@@ -1797,7 +1798,7 @@ public final class SqliteExamWriter {
 			statement.setString(1, paperCode);
 			statement.setLong(2, booklet.getId());
 			statement.setLong(3, booklet.getExam().getId());
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new IllegalStateException(
 						"Legacy Paper link could not be saved for booklet ID " + booklet.getId());
 			}
@@ -1836,7 +1837,7 @@ public final class SqliteExamWriter {
 			statement.setString(3, name);
 			statement.setLong(4, exam.getId());
 			statement.setLong(5, exam.getSubject().getId());
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new IllegalArgumentException("Exam does not exist for its stored subject");
 			}
 		}
@@ -1971,7 +1972,7 @@ public final class SqliteExamWriter {
 
 				// A correction must never silently ignore a stale or fabricated source
 				// document identifier.
-				if (statement.executeUpdate() != 1) {
+				if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 					throw new IllegalArgumentException("Source document does not exist: " + sourceDocumentId);
 				}
 			}

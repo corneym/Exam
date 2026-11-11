@@ -57,6 +57,7 @@ import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumMappingRevie
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 import au.edu.eq.questionbank.service.audit.BookletCorpusStatus;
 import au.edu.eq.questionbank.service.audit.ExamCorpusAuditService;
 import au.edu.eq.questionbank.service.audit.ExamCorpusStatus;
@@ -1331,7 +1332,7 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 						WHERE id = ?
 						""")) {
 			statement.setLong(1, originalBooklet.getId());
-			assertEquals(1, statement.executeUpdate());
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement));
 		}
 		SqliteExamWriter writer = new SqliteExamWriter(database);
 		ExamBooklet legacyBooklet = writer
@@ -2050,7 +2051,7 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 						""")) {
 			statement.setLong(1, exam.getId());
 			statement.setLong(2, exam.getSubject().getId());
-			assertEquals(1, statement.executeUpdate());
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement));
 		}
 	}
 

@@ -15,6 +15,7 @@ import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SourceQuestionCodeParser;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 
 /**
  * Corrects editable legacy question metadata without requiring ordinary
@@ -104,7 +105,7 @@ public final class LegacyQuestionMetadataService {
 					statement.setString(1, responseType.name());
 					statement.setLong(2, question.getId());
 					statement.setString(3, QuestionResponseType.UNKNOWN.name());
-					int updated = statement.executeUpdate();
+					int updated = SqliteDirectChanges.executeUpdate(statement);
 					if (updated != 1) {
 						throw new IllegalStateException(
 								"Question is missing or response type is no longer UNKNOWN: " + question.getId());
@@ -629,7 +630,7 @@ public final class LegacyQuestionMetadataService {
 			statement.setString(7, responseType.name());
 			statement.setLong(8, questionId);
 			statement.setLong(9, bookletId);
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new SQLException("Question metadata update affected an unexpected number of rows");
 			}
 		}

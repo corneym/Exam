@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 
 class SqliteBookletApplicabilityReviewRepositoryTest {
 
@@ -242,7 +243,7 @@ class SqliteBookletApplicabilityReviewRepositoryTest {
 		repository.setReviewed(20, true);
 		repository.setReviewed(30, true);
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
-			assertEquals(1, statement.executeUpdate("""
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
 					UPDATE exam_booklets
 					SET legacy_paper_code = '1'
 					WHERE id = 10
@@ -253,12 +254,12 @@ class SqliteBookletApplicabilityReviewRepositoryTest {
 		assertEquals(Set.of(10L, 20L), repository.findReviewedBookletIds(1));
 		assertTrue(repository.isReviewed(30));
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
-			assertEquals(1, statement.executeUpdate("""
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
 					UPDATE exam_booklets
 					SET legacy_paper_code = 'MCQ'
 					WHERE id = 10
 					"""));
-			assertEquals(1, statement.executeUpdate("""
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
 					UPDATE exam_booklets
 					SET expected_question_count = expected_question_count
 					WHERE id = 10

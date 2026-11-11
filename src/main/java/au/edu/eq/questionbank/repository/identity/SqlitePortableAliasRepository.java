@@ -10,6 +10,7 @@ import java.util.UUID;
 
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 
 /**
  * Persists explicitly approved cross-installation entity aliases.
@@ -66,6 +67,10 @@ public final class SqlitePortableAliasRepository {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
+
+				// The same originating entity cannot be approved
+				// under two different domain types.
+				rejectConflictingOriginType(connection, originInstallationId, entityType, originPortableId);
 				Optional<UUID> existing = findAlias(connection, originInstallationId, entityType, originPortableId);
 				if (existing.isPresent()) {
 					if (!existing.get().equals(canonicalPortableId)) {
@@ -73,8 +78,8 @@ public final class SqlitePortableAliasRepository {
 								"Origin identity already maps to a " + "different canonical entity");
 					}
 
-					// A previously approved alias remains historical
-					// evidence even if its target is now retired.
+					// Preserve the original approval even if its
+					// canonical target has subsequently been retired.
 					connection.commit();
 					return existing.get();
 				}
@@ -94,7 +99,7 @@ public final class SqlitePortableAliasRepository {
 					statement.setString(3, originPortableId.toString());
 					statement.setString(4, canonicalPortableId.toString());
 					statement.setString(5, approvalNote.strip());
-					if (statement.executeUpdate() != 1) {
+					if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 						throw new SQLException("Could not persist approved identity alias");
 					}
 				}
@@ -160,6 +165,28 @@ public final class SqlitePortableAliasRepository {
 					throw new SQLException("Duplicate origin identity alias");
 				}
 				return Optional.of(canonical);
+			}
+		}
+	}
+
+	private void rejectConflictingOriginType(Connection connection, UUID originInstallationId, EntityType entityType,
+			UUID originPortableId) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT entity_type
+				FROM portable_identity_aliases
+				WHERE origin_installation_id = ?
+				  AND origin_portable_id = ?
+				  AND entity_type <> ?
+				LIMIT 1
+				""")) {
+			statement.setString(1, originInstallationId.toString());
+			statement.setString(2, originPortableId.toString());
+			statement.setString(3, entityType.name());
+			try (ResultSet result = statement.executeQuery()) {
+				if (result.next()) {
+					throw new IllegalStateException("Origin UUID is already approved as "
+							+ result.getString("entity_type") + " and cannot be approved as " + entityType.name());
+				}
 			}
 		}
 	}

@@ -129,6 +129,38 @@ class SqlitePortableAliasRepositoryTest {
 		assertEquals(1, countAliases(master));
 	}
 
+	@Test
+	void sameOriginUuidCannotBeApprovedUnderDifferentEntityTypes() throws Exception {
+		SqliteDatabase master = createDatabase("type-conflict.db");
+		Subject subject = new SqliteCurriculumWriter(master).insertSubject("Biology");
+		try (Connection connection = master.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					INSERT INTO exam_providers (id, provider_name)
+					VALUES (1, 'QCAA')
+					""");
+		}
+		SqlitePortableIdentityRepository identities = new SqlitePortableIdentityRepository(master);
+		UUID subjectId = identities.requireByLocalId(EntityType.SUBJECT, subject.getId()).portableId();
+		UUID providerId = identities.requireByLocalId(EntityType.EXAM_PROVIDER, 1).portableId();
+		UUID originInstallation = UUID.randomUUID();
+		UUID originRecord = UUID.randomUUID();
+		SqlitePortableAliasRepository aliases = new SqlitePortableAliasRepository(master);
+		aliases.approveAlias(originInstallation, EntityType.SUBJECT, originRecord, subjectId,
+				"Reviewed Biology identity");
+
+		// Same installation and origin record UUID, but a different
+		// type, must be rejected before writing another alias.
+		assertThrows(IllegalStateException.class, () -> aliases.approveAlias(originInstallation,
+				EntityType.EXAM_PROVIDER, originRecord, providerId, "Conflicting provider claim"));
+		assertEquals(subjectId, aliases.findAlias(originInstallation, EntityType.SUBJECT, originRecord).orElseThrow());
+		assertTrue(aliases.findAlias(originInstallation, EntityType.EXAM_PROVIDER, originRecord).isEmpty());
+		assertEquals(1, countAliases(master));
+
+		// Approval rejection must leave a structurally valid database.
+		master.verifySchema();
+		master.verifyIntegrity();
+	}
+
 	private int countAliases(SqliteDatabase database) throws SQLException {
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();

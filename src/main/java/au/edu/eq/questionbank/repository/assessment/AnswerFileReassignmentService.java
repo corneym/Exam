@@ -12,6 +12,7 @@ import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 
 /**
  * Safely changes the AnswerFile assigned to one ExamBooklet.
@@ -170,7 +171,7 @@ public final class AnswerFileReassignmentService {
 			statement.setLong(3, booklet.getExam().getId());
 			statement.setLong(4, answerFile.getId());
 			statement.setLong(5, booklet.getExam().getId());
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new IllegalArgumentException(
 						"AnswerFile and booklet must both exist and belong to the same Exam");
 			}
@@ -216,7 +217,7 @@ public final class AnswerFileReassignmentService {
 
 				// Delete only Answers identified before invalidation as having no
 				// independent textual content.
-				if (statement.executeUpdate() != 1) {
+				if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 					throw new SQLException(
 							"Region-only Answer could not be removed after AnswerFile reassignment: " + answerId);
 				}
@@ -374,7 +375,7 @@ public final class AnswerFileReassignmentService {
 
 			// Another booklet or surviving Answer region still makes the old AnswerFile
 			// authoritative, so shared assets must remain untouched.
-			if (statement.executeUpdate() == 0) {
+			if (SqliteDirectChanges.executeUpdate(statement) == 0) {
 				return null;
 			}
 		}
@@ -399,7 +400,7 @@ public final class AnswerFileReassignmentService {
 
 			// The physical managed PDF may be removed only when this deletion proves that
 			// no Question booklet or remaining AnswerFile still owns the source.
-			if (statement.executeUpdate() == 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) == 1) {
 				return sourceDocument;
 			}
 		}

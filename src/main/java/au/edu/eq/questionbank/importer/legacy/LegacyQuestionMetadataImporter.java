@@ -20,6 +20,7 @@ import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SourceQuestionCodeParser;
 import au.edu.eq.questionbank.repository.assessment.LegacyExamImportEligibility;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 
 /**
  * Preflights and atomically imports validated legacy question metadata into an
@@ -1018,7 +1019,7 @@ public final class LegacyQuestionMetadataImporter {
 				""")) {
 			statement.setString(1, responseType.name());
 			statement.setLong(2, questionId);
-			int updated = statement.executeUpdate();
+			int updated = SqliteDirectChanges.executeUpdate(statement);
 			if (updated > 1) {
 				throw new SQLException("Response-type update affected an unexpected number of rows");
 			}
@@ -1034,7 +1035,7 @@ public final class LegacyQuestionMetadataImporter {
 				""")) {
 			statement.setLong(1, sourceQuestionId);
 			statement.setLong(2, questionId);
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new SQLException("Source-question relationship update affected an unexpected number of rows");
 			}
 		}

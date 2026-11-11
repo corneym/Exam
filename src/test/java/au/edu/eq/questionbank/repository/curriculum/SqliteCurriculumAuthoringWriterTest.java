@@ -18,6 +18,7 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 import au.edu.eq.questionbank.service.curriculum.CurriculumAuthoringSession;
 import au.edu.eq.questionbank.service.curriculum.CurriculumDraft;
 import au.edu.eq.questionbank.service.curriculum.CurriculumDraftLoader;
@@ -50,7 +51,7 @@ class SqliteCurriculumAuthoringWriterTest {
 						""")) {
 			statement.setLong(1, protectedDescriptor.getId());
 			statement.setLong(2, otherDescriptor.getId());
-			assertEquals(1, statement.executeUpdate());
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement));
 		}
 		CurriculumDraftLoader loader = new CurriculumDraftLoader(new SqliteCurriculumAuthoringRepository(database));
 		CurriculumAuthoringSession session = loader.load(syllabus);
