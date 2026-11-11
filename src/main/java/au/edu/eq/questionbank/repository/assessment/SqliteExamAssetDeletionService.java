@@ -10,6 +10,7 @@ import java.util.List;
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 
 /**
  * Deletes persisted Exam assets and all metadata that depends on those assets.
@@ -287,7 +288,7 @@ public final class SqliteExamAssetDeletionService {
 				// ordinary bound parameters.
 				statement.setLong(index + 1, values[index]);
 			}
-			return statement.executeUpdate();
+			return SqliteDirectChanges.executeUpdate(statement);
 		}
 	}
 

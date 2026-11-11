@@ -119,10 +119,8 @@ class EqworkManifestCodecTest {
 	@Test
 	void rejectsUnsafePortableSubjectNames() throws Exception {
 		EqworkManifest base = example(EqworkPackageType.SUBJECT_SNAPSHOT);
-
 		for (String invalidName : List.of("..", "CON", "Chemistry.", " Chemistry", "Physics/Engineering",
 				"Physics\\Engineering", "C:Physics")) {
-
 			assertThrows(IllegalArgumentException.class,
 					() -> new EqworkManifest(base.formatVersion(), base.packageId(), base.packageType(),
 							base.createdAt(), base.originInstallationId(), base.intendedMasterInstallationId(),
@@ -131,9 +129,7 @@ class EqworkManifestCodecTest {
 							base.producerSchemaVersion(), base.minimumReaderSchemaVersion(), base.scope(),
 							base.entries()));
 		}
-
 		String invalidJson = asJson(base).replace("\"subjectName\":\"Biology\"", "\"subjectName\":\"../Physics\"");
-
 		assertThrows(EqworkFormatException.class, () -> readJson(invalidJson));
 	}
 

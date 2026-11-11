@@ -15,6 +15,7 @@ import java.util.UUID;
 
 import au.edu.eq.questionbank.model.CurriculumStatus;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 import au.edu.eq.questionbank.service.curriculum.CurriculumAuthoringSession;
 import au.edu.eq.questionbank.service.curriculum.CurriculumDraft;
 import au.edu.eq.questionbank.service.curriculum.CurriculumDraftNode;
@@ -102,7 +103,7 @@ public final class SqliteCurriculumAuthoringWriter implements CurriculumAuthorin
 			for (int index = 0; index < orderedIds.size(); index++) {
 				statement.setLong(index + 2, orderedIds.get(index));
 			}
-			int deleted = statement.executeUpdate();
+			int deleted = SqliteDirectChanges.executeUpdate(statement);
 			if (deleted != orderedIds.size()) {
 				throw new IllegalStateException(
 						"Expected to delete " + orderedIds.size() + " curriculum nodes but deleted " + deleted);
@@ -295,7 +296,7 @@ public final class SqliteCurriculumAuthoringWriter implements CurriculumAuthorin
 				statement.setString(1, "__curriculum_save_" + saveToken + "_" + persistentId);
 				statement.setLong(2, persistentId);
 				statement.setLong(3, syllabusVersionId);
-				if (statement.executeUpdate() != 1) {
+				if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 					throw new IllegalStateException(
 							"Could not prepare persisted curriculum node " + persistentId + " for update");
 				}
@@ -327,7 +328,7 @@ public final class SqliteCurriculumAuthoringWriter implements CurriculumAuthorin
 			setNullableInteger(statement, 6, node.sourcePageNumber());
 			statement.setLong(7, persistentId);
 			statement.setLong(8, syllabusVersionId);
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new IllegalStateException("Could not update persisted curriculum node " + persistentId);
 			}
 		}

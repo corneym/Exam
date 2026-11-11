@@ -37,6 +37,7 @@ import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
 
 class QuestionBookletPdfReplacementServiceTest {
@@ -190,7 +191,7 @@ class QuestionBookletPdfReplacementServiceTest {
 						""")) {
 			statement.setLong(1, context.getId());
 			statement.setLong(2, booklet.getId());
-			assertEquals(1, statement.executeUpdate());
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement));
 		}
 		QuestionBookletPdfReplacementService service = new QuestionBookletPdfReplacementService(database, pdfRoot);
 		QuestionBookletPdfReplacementService.Impact impact = service.assess(booklet);

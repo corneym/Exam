@@ -20,6 +20,7 @@ import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.model.SourceQuestionCodeParser;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 
 /**
  * Converts one legacy single Question into explicitly persisted multipart
@@ -138,7 +139,7 @@ public final class LegacyQuestionSplitService {
 				""")) {
 			statement.setLong(1, questionId);
 			statement.setLong(2, booklet.getId());
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new SQLException("Question shared context update affected an unexpected number of rows");
 			}
 		}

@@ -13,6 +13,7 @@ import java.util.UUID;
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 import au.edu.eq.questionbank.service.migration.DataLayoutMigrationPlan.AssetKind;
 import au.edu.eq.questionbank.service.migration.DataLayoutMigrationPlan.Move;
 
@@ -188,7 +189,7 @@ public final class DataLayoutMigrationExecutor {
 			statement.setString(1, move.newRelativePath());
 			statement.setLong(2, move.persistentId());
 			statement.setString(3, move.oldRelativePath());
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new IllegalStateException("Migration plan is stale for syllabus " + move.persistentId());
 			}
 		}
@@ -204,7 +205,7 @@ public final class DataLayoutMigrationExecutor {
 			statement.setString(1, move.newRelativePath());
 			statement.setLong(2, move.persistentId());
 			statement.setString(3, move.oldRelativePath());
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new IllegalStateException("Migration plan is stale for SourceDocument " + move.persistentId());
 			}
 		}

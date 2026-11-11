@@ -8,6 +8,7 @@ import java.time.Instant;
 import au.edu.eq.questionbank.model.CurriculumStatus;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 
 /**
  * SQLite persistence for curriculum lifecycle transitions.
@@ -48,7 +49,7 @@ public final class SqliteCurriculumLifecycleRepository implements CurriculumLife
 						""")) {
 			statement.setString(1, finalisedAt.toString());
 			statement.setLong(2, syllabusVersion.getId());
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new IllegalStateException(
 						"Syllabus version is not available for finalisation: " + syllabusVersion.getId());
 			}
@@ -73,7 +74,7 @@ public final class SqliteCurriculumLifecycleRepository implements CurriculumLife
 						  AND curriculum_status = 'FINAL'
 						""")) {
 			statement.setLong(1, syllabusVersion.getId());
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new IllegalStateException(
 						"Syllabus version is not available for reopening: " + syllabusVersion.getId());
 			}

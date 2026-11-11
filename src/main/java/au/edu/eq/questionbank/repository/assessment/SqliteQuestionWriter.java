@@ -20,6 +20,7 @@ import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 
 /**
  * Persists a question and its ordered source regions in one SQLite transaction.
@@ -538,7 +539,7 @@ public final class SqliteQuestionWriter {
 			statement.setLong(3, booklet.getId());
 
 			// A successful recapture must update exactly the Question being captured.
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new IllegalArgumentException("Question does not exist in the supplied booklet: " + questionId);
 			}
 		}
@@ -591,7 +592,7 @@ public final class SqliteQuestionWriter {
 				""")) {
 			statement.setLong(1, classification.getId());
 			statement.setLong(2, questionId);
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new SQLException("Question classification update affected an unexpected number of rows");
 			}
 		}
@@ -716,7 +717,7 @@ public final class SqliteQuestionWriter {
 				""")) {
 			statement.setString(1, responseType.name());
 			statement.setLong(2, questionId);
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new SQLException("Question response-type update affected an unexpected number of rows");
 			}
 		}
@@ -1070,7 +1071,7 @@ public final class SqliteQuestionWriter {
 				statement.setLong(3, sharedContext.getId());
 			}
 			statement.setLong(4, questionId);
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new SQLException("Question capture update affected an unexpected number of rows");
 			}
 		}
@@ -1102,7 +1103,7 @@ public final class SqliteQuestionWriter {
 				statement.setLong(5, sharedContext.getId());
 			}
 			statement.setLong(6, questionId);
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new SQLException("Question update affected an unexpected number of rows");
 			}
 		}
@@ -1127,7 +1128,7 @@ public final class SqliteQuestionWriter {
 				statement.setLong(2, sharedContext.getId());
 			}
 			statement.setLong(3, questionId);
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new SQLException("Question relationship update affected an unexpected number of rows");
 			}
 		}

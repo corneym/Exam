@@ -15,6 +15,7 @@ import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
 
 /**
@@ -285,7 +286,7 @@ public final class QuestionBookletPdfReplacementService {
 				WHERE id = ?
 				""")) {
 			statement.setLong(1, bookletId);
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new IllegalArgumentException("Exam booklet does not exist: " + bookletId);
 			}
 		}
@@ -456,7 +457,7 @@ public final class QuestionBookletPdfReplacementService {
 				""")) {
 			statement.setString(1, contentSha256);
 			statement.setLong(2, sourceDocumentId);
-			if (statement.executeUpdate() != 1) {
+			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 				throw new IllegalArgumentException("Source document does not exist: " + sourceDocumentId);
 			}
 		}

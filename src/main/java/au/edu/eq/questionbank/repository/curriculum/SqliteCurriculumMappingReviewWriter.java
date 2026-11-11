@@ -13,6 +13,7 @@ import au.edu.eq.questionbank.model.CurriculumMappingReviewOutcome;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 
 /**
  * Stores completed descriptor and subtopic mapping reviews in SQLite. Each
@@ -36,21 +37,6 @@ public final class SqliteCurriculumMappingReviewWriter {
 			throw new NullPointerException("database");
 		}
 		this.database = database;
-	}
-
-	private void confirmMapping(Connection connection, CurriculumNode source, CurriculumNode target)
-			throws SQLException {
-		try (PreparedStatement statement = connection.prepareStatement("""
-				INSERT INTO curriculum_mappings
-				    (source_node_id, target_node_id, mapping_status)
-				VALUES (?, ?, 'CONFIRMED')
-				ON CONFLICT (source_node_id, target_node_id)
-				DO UPDATE SET mapping_status = 'CONFIRMED'
-				""")) {
-			statement.setLong(1, source.getId());
-			statement.setLong(2, target.getId());
-			statement.executeUpdate();
-		}
 	}
 
 	/**
@@ -142,59 +128,6 @@ public final class SqliteCurriculumMappingReviewWriter {
 		}
 	}
 
-	private void deleteMappings(Connection connection, CurriculumNode source, SyllabusVersion targetVersion)
-			throws SQLException {
-
-		// Keep mappings to other target versions untouched.
-		try (PreparedStatement statement = connection.prepareStatement("""
-				DELETE FROM curriculum_mappings
-				WHERE source_node_id = ?
-				  AND target_node_id IN (
-				      SELECT id
-				      FROM curriculum_nodes
-				      WHERE syllabus_version_id = ?
-				  )
-				""")) {
-			statement.setLong(1, source.getId());
-			statement.setLong(2, targetVersion.getId());
-			statement.executeUpdate();
-		}
-	}
-
-	private boolean hasConfirmedMappings(Connection connection, CurriculumNode source, SyllabusVersion targetVersion)
-			throws SQLException {
-		try (PreparedStatement statement = connection.prepareStatement("""
-				SELECT COUNT(*)
-				FROM curriculum_mappings mapping
-				JOIN curriculum_nodes target
-				    ON target.id = mapping.target_node_id
-				WHERE mapping.source_node_id = ?
-				  AND target.syllabus_version_id = ?
-				  AND mapping.mapping_status = 'CONFIRMED'
-				""")) {
-			statement.setLong(1, source.getId());
-			statement.setLong(2, targetVersion.getId());
-			try (ResultSet result = statement.executeQuery()) {
-				result.next();
-				return result.getInt(1) > 0;
-			}
-		}
-	}
-
-	private void insertReview(Connection connection, CurriculumNode source, SyllabusVersion targetVersion,
-			CurriculumMappingReviewOutcome outcome) throws SQLException {
-		try (PreparedStatement statement = connection.prepareStatement("""
-				INSERT INTO curriculum_mapping_reviews
-				    (source_node_id, target_syllabus_version_id, review_outcome)
-				VALUES (?, ?, ?)
-				""")) {
-			statement.setLong(1, source.getId());
-			statement.setLong(2, targetVersion.getId());
-			statement.setString(3, outcome.name());
-			statement.executeUpdate();
-		}
-	}
-
 	/**
 	 * Atomically replaces the mappings for an existing review with one or more
 	 * confirmed mappings. Mappings from the same source to other target syllabus
@@ -280,6 +213,74 @@ public final class SqliteCurriculumMappingReviewWriter {
 		}
 	}
 
+	private void confirmMapping(Connection connection, CurriculumNode source, CurriculumNode target)
+			throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				INSERT INTO curriculum_mappings
+				    (source_node_id, target_node_id, mapping_status)
+				VALUES (?, ?, 'CONFIRMED')
+				ON CONFLICT (source_node_id, target_node_id)
+				DO UPDATE SET mapping_status = 'CONFIRMED'
+				""")) {
+			statement.setLong(1, source.getId());
+			statement.setLong(2, target.getId());
+			statement.executeUpdate();
+		}
+	}
+
+	private void deleteMappings(Connection connection, CurriculumNode source, SyllabusVersion targetVersion)
+			throws SQLException {
+
+		// Keep mappings to other target versions untouched.
+		try (PreparedStatement statement = connection.prepareStatement("""
+				DELETE FROM curriculum_mappings
+				WHERE source_node_id = ?
+				  AND target_node_id IN (
+				      SELECT id
+				      FROM curriculum_nodes
+				      WHERE syllabus_version_id = ?
+				  )
+				""")) {
+			statement.setLong(1, source.getId());
+			statement.setLong(2, targetVersion.getId());
+			statement.executeUpdate();
+		}
+	}
+
+	private boolean hasConfirmedMappings(Connection connection, CurriculumNode source, SyllabusVersion targetVersion)
+			throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT COUNT(*)
+				FROM curriculum_mappings mapping
+				JOIN curriculum_nodes target
+				    ON target.id = mapping.target_node_id
+				WHERE mapping.source_node_id = ?
+				  AND target.syllabus_version_id = ?
+				  AND mapping.mapping_status = 'CONFIRMED'
+				""")) {
+			statement.setLong(1, source.getId());
+			statement.setLong(2, targetVersion.getId());
+			try (ResultSet result = statement.executeQuery()) {
+				result.next();
+				return result.getInt(1) > 0;
+			}
+		}
+	}
+
+	private void insertReview(Connection connection, CurriculumNode source, SyllabusVersion targetVersion,
+			CurriculumMappingReviewOutcome outcome) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				INSERT INTO curriculum_mapping_reviews
+				    (source_node_id, target_syllabus_version_id, review_outcome)
+				VALUES (?, ?, ?)
+				""")) {
+			statement.setLong(1, source.getId());
+			statement.setLong(2, targetVersion.getId());
+			statement.setString(3, outcome.name());
+			statement.executeUpdate();
+		}
+	}
+
 	private void requireExistingReview(Connection connection, CurriculumNode source, SyllabusVersion targetVersion)
 			throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
@@ -317,7 +318,7 @@ public final class SqliteCurriculumMappingReviewWriter {
 			statement.setString(1, outcome.name());
 			statement.setLong(2, source.getId());
 			statement.setLong(3, targetVersion.getId());
-			int updatedRows = statement.executeUpdate();
+			int updatedRows = SqliteDirectChanges.executeUpdate(statement);
 			if (updatedRows != 1) {
 				throw new SQLException("Curriculum mapping review was not found or changed");
 			}

@@ -97,20 +97,92 @@ public final class HistoricalSchemaFixture {
 	}
 
 	/**
-	 * Removes version-24 Shared Context tables from a disposable historical test
-	 * fixture before its schema version is downgraded.
+	 * Removes schema objects introduced after version 23 from a disposable
+	 * historical database fixture.
 	 *
 	 * @param statement statement operating on the fixture connection
-	 * @throws SQLException if either table cannot be removed
+	 * @throws SQLException if schema cleanup fails
 	 */
 	public static void removeVersion24Objects(Statement statement) throws SQLException {
 		if (statement == null) {
 			throw new NullPointerException("statement");
 		}
 
-		// Content-order rows reference both source tables. Remove
-		// those references before dropping the image table.
+		// Newer portable identity tables must be removed before an older
+		// schema version can be reconstructed.
+		removeVersion25Objects(statement);
+
+		// Content-order rows reference the image and region tables.
 		statement.execute("DROP TABLE shared_question_context_content_parts");
 		statement.execute("DROP TABLE shared_question_context_images");
+	}
+
+	/**
+	 * Removes portable-identity structures introduced in versions 25 and 26 from an
+	 * isolated, disposable historical database fixture.
+	 *
+	 * @param statement statement operating on the fixture connection
+	 * @throws SQLException if schema cleanup fails
+	 */
+	public static void removeVersion25Objects(Statement statement) throws SQLException {
+		if (statement == null) {
+			throw new NullPointerException("statement");
+		}
+		removeVersion26Objects(statement);
+		List<String> triggers = new ArrayList<>();
+		try (Statement lookup = statement.getConnection().createStatement(); ResultSet result = lookup.executeQuery("""
+				SELECT name
+				FROM sqlite_master
+				WHERE type = 'trigger'
+				  AND name GLOB 'app_portable_*'
+				ORDER BY name
+				""")) {
+			while (result.next()) {
+				String name = result.getString("name");
+				if (!name.matches(
+						"app_portable_[a-z_]+_(insert|delete|id_update)" + "|app_portable_identity_immutable")) {
+					throw new SQLException("Unexpected portable identity trigger: " + name);
+				}
+				triggers.add(name);
+			}
+		}
+		for (String name : triggers) {
+			statement.execute("DROP TRIGGER \"" + name + "\"");
+		}
+		statement.execute("DROP TABLE IF EXISTS portable_identity_aliases");
+		statement.execute("DROP TABLE IF EXISTS portable_entity_retirements");
+		statement.execute("DROP TABLE IF EXISTS portable_entity_identities");
+		statement.execute("DROP TABLE IF EXISTS installation_identity");
+	}
+
+	/**
+	 * Removes version-26 revision triggers from a disposable test fixture.
+	 *
+	 * @param statement statement operating on the fixture connection
+	 * @throws SQLException if cleanup fails
+	 */
+	public static void removeVersion26Objects(Statement statement) throws SQLException {
+		if (statement == null) {
+			throw new NullPointerException("statement");
+		}
+		List<String> names = new ArrayList<>();
+		try (Statement lookup = statement.getConnection().createStatement(); ResultSet result = lookup.executeQuery("""
+				SELECT name
+				FROM sqlite_master
+				WHERE type = 'trigger'
+				  AND name GLOB 'app_revision_*'
+				ORDER BY name
+				""")) {
+			while (result.next()) {
+				String name = result.getString("name");
+				if (!name.matches("app_revision_[a-z_]+")) {
+					throw new SQLException("Unexpected revision trigger: " + name);
+				}
+				names.add(name);
+			}
+		}
+		for (String name : names) {
+			statement.execute("DROP TRIGGER \"" + name + "\"");
+		}
 	}
 }

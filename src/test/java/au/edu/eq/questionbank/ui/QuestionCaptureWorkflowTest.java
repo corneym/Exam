@@ -48,6 +48,7 @@ import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteSharedQuestionContextRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteSourceQuestionRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 import au.edu.eq.questionbank.service.curriculum.DescriptorLookupService.DescriptorMatch;
 import au.edu.eq.questionbank.ui.capture.AnswerCapturePane;
 import au.edu.eq.questionbank.ui.capture.QuestionCapturePane;
@@ -1555,7 +1556,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 						.prepareStatement("UPDATE questions SET shared_context_id = ? WHERE id = ?")) {
 			statement.setLong(1, conflictingContext.getId());
 			statement.setLong(2, second.getId());
-			assertEquals(1, statement.executeUpdate());
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement));
 		}
 		QuestionCapturePane pane = questionCapturePane();
 		robot.interact(pane::refreshImportedQuestions);
@@ -1593,7 +1594,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 				PreparedStatement statement = connection
 						.prepareStatement("UPDATE questions SET shared_context_id = NULL WHERE id = ?")) {
 			statement.setLong(1, second.getId());
-			assertEquals(1, statement.executeUpdate());
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement));
 		}
 
 		// Retrying must use freshly persisted Questions rather than
@@ -1839,7 +1840,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 						.prepareStatement("UPDATE questions SET shared_context_id = ? WHERE id = ?")) {
 			statement.setLong(1, conflictingContext.getId());
 			statement.setLong(2, second.getId());
-			assertEquals(1, statement.executeUpdate());
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement));
 		}
 		TextField code = lookup(robot, "#question-code", TextField.class);
 		TextField marks = lookup(robot, "#question-marks", TextField.class);
@@ -1873,7 +1874,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 						.prepareStatement("UPDATE questions SET shared_context_id = ? WHERE id = ?")) {
 			statement.setLong(1, firstContext.getId());
 			statement.setLong(2, second.getId());
-			assertEquals(1, statement.executeUpdate());
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement));
 		}
 
 		// Re-entering the code is a fresh workflow evaluation.

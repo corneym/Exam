@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 24;
+	private static final int LATEST_SCHEMA_VERSION = 26;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -730,6 +730,22 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v23-to-v24.sql", 24);
 			return 24;
 		}
+		if (version == 24) {
+
+			// Create permanent portable identities without changing the
+			// existing local primary keys or their relationships.
+			SqlitePortableIdentitySchema.migrate(connection);
+			verifySchema(connection, 25);
+			return 25;
+		}
+		if (version == 25) {
+
+			// Install mutation tracking within the same migration transaction.
+			// A failed trigger installation must leave the v25 database intact.
+			SqlitePortableRevisionTriggers.install(connection);
+			executeMigration(connection, "/db/migration-v25-to-v26.sql", 26);
+			return 26;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -1028,6 +1044,18 @@ public final class SqliteDatabase {
 			// Both storage tables and their foreign keys are required before
 			// mixed Shared Context content may be persisted.
 			verifyVersion24SharedContextContentSchema(connection);
+		}
+		if (version >= 25) {
+
+			// Portable identity structures must be present and structurally
+			// valid before any Subject package operation can depend on them.
+			verifyVersion25PortableIdentitySchema(connection);
+		}
+		if (version >= 26) {
+
+			// Structural verification includes the exact material-change
+			// triggers, rather than merely checking their names.
+			SqlitePortableRevisionTriggers.verify(connection);
 		}
 	}
 
@@ -1629,6 +1657,31 @@ public final class SqliteDatabase {
 		// Explicitly verify the composite references used to retain the
 		// ownership and identity of each content part.
 		verifyForeignKeyIntegrity(connection);
+	}
+
+	private void verifyVersion25PortableIdentitySchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "installation_identity",
+				List.of(column("singleton_id", false, 1), column("installation_id", true, 0)), List.of(),
+				List.of(List.of("installation_id")));
+		verifyTableSchema(connection, "portable_entity_identities",
+				List.of(column("entity_type", true, 1), column("local_id", true, 2), column("portable_id", true, 0),
+						column("revision_id", true, 0), column("retired", true, 0)),
+				List.of(), List.of(List.of("portable_id"), List.of("revision_id")));
+		verifyTableSchema(connection, "portable_entity_retirements",
+				List.of(column("portable_id", true, 1), column("entity_type", true, 0), column("local_id", true, 0),
+						column("revision_id", true, 0), column("retired_at", true, 0)),
+				List.of(), List.of(List.of("revision_id")));
+		verifyTableSchema(connection, "portable_identity_aliases",
+				List.of(column("origin_installation_id", true, 1), column("entity_type", true, 2),
+						column("origin_portable_id", true, 3), column("canonical_portable_id", true, 0),
+						column("approval_note", true, 0), column("approved_at", true, 0)),
+				List.of(), List.of(List.of("origin_installation_id", "entity_type", "origin_portable_id")));
+		SqlitePortableIdentitySchema.verifyInstallationIdentity(connection);
+		SqlitePortableIdentitySchema.verifyTriggers(connection);
+
+		// Shape checks alone cannot detect detached live records or
+		// identities reused from the permanent retirement history.
+		SqlitePortableIdentityAudit.verify(connection);
 	}
 
 	private record ForeignKeyColumn(int sequence, String fromColumn, String targetColumn) {

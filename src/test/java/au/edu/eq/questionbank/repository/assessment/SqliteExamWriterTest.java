@@ -28,6 +28,7 @@ import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 
 class SqliteExamWriterTest {
 
@@ -774,7 +775,7 @@ class SqliteExamWriterTest {
 						VALUES (?, '9')
 						""")) {
 			statement.setLong(1, paperTwo.getId());
-			assertEquals(1, statement.executeUpdate());
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement));
 		}
 		assertThrows(IllegalStateException.class, () -> writer.updateLegacyPaperCode(paperTwo, null));
 		assertEquals("2", writer.findLegacyPaperCodes(exam).get(paperTwo.getId()));

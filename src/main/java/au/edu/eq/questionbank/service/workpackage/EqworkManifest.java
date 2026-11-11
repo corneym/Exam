@@ -99,7 +99,6 @@ public record EqworkManifest(int formatVersion, UUID packageId, EqworkPackageTyp
 
 	private static void requirePortableSubjectName(String value) {
 		requireText(value, "subjectName");
-
 		if (!value.equals(value.trim()) || value.equals(".") || value.equals("..") || value.endsWith(".")
 				|| value.matches("(?i)(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\\..*)?")) {
 			throw new IllegalArgumentException("Unsafe portable Subject name: " + value);

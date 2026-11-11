@@ -159,7 +159,7 @@ class BookletApplicabilityReviewSchemaTest {
 					"""));
 
 			// Clearing a review does not delete the underlying booklet.
-			assertEquals(1, statement.executeUpdate("""
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
 					DELETE FROM booklet_applicability_reviews
 					WHERE booklet_id = 1
 					"""));

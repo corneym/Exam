@@ -39,6 +39,7 @@ module au.edu.eq.questionbank {
 	opens au.edu.eq.questionbank.pdf;
 	opens au.edu.eq.questionbank.repository.assessment;
 	opens au.edu.eq.questionbank.repository.curriculum;
+	opens au.edu.eq.questionbank.repository.identity;
 	opens au.edu.eq.questionbank.repository.sqlite;
 	opens au.edu.eq.questionbank.service.audit;
 	opens au.edu.eq.questionbank.service.backup;
