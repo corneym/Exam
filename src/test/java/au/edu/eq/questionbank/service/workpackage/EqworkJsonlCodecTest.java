@@ -164,6 +164,67 @@ class EqworkJsonlCodecTest {
 		assertArrayEquals(ascending, writeRecords(restored));
 	}
 
+	@Test
+	void rejectsAmbiguousManagedAssetDestinations() {
+		Reference original = exampleAssetIndex().references().getFirst();
+		String differentDigest = "b".repeat(64);
+		Reference differentBytes = new Reference("assets/sha256/bb/" + differentDigest + ".pdf", differentDigest,
+				original.size(), original.mediaType(), original.managedPath(), original.ownerType(), uuid(45),
+				original.usage());
+		assertThrows(IllegalArgumentException.class, () -> new EqworkAssetIndex(List.of(original, differentBytes)));
+		String differentlyCased = original.managedPath().replace("subjects/Biology/", "subjects/biology/");
+		Reference caseAlias = new Reference(original.archivePath(), original.sha256(), original.size(),
+				original.mediaType(), differentlyCased, original.ownerType(), uuid(46), original.usage());
+		assertThrows(IllegalArgumentException.class, () -> new EqworkAssetIndex(List.of(original, caseAlias)));
+	}
+
+	@Test
+	void rejectsCrossSubjectAssetReferences() throws Exception {
+		Reference original = exampleAssetIndex().references().getFirst();
+		Reference wrongSubject = new Reference(original.archivePath(), original.sha256(), original.size(),
+				original.mediaType(), "subjects/Physics/exams/QCAA/2025/questions.pdf", original.ownerType(),
+				original.ownerId(), original.usage());
+		EqworkAssetIndex index = new EqworkAssetIndex(List.of(wrongSubject));
+		EqworkManifest manifest = manifest(index, List.of(examplePhysicalAsset()));
+		assertThrows(EqworkFormatException.class, () -> index.requireMatchingManifest(manifest));
+	}
+
+	@Test
+	void rejectsNonCanonicalAssetIndexOrdering() throws Exception {
+		String encoded = new String(writeAssetIndex(exampleAssetIndex()), StandardCharsets.UTF_8);
+		String[] lines = encoded.split("\n");
+		assertEquals(2, lines.length);
+		String reversed = lines[1] + "\n" + lines[0] + "\n";
+		assertThrows(EqworkFormatException.class,
+				() -> codec.readAssetIndex(new ByteArrayInputStream(reversed.getBytes(StandardCharsets.UTF_8))));
+	}
+
+	@Test
+	void rejectsNonCanonicalRecordPropertyAndLineOrdering() throws Exception {
+		String nonCanonical = """
+				{"recordVersion":1,"recordType":"QUESTION","recordId":"%s","values":{"z":9,"a":1}}
+				""".formatted(uuid(1));
+		assertThrows(EqworkFormatException.class, () -> readRecords(nonCanonical));
+		String canonical = new String(
+				writeRecords(List.of(questionRecord(1, "{\"a\":1}"), questionRecord(2, "{\"a\":2}"))),
+				StandardCharsets.UTF_8);
+		String[] lines = canonical.split("\n");
+		assertEquals(2, lines.length);
+		String reversed = lines[1] + "\n" + lines[0] + "\n";
+		assertThrows(EqworkFormatException.class, () -> readRecords(reversed));
+	}
+
+	@Test
+	void rejectsWindowsReservedManagedPaths() {
+		Reference valid = exampleAssetIndex().references().getFirst();
+		for (String path : List.of("subjects/Biology/exams/CON.pdf", "subjects/Biology/exams/aux",
+				"subjects/Biology/NUL/report.pdf", "subjects/Biology/exams/LPT1.txt", "subjects/Biology/exams/COM9.pdf",
+				"subjects/Biology/exams/questions.pdf.")) {
+			assertThrows(IllegalArgumentException.class, () -> new Reference(valid.archivePath(), valid.sha256(),
+					valid.size(), valid.mediaType(), path, valid.ownerType(), valid.ownerId(), valid.usage()));
+		}
+	}
+
 	private Reference assetReference(UUID owner, String managedPath) {
 		String digest = "a".repeat(64);
 		return new Reference("assets/sha256/aa/" + digest + ".pdf", digest, 3, "application/pdf", managedPath,

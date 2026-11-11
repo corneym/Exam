@@ -10,6 +10,7 @@ import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
@@ -69,31 +70,45 @@ public final class EqworkJsonlCodec {
 	}
 
 	/**
-	 * Reads the complete logical asset-reference index.
+	 * Reads a canonical logical asset-reference index.
 	 *
 	 * @param input JSONL input, retained by the caller
 	 * @return immutable asset index
-	 * @throws IOException           if the stream cannot be read
-	 * @throws EqworkFormatException if the index is invalid
+	 * @throws IOException           if the input cannot be read
+	 * @throws EqworkFormatException if JSONL content or ordering is invalid
 	 */
 	public EqworkAssetIndex readAssetIndex(InputStream input) throws IOException {
 		try {
-			return new EqworkAssetIndex(readLines(input, EqworkAssetIndex.Reference.class));
+			List<EqworkAssetIndex.Reference> supplied = readLines(input, EqworkAssetIndex.Reference.class);
+			EqworkAssetIndex index = new EqworkAssetIndex(supplied);
+
+			// The contract requires the on-disk order to be canonical,
+			// not merely sortable into canonical order after reading.
+			if (!supplied.equals(index.references())) {
+				throw new EqworkFormatException("Asset-reference index is not canonically ordered");
+			}
+			return index;
 		} catch (IllegalArgumentException exception) {
 			throw new EqworkFormatException("Invalid .eqwork asset index", exception);
 		}
 	}
 
 	/**
-	 * Reads, validates and canonically orders portable domain records.
+	 * Reads canonical, versioned portable domain records.
 	 *
 	 * @param input JSONL input, retained by the caller
-	 * @return immutable list of records
-	 * @throws IOException           if the stream cannot be read
-	 * @throws EqworkFormatException if the JSONL or record identities are invalid
+	 * @return immutable records in canonical order
+	 * @throws IOException           if the input cannot be read
+	 * @throws EqworkFormatException if records are malformed, duplicated or
+	 *                               non-canonical
 	 */
 	public List<EqworkRecord> readRecords(InputStream input) throws IOException {
-		return normaliseRecords(readLines(input, EqworkRecord.class));
+		List<EqworkRecord> supplied = readLines(input, EqworkRecord.class);
+		List<EqworkRecord> canonical = normaliseRecords(supplied);
+		if (!supplied.equals(canonical)) {
+			throw new EqworkFormatException(".eqwork records are not canonically ordered");
+		}
+		return canonical;
 	}
 
 	/**
@@ -143,13 +158,19 @@ public final class EqworkJsonlCodec {
 
 	private <T> T decodeLine(byte[] bytes, Class<T> type) throws EqworkFormatException {
 		try {
-
-			// Reject malformed UTF-8 rather than silently replacing invalid bytes.
 			String json = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
 					.onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();
 			T decoded = mapper.readValue(json, type);
 			if (decoded == null) {
 				throw new EqworkFormatException("JSONL entries must be JSON objects");
+			}
+
+			// Reproduce the exact canonical representation. Reject altered
+			// property order, whitespace and numeric formatting so that
+			// semantic record hashes have one byte representation.
+			byte[] canonical = mapper.writeValueAsBytes(canonicalise(mapper.valueToTree(decoded)));
+			if (!Arrays.equals(bytes, canonical)) {
+				throw new EqworkFormatException("Non-canonical .eqwork JSONL record");
 			}
 			return decoded;
 		} catch (CharacterCodingException exception) {

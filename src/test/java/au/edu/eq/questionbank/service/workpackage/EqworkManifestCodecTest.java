@@ -9,6 +9,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -38,6 +39,39 @@ class EqworkManifestCodecTest {
 		assertTrue(!json.contains("\"assignmentId\""));
 		assertTrue(!json.contains("\"baselineSnapshotId\""));
 		assertTrue(!json.contains("\"intendedMasterInstallationId\""));
+	}
+
+	@Test
+	void minimumReaderVersionsControlCompatibility() throws Exception {
+		EqworkManifest base = example(EqworkPackageType.SUBJECT_SNAPSHOT);
+		EqworkManifest compatible = new EqworkManifest(base.formatVersion(), base.packageId(), base.packageType(),
+				base.createdAt(), base.originInstallationId(), base.intendedMasterInstallationId(), base.subjectId(),
+				base.subjectName(), base.assignmentId(), base.baselineSnapshotId(), "1.1.0", "1.0.0", 25, 24,
+				base.scope(), base.entries());
+
+		// A version 1.0.1/schema 24 reader is permitted because those
+		// versions exceed the declared minimum reader requirements.
+		compatible.requireCompatibleReader("1.0.1", 24);
+		assertThrows(EqworkFormatException.class, () -> compatible.requireCompatibleReader("0.9.9", 24));
+		assertThrows(EqworkFormatException.class, () -> compatible.requireCompatibleReader("1.0.1", 23));
+		assertThrows(IllegalArgumentException.class,
+				() -> new EqworkManifest(base.formatVersion(), base.packageId(), base.packageType(), base.createdAt(),
+						base.originInstallationId(), base.intendedMasterInstallationId(), base.subjectId(),
+						base.subjectName(), base.assignmentId(), base.baselineSnapshotId(), "1.0.0", "1.1.0", 24, 24,
+						base.scope(), base.entries()));
+	}
+
+	@Test
+	void rejectsCaseCollidingManifestEntries() {
+		EqworkManifest base = example(EqworkPackageType.SUBJECT_SNAPSHOT);
+		List<Entry> entries = new ArrayList<>(base.entries());
+		entries.add(new Entry("records/QUESTIONS.jsonl", EntryRole.RECORDS, 0, "b".repeat(64)));
+		assertThrows(IllegalArgumentException.class,
+				() -> new EqworkManifest(base.formatVersion(), base.packageId(), base.packageType(), base.createdAt(),
+						base.originInstallationId(), base.intendedMasterInstallationId(), base.subjectId(),
+						base.subjectName(), base.assignmentId(), base.baselineSnapshotId(),
+						base.producerApplicationVersion(), base.minimumReaderApplicationVersion(),
+						base.producerSchemaVersion(), base.minimumReaderSchemaVersion(), base.scope(), entries));
 	}
 
 	@Test
@@ -87,6 +121,14 @@ class EqworkManifestCodecTest {
 		String json = asJson(example(EqworkPackageType.SUBJECT_SNAPSHOT));
 		String invalid = json.replace("\"formatVersion\":1", "\"formatVersion\":2");
 		assertThrows(EqworkFormatException.class, () -> readJson(invalid));
+	}
+
+	@Test
+	void rejectsWindowsReservedArchiveEntryNames() {
+		for (String path : List.of("records/CON.jsonl", "records/aux.jsonl", "records/PRN.jsonl",
+				"records/questions.jsonl.", "baseline/NUL.jsonl", "receipts/COM1.jsonl")) {
+			assertThrows(IllegalArgumentException.class, () -> new Entry(path, EntryRole.RECORDS, 0, "a".repeat(64)));
+		}
 	}
 
 	@Test

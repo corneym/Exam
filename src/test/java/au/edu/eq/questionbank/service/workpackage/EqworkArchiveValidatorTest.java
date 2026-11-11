@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.service.workpackage;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -57,6 +58,16 @@ class EqworkArchiveValidatorTest {
 			Path archive = writeArchive(manifestBytes(manifest), payloads, name, null);
 			assertThrows(EqworkFormatException.class, () -> validator.validate(archive, "1.0.1", 24));
 		}
+	}
+
+	@Test
+	void rejectsCaseCollidingZipEntriesBeforeManifestProcessing() throws Exception {
+		Map<String, byte[]> payloads = validPayloads();
+		EqworkManifest manifest = manifest(EqworkPackageType.SUBJECT_SNAPSHOT, payloads);
+		Path archive = writeArchive(manifestBytes(manifest), payloads, "records/QUESTIONS.jsonl", null);
+		EqworkFormatException exception = assertThrows(EqworkFormatException.class,
+				() -> validator.validate(archive, "1.0.1", 24));
+		assertTrue(exception.getMessage().contains("Case-colliding ZIP entry name"));
 	}
 
 	@Test
@@ -181,6 +192,16 @@ class EqworkArchiveValidatorTest {
 		Path validArchive = writeArchive(manifestBytes(manifest), payloads, null, null);
 		assertThrows(EqworkFormatException.class, () -> validator.validate(validArchive, "1.0.0", 24));
 		assertThrows(EqworkFormatException.class, () -> validator.validate(validArchive, "1.0.1", 23));
+	}
+
+	@Test
+	void rejectsWindowsReservedZipEntryBeforeManifest() throws Exception {
+		Map<String, byte[]> payloads = new LinkedHashMap<>();
+		payloads.put("records/CON.jsonl", new byte[0]);
+		Path archive = writeArchive(null, payloads, null, null);
+		EqworkFormatException exception = assertThrows(EqworkFormatException.class,
+				() -> validator.validate(archive, "1.0.1", 24));
+		assertEquals(true, exception.getMessage().contains("Unsafe ZIP entry name"));
 	}
 
 	@Test

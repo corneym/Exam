@@ -13,6 +13,7 @@ import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -193,6 +194,7 @@ public final class EqworkArchiveValidator {
 
 	private Map<String, ZipArchiveEntry> inspectArchiveEntries(ZipFile archive) throws EqworkFormatException {
 		Map<String, ZipArchiveEntry> result = new LinkedHashMap<>();
+		Set<String> portableNames = new HashSet<>();
 		Enumeration<ZipArchiveEntry> entries = archive.getEntries();
 		long totalDeclaredBytes = 0;
 		int count = 0;
@@ -201,40 +203,41 @@ public final class EqworkArchiveValidator {
 			if (++count > MAX_ENTRIES) {
 				throw new EqworkFormatException(".eqwork archive exceeds maximum entry count");
 			}
-			requireSafeEntryName(entry.getName());
-			if (result.putIfAbsent(entry.getName(), entry) != null) {
-				throw new EqworkFormatException("Duplicate ZIP entry name: " + entry.getName());
-			}
-			if (entry.isDirectory() || entry.isUnixSymlink()) {
-				throw new EqworkFormatException("Directories and symlinks are not permitted: " + entry.getName());
+			String name = entry.getName();
+			requireSafeEntryName(name);
+			if (result.putIfAbsent(name, entry) != null) {
+				throw new EqworkFormatException("Duplicate ZIP entry name: " + name);
 			}
 
-			// If ZIP Unix metadata specifies a filesystem type, it must
-			// identify an ordinary file rather than a device or link.
+			// A case-sensitive ZIP may otherwise contain two entries
+			// that represent one destination on Windows.
+			if (!portableNames.add(name.toLowerCase(Locale.ROOT))) {
+				throw new EqworkFormatException("Case-colliding ZIP entry name: " + name);
+			}
+			if (entry.isDirectory() || entry.isUnixSymlink()) {
+				throw new EqworkFormatException("Directories and symlinks are not permitted: " + name);
+			}
 			int unixType = entry.getUnixMode() & 0170000;
 			if (unixType != 0 && unixType != 0100000) {
-				throw new EqworkFormatException("Non-regular ZIP entry: " + entry.getName());
+				throw new EqworkFormatException("Non-regular ZIP entry: " + name);
 			}
 			if (entry.getGeneralPurposeBit().usesEncryption()
 					|| (entry.getMethod() != ZipEntry.STORED && entry.getMethod() != ZipEntry.DEFLATED)
 					|| !archive.canReadEntryData(entry)) {
-				throw new EqworkFormatException("Unsupported ZIP entry encoding: " + entry.getName());
+				throw new EqworkFormatException("Unsupported ZIP entry encoding: " + name);
 			}
 			long size = entry.getSize();
 			long compressed = entry.getCompressedSize();
-			long maximum = "manifest.json".equals(entry.getName()) ? MAX_MANIFEST_BYTES
-					: entry.getName().startsWith("assets/") ? MAX_ASSET_BYTES : MAX_STRUCTURED_ENTRY_BYTES;
+			long maximum = "manifest.json".equals(name) ? MAX_MANIFEST_BYTES
+					: name.startsWith("assets/") ? MAX_ASSET_BYTES : MAX_STRUCTURED_ENTRY_BYTES;
 			if (size < 0 || compressed < 0 || size > maximum || compressed > MAX_ARCHIVE_BYTES) {
-				throw new EqworkFormatException("Invalid ZIP entry size: " + entry.getName());
+				throw new EqworkFormatException("Invalid ZIP entry size: " + name);
 			}
-
-			// Permit small highly compressible metadata, but reject large
-			// content whose expansion is disproportionate to its ZIP bytes.
 			if (size > compressed * MAX_COMPRESSION_RATIO + RATIO_ALLOWANCE_BYTES) {
-				throw new EqworkFormatException("Excessive ZIP compression ratio: " + entry.getName());
+				throw new EqworkFormatException("Excessive ZIP compression ratio: " + name);
 			}
 			if (entry.getCrc() < 0) {
-				throw new EqworkFormatException("Missing ZIP entry CRC: " + entry.getName());
+				throw new EqworkFormatException("Missing ZIP entry CRC: " + name);
 			}
 			totalDeclaredBytes += size;
 			if (totalDeclaredBytes > MAX_TOTAL_UNCOMPRESSED_BYTES) {
@@ -290,8 +293,10 @@ public final class EqworkArchiveValidator {
 		if (!allowedRoot) {
 			throw new EqworkFormatException("Unexpected ZIP entry name: " + name);
 		}
-		for (String part : name.split("/", -1)) {
-			if (part.equals(".") || part.equals("..") || !part.matches("[A-Za-z0-9._-]+")) {
+		for (String component : name.split("/", -1)) {
+			if (component.equals(".") || component.equals("..") || component.endsWith(".")
+					|| !component.matches("[A-Za-z0-9._-]+")
+					|| component.matches("(?i)(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\\..*)?")) {
 				throw new EqworkFormatException("Unsafe ZIP entry name: " + name);
 			}
 		}

@@ -5,6 +5,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -29,7 +30,7 @@ public record EqworkAssetIndex(List<Reference> references) {
 	public static final String INDEX_PATH = "records/assets.jsonl";
 
 	/**
-	 * Sorts references and rejects duplicate logical file ownership.
+	 * Sorts logical references and rejects ambiguous managed destinations.
 	 */
 	public EqworkAssetIndex {
 		List<Reference> sorted = new ArrayList<>(List.copyOf(Objects.requireNonNull(references, "references")));
@@ -38,27 +39,37 @@ public record EqworkAssetIndex(List<Reference> references) {
 				.thenComparing(reference -> reference.ownerType() == null ? "" : reference.ownerType())
 				.thenComparing(reference -> reference.ownerId() == null ? "" : reference.ownerId().toString()));
 		Set<String> logicalReferences = new HashSet<>();
+		Map<String, Reference> destinations = new HashMap<>();
 		for (Reference reference : sorted) {
 			String key = reference.managedPath() + "\0" + reference.usage() + "\0" + reference.ownerType() + "\0"
 					+ reference.ownerId();
 			if (!logicalReferences.add(key)) {
 				throw new IllegalArgumentException("Duplicate logical asset reference: " + reference.managedPath());
 			}
+			String destinationKey = reference.managedPath().toLowerCase(Locale.ROOT);
+			Reference previous = destinations.putIfAbsent(destinationKey, reference);
+			if (previous != null && (!previous.managedPath().equals(reference.managedPath())
+					|| !previous.sha256().equals(reference.sha256()))) {
+
+				// Multiple references to the same managed file are valid
+				// only if they agree on its exact path and original bytes.
+				throw new IllegalArgumentException(
+						"Conflicting or case-colliding managed asset path: " + reference.managedPath());
+			}
 		}
 		references = List.copyOf(sorted);
 	}
 
 	/**
-	 * Checks that the logical asset index agrees with the manifest's physical
-	 * archive inventory.
+	 * Checks the logical asset index against the manifest's physical inventory.
 	 *
 	 * <p>
-	 * This check does not read archive bytes. The ZIP validator must separately
-	 * verify that the actual bytes match each manifest entry's size and digest.
+	 * Every physical asset must be referenced, every logical reference must
+	 * identify a declared asset, and managed paths must belong to the manifest's
+	 * Subject. Actual ZIP bytes are verified separately.
 	 *
-	 * @param manifest immutable package manifest
-	 * @throws EqworkFormatException if an asset is missing, inconsistent,
-	 *                               duplicated physically or unreferenced
+	 * @param manifest package manifest
+	 * @throws EqworkFormatException if the index is inconsistent
 	 */
 	public void requireMatchingManifest(EqworkManifest manifest) throws EqworkFormatException {
 		Objects.requireNonNull(manifest, "manifest");
@@ -78,28 +89,31 @@ public record EqworkAssetIndex(List<Reference> references) {
 			if (entry.role() != EntryRole.ASSET) {
 				continue;
 			}
-
-			// Physical assets must be addressed by their own content digest.
 			String prefix = "assets/sha256/" + entry.sha256().substring(0, 2) + "/" + entry.sha256() + ".";
 			if (!entry.path().startsWith(prefix)) {
-				throw new EqworkFormatException("Asset path does not match its SHA-256: " + entry.path());
+				throw new EqworkFormatException("Asset path does not match SHA-256: " + entry.path());
 			}
 			String suffix = entry.path().substring(prefix.length());
 			if (!suffix.matches("[a-z0-9]{1,8}")) {
 				throw new EqworkFormatException("Invalid asset filename suffix: " + entry.path());
 			}
-			String previousPath = physicalPathsByDigest.putIfAbsent(entry.sha256(), entry.path());
-			if (previousPath != null && !previousPath.equals(entry.path())) {
-				throw new EqworkFormatException("Duplicate physical bytes must share one asset entry");
+			String previous = physicalPathsByDigest.putIfAbsent(entry.sha256(), entry.path());
+			if (previous != null && !previous.equals(entry.path())) {
+				throw new EqworkFormatException("Identical asset bytes must share one physical entry");
 			}
 			physicalAssets.put(entry.path(), entry);
 		}
 		if (!indexPresent) {
 			throw new EqworkFormatException("Missing required asset-reference index: " + INDEX_PATH);
 		}
+		String subjectPrefix = "subjects/" + manifest.subjectName() + "/";
 		Set<String> referencedPaths = new HashSet<>();
 		Map<String, String> mediaTypesByPath = new HashMap<>();
 		for (Reference reference : references) {
+			if (!reference.managedPath().startsWith(subjectPrefix)) {
+				throw new EqworkFormatException(
+						"Managed asset belongs to a different Subject: " + reference.managedPath());
+			}
 			Entry entry = physicalAssets.get(reference.archivePath());
 			if (entry == null) {
 				throw new EqworkFormatException("Asset reference is absent from manifest: " + reference.archivePath());
@@ -114,9 +128,9 @@ public record EqworkAssetIndex(List<Reference> references) {
 			}
 			referencedPaths.add(reference.archivePath());
 		}
-		for (String assetPath : physicalAssets.keySet()) {
-			if (!referencedPaths.contains(assetPath)) {
-				throw new EqworkFormatException("Unreferenced physical asset: " + assetPath);
+		for (String path : physicalAssets.keySet()) {
+			if (!referencedPaths.contains(path)) {
+				throw new EqworkFormatException("Unreferenced physical asset: " + path);
 			}
 		}
 	}
@@ -194,8 +208,8 @@ public record EqworkAssetIndex(List<Reference> references) {
 				throw new IllegalArgumentException("Asset must have a Subject-relative managed path");
 			}
 
-			// Do not normalise untrusted paths: reject traversal and syntax
-			// that could resolve differently on another operating system.
+			// Reject paths that normalise or resolve differently on Windows,
+			// Linux or another contributor's installation.
 			for (String component : components) {
 				if (component.isBlank() || component.equals(".") || component.equals("..") || component.endsWith(".")
 						|| !component.equals(component.trim())) {
@@ -206,6 +220,11 @@ public record EqworkAssetIndex(List<Reference> references) {
 					if (character < 32 || "<>:\"\\|?*".indexOf(character) >= 0) {
 						throw new IllegalArgumentException("Unsafe managed asset path: " + path);
 					}
+				}
+
+				// Windows device names remain reserved with extensions.
+				if (component.matches("(?i)(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\\..*)?")) {
+					throw new IllegalArgumentException("Reserved managed asset path component: " + path);
 				}
 			}
 		}

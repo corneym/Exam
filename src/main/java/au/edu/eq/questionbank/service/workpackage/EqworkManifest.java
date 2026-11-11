@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -62,7 +63,9 @@ public record EqworkManifest(int formatVersion, UUID packageId, EqworkPackageTyp
 		requireText(subjectName, "subjectName");
 		requireText(producerApplicationVersion, "producerApplicationVersion");
 		requireText(minimumReaderApplicationVersion, "minimumReaderApplicationVersion");
-		versionComponents(minimumReaderApplicationVersion);
+		if (compareApplicationVersions(producerApplicationVersion, minimumReaderApplicationVersion) < 0) {
+			throw new IllegalArgumentException("Minimum reader application version exceeds producer version");
+		}
 		if (producerSchemaVersion < 1 || minimumReaderSchemaVersion < 1
 				|| minimumReaderSchemaVersion > producerSchemaVersion) {
 			throw new IllegalArgumentException("Invalid database schema compatibility requirements");
@@ -73,7 +76,7 @@ public record EqworkManifest(int formatVersion, UUID packageId, EqworkPackageTyp
 		if (packageType == EqworkPackageType.WORK_ASSIGNMENT || packageType == EqworkPackageType.CONTRIBUTION) {
 			if (intendedMasterInstallationId == null || assignmentId == null || baselineSnapshotId == null) {
 				throw new IllegalArgumentException(
-						"Assignments and contributions require master, " + "assignment and baseline identities");
+						"Assignments and contributions require master, assignment and baseline identities");
 			}
 		}
 		if (packageType == EqworkPackageType.IMPORT_RECEIPT && intendedMasterInstallationId == null) {
@@ -81,41 +84,54 @@ public record EqworkManifest(int formatVersion, UUID packageId, EqworkPackageTyp
 		}
 		List<Entry> sortedEntries = new ArrayList<>(List.copyOf(Objects.requireNonNull(entries, "entries")));
 		sortedEntries.sort(Comparator.comparing(Entry::path));
-		Set<String> paths = new HashSet<>();
+		Set<String> portablePaths = new HashSet<>();
 		for (Entry entry : sortedEntries) {
-			if (!paths.add(entry.path())) {
-				throw new IllegalArgumentException("Duplicate indexed archive path: " + entry.path());
+
+			// ZIP entry names are case-sensitive, but destination file systems
+			// may not be. Do not allow two names to identify the same file.
+			String portableKey = entry.path().toLowerCase(Locale.ROOT);
+			if (!portablePaths.add(portableKey)) {
+				throw new IllegalArgumentException("Duplicate or case-colliding indexed archive path: " + entry.path());
 			}
 		}
 		entries = List.copyOf(sortedEntries);
 	}
 
 	/**
-	 * Checks whether a reader can safely interpret the declared producer and
-	 * minimum-reader versions.
+	 * Checks the declared minimum reader versions.
+	 *
+	 * <p>
+	 * The producer versions describe provenance. Compatibility is governed by the
+	 * explicitly declared minimum reader versions, not by an implicit requirement
+	 * for an identical producer schema.
 	 *
 	 * @param applicationVersion installed application version
 	 * @param schemaVersion      installed database schema version
 	 * @throws EqworkFormatException if the reader is incompatible
 	 */
 	public void requireCompatibleReader(String applicationVersion, int schemaVersion) throws EqworkFormatException {
-		if (schemaVersion < minimumReaderSchemaVersion || schemaVersion < producerSchemaVersion) {
+		if (schemaVersion < minimumReaderSchemaVersion) {
 			throw new EqworkFormatException("Incompatible .eqwork database schema version");
 		}
 		try {
-			int[] current = versionComponents(applicationVersion);
-			int[] minimum = versionComponents(minimumReaderApplicationVersion);
-			for (int index = 0; index < current.length; index++) {
-				if (current[index] > minimum[index]) {
-					return;
-				}
-				if (current[index] < minimum[index]) {
-					throw new EqworkFormatException("Incompatible .eqwork application version");
-				}
+			if (compareApplicationVersions(applicationVersion, minimumReaderApplicationVersion) < 0) {
+				throw new EqworkFormatException("Incompatible .eqwork application version");
 			}
 		} catch (IllegalArgumentException exception) {
 			throw new EqworkFormatException("Unrecognised application version", exception);
 		}
+	}
+
+	private static int compareApplicationVersions(String first, String second) {
+		int[] left = versionComponents(first);
+		int[] right = versionComponents(second);
+		for (int index = 0; index < left.length; index++) {
+			int comparison = Integer.compare(left[index], right[index]);
+			if (comparison != 0) {
+				return comparison;
+			}
+		}
+		return 0;
 	}
 
 	private static List<UUID> normaliseIds(List<UUID> identities) {
@@ -209,7 +225,7 @@ public record EqworkManifest(int formatVersion, UUID packageId, EqworkPackageTyp
 	public record Entry(String path, EntryRole role, long size, String sha256) {
 
 		/**
-		 * Validates the indexed entry's path and content metadata.
+		 * Validates the indexed entry's portable path and content metadata.
 		 */
 		public Entry {
 			Objects.requireNonNull(role, "role");
@@ -222,11 +238,10 @@ public record EqworkManifest(int formatVersion, UUID packageId, EqworkPackageTyp
 			if (!allowedRoot) {
 				throw new IllegalArgumentException("Unsupported archive entry path: " + path);
 			}
-
-			// Reject traversal and platform-dependent filename syntax
-			// without resolving the entry against a filesystem.
 			for (String component : path.split("/", -1)) {
-				if (component.equals(".") || component.equals("..") || !component.matches("[A-Za-z0-9._-]+")) {
+				if (component.equals(".") || component.equals("..") || component.endsWith(".")
+						|| !component.matches("[A-Za-z0-9._-]+")
+						|| component.matches("(?i)(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\\..*)?")) {
 					throw new IllegalArgumentException("Unsafe archive entry path: " + path);
 				}
 			}
