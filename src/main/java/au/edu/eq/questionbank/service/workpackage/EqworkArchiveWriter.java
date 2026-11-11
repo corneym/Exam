@@ -40,6 +40,9 @@ import au.edu.eq.questionbank.service.workpackage.EqworkManifest.EntryRole;
  */
 public final class EqworkArchiveWriter {
 
+	private static final long MAX_ARCHIVE_BYTES = 512L * 1024 * 1024;
+	private static final long MAX_COMPRESSION_RATIO = 200;
+	private static final long RATIO_ALLOWANCE_BYTES = 1024L * 1024;
 	private static final int MAX_ENTRIES = 4096;
 	private static final long MAX_ASSET_BYTES = 256L * 1024 * 1024;
 	private static final long MAX_STRUCTURED_BYTES = 64L * 1024 * 1024;
@@ -95,6 +98,10 @@ public final class EqworkArchiveWriter {
 	 * ownership of {@code output}; each opened source stream is closed by this
 	 * method.
 	 *
+	 * <p>
+	 * A failed write can leave partial ZIP bytes in the output stream. Such output
+	 * must be discarded, not published.
+	 *
 	 * @param manifest immutable package manifest
 	 * @param sources  archive path to independently openable source
 	 * @param output   destination output stream
@@ -106,54 +113,64 @@ public final class EqworkArchiveWriter {
 		Objects.requireNonNull(manifest, "manifest");
 		Objects.requireNonNull(sources, "sources");
 		Objects.requireNonNull(output, "output");
+
 		if (manifest.entries().size() + 1 > MAX_ENTRIES) {
 			throw new EqworkFormatException(".eqwork archive exceeds maximum entry count");
 		}
+
 		Set<String> requiredPaths = new HashSet<>();
 		long declaredTotal = 0;
+
 		for (Entry entry : manifest.entries()) {
 			requireRoleAndPath(entry);
 			requiredPaths.add(entry.path());
+
 			long maximum = entry.role() == EntryRole.ASSET ? MAX_ASSET_BYTES : MAX_STRUCTURED_BYTES;
 			if (entry.size() > maximum) {
 				throw new EqworkFormatException("Archive entry exceeds maximum size: " + entry.path());
 			}
+
 			declaredTotal += entry.size();
 			if (declaredTotal > MAX_TOTAL_BYTES) {
 				throw new EqworkFormatException("Archive exceeds maximum uncompressed size");
 			}
 		}
+
 		if (!sources.keySet().equals(requiredPaths)) {
 			throw new EqworkFormatException("Supplied package content disagrees with manifest entries");
 		}
+
 		for (String path : requiredPaths) {
 			if (sources.get(path) == null) {
 				throw new EqworkFormatException("Missing archive content source: " + path);
 			}
 		}
 
-		// Verify the logical asset-reference index before emitting ZIP
-		// bytes. This also rejects missing and unreferenced physical assets.
+		// Verify logical asset references before emitting ZIP bytes.
 		EntrySource indexSource = sources.get(EqworkAssetIndex.INDEX_PATH);
 		if (indexSource == null) {
 			throw new EqworkFormatException("Missing required asset-reference index");
 		}
+
 		try (InputStream input = Objects.requireNonNull(indexSource.open(), "asset index stream")) {
 			EqworkAssetIndex index = jsonlCodec.readAssetIndex(input);
 			index.requireMatchingManifest(manifest);
 		}
 
-		// Reject malformed structured content before writing an archive.
+		// Check canonical structured content and cross-file identities.
 		Set<String> currentStateIdentities = new HashSet<>();
+
 		for (Entry entry : manifest.entries()) {
 			if (entry.role() != EntryRole.RECORDS && entry.role() != EntryRole.BASELINE
 					&& entry.role() != EntryRole.RECEIPT) {
 				continue;
 			}
+
 			try (InputStream input = Objects.requireNonNull(sources.get(entry.path()).open(), "JSONL stream")) {
 				for (EqworkRecord record : jsonlCodec.readRecords(input)) {
 					if (entry.role() == EntryRole.RECORDS) {
 						String identity = record.recordType() + "\0" + record.recordId();
+
 						if (!currentStateIdentities.add(identity)) {
 							throw new EqworkFormatException("Duplicate current-state record identity: " + identity);
 						}
@@ -161,40 +178,65 @@ public final class EqworkArchiveWriter {
 				}
 			}
 		}
+
 		ByteArrayOutputStream manifestBytes = new ByteArrayOutputStream();
 		manifestCodec.write(manifest, manifestBytes);
+
 		ZipArchiveOutputStream zip = new ZipArchiveOutputStream(output);
 		zip.setEncoding("UTF-8");
 		zip.setUseZip64(Zip64Mode.AsNeeded);
+
 		writeEntry(zip, "manifest.json", manifestBytes.toByteArray());
+
 		for (Entry entry : manifest.entries()) {
 			writeEntry(zip, entry, sources.get(entry.path()));
 		}
+
 		zip.finish();
+
+		// Check the complete physical archive, including ZIP headers and
+		// central directory. A caller must discard output on failure.
+		if (zip.getBytesWritten() > MAX_ARCHIVE_BYTES) {
+			throw new EqworkFormatException(".eqwork archive exceeds maximum compressed size");
+		}
 	}
 
 	private void writeEntry(ZipArchiveOutputStream zip, Entry entry, EntrySource source) throws IOException {
-		zip.putArchiveEntry(zipEntry(entry.path()));
+		ZipArchiveEntry archiveEntry = zipEntry(entry.path());
+		zip.putArchiveEntry(archiveEntry);
+
 		MessageDigest digest = newDigest();
 		long count = 0;
 		byte[] buffer = new byte[8192];
+
 		try (InputStream input = Objects.requireNonNull(source.open(), "archive content stream")) {
 			int length;
 			while ((length = input.read(buffer)) != -1) {
 				count += length;
 
-				// Check actual bytes, not just the declared manifest size.
+				// Enforce the declared uncompressed size during streaming.
 				if (count > entry.size()) {
 					throw new EqworkFormatException("Archive source exceeds declared size: " + entry.path());
 				}
+
 				digest.update(buffer, 0, length);
 				zip.write(buffer, 0, length);
 			}
 		}
+
 		if (count != entry.size() || !HexFormat.of().formatHex(digest.digest()).equals(entry.sha256())) {
 			throw new EqworkFormatException("Archive source length or SHA-256 mismatch: " + entry.path());
 		}
+
 		zip.closeArchiveEntry();
+
+		// Commons Compress updates the entry's compressed size when the
+		// ZIP entry closes. Reject output that the reader's ratio limit
+		// would subsequently reject.
+		long compressedSize = archiveEntry.getCompressedSize();
+		if (compressedSize < 0 || count > compressedSize * MAX_COMPRESSION_RATIO + RATIO_ALLOWANCE_BYTES) {
+			throw new EqworkFormatException("Archive source exceeds permitted compression ratio: " + entry.path());
+		}
 	}
 
 	private void writeEntry(ZipArchiveOutputStream zip, String path, byte[] contents) throws IOException {

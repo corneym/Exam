@@ -60,7 +60,7 @@ public record EqworkManifest(int formatVersion, UUID packageId, EqworkPackageTyp
 		Objects.requireNonNull(originInstallationId, "originInstallationId");
 		Objects.requireNonNull(subjectId, "subjectId");
 		Objects.requireNonNull(scope, "scope");
-		requireText(subjectName, "subjectName");
+		requirePortableSubjectName(subjectName);
 		requireText(producerApplicationVersion, "producerApplicationVersion");
 		requireText(minimumReaderApplicationVersion, "minimumReaderApplicationVersion");
 		if (compareApplicationVersions(producerApplicationVersion, minimumReaderApplicationVersion) < 0) {
@@ -95,6 +95,24 @@ public record EqworkManifest(int formatVersion, UUID packageId, EqworkPackageTyp
 			}
 		}
 		entries = List.copyOf(sortedEntries);
+	}
+
+	private static void requirePortableSubjectName(String value) {
+		requireText(value, "subjectName");
+
+		if (!value.equals(value.trim()) || value.equals(".") || value.equals("..") || value.endsWith(".")
+				|| value.matches("(?i)(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\\..*)?")) {
+			throw new IllegalArgumentException("Unsafe portable Subject name: " + value);
+		}
+
+		// Match the directory-component restrictions used by
+		// ManagedDataLayout. A Subject name is exactly one component.
+		for (int index = 0; index < value.length(); index++) {
+			char character = value.charAt(index);
+			if (character < 32 || "<>:\"/\\|?*".indexOf(character) >= 0) {
+				throw new IllegalArgumentException("Unsafe portable Subject name: " + value);
+			}
+		}
 	}
 
 	/**

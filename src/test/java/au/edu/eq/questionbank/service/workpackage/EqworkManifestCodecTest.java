@@ -117,6 +117,27 @@ class EqworkManifestCodecTest {
 	}
 
 	@Test
+	void rejectsUnsafePortableSubjectNames() throws Exception {
+		EqworkManifest base = example(EqworkPackageType.SUBJECT_SNAPSHOT);
+
+		for (String invalidName : List.of("..", "CON", "Chemistry.", " Chemistry", "Physics/Engineering",
+				"Physics\\Engineering", "C:Physics")) {
+
+			assertThrows(IllegalArgumentException.class,
+					() -> new EqworkManifest(base.formatVersion(), base.packageId(), base.packageType(),
+							base.createdAt(), base.originInstallationId(), base.intendedMasterInstallationId(),
+							base.subjectId(), invalidName, base.assignmentId(), base.baselineSnapshotId(),
+							base.producerApplicationVersion(), base.minimumReaderApplicationVersion(),
+							base.producerSchemaVersion(), base.minimumReaderSchemaVersion(), base.scope(),
+							base.entries()));
+		}
+
+		String invalidJson = asJson(base).replace("\"subjectName\":\"Biology\"", "\"subjectName\":\"../Physics\"");
+
+		assertThrows(EqworkFormatException.class, () -> readJson(invalidJson));
+	}
+
+	@Test
 	void rejectsUnsupportedMandatoryFormatVersion() throws Exception {
 		String json = asJson(example(EqworkPackageType.SUBJECT_SNAPSHOT));
 		String invalid = json.replace("\"formatVersion\":1", "\"formatVersion\":2");

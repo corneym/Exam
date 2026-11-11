@@ -41,6 +41,12 @@
  * Compatibility is checked against the explicitly declared minimum reader
  * application and schema versions. Producer versions identify provenance.
  *
+ * *
+ * <p>
+ * The {@code subjectName} must be one valid, portable managed-directory
+ * component. Path separators, traversal components, reserved Windows device
+ * names, trailing dots, and leading or trailing whitespace are forbidden.
+ *
  * <h2>Package purposes</h2>
  *
  * <ul>

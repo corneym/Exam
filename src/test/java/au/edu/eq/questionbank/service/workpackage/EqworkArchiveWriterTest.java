@@ -71,6 +71,38 @@ class EqworkArchiveWriterTest {
 	}
 
 	@Test
+	void rejectsExcessiveCompressionBeforeReportingSuccess() throws Exception {
+		Map<String, byte[]> contents = exampleContents();
+
+		// Replace the ordinary PDF fixture with highly compressible bytes.
+		contents.remove(assetPath());
+
+		byte[] highlyCompressible = new byte[8 * 1024 * 1024];
+		String digest = sha256(highlyCompressible);
+		String archivePath = "assets/sha256/" + digest.substring(0, 2) + "/" + digest + ".pdf";
+
+		Reference reference = new Reference(archivePath, digest, highlyCompressible.length, "application/pdf",
+				"subjects/Biology/exams/QCAA/2025/Paper1/source.pdf", "EXAM_BOOKLET", uuid(20), "QUESTION_PDF");
+
+		EqworkAssetIndex index = new EqworkAssetIndex(List.of(reference));
+
+		ByteArrayOutputStream indexBytes = new ByteArrayOutputStream();
+		jsonlCodec.writeAssetIndex(index, indexBytes);
+
+		contents.put(EqworkAssetIndex.INDEX_PATH, indexBytes.toByteArray());
+		contents.put(archivePath, highlyCompressible);
+
+		EqworkManifest manifest = manifest(EqworkPackageType.SUBJECT_SNAPSHOT, contents);
+
+		// The writer must not successfully return a ZIP that its own
+		// validator would reject as excessive decompression.
+		EqworkFormatException exception = assertThrows(EqworkFormatException.class,
+				() -> write(manifest, sources(contents)));
+
+		assertTrue(exception.getMessage().contains("compression ratio"));
+	}
+
+	@Test
 	void rejectsMalformedStructuredDataBeforeWriting() throws Exception {
 		Map<String, byte[]> contents = exampleContents();
 		contents.put("records/questions.jsonl", "{bad-json}\n".getBytes(StandardCharsets.UTF_8));
