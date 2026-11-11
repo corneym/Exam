@@ -7,22 +7,29 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Base64;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
+
+import javax.imageio.ImageIO;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -241,6 +248,207 @@ class EqworkSubjectSnapshotExporterTest {
 	}
 
 	/**
+	 * Verifies that Subject snapshot export preserves a long alternating sequence
+	 * of PDF regions and embedded PNG images.
+	 *
+	 * <p>
+	 * Question and Shared Context content are deliberately inserted into SQLite out
+	 * of content order. The exported JSONL must retain the authoritative
+	 * content_order sequence, the correct PDF region references and the correct
+	 * portable image references.
+	 *
+	 * <p>
+	 * Three distinct PNG byte sequences are each used by both the Question and
+	 * Shared Context. The package must retain six logical image references while
+	 * storing only three distinct physical PNG archive entries.
+	 *
+	 * @throws Exception if fixture creation, export or archive validation fails
+	 */
+	@Test
+	void preservesLongAlternatingPdfAndPngSequence() throws Exception {
+		Fixture fixture = createFixture("alternating-content");
+		seedCompleteSubject(fixture);
+		SqliteDatabase database = fixture.database();
+		byte[] redPng = pngPixel(0xFFCC2200);
+		byte[] bluePng = pngPixel(0xFF0055CC);
+
+		// Insert PDF regions in reverse order to prove that export
+		// uses region_order rather than SQLite insertion order.
+		execute(database, """
+				INSERT INTO question_regions (
+				    question_id, region_order, booklet_id,
+				    page_number, x, y, width, height
+				)
+				VALUES
+				    (81, 2, 61, 4, 0.1, 0.2, 0.4, 0.3),
+				    (81, 1, 61, 3, 0.2, 0.1, 0.5, 0.4)
+				""", """
+				INSERT INTO shared_question_context_regions (
+				    shared_context_id, region_order,
+				    page_number, x, y, width, height
+				)
+				VALUES
+				    (121, 2, 3, 0.1, 0.2, 0.4, 0.3),
+				    (121, 1, 2, 0.2, 0.1, 0.5, 0.4)
+				""");
+
+		// The existing fixture contains Question image 131 and
+		// Shared Context image_order 0, both using PNG.
+		// Add two more distinct PNGs to each owner in reverse order.
+		try (Connection connection = database.openConnection();
+				PreparedStatement questionStatement = connection.prepareStatement("""
+						INSERT INTO question_images (
+						    id, question_id, image_png
+						)
+						VALUES (?, 81, ?)
+						""");
+				PreparedStatement contextStatement = connection.prepareStatement("""
+						INSERT INTO shared_question_context_images (
+						    shared_context_id, image_order, image_png
+						)
+						VALUES (121, ?, ?)
+						""")) {
+			for (int imageOrder = 2; imageOrder >= 1; imageOrder--) {
+				byte[] bytes = imageOrder == 1 ? redPng : bluePng;
+				questionStatement.setLong(1, 131L + imageOrder);
+				questionStatement.setBytes(2, bytes);
+				questionStatement.executeUpdate();
+				contextStatement.setInt(1, imageOrder);
+				contextStatement.setBytes(2, bytes);
+				contextStatement.executeUpdate();
+			}
+		}
+
+		// Append the remaining content parts out of sequence.
+		// The intended sequence is PDF, IMAGE, PDF, IMAGE,
+		// PDF, IMAGE for both owners.
+		execute(database, """
+				INSERT INTO question_content_parts (
+				    question_id, content_order, content_type,
+				    region_order, image_id
+				)
+				VALUES
+				    (81, 5, 'IMAGE', NULL, 133),
+				    (81, 4, 'PDF_REGION', 2, NULL),
+				    (81, 3, 'IMAGE', NULL, 132),
+				    (81, 2, 'PDF_REGION', 1, NULL)
+				""", """
+				INSERT INTO shared_question_context_content_parts (
+				    shared_context_id, content_order, content_type,
+				    region_order, image_order
+				)
+				VALUES
+				    (121, 5, 'IMAGE', NULL, 2),
+				    (121, 4, 'PDF_REGION', 2, NULL),
+				    (121, 3, 'IMAGE', NULL, 1),
+				    (121, 2, 'PDF_REGION', 1, NULL)
+				""");
+		SqlitePortableIdentityRepository identities = new SqlitePortableIdentityRepository(database);
+		List<String> expectedQuestionImageIds = List.of(
+				identities.requireByLocalId(EntityType.QUESTION_IMAGE, 131).portableId().toString(),
+				identities.requireByLocalId(EntityType.QUESTION_IMAGE, 132).portableId().toString(),
+				identities.requireByLocalId(EntityType.QUESTION_IMAGE, 133).portableId().toString());
+		Path archive = fixture.exportDirectory().resolve("alternating-content.eqwork");
+		EqworkManifest manifest = exporter(fixture).export(1, archive);
+
+		// Independently validate the published archive.
+		assertEquals(manifest, new EqworkArchiveValidator().validate(archive, ApplicationVersion.current(),
+				SqliteDatabase.latestSchemaVersion()));
+		List<EqworkRecord> records = readRecords(archive);
+		assertEquals(3, count(records, "QUESTION_IMAGE"));
+		EqworkRecord question = findRecord(records, "QUESTION");
+		EqworkRecord context = findRecord(records, "SHARED_QUESTION_CONTEXT");
+		var questionRegions = question.values().path("question_regions");
+		var questionParts = question.values().path("question_content_parts");
+		var contextRegions = context.values().path("shared_question_context_regions");
+		var contextImages = context.values().path("shared_question_context_images");
+		var contextParts = context.values().path("shared_question_context_content_parts");
+		assertEquals(3, questionRegions.size());
+		assertEquals(3, contextRegions.size());
+		assertEquals(3, contextImages.size());
+		assertEquals(6, questionParts.size());
+		assertEquals(6, contextParts.size());
+		List<byte[]> expectedImages = List.of(PNG, redPng, bluePng);
+
+		// Confirm that PDF region ordering remains authoritative
+		// independently of the content-part sequence.
+		for (int regionOrder = 0; regionOrder < 3; regionOrder++) {
+			assertEquals(regionOrder, questionRegions.get(regionOrder).path("region_order").asInt());
+			assertEquals(regionOrder, contextRegions.get(regionOrder).path("region_order").asInt());
+			assertEquals(regionOrder, contextImages.get(regionOrder).path("image_order").asInt());
+			assertEquals(sha256(expectedImages.get(regionOrder)),
+					contextImages.get(regionOrder).path("image_png").asText());
+		}
+
+		// Verify each position, its content type, and the
+		// precise referenced region or portable image identity.
+		for (int position = 0; position < 6; position++) {
+			var questionPart = questionParts.get(position);
+			var contextPart = contextParts.get(position);
+			assertEquals(position, questionPart.path("content_order").asInt());
+			assertEquals(position, contextPart.path("content_order").asInt());
+			if (position % 2 == 0) {
+				int regionOrder = position / 2;
+				assertEquals("PDF_REGION", questionPart.path("content_type").asText());
+				assertEquals("PDF_REGION", contextPart.path("content_type").asText());
+				assertEquals(regionOrder, questionPart.path("region_order").asInt());
+				assertEquals(regionOrder, contextPart.path("region_order").asInt());
+				assertTrue(questionPart.path("image_id").isNull());
+				assertTrue(contextPart.path("image_order").isNull());
+			} else {
+				int imageOrder = position / 2;
+				assertEquals("IMAGE", questionPart.path("content_type").asText());
+				assertEquals("IMAGE", contextPart.path("content_type").asText());
+				assertEquals(expectedQuestionImageIds.get(imageOrder), questionPart.path("image_id").asText());
+				assertEquals(imageOrder, contextPart.path("image_order").asInt());
+				assertTrue(questionPart.path("region_order").isNull());
+				assertTrue(contextPart.path("region_order").isNull());
+			}
+		}
+
+		// Check the independently represented QuestionImage records.
+		for (int imageOrder = 0; imageOrder < 3; imageOrder++) {
+			String portableId = expectedQuestionImageIds.get(imageOrder);
+			String expectedHash = sha256(expectedImages.get(imageOrder));
+			EqworkRecord imageRecord = records.stream().filter(record -> record.recordType().equals("QUESTION_IMAGE"))
+					.filter(record -> record.recordId().toString().equals(portableId)).findFirst().orElseThrow();
+			assertEquals(expectedHash, imageRecord.values().path("image_png").asText());
+		}
+		EqworkAssetIndex index = readAssetIndex(archive);
+		List<Reference> pngReferences = index.references().stream()
+				.filter(reference -> reference.usage().startsWith("EMBEDDED_")).toList();
+		assertEquals(6, pngReferences.size());
+		assertEquals(3,
+				pngReferences.stream().filter(reference -> reference.usage().equals("EMBEDDED_QUESTION_PNG")).count());
+		assertEquals(3,
+				pngReferences.stream().filter(reference -> reference.usage().equals("EMBEDDED_CONTEXT_PNG")).count());
+
+		// Six logical usages share three physical content-addressed
+		// PNG assets. The index must retain all six references.
+		assertEquals(3, pngReferences.stream().map(Reference::archivePath).distinct().count());
+
+		// Verify each physical asset's actual archive bytes
+		// against the expected PNG SHA-256 and original content.
+		try (ZipFile zip = new ZipFile(archive.toFile())) {
+			for (Reference reference : pngReferences) {
+				byte[] expected = null;
+				for (byte[] candidate : expectedImages) {
+					if (sha256(candidate).equals(reference.sha256())) {
+						expected = candidate;
+						break;
+					}
+				}
+				assertNotNull(expected, "Unexpected embedded image digest: " + reference.sha256());
+				ZipEntry entry = zip.getEntry(reference.archivePath());
+				assertNotNull(entry);
+				try (var input = zip.getInputStream(entry)) {
+					assertArrayEquals(expected, input.readAllBytes());
+				}
+			}
+		}
+	}
+
+	/**
 	 * Verifies an existing destination cannot be replaced by a later export.
 	 */
 	@Test
@@ -304,6 +512,23 @@ class EqworkSubjectSnapshotExporterTest {
 
 	private EqworkRecord findRecord(List<EqworkRecord> records, String type) {
 		return records.stream().filter(record -> record.recordType().equals(type)).findFirst().orElseThrow();
+	}
+
+	/**
+	 * Creates an actual single-pixel PNG with the supplied ARGB colour.
+	 *
+	 * @param argb packed alpha, red, green and blue channel values
+	 * @return complete encoded PNG file bytes
+	 * @throws IOException if the PNG cannot be encoded
+	 */
+	private byte[] pngPixel(int argb) throws IOException {
+		BufferedImage image = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
+		image.setRGB(0, 0, argb);
+		ByteArrayOutputStream output = new ByteArrayOutputStream();
+		if (!ImageIO.write(image, "png", output)) {
+			throw new IOException("PNG encoder is unavailable");
+		}
+		return output.toByteArray();
 	}
 
 	private EqworkAssetIndex readAssetIndex(Path archive) throws Exception {
@@ -531,6 +756,20 @@ class EqworkSubjectSnapshotExporterTest {
 				)
 				VALUES (61), (62)
 				""");
+	}
+
+	/**
+	 * Calculates the lower-case SHA-256 digest of supplied binary content.
+	 *
+	 * @param bytes binary content to hash
+	 * @return 64-character lower-case hexadecimal SHA-256
+	 */
+	private String sha256(byte[] bytes) {
+		try {
+			return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+		} catch (NoSuchAlgorithmException exception) {
+			throw new IllegalStateException("SHA-256 is unavailable", exception);
+		}
 	}
 
 	private String sourcePath(SqliteDatabase database, long id) throws SQLException {

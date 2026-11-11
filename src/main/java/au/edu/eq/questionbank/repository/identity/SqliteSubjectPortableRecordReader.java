@@ -148,9 +148,7 @@ public final class SqliteSubjectPortableRecordReader {
 		if (!node.isObject()) {
 			return;
 		}
-		var fields = node.fields();
-		while (fields.hasNext()) {
-			var field = fields.next();
+		for (Map.Entry<String, JsonNode> field : node.properties()) {
 			String name = field.getKey();
 			JsonNode value = field.getValue();
 			EntityType type = REFERENCE_FIELDS.get(name);
