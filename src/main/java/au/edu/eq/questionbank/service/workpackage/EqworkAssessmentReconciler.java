@@ -77,6 +77,7 @@ public final class EqworkAssessmentReconciler {
 		Map<UUID, Proposal> examMatches = matchExams(left, right, subject, providerMatches, results);
 		matchOwned("EXAM_BOOKLET", left, right, examMatches, results);
 		matchOwned("ANSWER_FILE", left, right, examMatches, results);
+		reconcileBookletAnswerFileLinks(left, right, results);
 		matchSourceDocuments(left, right, results);
 		results.sort(Comparator.comparing(Proposal::recordType).thenComparing(p -> p.incomingId().toString()));
 		return new Preview(results);
@@ -206,9 +207,7 @@ public final class EqworkAssessmentReconciler {
 				} else if (!masterHash.equals(incomingHash)) {
 					classification = Classification.CONFLICT;
 					reason = "Matching logical identity references different source PDF bytes.";
-				} else if (!equivalent(candidate, incoming, "exam_id", "source_document_id")) {
-					classification = Classification.CONFLICT;
-					reason = "PDF matches but " + type + " metadata differs.";
+				} else if (!equivalent(candidate, incoming, "exam_id", "source_document_id", "answer_file_id")) {
 				} else {
 					classification = Classification.IDENTICAL;
 					reason = "Logical identity, metadata and verified source PDF SHA-256 agree.";
@@ -263,7 +262,7 @@ public final class EqworkAssessmentReconciler {
 			EqworkRecord to = left.require(proposal.recordType(), proposal.masterId());
 			UUID incomingSource = right.reference(from, "source_document_id");
 			UUID masterSource = left.reference(to, "source_document_id");
-			candidates.computeIfAbsent(incomingSource, ignored -> new HashSet<>()).add(masterSource);
+			candidates.computeIfAbsent(incomingSource, _ -> new HashSet<>()).add(masterSource);
 		}
 		Map<UUID, Long> claimedMaster = candidates.values().stream().filter(ids -> ids.size() == 1)
 				.map(ids -> ids.iterator().next())
@@ -309,8 +308,67 @@ public final class EqworkAssessmentReconciler {
 				: value.asText().trim().toLowerCase(Locale.ROOT);
 	}
 
+	/**
+	 * Reads an optional canonical portable UUID, retaining the distinction from
+	 * null.
+	 */
+	private UUID optionalUuid(EqworkRecord record, String field) {
+		JsonNode value = record.values().path(field);
+		if (value.isMissingNode() || value.isNull()) {
+			return null;
+		}
+		if (!value.isTextual()) {
+			throw new IllegalArgumentException("Invalid " + field + " in " + record.recordId());
+		}
+		try {
+			UUID parsed = UUID.fromString(value.asText());
+			if (!parsed.toString().equals(value.asText())) {
+				throw new IllegalArgumentException("Noncanonical UUID");
+			}
+			return parsed;
+		} catch (IllegalArgumentException exception) {
+			throw new IllegalArgumentException("Invalid " + field + " in " + record.recordId(), exception);
+		}
+	}
+
 	private String ownedKey(String type, EqworkRecord record) {
 		return type.equals("EXAM_BOOKLET") ? bookletKey(record) : "name:" + required(record, "answer_file_name");
+	}
+
+	/**
+	 * Verifies independently created Booklets preserve their shared AnswerFile
+	 * links.
+	 */
+	private void reconcileBookletAnswerFileLinks(Graph left, Graph right, List<Proposal> results) {
+		Map<UUID, Proposal> answerFileAliases = new HashMap<>();
+		for (Proposal proposal : results) {
+			if (proposal.recordType().equals("ANSWER_FILE")) {
+				answerFileAliases.put(proposal.incomingId(), proposal);
+			}
+		}
+		for (int index = 0; index < results.size(); index++) {
+			Proposal proposal = results.get(index);
+			if (!proposal.recordType().equals("EXAM_BOOKLET") || proposal.masterId() == null
+					|| proposal.classification() != Classification.IDENTICAL) {
+				continue;
+			}
+			EqworkRecord incoming = right.require("EXAM_BOOKLET", proposal.incomingId());
+			EqworkRecord master = left.require("EXAM_BOOKLET", proposal.masterId());
+			UUID incomingAnswerFile = optionalUuid(incoming, "answer_file_id");
+			UUID masterAnswerFile = optionalUuid(master, "answer_file_id");
+			if (incomingAnswerFile == null && masterAnswerFile == null) {
+				continue;
+			}
+			Proposal answerFile = incomingAnswerFile == null ? null : answerFileAliases.get(incomingAnswerFile);
+			if (answerFile == null || answerFile.classification() != Classification.IDENTICAL
+					|| !Objects.equals(answerFile.masterId(), masterAnswerFile)) {
+				results.set(index,
+						new Proposal("EXAM_BOOKLET", proposal.incomingId(), proposal.masterId(),
+								proposal.incomingParentId(), proposal.masterParentId(), Classification.CONFLICT,
+								"The Booklet's linked shared AnswerFile is different or unresolved; "
+										+ "matching PDF bytes do not justify an alias."));
+			}
+		}
 	}
 
 	private String required(EqworkRecord record, String field) {
@@ -333,7 +391,7 @@ public final class EqworkAssessmentReconciler {
 			Objects.requireNonNull(source, "source");
 			Objects.requireNonNull(assets, "assets");
 			for (EqworkRecord record : source) {
-				EqworkRecord previous = records.computeIfAbsent(record.recordType(), ignored -> new HashMap<>())
+				EqworkRecord previous = records.computeIfAbsent(record.recordType(), _ -> new HashMap<>())
 						.putIfAbsent(record.recordId(), record);
 				if (previous != null) {
 					throw new IllegalArgumentException("Duplicate record identity: " + record.recordId());
