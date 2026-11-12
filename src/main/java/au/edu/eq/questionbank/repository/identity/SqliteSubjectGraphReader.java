@@ -39,7 +39,7 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
  * The returned {@link SubjectGraph} contains SQLite-local identifiers used
  * internally for subsequent record retrieval. These identifiers are not
  * portable identities and must never be serialised directly into an
- * {@code .eqwork} package. The subsequent export layer resolves them to
+ * {@code .examwork} package. The subsequent export layer resolves them to
  * persistent portable UUIDs.
  *
  * <p>

@@ -22,8 +22,8 @@ import org.junit.jupiter.api.io.TempDir;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableContentRepository.Snapshot;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
-import au.edu.eq.questionbank.service.workpackage.EqworkJsonlCodec;
-import au.edu.eq.questionbank.service.workpackage.EqworkRecord;
+import au.edu.eq.questionbank.service.workpackage.ExamWorkJsonlCodec;
+import au.edu.eq.questionbank.service.workpackage.ExchangeRecord;
 
 class SqlitePortableGraphIntegrationTest {
 
@@ -103,7 +103,7 @@ class SqlitePortableGraphIntegrationTest {
 
 		// Content equality and causal revision are different concepts.
 		assertNotEquals(before.record().revisionId(), after.record().revisionId());
-		EqworkJsonlCodec codec = new EqworkJsonlCodec();
+		ExamWorkJsonlCodec codec = new ExamWorkJsonlCodec();
 		ByteArrayOutputStream beforeOutput = new ByteArrayOutputStream();
 		ByteArrayOutputStream afterOutput = new ByteArrayOutputStream();
 		codec.writeRecords(List.of(before.record()), beforeOutput);
@@ -117,12 +117,12 @@ class SqlitePortableGraphIntegrationTest {
 		SqliteDatabase database = createDatabase("jsonl.db");
 		seedGraph(database);
 		SqlitePortableContentRepository content = new SqlitePortableContentRepository(database);
-		List<EqworkRecord> records = graphRecords(content);
-		EqworkJsonlCodec codec = new EqworkJsonlCodec();
+		List<ExchangeRecord> records = graphRecords(content);
+		ExamWorkJsonlCodec codec = new ExamWorkJsonlCodec();
 		ByteArrayOutputStream output = new ByteArrayOutputStream();
 		codec.writeRecords(records, output);
 		byte[] encoded = output.toByteArray();
-		List<EqworkRecord> decoded = codec.readRecords(new ByteArrayInputStream(encoded));
+		List<ExchangeRecord> decoded = codec.readRecords(new ByteArrayInputStream(encoded));
 		assertEquals(records.size(), decoded.size());
 		ByteArrayOutputStream reencoded = new ByteArrayOutputStream();
 		codec.writeRecords(decoded, reencoded);
@@ -130,7 +130,7 @@ class SqlitePortableGraphIntegrationTest {
 
 		// The codec preserves all portable references, content
 		// arrays and causal revisions without local integer keys.
-		EqworkRecord question = decoded.stream().filter(record -> record.recordType().equals("QUESTION")).findFirst()
+		ExchangeRecord question = decoded.stream().filter(record -> record.recordType().equals("QUESTION")).findFirst()
 				.orElseThrow();
 		SqlitePortableIdentityRepository identities = new SqlitePortableIdentityRepository(database);
 		assertEquals(identities.requireByLocalId(EntityType.EXAM_BOOKLET, 1).portableId().toString(),
@@ -170,8 +170,8 @@ class SqlitePortableGraphIntegrationTest {
 		return database;
 	}
 
-	private List<EqworkRecord> graphRecords(SqlitePortableContentRepository content) throws SQLException {
-		List<EqworkRecord> records = new ArrayList<>();
+	private List<ExchangeRecord> graphRecords(SqlitePortableContentRepository content) throws SQLException {
+		List<ExchangeRecord> records = new ArrayList<>();
 		records.add(content.snapshot(EntityType.SUBJECT, 1).record());
 		records.add(content.snapshot(EntityType.SYLLABUS_VERSION, 1).record());
 		records.add(content.snapshot(EntityType.CURRICULUM_NODE, 1).record());

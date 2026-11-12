@@ -17,7 +17,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.identity.SqliteSubjectGraphReader.SubjectGraph;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
-import au.edu.eq.questionbank.service.workpackage.EqworkRecord;
+import au.edu.eq.questionbank.service.workpackage.ExchangeRecord;
 
 /**
  * Converts an immutable Subject graph selection into portable current-state
@@ -46,7 +46,7 @@ import au.edu.eq.questionbank.service.workpackage.EqworkRecord;
  * @see SqliteSubjectGraphReader
  * @see SqlitePortableContentRepository
  * @see SqlitePortableIdentityRepository
- * @see EqworkRecord
+ * @see ExchangeRecord
  */
 public final class SqliteSubjectPortableRecordReader {
 
@@ -98,7 +98,7 @@ public final class SqliteSubjectPortableRecordReader {
 	 *                              read, or the selected Subject graph has missing
 	 *                              references
 	 */
-	public List<EqworkRecord> read(SubjectGraph graph) throws SQLException {
+	public List<ExchangeRecord> read(SubjectGraph graph) throws SQLException {
 		Objects.requireNonNull(graph, "graph");
 		Map<EntityType, Set<UUID>> selected = new EnumMap<>(EntityType.class);
 		for (EntityType type : EntityType.values()) {
@@ -111,10 +111,10 @@ public final class SqliteSubjectPortableRecordReader {
 			}
 			selected.put(type, Set.copyOf(selectedIds));
 		}
-		List<EqworkRecord> records = new ArrayList<>();
+		List<ExchangeRecord> records = new ArrayList<>();
 		for (EntityType type : EntityType.values()) {
 			for (long localId : graph.ids(type)) {
-				EqworkRecord record = content.snapshot(type, localId).record();
+				ExchangeRecord record = content.snapshot(type, localId).record();
 				if (!selected.get(type).contains(record.recordId())) {
 					throw new SQLException("Portable identity changed during export: " + type + ":" + localId);
 				}
@@ -123,7 +123,7 @@ public final class SqliteSubjectPortableRecordReader {
 			}
 		}
 		records.sort(
-				Comparator.comparing(EqworkRecord::recordType).thenComparing(record -> record.recordId().toString()));
+				Comparator.comparing(ExchangeRecord::recordType).thenComparing(record -> record.recordId().toString()));
 		return List.copyOf(records);
 	}
 

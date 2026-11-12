@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
 import java.time.Clock;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -159,10 +160,10 @@ import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 import au.edu.eq.questionbank.service.revision.RevisionCorpusBuilder;
 import au.edu.eq.questionbank.service.revision.RevisionGroupingMode;
 import au.edu.eq.questionbank.service.revision.RevisionPresentationPlanner;
-import au.edu.eq.questionbank.service.workpackage.EqworkManifest;
-import au.edu.eq.questionbank.service.workpackage.EqworkReconciliationReview;
-import au.edu.eq.questionbank.service.workpackage.EqworkSubjectSnapshotExporter;
-import au.edu.eq.questionbank.service.workpackage.EqworkTwoWaySubjectPreviewService;
+import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest;
+import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationPreviewService;
+import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationReview;
+import au.edu.eq.questionbank.service.workpackage.SubjectSnapshotExporter;
 import au.edu.eq.questionbank.ui.audit.CorpusDashboardPane;
 import au.edu.eq.questionbank.ui.capture.AnswerCapturePane;
 import au.edu.eq.questionbank.ui.capture.QuestionCapturePane;
@@ -4847,8 +4848,9 @@ public class QuestionBankApplication extends Application {
 		}
 		FileChooser chooser = new FileChooser();
 		chooser.setTitle("Export complete Working Subject snapshot");
-		chooser.setInitialFileName("Subject-snapshot.eqwork");
-		chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Subject snapshots", "*.eqwork"));
+		chooser.setInitialFileName(SubjectSnapshotFileNames.suggest(subject.getName(), LocalDateTime.now()));
+		chooser.getExtensionFilters()
+				.add(new FileChooser.ExtensionFilter("ExamWork packages (*.examwork)", "*.examwork"));
 		File targetFile = chooser.showSaveDialog(primaryStage);
 		if (targetFile == null) {
 			return;
@@ -4860,11 +4862,11 @@ public class QuestionBankApplication extends Application {
 					"Subject snapshots must not be stored among authoritative source files.");
 			return;
 		}
-		Task<EqworkManifest> task = new Task<>() {
+		Task<ExamWorkManifest> task = new Task<>() {
 
 			@Override
-			protected EqworkManifest call() throws Exception {
-				return new EqworkSubjectSnapshotExporter(new SqliteDatabase(config.databasePath()),
+			protected ExamWorkManifest call() throws Exception {
+				return new SubjectSnapshotExporter(new SqliteDatabase(config.databasePath()),
 						new ManagedDataLayout(config.dataRoot())).export(subject.getId(), target);
 			}
 		};
@@ -4875,7 +4877,6 @@ public class QuestionBankApplication extends Application {
 		progress.setContentText("The source database and managed PDF files will not be changed.");
 
 		// Hiding the progress alert does not cancel an in-flight atomic export.
-		// The user is informed only when validation and publication have finished.
 		progress.getButtonTypes().setAll(new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE));
 		task.setOnSucceeded(_ -> {
 			progress.close();
@@ -4889,7 +4890,7 @@ public class QuestionBankApplication extends Application {
 					failure == null ? "Unknown error" : failure.getMessage());
 		});
 		task.setOnCancelled(_ -> progress.close());
-		Thread worker = new Thread(task, "eqwork-subject-snapshot-export");
+		Thread worker = new Thread(task, "examwork-subject-snapshot-export");
 		worker.setDaemon(true);
 		progress.show();
 		worker.start();
@@ -5373,22 +5374,23 @@ public class QuestionBankApplication extends Application {
 	 */
 	private void showSubjectReconciliationReview(Stage primaryStage, ApplicationConfig config) {
 		FileChooser chooser = new FileChooser();
-		chooser.setTitle("Select coordinator Subject snapshot (.eqwork)");
-		chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Subject snapshots", "*.eqwork"));
+		chooser.setTitle("Select coordinator Subject snapshot");
+		chooser.getExtensionFilters()
+				.add(new FileChooser.ExtensionFilter("ExamWork packages (*.examwork)", "*.examwork"));
 		File masterFile = chooser.showOpenDialog(primaryStage);
 		if (masterFile == null) {
 			return;
 		}
-		chooser.setTitle("Select independently exported contributor Subject snapshot (.eqwork)");
+		chooser.setTitle("Select independently exported contributor Subject snapshot");
 		File incomingFile = chooser.showOpenDialog(primaryStage);
 		if (incomingFile == null) {
 			return;
 		}
-		Task<EqworkTwoWaySubjectPreviewService.Result> task = new Task<>() {
+		Task<SubjectReconciliationPreviewService.Result> task = new Task<>() {
 
 			@Override
-			protected EqworkTwoWaySubjectPreviewService.Result call() throws Exception {
-				return new EqworkTwoWaySubjectPreviewService().preview(masterFile.toPath(), incomingFile.toPath());
+			protected SubjectReconciliationPreviewService.Result call() throws Exception {
+				return new SubjectReconciliationPreviewService().preview(masterFile.toPath(), incomingFile.toPath());
 			}
 		};
 		Alert progress = new Alert(Alert.AlertType.INFORMATION);
@@ -5404,8 +5406,8 @@ public class QuestionBankApplication extends Application {
 		});
 		task.setOnSucceeded(_ -> {
 			progress.close();
-			EqworkReconciliationReviewDialog dialog = new EqworkReconciliationReviewDialog(primaryStage,
-					new EqworkReconciliationReview(task.getValue()), config.dataRoot());
+			SubjectReconciliationReviewDialog dialog = new SubjectReconciliationReviewDialog(primaryStage,
+					new SubjectReconciliationReview(task.getValue()), config.dataRoot());
 			dialog.showAndWait();
 		});
 		task.setOnFailed(_ -> {
@@ -5415,7 +5417,7 @@ public class QuestionBankApplication extends Application {
 					failure == null ? "Unknown error" : failure.getMessage());
 		});
 		task.setOnCancelled(_ -> progress.close());
-		Thread worker = new Thread(task, "eqwork-subject-preview");
+		Thread worker = new Thread(task, "examwork-subject-preview");
 		worker.setDaemon(true);
 		progress.show();
 		worker.start();

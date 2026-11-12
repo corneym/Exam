@@ -4,8 +4,8 @@
  * <h2>Container</h2>
  *
  * <p>
- * A {@code .eqwork} package is a ZIP archive with one {@code manifest.json} at
- * its root. Every other physical file is declared exactly once in the
+ * A {@code .examwork} package is a ZIP archive with one {@code manifest.json}
+ * at its root. Every other physical file is declared exactly once in the
  * manifest's {@code entries} collection. Directory entries, symbolic links,
  * unsafe paths and unindexed files are forbidden.
  *
@@ -122,8 +122,8 @@
  * identity mapping, conflict detection, import approval, transaction handling
  * and managed-file publication are separate responsibilities.
  *
- * @see au.edu.eq.questionbank.service.workpackage.EqworkManifest
- * @see au.edu.eq.questionbank.service.workpackage.EqworkJsonlCodec
- * @see au.edu.eq.questionbank.service.workpackage.EqworkArchiveValidator
+ * @see au.edu.eq.questionbank.service.workpackage.ExamWorkManifest
+ * @see au.edu.eq.questionbank.service.workpackage.ExamWorkJsonlCodec
+ * @see au.edu.eq.questionbank.service.workpackage.ExamWorkArchiveValidator
  */
 package au.edu.eq.questionbank.service.workpackage;
