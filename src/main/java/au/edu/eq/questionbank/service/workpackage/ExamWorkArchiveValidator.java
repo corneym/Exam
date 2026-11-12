@@ -60,19 +60,23 @@ public final class ExamWorkArchiveValidator {
 	}
 
 	/**
-	 * Validates one .examwork archive without extracting or publishing files.
+	 * Validates an ExamWork archive without extracting or publishing files.
 	 *
-	 * @param archivePath        path to the local package archive
+	 * @param archivePath        path to an .examwork archive
 	 * @param applicationVersion installed application version
 	 * @param schemaVersion      installed database schema version
-	 * @return the validated immutable package manifest
-	 * @throws IOException            if archive input cannot be read
-	 * @throws PackageFormatException if the package is invalid or incompatible
+	 * @return validated immutable manifest
+	 * @throws IOException            if the archive cannot be read
+	 * @throws PackageFormatException if the extension, archive or reader version is
+	 *                                invalid
 	 */
 	public ExamWorkManifest validate(Path archivePath, String applicationVersion, int schemaVersion)
 			throws IOException {
 		Objects.requireNonNull(archivePath, "archivePath");
 		Objects.requireNonNull(applicationVersion, "applicationVersion");
+		if (archivePath.getFileName() == null || !archivePath.getFileName().toString().endsWith(".examwork")) {
+			throw new PackageFormatException("An ExamWork archive must end in .examwork");
+		}
 		if (!Files.isRegularFile(archivePath, LinkOption.NOFOLLOW_LINKS)) {
 			throw new PackageFormatException("Not a regular .examwork archive: " + archivePath);
 		}

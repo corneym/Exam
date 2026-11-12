@@ -237,8 +237,8 @@ public final class SubjectSnapshotExporter {
 		Objects.requireNonNull(destination, "destination");
 		Path target = destination.toAbsolutePath().normalize();
 		String filename = target.getFileName().toString();
-		if (!filename.endsWith(".examwork") && !filename.endsWith(".examwork")) {
-			throw new IllegalArgumentException("Export destination must end in .examwork (or legacy .examwork)");
+		if (!filename.endsWith(".examwork")) {
+			throw new IllegalArgumentException("Export destination must end in .examwork");
 		}
 		if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
 			throw new IOException("Export destination already exists: " + target);

@@ -103,6 +103,18 @@ class ExamWorkArchiveValidatorTest {
 	}
 
 	@Test
+	void rejectsFormerExtension() throws Exception {
+		Map<String, byte[]> payloads = validPayloads();
+		ExamWorkManifest manifest = manifest(ExamWorkPackageType.SUBJECT_SNAPSHOT, payloads);
+		Path valid = writeArchive(manifestBytes(manifest), payloads, null, null);
+		Path obsolete = directory.resolve("obsolete.eqwork");
+		Files.copy(valid, obsolete);
+		PackageFormatException failure = assertThrows(PackageFormatException.class,
+				() -> validator.validate(obsolete, "1.0.1", 24));
+		assertTrue(failure.getMessage().contains(".examwork"));
+	}
+
+	@Test
 	void rejectsInvalidRecordJsonlEvenWithMatchingDigest() throws Exception {
 		Map<String, byte[]> payloads = validPayloads();
 		payloads.put("records/questions.jsonl", "{invalid-json}\n".getBytes(StandardCharsets.UTF_8));

@@ -5375,8 +5375,8 @@ public class QuestionBankApplication extends Application {
 	private void showSubjectReconciliationReview(Stage primaryStage, ApplicationConfig config) {
 		FileChooser chooser = new FileChooser();
 		chooser.setTitle("Select coordinator Subject snapshot");
-		chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("ExamWork packages (*.examwork, *.examwork)",
-				"*.examwork", "*.examwork"));
+		chooser.getExtensionFilters()
+				.add(new FileChooser.ExtensionFilter("ExamWork packages (*.examwork)", "*.examwork"));
 		File masterFile = chooser.showOpenDialog(primaryStage);
 		if (masterFile == null) {
 			return;
