@@ -33,31 +33,15 @@ class EqworkAssessmentReconcilerTest {
 	private final EqworkCurriculumReconciler curriculum = new EqworkCurriculumReconciler();
 
 	@Test
-	void independentlyCreatedIdsProduceUnapprovedAliasesWhenEvidenceAgrees() {
+	void changedExamMetadataRemainsReviewableAndBlocksChildAliasAcceptance() {
 		Fixture master = fixture("master", 2024, "External Assessment", "Paper 1", "1", QUESTIONS_HASH);
 		Fixture incoming = fixture("contributor", 2024, "External Assessment", "Paper 1", "1", QUESTIONS_HASH);
+		ObjectNode changed = (ObjectNode) incoming.exam().values();
+		changed.put("capture_state", "COMPLETE");
+		incoming = incoming.withReplaced(incoming.exam(), record("EXAM", "contributor:exam", changed));
 		Preview preview = preview(master, incoming);
-		assertEquals(6, preview.proposals().size());
-		assertTrue(preview.proposals().stream().allMatch(p -> p.classification() == Classification.IDENTICAL));
-		assertTrue(preview.proposals().stream().allMatch(Proposal::proposesAlias));
-		assertEquals(master.exam().recordId(), proposal(preview, incoming.exam()).masterId());
-		assertEquals(master.exam().recordId(), proposal(preview, incoming.booklet()).masterParentId());
-		assertEquals(master.questionDocument().recordId(), proposal(preview, incoming.questionDocument()).masterId());
-		assertEquals(incoming.exam().recordId().toString(), incoming.booklet().values().path("exam_id").asText());
-	}
-
-	@Test
-	void identicalPdfInDifferentExamDoesNotAutomaticallyAliasDocument() {
-		Fixture master = fixture("master", 2024, "External Assessment", "Paper 1", "1", QUESTIONS_HASH);
-		Fixture incoming = fixture("contributor", 2025, "External Assessment", "Paper 1", "1", QUESTIONS_HASH);
-		Preview preview = preview(master, incoming);
-		assertEquals(Classification.COMPATIBLE_ADDITION, proposal(preview, incoming.exam()).classification());
-		assertEquals(Classification.NEW, proposal(preview, incoming.booklet()).classification());
-		Proposal document = proposal(preview, incoming.questionDocument());
-		assertEquals(Classification.NEW, document.classification());
-		assertNull(document.masterId());
-		assertTrue(document.reason().contains("Identical PDF bytes alone")
-				|| document.reason().contains("identical PDF bytes alone"));
+		assertEquals(Classification.CONFLICT, proposal(preview, incoming.exam()).classification());
+		assertEquals(Classification.CONFLICT, proposal(preview, incoming.booklet()).classification());
 	}
 
 	@Test
@@ -72,26 +56,39 @@ class EqworkAssessmentReconcilerTest {
 	}
 
 	@Test
-	void legacyPaperCodeTakesPrecedenceOverEditableBookletName() {
+	void collidingDisplayNameButDifferentLegacyPaperCannotBeSilentlyAdded() {
 		Fixture master = fixture("master", 2024, "External Assessment", "Paper 1", "1", QUESTIONS_HASH);
-		Fixture incoming = fixture("contributor", 2024, "External Assessment", "Renamed Paper", "1", QUESTIONS_HASH);
+		Fixture incoming = fixture("contributor", 2024, "External Assessment", "Paper 1", "2", QUESTIONS_HASH);
 		Preview preview = preview(master, incoming);
-		Proposal booklet = proposal(preview, incoming.booklet());
-		assertEquals(master.booklet().recordId(), booklet.masterId());
-		assertEquals(Classification.CONFLICT, booklet.classification());
-		assertTrue(booklet.reason().contains("metadata differs"));
+		assertEquals(Classification.CONFLICT, proposal(preview, incoming.booklet()).classification());
+		assertFalse(proposal(preview, incoming.booklet()).classification() == Classification.COMPATIBLE_ADDITION);
+	}
+
+	/** A changed or detached shared AnswerFile cannot be silently accepted. */
+	@Test
+	void differingSharedAnswerFileLinksFlagBookletConflict() {
+		Fixture master = fixture("master", 2024, "External Assessment", "Paper 1", "1", QUESTIONS_HASH);
+		Fixture incoming = fixture("contributor", 2024, "External Assessment", "Paper 1", "1", QUESTIONS_HASH);
+		ObjectNode incomingValues = (ObjectNode) incoming.booklet().values();
+		incomingValues.put("answer_file_id", incoming.answerFile().recordId().toString());
+		incoming = incoming.withReplaced(incoming.booklet(),
+				record("EXAM_BOOKLET", "contributor:paper1", incomingValues));
+		Preview result = preview(master, incoming);
+		assertEquals(Classification.CONFLICT, proposal(result, incoming.booklet()).classification());
 	}
 
 	@Test
-	void changedExamMetadataRemainsReviewableAndBlocksChildAliasAcceptance() {
+	void identicalPdfInDifferentExamDoesNotAutomaticallyAliasDocument() {
 		Fixture master = fixture("master", 2024, "External Assessment", "Paper 1", "1", QUESTIONS_HASH);
-		Fixture incoming = fixture("contributor", 2024, "External Assessment", "Paper 1", "1", QUESTIONS_HASH);
-		ObjectNode changed = (ObjectNode) incoming.exam().values();
-		changed.put("capture_state", "COMPLETE");
-		incoming = incoming.withReplaced(incoming.exam(), record("EXAM", "contributor:exam", changed));
+		Fixture incoming = fixture("contributor", 2025, "External Assessment", "Paper 1", "1", QUESTIONS_HASH);
 		Preview preview = preview(master, incoming);
-		assertEquals(Classification.CONFLICT, proposal(preview, incoming.exam()).classification());
-		assertEquals(Classification.CONFLICT, proposal(preview, incoming.booklet()).classification());
+		assertEquals(Classification.COMPATIBLE_ADDITION, proposal(preview, incoming.exam()).classification());
+		assertEquals(Classification.NEW, proposal(preview, incoming.booklet()).classification());
+		Proposal document = proposal(preview, incoming.questionDocument());
+		assertEquals(Classification.NEW, document.classification());
+		assertNull(document.masterId());
+		assertTrue(document.reason().contains("Identical PDF bytes alone")
+				|| document.reason().contains("identical PDF bytes alone"));
 	}
 
 	@Test
@@ -110,12 +107,17 @@ class EqworkAssessmentReconcilerTest {
 	}
 
 	@Test
-	void collidingDisplayNameButDifferentLegacyPaperCannotBeSilentlyAdded() {
+	void independentlyCreatedIdsProduceUnapprovedAliasesWhenEvidenceAgrees() {
 		Fixture master = fixture("master", 2024, "External Assessment", "Paper 1", "1", QUESTIONS_HASH);
-		Fixture incoming = fixture("contributor", 2024, "External Assessment", "Paper 1", "2", QUESTIONS_HASH);
+		Fixture incoming = fixture("contributor", 2024, "External Assessment", "Paper 1", "1", QUESTIONS_HASH);
 		Preview preview = preview(master, incoming);
-		assertEquals(Classification.CONFLICT, proposal(preview, incoming.booklet()).classification());
-		assertFalse(proposal(preview, incoming.booklet()).classification() == Classification.COMPATIBLE_ADDITION);
+		assertEquals(6, preview.proposals().size());
+		assertTrue(preview.proposals().stream().allMatch(p -> p.classification() == Classification.IDENTICAL));
+		assertTrue(preview.proposals().stream().allMatch(Proposal::proposesAlias));
+		assertEquals(master.exam().recordId(), proposal(preview, incoming.exam()).masterId());
+		assertEquals(master.exam().recordId(), proposal(preview, incoming.booklet()).masterParentId());
+		assertEquals(master.questionDocument().recordId(), proposal(preview, incoming.questionDocument()).masterId());
+		assertEquals(incoming.exam().recordId().toString(), incoming.booklet().values().path("exam_id").asText());
 	}
 
 	/**
@@ -150,17 +152,26 @@ class EqworkAssessmentReconcilerTest {
 		assertEquals(Classification.IDENTICAL, proposal(result, incoming.answerFile()).classification());
 	}
 
-	/** A changed or detached shared AnswerFile cannot be silently accepted. */
+	/**
+	 * Verifies that a legacy Paper code establishes the proposed Booklet identity
+	 * even when the editable display name differs.
+	 *
+	 * <p>
+	 * The metadata difference must remain a reviewable conflict.
+	 */
 	@Test
-	void differingSharedAnswerFileLinksFlagBookletConflict() {
+	void legacyPaperCodeTakesPrecedenceOverEditableBookletName() {
 		Fixture master = fixture("master", 2024, "External Assessment", "Paper 1", "1", QUESTIONS_HASH);
-		Fixture incoming = fixture("contributor", 2024, "External Assessment", "Paper 1", "1", QUESTIONS_HASH);
-		ObjectNode incomingValues = (ObjectNode) incoming.booklet().values();
-		incomingValues.put("answer_file_id", incoming.answerFile().recordId().toString());
-		incoming = incoming.withReplaced(incoming.booklet(),
-				record("EXAM_BOOKLET", "contributor:paper1", incomingValues));
-		Preview result = preview(master, incoming);
-		assertEquals(Classification.CONFLICT, proposal(result, incoming.booklet()).classification());
+
+		Fixture incoming = fixture("contributor", 2024, "External Assessment", "Renamed Paper", "1", QUESTIONS_HASH);
+
+		Preview preview = preview(master, incoming);
+		Proposal booklet = proposal(preview, incoming.booklet());
+
+		assertEquals(master.booklet().recordId(), booklet.masterId());
+		assertEquals(Classification.CONFLICT, booklet.classification());
+		assertTrue(booklet.reason().contains("EXAM_BOOKLET metadata"));
+		assertTrue(booklet.reason().contains("coordinator review required"));
 	}
 
 	private EqworkAssetIndex assets(String seed, UUID questionId, String questionHash, UUID answerId) {
@@ -216,15 +227,15 @@ class EqworkAssessmentReconcilerTest {
 		return record(type, identity, fields);
 	}
 
-	private Proposal proposal(Preview preview, EqworkRecord incoming) {
-		return preview.forType(incoming.recordType()).stream().filter(p -> p.incomingId().equals(incoming.recordId()))
-				.findFirst().orElseThrow();
-	}
-
 	private Preview preview(Fixture master, Fixture incoming) {
 		Preview curriculumPreview = curriculum.preview(master.records(), incoming.records());
 		return reconciler.preview(master.records(), master.assets(), incoming.records(), incoming.assets(),
 				curriculumPreview);
+	}
+
+	private Proposal proposal(Preview preview, EqworkRecord incoming) {
+		return preview.forType(incoming.recordType()).stream().filter(p -> p.incomingId().equals(incoming.recordId()))
+				.findFirst().orElseThrow();
 	}
 
 	private EqworkRecord record(String type, String identity, ObjectNode values) {

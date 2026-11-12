@@ -28,6 +28,20 @@ class EqworkReconciliationReviewTest {
 	Path directory;
 
 	/**
+	 * Proves that a conflicting portable record requires explicit coordinator
+	 * rationale.
+	 */
+	@Test
+	void conflictingAliasesRequireWrittenJustificationAndDoNotChangeClassification() {
+		EqworkReconciliationReview review = fixture();
+		assertThrows(IllegalArgumentException.class,
+				() -> review.decide(key("QUESTION", 3), Decision.ACCEPT, "too short"));
+		review.decide(key("QUESTION", 3), Decision.ACCEPT, "Reviewed the Question and PDF regions");
+		assertEquals(Classification.CONFLICT, review.preview().forType("QUESTION").getFirst().classification());
+		assertEquals(Decision.ACCEPT, review.choice(key("QUESTION", 3)).decision());
+	}
+
+	/**
 	 * Proves that all decisions begin UNDECIDED despite identical content evidence.
 	 */
 	@Test
@@ -36,6 +50,45 @@ class EqworkReconciliationReviewTest {
 		assertTrue(review.reviewKeys().stream().allMatch(key -> review.choice(key).decision() == Decision.UNDECIDED));
 		assertFalse(review.snapshot().complete());
 		assertTrue(review.snapshot().decisions().isEmpty());
+	}
+
+	/**
+	 * Verifies every item may explicitly be rejected without mutating any proposal.
+	 */
+	@Test
+	void rejectedReviewMayBeCompleteAndSafeWithoutAnyAcceptedRecord() {
+		EqworkReconciliationReview review = fixture();
+		for (var key : review.reviewKeys()) {
+			review.decide(key, Decision.REJECT, "not selected");
+		}
+		assertTrue(review.snapshot().complete());
+		assertTrue(review.snapshot().dependencySafe());
+		assertEquals(0, review.snapshot().decisions().values().stream()
+				.filter(choice -> choice.decision() == Decision.ACCEPT).count());
+	}
+
+	/**
+	 * Verifies that rejecting a parent prevents acceptance of its descendants, even
+	 * when a conflicting descendant has a valid coordinator justification.
+	 */
+	@Test
+	void rejectingParentBlocksAllDescendants() {
+		EqworkReconciliationReview review = fixture();
+
+		review.decide(key("SUBJECT", 1), Decision.REJECT, "not this Subject");
+
+		assertThrows(IllegalStateException.class,
+				() -> review.decide(key("QUESTION", 3), Decision.ACCEPT, "Reviewed conflicting PDF regions"));
+
+		assertFalse(review.snapshot().complete());
+	}
+
+	/** Verifies a rejected SourceDocument cannot support an accepted Booklet. */
+	@Test
+	void sourceDocumentDependencyIsPreservedAcrossRecordTypes() {
+		EqworkReconciliationReview review = fixture();
+		review.decide(key("SOURCE_DOCUMENT", 5), Decision.REJECT, "Wrong source PDF");
+		assertThrows(IllegalStateException.class, () -> review.decide(key("EXAM_BOOKLET", 4), Decision.ACCEPT, ""));
 	}
 
 	/** Proves that an accepted child requires explicitly accepted ancestry. */
@@ -52,55 +105,6 @@ class EqworkReconciliationReviewTest {
 		review.decide(key("CURRICULUM_NODE", 6), Decision.ACCEPT, "");
 		assertTrue(review.snapshot().dependencySafe());
 		assertThrows(IllegalStateException.class, () -> review.decide(key("EXAM", 2), Decision.REJECT, "not accepted"));
-	}
-
-	/**
-	 * Proves that a rejected parent blocks acceptance of descendants and owned
-	 * assets.
-	 */
-	@Test
-	void rejectingParentBlocksAllDescendants() {
-		EqworkReconciliationReview review = fixture();
-		review.decide(key("SUBJECT", 1), Decision.REJECT, "not this Subject");
-		assertThrows(IllegalStateException.class, () -> review.decide(key("QUESTION", 3), Decision.ACCEPT, ""));
-		assertFalse(review.snapshot().complete());
-	}
-
-	/**
-	 * Proves that a conflicting portable record requires explicit coordinator
-	 * rationale.
-	 */
-	@Test
-	void conflictingAliasesRequireWrittenJustificationAndDoNotChangeClassification() {
-		EqworkReconciliationReview review = fixture();
-		assertThrows(IllegalArgumentException.class,
-				() -> review.decide(key("QUESTION", 3), Decision.ACCEPT, "too short"));
-		review.decide(key("QUESTION", 3), Decision.ACCEPT, "Reviewed the Question and PDF regions");
-		assertEquals(Classification.CONFLICT, review.preview().forType("QUESTION").getFirst().classification());
-		assertEquals(Decision.ACCEPT, review.choice(key("QUESTION", 3)).decision());
-	}
-
-	/** Verifies a rejected SourceDocument cannot support an accepted Booklet. */
-	@Test
-	void sourceDocumentDependencyIsPreservedAcrossRecordTypes() {
-		EqworkReconciliationReview review = fixture();
-		review.decide(key("SOURCE_DOCUMENT", 5), Decision.REJECT, "Wrong source PDF");
-		assertThrows(IllegalStateException.class, () -> review.decide(key("EXAM_BOOKLET", 4), Decision.ACCEPT, ""));
-	}
-
-	/**
-	 * Verifies every item may explicitly be rejected without mutating any proposal.
-	 */
-	@Test
-	void rejectedReviewMayBeCompleteAndSafeWithoutAnyAcceptedRecord() {
-		EqworkReconciliationReview review = fixture();
-		for (var key : review.reviewKeys()) {
-			review.decide(key, Decision.REJECT, "not selected");
-		}
-		assertTrue(review.snapshot().complete());
-		assertTrue(review.snapshot().dependencySafe());
-		assertEquals(0, review.snapshot().decisions().values().stream()
-				.filter(choice -> choice.decision() == Decision.ACCEPT).count());
 	}
 
 	/**
@@ -150,13 +154,13 @@ class EqworkReconciliationReviewTest {
 		return new EqworkReconciliationReview(preview);
 	}
 
-	/** Creates a stable UUID distinct from every other test identity. */
-	private UUID uuid(long identifier) {
-		return new UUID(0L, identifier);
-	}
-
 	/** Builds a record review key from the fixture's portable identity. */
 	private EqworkReconciliationReview.Key key(String type, long number) {
 		return EqworkReconciliationReview.recordKey(type, uuid(number));
+	}
+
+	/** Creates a stable UUID distinct from every other test identity. */
+	private UUID uuid(long identifier) {
+		return new UUID(0L, identifier);
 	}
 }
