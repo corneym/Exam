@@ -243,7 +243,8 @@ public final class EqworkCurriculumReconciler {
 					masterParent = masterVersion.recordId();
 				} else {
 					String parentPath = incomingGraph.paths().get(incomingParent);
-					List<EqworkRecord> parentMatches = masterGraph.byPath().getOrDefault(parentPath, List.of());
+					List<EqworkRecord> parentMatches = masterGraph == null ? List.of()
+							: masterGraph.byPath().getOrDefault(parentPath, List.of());
 					if (parentMatches.size() == 1) {
 						masterParent = parentMatches.getFirst().recordId();
 					}
