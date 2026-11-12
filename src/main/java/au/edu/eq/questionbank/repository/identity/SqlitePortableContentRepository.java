@@ -22,7 +22,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
-import au.edu.eq.questionbank.service.workpackage.EqworkRecord;
+import au.edu.eq.questionbank.service.workpackage.ExchangeRecord;
 
 /**
  * Reads canonical portable content from the current SQLite entity graph.
@@ -120,8 +120,8 @@ public final class SqlitePortableContentRepository {
 					values.put(child.tableName(), readChildren(connection, child, localId));
 				}
 				JsonNode json = mapper.valueToTree(values);
-				EqworkRecord record = new EqworkRecord(EqworkRecord.CURRENT_RECORD_VERSION, type.name(), identity[0],
-						identity[1], null, json);
+				ExchangeRecord record = new ExchangeRecord(ExchangeRecord.CURRENT_RECORD_VERSION, type.name(),
+						identity[0], identity[1], null, json);
 				String fingerprint = fingerprint(type, json);
 				connection.commit();
 				return new Snapshot(record, fingerprint);
@@ -158,7 +158,7 @@ public final class SqlitePortableContentRepository {
 
 			// Explicit domain separation permits future fingerprint
 			// versions without changing existing entity UUIDs.
-			digest.update("eqwork-content-v1\n".getBytes(StandardCharsets.UTF_8));
+			digest.update("examwork-content-v1\n".getBytes(StandardCharsets.UTF_8));
 			digest.update(type.name().getBytes(StandardCharsets.UTF_8));
 			digest.update((byte) '\n');
 			digest.update(mapper.writeValueAsBytes(values));
@@ -283,7 +283,7 @@ public final class SqlitePortableContentRepository {
 	 * @param record        portable record with its causal revision
 	 * @param contentSha256 lower-case SHA-256 content digest
 	 */
-	public record Snapshot(EqworkRecord record, String contentSha256) {
+	public record Snapshot(ExchangeRecord record, String contentSha256) {
 
 		/**
 		 * Validates the snapshot.
