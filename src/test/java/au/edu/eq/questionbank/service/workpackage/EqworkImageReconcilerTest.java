@@ -42,9 +42,7 @@ class EqworkImageReconcilerTest {
 	void changedQuestionPngDigestIsConflict() {
 		Fixture master = fixture("master", RED, List.of());
 		Fixture incoming = fixture("incoming", GREEN, List.of());
-
 		ImagePreview result = inspect(master, incoming, capturePreview(master, incoming, true));
-
 		assertEquals(Classification.CONFLICT, evidence(result, incoming.question()).classification());
 	}
 
@@ -56,9 +54,7 @@ class EqworkImageReconcilerTest {
 	void changedSharedContextImageOrderIsConflict() {
 		Fixture master = fixture("master", RED, List.of(RED, BLUE));
 		Fixture incoming = fixture("incoming", RED, List.of(BLUE, RED));
-
 		ImagePreview result = inspect(master, incoming, capturePreview(master, incoming, true));
-
 		assertEquals(Classification.IDENTICAL, evidence(result, incoming.question()).classification());
 		assertEquals(Classification.CONFLICT, evidence(result, incoming.context()).classification());
 		assertTrue(evidence(result, incoming.context()).reason().contains("order"));
@@ -73,7 +69,6 @@ class EqworkImageReconcilerTest {
 		Fixture incoming = fixture("incoming", null, List.of(RED, BLUE));
 		EqworkAssetIndex missing = new EqworkAssetIndex(
 				incoming.assets().references().stream().filter(reference -> !reference.sha256().equals(BLUE)).toList());
-
 		assertThrows(IllegalArgumentException.class, () -> reconciler.preview(master.records(), master.assets(),
 				incoming.records(), missing, capturePreview(master, incoming, true)));
 	}
@@ -83,7 +78,6 @@ class EqworkImageReconcilerTest {
 	void emptyImageInventoriesNeedNoFurtherReview() {
 		Fixture master = fixture("master", null, List.of());
 		Fixture incoming = fixture("incoming", null, List.of());
-
 		assertTrue(inspect(master, incoming, capturePreview(master, incoming, true)).evidence().isEmpty());
 	}
 
@@ -97,7 +91,6 @@ class EqworkImageReconcilerTest {
 		EqworkRecord inconsistent = record("QUESTION", "incoming:question", changed);
 		List<EqworkRecord> rows = incoming.records().stream()
 				.map(row -> row.recordId().equals(incoming.question().recordId()) ? inconsistent : row).toList();
-
 		assertThrows(IllegalArgumentException.class, () -> reconciler.preview(master.records(), master.assets(), rows,
 				incoming.assets(), capturePreview(master, incoming, true)));
 	}
@@ -111,9 +104,7 @@ class EqworkImageReconcilerTest {
 		Fixture master = fixture("master", RED, List.of(RED, BLUE));
 		Fixture incoming = fixture("incoming", RED, List.of(RED, BLUE));
 		Preview captures = capturePreview(master, incoming, true);
-
 		ImagePreview result = inspect(master, incoming, captures);
-
 		assertEquals(2, result.evidence().size());
 		assertTrue(
 				result.evidence().stream().allMatch(evidence -> evidence.classification() == Classification.IDENTICAL));
@@ -130,7 +121,6 @@ class EqworkImageReconcilerTest {
 		Fixture incoming = fixture("incoming", RED, List.of());
 		EqworkAssetIndex missing = new EqworkAssetIndex(incoming.assets().references().stream()
 				.filter(reference -> !reference.usage().equals("EMBEDDED_QUESTION_PNG")).toList());
-
 		assertThrows(IllegalArgumentException.class, () -> reconciler.preview(master.records(), master.assets(),
 				incoming.records(), missing, capturePreview(master, incoming, true)));
 	}
@@ -153,7 +143,6 @@ class EqworkImageReconcilerTest {
 				changed.add(reference);
 			}
 		}
-
 		assertThrows(IllegalArgumentException.class, () -> reconciler.preview(master.records(), master.assets(),
 				incoming.records(), new EqworkAssetIndex(changed), capturePreview(master, incoming, true)));
 	}
@@ -166,9 +155,7 @@ class EqworkImageReconcilerTest {
 	void samePngInIndependentQuestionDoesNotProposeAlias() {
 		Fixture master = fixture("master", RED, List.of());
 		Fixture incoming = fixture("incoming", RED, List.of());
-
 		ImagePreview result = inspect(master, incoming, capturePreview(master, incoming, false));
-
 		Evidence evidence = evidence(result, incoming.question());
 		assertEquals(Classification.COMPATIBLE_ADDITION, evidence.classification());
 		assertNull(evidence.masterOwnerId());
@@ -229,7 +216,6 @@ class EqworkImageReconcilerTest {
 		}
 		EqworkRecord question = record("QUESTION", installation + ":question", questionValues);
 		records.add(question);
-
 		ObjectNode contextValues = mapper.createObjectNode();
 		contextValues.put("context_label", "Shared stimulus");
 		contextValues.putArray("shared_question_context_images");

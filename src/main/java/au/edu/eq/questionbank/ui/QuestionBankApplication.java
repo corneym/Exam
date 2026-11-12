@@ -159,6 +159,10 @@ import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 import au.edu.eq.questionbank.service.revision.RevisionCorpusBuilder;
 import au.edu.eq.questionbank.service.revision.RevisionGroupingMode;
 import au.edu.eq.questionbank.service.revision.RevisionPresentationPlanner;
+import au.edu.eq.questionbank.service.workpackage.EqworkManifest;
+import au.edu.eq.questionbank.service.workpackage.EqworkReconciliationReview;
+import au.edu.eq.questionbank.service.workpackage.EqworkSubjectSnapshotExporter;
+import au.edu.eq.questionbank.service.workpackage.EqworkTwoWaySubjectPreviewService;
 import au.edu.eq.questionbank.ui.audit.CorpusDashboardPane;
 import au.edu.eq.questionbank.ui.capture.AnswerCapturePane;
 import au.edu.eq.questionbank.ui.capture.QuestionCapturePane;
@@ -1963,12 +1967,20 @@ public class QuestionBankApplication extends Application {
 		return progressAlert;
 	}
 
+	/** Builds the primary File menu, including read-only Subject comparison. */
 	private Menu createFileMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu fileMenu = createMenu("_File");
 		Menu openMenu = createMenu("_Open");
 		openMenu.getItems().add(createMenuItem("_PDF...", () -> openViewerPdf(primaryStage, config)));
+		MenuItem exportSubjectItem = createMenuItem("Export Working _Subject snapshot...",
+				() -> showExportWorkingSubjectSnapshot(primaryStage, config));
+		exportSubjectItem.setId("file-export-subject-snapshot");
+		MenuItem reconciliationItem = createMenuItem("_Review Subject snapshots...",
+				() -> showSubjectReconciliationReview(primaryStage, config));
+		reconciliationItem.setId("file-review-subject-snapshots");
 		fileMenu.getItems().addAll(openMenu, createMenuItem("_Close PDF", this::closeViewerPdf),
-				new SeparatorMenuItem(), createMenuItem("_Backup Now...", () -> backupNow(primaryStage, config)),
+				new SeparatorMenuItem(), exportSubjectItem, reconciliationItem, new SeparatorMenuItem(),
+				createMenuItem("_Backup Now...", () -> backupNow(primaryStage, config)),
 				createMenuItem("_Restore Backup...", () -> restoreBackup(primaryStage, config)),
 				new SeparatorMenuItem(), createMenuItem("Op_tions...", () -> showOptions(primaryStage, config)),
 				new SeparatorMenuItem(), createMenuItem("E_xit", () -> requestApplicationExit(primaryStage)));
@@ -4819,6 +4831,70 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	/**
+	 * Exports the accepted Working Subject as an independently validated snapshot.
+	 *
+	 * <p>
+	 * Export performs a consistent read-only SQLite snapshot on a worker thread.
+	 * The output is created only outside authoritative managed data directories.
+	 */
+	private void showExportWorkingSubjectSnapshot(Stage primaryStage, ApplicationConfig config) {
+		Subject subject = workingSubject;
+		if (subject == null) {
+			showAlert(Alert.AlertType.WARNING, "Export Subject Snapshot", "No Working Subject is selected.",
+					"Select a Subject before exporting.");
+			return;
+		}
+		FileChooser chooser = new FileChooser();
+		chooser.setTitle("Export complete Working Subject snapshot");
+		chooser.setInitialFileName("Subject-snapshot.eqwork");
+		chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Subject snapshots", "*.eqwork"));
+		File targetFile = chooser.showSaveDialog(primaryStage);
+		if (targetFile == null) {
+			return;
+		}
+		Path target = targetFile.toPath().toAbsolutePath().normalize();
+		if (target.startsWith(config.dataRoot().toAbsolutePath().normalize())) {
+			showAlert(Alert.AlertType.ERROR, "Export Subject Snapshot",
+					"Choose a location outside the application's managed data directory.",
+					"Subject snapshots must not be stored among authoritative source files.");
+			return;
+		}
+		Task<EqworkManifest> task = new Task<>() {
+
+			@Override
+			protected EqworkManifest call() throws Exception {
+				return new EqworkSubjectSnapshotExporter(new SqliteDatabase(config.databasePath()),
+						new ManagedDataLayout(config.dataRoot())).export(subject.getId(), target);
+			}
+		};
+		Alert progress = new Alert(Alert.AlertType.INFORMATION);
+		progress.initOwner(primaryStage);
+		progress.setTitle("Exporting Subject snapshot");
+		progress.setHeaderText("Preparing a verified, portable Subject snapshot");
+		progress.setContentText("The source database and managed PDF files will not be changed.");
+
+		// Hiding the progress alert does not cancel an in-flight atomic export.
+		// The user is informed only when validation and publication have finished.
+		progress.getButtonTypes().setAll(new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE));
+		task.setOnSucceeded(_ -> {
+			progress.close();
+			showAlert(Alert.AlertType.INFORMATION, "Export Subject Snapshot", "Snapshot exported and validated.",
+					target.toString());
+		});
+		task.setOnFailed(_ -> {
+			progress.close();
+			Throwable failure = task.getException();
+			showAlert(Alert.AlertType.ERROR, "Export Subject Snapshot", "The Subject snapshot could not be exported.",
+					failure == null ? "Unknown error" : failure.getMessage());
+		});
+		task.setOnCancelled(_ -> progress.close());
+		Thread worker = new Thread(task, "eqwork-subject-snapshot-export");
+		worker.setDaemon(true);
+		progress.show();
+		worker.start();
+	}
+
 	private void showHelpContents() {
 		Window owner = primaryWindow();
 
@@ -5286,6 +5362,63 @@ public class QuestionBankApplication extends Application {
 
 	private void showStartupError(String title, String message) {
 		showAlert(Alert.AlertType.ERROR, title, "The application could not start.", message);
+	}
+
+	/**
+	 * Opens a read-only comparison of two exported complete Subject snapshots.
+	 *
+	 * <p>
+	 * Archive validation and graph comparison run on a worker thread. The only
+	 * optional output is an explicitly saved review JSON file outside managed data.
+	 */
+	private void showSubjectReconciliationReview(Stage primaryStage, ApplicationConfig config) {
+		FileChooser chooser = new FileChooser();
+		chooser.setTitle("Select coordinator Subject snapshot (.eqwork)");
+		chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Subject snapshots", "*.eqwork"));
+		File masterFile = chooser.showOpenDialog(primaryStage);
+		if (masterFile == null) {
+			return;
+		}
+		chooser.setTitle("Select independently exported contributor Subject snapshot (.eqwork)");
+		File incomingFile = chooser.showOpenDialog(primaryStage);
+		if (incomingFile == null) {
+			return;
+		}
+		Task<EqworkTwoWaySubjectPreviewService.Result> task = new Task<>() {
+
+			@Override
+			protected EqworkTwoWaySubjectPreviewService.Result call() throws Exception {
+				return new EqworkTwoWaySubjectPreviewService().preview(masterFile.toPath(), incomingFile.toPath());
+			}
+		};
+		Alert progress = new Alert(Alert.AlertType.INFORMATION);
+		progress.initOwner(primaryStage);
+		progress.setTitle("Comparing Subject snapshots");
+		progress.setHeaderText("Validating source packages and preparing a read-only preview");
+		progress.setContentText("No records or managed files will be changed.");
+		progress.getButtonTypes().setAll(ButtonType.CANCEL);
+		progress.setOnHidden(_ -> {
+			if (task.isRunning()) {
+				task.cancel(true);
+			}
+		});
+		task.setOnSucceeded(_ -> {
+			progress.close();
+			EqworkReconciliationReviewDialog dialog = new EqworkReconciliationReviewDialog(primaryStage,
+					new EqworkReconciliationReview(task.getValue()), config.dataRoot());
+			dialog.showAndWait();
+		});
+		task.setOnFailed(_ -> {
+			progress.close();
+			Throwable failure = task.getException();
+			showAlert(Alert.AlertType.ERROR, "Subject Reconciliation", "The snapshots could not be compared.",
+					failure == null ? "Unknown error" : failure.getMessage());
+		});
+		task.setOnCancelled(_ -> progress.close());
+		Thread worker = new Thread(task, "eqwork-subject-preview");
+		worker.setDaemon(true);
+		progress.show();
+		worker.start();
 	}
 
 	private void showVersionInformation(ApplicationConfig config) {

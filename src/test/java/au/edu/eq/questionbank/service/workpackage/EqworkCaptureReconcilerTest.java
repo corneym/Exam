@@ -41,9 +41,7 @@ class EqworkCaptureReconcilerTest {
 		ObjectNode answer = (ObjectNode) incoming.answer().values();
 		((ObjectNode) answer.path("answer_regions").get(0)).put("page_number", 8);
 		incoming = incoming.replacing(incoming.answer(), record("ANSWER", "incoming:answer", answer));
-
 		Preview result = preview(master, incoming);
-
 		assertEquals(Classification.CONFLICT, proposal(result, incoming.context()).classification());
 		assertEquals(Classification.CONFLICT, proposal(result, incoming.question()).classification());
 		assertEquals(Classification.CONFLICT, proposal(result, incoming.answer()).classification());
@@ -56,7 +54,6 @@ class EqworkCaptureReconcilerTest {
 		Fixture incoming = fixture("incoming");
 		Preview result = reconciler.preview(master.records(), incoming.records(), curriculum(master, incoming),
 				assessment(master, incoming, Classification.CONFLICT));
-
 		assertEquals(Classification.CONFLICT, proposal(result, incoming.question()).classification());
 		assertEquals(Classification.CONFLICT, proposal(result, incoming.answer()).classification());
 		assertTrue(proposal(result, incoming.question()).reason().contains("PDF provenance"));
@@ -70,9 +67,7 @@ class EqworkCaptureReconcilerTest {
 		ObjectNode changed = (ObjectNode) incoming.question().values();
 		changed.put("classification_node_id", id("unmapped-node").toString());
 		incoming = incoming.replacing(incoming.question(), record("QUESTION", "incoming:question", changed));
-
 		Preview result = preview(master, incoming);
-
 		assertEquals(Classification.CONFLICT, proposal(result, incoming.question()).classification());
 		assertTrue(proposal(result, incoming.question()).reason().contains("Unresolved portable dependency"));
 		assertEquals(Classification.CONFLICT, proposal(result, incoming.answer()).classification());
@@ -86,9 +81,7 @@ class EqworkCaptureReconcilerTest {
 		ObjectNode changed = (ObjectNode) incoming.question().values();
 		((ObjectNode) changed.path("question_regions").get(0)).put("x", 0.75);
 		incoming = incoming.replacing(incoming.question(), record("QUESTION", "incoming:question", changed));
-
 		Preview result = preview(master, incoming);
-
 		assertEquals(Classification.CONFLICT, proposal(result, incoming.question()).classification());
 		assertEquals(Classification.CONFLICT, proposal(result, incoming.answer()).classification());
 	}
@@ -101,9 +94,7 @@ class EqworkCaptureReconcilerTest {
 		ObjectNode second = (ObjectNode) incoming.context().values();
 		EqworkRecord duplicate = record("SHARED_QUESTION_CONTEXT", "incoming:other-context", second);
 		incoming = incoming.with(duplicate);
-
 		Preview result = preview(master, incoming);
-
 		assertEquals(Classification.CONFLICT, proposal(result, incoming.context()).classification());
 		assertEquals(Classification.CONFLICT, proposal(result, duplicate).classification());
 	}
@@ -117,9 +108,7 @@ class EqworkCaptureReconcilerTest {
 		ArrayNode images = changed.putArray("question_images");
 		images.addObject().put("image_png", "a".repeat(64));
 		incoming = incoming.replacing(incoming.question(), record("QUESTION", "incoming:question", changed));
-
 		Preview result = preview(master, incoming);
-
 		assertEquals(Classification.CONFLICT, proposal(result, incoming.question()).classification());
 		assertTrue(proposal(result, incoming.question()).reason().contains("image ownership"));
 	}
@@ -133,7 +122,6 @@ class EqworkCaptureReconcilerTest {
 		Fixture master = fixture("master");
 		Fixture incoming = fixture("incoming");
 		Preview result = preview(master, incoming);
-
 		assertEquals(4, result.proposals().size());
 		assertTrue(result.proposals().stream().allMatch(p -> p.classification() == Classification.IDENTICAL));
 		assertTrue(result.proposals().stream().allMatch(Proposal::proposesAlias));
@@ -149,9 +137,7 @@ class EqworkCaptureReconcilerTest {
 	void independentlyCapturedQuestionIsCompatibleAdditionWithNewAnswer() {
 		Fixture master = fixture("master").withoutCapture();
 		Fixture incoming = fixture("incoming");
-
 		Preview result = preview(master, incoming);
-
 		assertEquals(Classification.COMPATIBLE_ADDITION, proposal(result, incoming.question()).classification());
 		assertEquals(Classification.NEW, proposal(result, incoming.answer()).classification());
 		assertNull(proposal(result, incoming.question()).masterId());
@@ -163,7 +149,6 @@ class EqworkCaptureReconcilerTest {
 	void missingParentProposalFailsClosed() {
 		Fixture master = fixture("master");
 		Fixture incoming = fixture("incoming");
-
 		assertThrows(IllegalArgumentException.class, () -> reconciler.preview(master.records(), incoming.records(),
 				curriculum(master, incoming), new Preview(List.of())));
 	}

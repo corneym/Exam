@@ -41,7 +41,6 @@ import au.edu.eq.questionbank.service.workpackage.EqworkCurriculumReconciler.Pro
 public final class EqworkCaptureReconciler {
 
 	private static final ObjectMapper MAPPER = new ObjectMapper();
-
 	private static final Map<String, String> REFERENCE_TYPES = Map.of("booklet_id", "EXAM_BOOKLET",
 			"classification_node_id", "CURRICULUM_NODE", "source_question_id", "SOURCE_QUESTION", "shared_context_id",
 			"SHARED_QUESTION_CONTEXT", "pending_mcq_shared_context_id", "SHARED_QUESTION_CONTEXT",
@@ -80,7 +79,6 @@ public final class EqworkCaptureReconciler {
 		Map<String, Map<UUID, Proposal>> matches = new HashMap<>();
 		addPreceding(matches, left, right, curriculum);
 		addPreceding(matches, left, right, assessment);
-
 		List<Proposal> results = new ArrayList<>();
 		matchNamed("SOURCE_QUESTION", "source_question_code", "booklet_id", left, right, matches, results);
 		matchNamed("SHARED_QUESTION_CONTEXT", "context_label", "booklet_id", left, right, matches, results);

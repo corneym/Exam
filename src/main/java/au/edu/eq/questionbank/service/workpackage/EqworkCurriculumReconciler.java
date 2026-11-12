@@ -44,6 +44,7 @@ public final class EqworkCurriculumReconciler {
 	 * without modifying either dataset or accepting any proposed aliases.
 	 */
 	public EqworkCurriculumReconciler() {
+
 		// No mutable state is required.
 	}
 

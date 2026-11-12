@@ -54,7 +54,6 @@ public final class EqworkTwoWaySubjectPreviewService {
 			Map.entry("answer_id", "ANSWER"), Map.entry("source_node_id", "CURRICULUM_NODE"),
 			Map.entry("target_node_id", "CURRICULUM_NODE"), Map.entry("target_syllabus_version_id", "SYLLABUS_VERSION"),
 			Map.entry("current_curriculum_node_id", "CURRICULUM_NODE"), Map.entry("image_id", "QUESTION_IMAGE"));
-
 	private final EqworkArchiveValidator validator = new EqworkArchiveValidator();
 	private final EqworkJsonlCodec codec = new EqworkJsonlCodec();
 
@@ -91,7 +90,6 @@ public final class EqworkTwoWaySubjectPreviewService {
 				assessment);
 		EqworkImageReconciler.ImagePreview images = new EqworkImageReconciler().preview(left.records(), left.assets(),
 				right.records(), right.assets(), capture);
-
 		List<Proposal> all = new ArrayList<>();
 		all.addAll(curriculum.proposals());
 		all.addAll(assessment.proposals());

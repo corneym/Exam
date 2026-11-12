@@ -233,6 +233,7 @@ public final class EqworkImageReconciler {
 			JsonNode values = owner.values();
 			if ("QUESTION".equals(type)) {
 				Map<UUID, String> imageHashes = new HashMap<>();
+
 				// Images are indexed by owning Question once. Avoid scanning
 				// the entire Subject's image corpus for each Question.
 				for (EqworkRecord image : imagesByQuestion.getOrDefault(id, List.of())) {
@@ -292,6 +293,7 @@ public final class EqworkImageReconciler {
 					parts.add("OTHER:" + part.toString());
 				}
 			}
+
 			// The stored image_order is significant even when no content
 			// assembly rows exist yet. Do not turn the Context into a set.
 			List<String> orderedImages = byOrder.entrySet().stream().sorted(Map.Entry.comparingByKey())

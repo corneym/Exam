@@ -71,7 +71,6 @@ public final class EqworkAssessmentReconciler {
 		if (subject.masterId() != null && !subject.masterId().equals(left.subjectId())) {
 			throw new IllegalArgumentException("Curriculum preview belongs to a different master Subject");
 		}
-
 		List<Proposal> results = new ArrayList<>();
 		Map<UUID, Proposal> providerMatches = matchProviders(left, right, results);
 		Map<UUID, Proposal> examMatches = matchExams(left, right, subject, providerMatches, results);
@@ -155,6 +154,20 @@ public final class EqworkAssessmentReconciler {
 		return matched;
 	}
 
+	/**
+	 * Matches Booklets and AnswerFiles within their reconciled Exams.
+	 *
+	 * <p>
+	 * Logical identity and verified PDF provenance must agree before records can be
+	 * classified as identical. Matching PDF bytes alone do not establish record
+	 * identity.
+	 *
+	 * @param type    portable entity type
+	 * @param left    master assessment graph
+	 * @param right   incoming assessment graph
+	 * @param exams   proposed Exam identity mappings
+	 * @param results destination for reconciliation proposals
+	 */
 	private void matchOwned(String type, Graph left, Graph right, Map<UUID, Proposal> exams, List<Proposal> results) {
 		for (EqworkRecord incoming : right.records(type)) {
 			UUID incomingExam = right.reference(incoming, "exam_id");
@@ -171,8 +184,9 @@ public final class EqworkAssessmentReconciler {
 							.filter(record -> ownedKey(type, record).equals(incomingKey)).toList();
 			boolean weakLegacyMatch = false;
 			if (type.equals("EXAM_BOOKLET") && parent.masterId() != null && candidates.isEmpty()) {
-				// A renamed legacy Paper must never be silently created as
-				// an apparently new Booklet with a colliding display name.
+
+				// A renamed legacy Paper must not silently become a new
+				// Booklet with a colliding display name.
 				candidates = left.owned(type, parent.masterId()).stream()
 						.filter(record -> required(record, "booklet_name").equals(required(incoming, "booklet_name")))
 						.toList();
@@ -208,6 +222,9 @@ public final class EqworkAssessmentReconciler {
 					classification = Classification.CONFLICT;
 					reason = "Matching logical identity references different source PDF bytes.";
 				} else if (!equivalent(candidate, incoming, "exam_id", "source_document_id", "answer_file_id")) {
+					classification = Classification.CONFLICT;
+					reason = "Matching logical identity and source PDF, but differing " + type
+							+ " metadata; coordinator review required.";
 				} else {
 					classification = Classification.IDENTICAL;
 					reason = "Logical identity, metadata and verified source PDF SHA-256 agree.";
