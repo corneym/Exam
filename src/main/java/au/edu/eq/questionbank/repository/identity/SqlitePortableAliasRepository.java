@@ -71,6 +71,8 @@ public final class SqlitePortableAliasRepository {
 				// The same originating entity cannot be approved
 				// under two different domain types.
 				rejectConflictingOriginType(connection, originInstallationId, entityType, originPortableId);
+				requireConsistentLocalOrigin(connection, originInstallationId, entityType, originPortableId,
+						canonicalPortableId);
 				Optional<UUID> existing = findAlias(connection, originInstallationId, entityType, originPortableId);
 				if (existing.isPresent()) {
 					if (!existing.get().equals(canonicalPortableId)) {
@@ -209,6 +211,60 @@ public final class SqlitePortableAliasRepository {
 				}
 				if (result.next()) {
 					throw new SQLException("Duplicate canonical portable UUID");
+				}
+			}
+		}
+	}
+
+	private void requireConsistentLocalOrigin(Connection connection, UUID originInstallationId, EntityType entityType,
+			UUID originPortableId, UUID canonicalPortableId) throws SQLException {
+		UUID localInstallationId;
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT installation_id
+				FROM installation_identity
+				WHERE singleton_id = 1
+				"""); ResultSet result = statement.executeQuery()) {
+			if (!result.next()) {
+				throw new SQLException("Database has no installation identity");
+			}
+			String storedId = result.getString("installation_id");
+			try {
+				localInstallationId = UUID.fromString(storedId);
+			} catch (IllegalArgumentException exception) {
+				throw new SQLException("Invalid local installation identity", exception);
+			}
+			if (!localInstallationId.toString().equals(storedId)) {
+				throw new SQLException("Noncanonical local installation identity");
+			}
+			if (result.next()) {
+				throw new SQLException("Multiple local installation identities");
+			}
+		}
+		if (!localInstallationId.equals(originInstallationId)) {
+			return;
+		}
+
+		// An installation cannot claim that its own portable identity
+		// belongs to a different canonical entity.
+		if (!originPortableId.equals(canonicalPortableId)) {
+			throw new IllegalStateException("Local-origin identity cannot alias a different canonical entity");
+		}
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT entity_type, retired
+				FROM portable_entity_identities
+				WHERE portable_id = ?
+				""")) {
+			statement.setString(1, originPortableId.toString());
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalStateException("Local-origin portable identity does not exist");
+				}
+				if (!entityType.name().equals(result.getString("entity_type")) || result.getInt("retired") != 0) {
+					throw new IllegalStateException(
+							"Local-origin identity is not an active entity of the requested type");
+				}
+				if (result.next()) {
+					throw new SQLException("Duplicate local portable identity");
 				}
 			}
 		}

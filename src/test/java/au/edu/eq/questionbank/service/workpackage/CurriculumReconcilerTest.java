@@ -68,6 +68,18 @@ class CurriculumReconcilerTest {
 	}
 
 	@Test
+	void differentSubjectNameCasingDoesNotCreateAnAlias() {
+		List<ExchangeRecord> master = biology("master");
+		List<ExchangeRecord> incoming = new ArrayList<>(biology("contributor"));
+		incoming.set(0, subject("contributor", "BIOLOGY"));
+		Preview preview = reconciler.preview(master, incoming);
+		Proposal subject = preview.forType("SUBJECT").getFirst();
+		assertEquals(Classification.NEW, subject.classification());
+		assertNull(subject.masterId());
+		assertFalse(subject.proposesAlias());
+	}
+
+	@Test
 	void duplicateSyllabusNameIsAmbiguousAndProposesNoAlias() {
 		List<ExchangeRecord> master = biology("master");
 		List<ExchangeRecord> incoming = new ArrayList<>(biology("contributor"));
@@ -77,6 +89,24 @@ class CurriculumReconcilerTest {
 		assertEquals(2, preview.forType("SYLLABUS_VERSION").size());
 		assertTrue(preview.forType("SYLLABUS_VERSION").stream().allMatch(
 				proposal -> proposal.classification() == Classification.CONFLICT && proposal.masterId() == null));
+	}
+
+	@Test
+	void equivalentMappingReviewsWithIndependentSyllabusIdsAreIdentical() {
+		List<ExchangeRecord> master = new ArrayList<>(biology("master"));
+		List<ExchangeRecord> incoming = new ArrayList<>(biology("contributor"));
+		addMappingReview(master, 2);
+		addMappingReview(incoming, 2);
+		String originalIncomingTarget = incoming.get(2).values().path("curriculum_mapping_reviews").get(0)
+				.path("target_syllabus_version_id").asText();
+		Preview preview = reconciler.preview(master, incoming);
+		assertEquals(Classification.IDENTICAL, preview.forType("SYLLABUS_VERSION").getFirst().classification());
+		assertEquals(Classification.IDENTICAL, proposal(preview, incoming.get(2)).classification());
+
+		// Rebasing is comparison-only.
+		assertEquals(originalIncomingTarget, incoming.get(2).values().path("curriculum_mapping_reviews").get(0)
+				.path("target_syllabus_version_id").asText());
+		assertFalse(master.get(1).recordId().equals(incoming.get(1).recordId()));
 	}
 
 	@Test
@@ -130,6 +160,16 @@ class CurriculumReconcilerTest {
 		assertEquals(Classification.COMPATIBLE_ADDITION, proposal(preview, node).classification());
 		assertFalse(proposal(preview, version).proposesAlias());
 		assertTrue(proposal(preview, version).reason().contains("approval required"));
+	}
+
+	private void addMappingReview(List<ExchangeRecord> records, int nodeIndex) {
+		ExchangeRecord original = records.get(nodeIndex);
+		ObjectNode values = (ObjectNode) original.values();
+		ObjectNode review = values.putArray("curriculum_mapping_reviews").addObject();
+		review.put("target_syllabus_version_id", records.get(1).recordId().toString());
+		review.put("review_outcome", "MATCHED");
+		records.set(nodeIndex, new ExchangeRecord(original.recordVersion(), original.recordType(), original.recordId(),
+				original.revisionId(), original.baselineRevisionId(), values));
 	}
 
 	private List<ExchangeRecord> biology(String origin) {

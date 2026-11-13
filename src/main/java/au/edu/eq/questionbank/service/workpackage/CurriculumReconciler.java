@@ -76,8 +76,11 @@ public final class CurriculumReconciler {
 		requireUniqueIds(incoming);
 		ExchangeRecord incomingSubject = incomingSubjects.getFirst();
 		ExchangeRecord candidateSubject = masterSubjects.isEmpty() ? null : masterSubjects.getFirst();
-		boolean sameSubject = candidateSubject != null
-				&& key(candidateSubject, "subject_name").equals(key(incomingSubject, "subject_name"));
+
+		// Subject names identify managed directory roots.
+		// Do not silently equate differently cased directory names.
+		boolean sameSubject = candidateSubject != null && candidateSubject.values().path("subject_name").asText()
+				.equals(incomingSubject.values().path("subject_name").asText());
 		ExchangeRecord masterSubject = sameSubject ? candidateSubject : null;
 		List<Proposal> proposals = new ArrayList<>();
 		proposals.add(new Proposal("SUBJECT", incomingSubject.recordId(),
@@ -97,13 +100,24 @@ public final class CurriculumReconciler {
 		}
 		Map<String, List<ExchangeRecord>> masterByName = groupByKey(masterVersions, "syllabus_name");
 		Map<String, List<ExchangeRecord>> incomingByName = groupByKey(incomingVersions, "syllabus_name");
+		Map<UUID, UUID> syllabusAliases = new HashMap<>();
+		for (Map.Entry<String, List<ExchangeRecord>> entry : incomingByName.entrySet()) {
+			List<ExchangeRecord> incomingMatches = entry.getValue();
+			List<ExchangeRecord> masterMatches = masterByName.getOrDefault(entry.getKey(), List.of());
+
+			// Only unique syllabus-name matches can be used for rebasing.
+			if (incomingMatches.size() == 1 && masterMatches.size() == 1) {
+				syllabusAliases.put(incomingMatches.getFirst().recordId(), masterMatches.getFirst().recordId());
+			}
+		}
+		List<ExchangeRecord> comparableIncoming = rebaseMappingReviewTargets(incoming, syllabusAliases);
 		incomingVersions.stream().sorted(Comparator.comparing((ExchangeRecord version) -> key(version, "syllabus_name"))
 				.thenComparing(version -> version.recordId().toString())).forEach(version -> {
 					String versionName = key(version, "syllabus_name");
 					List<ExchangeRecord> candidates = masterByName.getOrDefault(versionName, List.of());
 					boolean ambiguous = candidates.size() > 1 || incomingByName.get(versionName).size() > 1;
 					ExchangeRecord matching = ambiguous || candidates.isEmpty() ? null : candidates.getFirst();
-					NodeGraph incomingGraph = graph(incoming, version);
+					NodeGraph incomingGraph = graph(comparableIncoming, version);
 					NodeGraph masterGraph = matching == null ? null : graph(master, matching);
 					Classification classification;
 					String reason;
@@ -276,6 +290,49 @@ public final class CurriculumReconciler {
 							incomingParent == null ? incomingVersion.recordId() : incomingParent, masterParent,
 							classification, reason));
 		}
+	}
+
+	private List<ExchangeRecord> rebaseMappingReviewTargets(List<ExchangeRecord> incoming,
+			Map<UUID, UUID> syllabusAliases) {
+		List<ExchangeRecord> adjusted = new ArrayList<>();
+		for (ExchangeRecord record : incoming) {
+			if (!"CURRICULUM_NODE".equals(record.recordType())) {
+				adjusted.add(record);
+				continue;
+			}
+			ObjectNode values = (ObjectNode) record.values();
+			JsonNode reviews = values.get("curriculum_mapping_reviews");
+			if (reviews != null && reviews.isArray()) {
+				for (JsonNode review : reviews) {
+					if (!review.isObject()) {
+						throw new IllegalArgumentException("Malformed curriculum mapping review");
+					}
+					JsonNode target = review.get("target_syllabus_version_id");
+					if (target == null || !target.isTextual()) {
+						throw new IllegalArgumentException("Missing mapping-review syllabus identity");
+					}
+					UUID incomingTarget;
+					try {
+						incomingTarget = UUID.fromString(target.asText());
+					} catch (IllegalArgumentException exception) {
+						throw new IllegalArgumentException("Invalid mapping-review syllabus identity", exception);
+					}
+					if (!incomingTarget.toString().equals(target.asText())) {
+						throw new IllegalArgumentException("Noncanonical mapping-review syllabus identity");
+					}
+					UUID masterTarget = syllabusAliases.get(incomingTarget);
+					if (masterTarget != null) {
+						((ObjectNode) review).put("target_syllabus_version_id", masterTarget.toString());
+					}
+				}
+			}
+
+			// Construct only a temporary comparison record.
+			// Neither the source record nor its revision is changed.
+			adjusted.add(new ExchangeRecord(record.recordVersion(), record.recordType(), record.recordId(),
+					record.revisionId(), record.baselineRevisionId(), values));
+		}
+		return List.copyOf(adjusted);
 	}
 
 	private UUID reference(ExchangeRecord record, String field) {

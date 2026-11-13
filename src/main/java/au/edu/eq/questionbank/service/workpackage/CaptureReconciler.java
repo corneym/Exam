@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -72,6 +73,12 @@ public final class CaptureReconciler {
 	 */
 	public Preview preview(List<ExchangeRecord> master, List<ExchangeRecord> incoming, Preview curriculum,
 			Preview assessment) {
+		return preview(master, incoming, curriculum, assessment, Set.of());
+	}
+
+	Preview preview(List<ExchangeRecord> master, List<ExchangeRecord> incoming, Preview curriculum, Preview assessment,
+			Set<String> verifiedImageOwners) {
+		Objects.requireNonNull(verifiedImageOwners, "verifiedImageOwners");
 		Graph left = new Graph(master);
 		Graph right = new Graph(incoming);
 		Objects.requireNonNull(curriculum, "curriculum");
@@ -80,10 +87,12 @@ public final class CaptureReconciler {
 		addPreceding(matches, left, right, curriculum);
 		addPreceding(matches, left, right, assessment);
 		List<Proposal> results = new ArrayList<>();
-		matchNamed("SOURCE_QUESTION", "source_question_code", "booklet_id", left, right, matches, results);
-		matchNamed("SHARED_QUESTION_CONTEXT", "context_label", "booklet_id", left, right, matches, results);
-		matchNamed("QUESTION", "question_code", "booklet_id", left, right, matches, results);
-		matchNamed("ANSWER", null, "question_id", left, right, matches, results);
+		matchNamed("SOURCE_QUESTION", "source_question_code", "booklet_id", left, right, matches, results,
+				verifiedImageOwners);
+		matchNamed("SHARED_QUESTION_CONTEXT", "context_label", "booklet_id", left, right, matches, results,
+				verifiedImageOwners);
+		matchNamed("QUESTION", "question_code", "booklet_id", left, right, matches, results, verifiedImageOwners);
+		matchNamed("ANSWER", null, "question_id", left, right, matches, results, verifiedImageOwners);
 		results.sort(Comparator.comparing(Proposal::recordType).thenComparing(p -> p.incomingId().toString()));
 		return new Preview(results);
 	}
@@ -183,8 +192,22 @@ public final class CaptureReconciler {
 	/** Compares all persisted values after resolving independent portable UUIDs. */
 	private boolean identicalAfterRebasing(ExchangeRecord master, ExchangeRecord incoming,
 			Map<String, Map<UUID, Proposal>> matches) {
-		JsonNode adjusted = rebase(incoming.values(), matches);
-		return master.values().equals(adjusted);
+		return identicalAfterRebasing(master, incoming, matches, false);
+	}
+
+	private boolean identicalAfterRebasing(ExchangeRecord master, ExchangeRecord incoming,
+			Map<String, Map<UUID, Proposal>> matches, boolean imageVerified) {
+		JsonNode masterValues = master.values();
+		JsonNode incomingValues = incoming.values();
+		if (imageVerified) {
+
+			// Images have already been independently verified by hash,
+			// owner, multiplicity and content order.
+			masterValues = withoutImageMaterial(masterValues);
+			incomingValues = withoutImageMaterial(incomingValues);
+		}
+		JsonNode rebased = rebase(incomingValues, matches);
+		return masterValues.equals(rebased);
 	}
 
 	/** Builds the normalised non-empty identity key for a named capture. */
@@ -199,7 +222,7 @@ public final class CaptureReconciler {
 
 	/** Matches one capture entity type beneath its already reviewed parent. */
 	private void matchNamed(String type, String identityField, String parentField, Graph left, Graph right,
-			Map<String, Map<UUID, Proposal>> matches, List<Proposal> results) {
+			Map<String, Map<UUID, Proposal>> matches, List<Proposal> results, Set<String> verifiedImageOwners) {
 		String parentType = REFERENCE_TYPES.get(parentField);
 		for (ExchangeRecord incoming : right.records(type)) {
 			UUID incomingParentId = right.reference(incoming, parentField);
@@ -237,23 +260,33 @@ public final class CaptureReconciler {
 				} else {
 					classification = parent.masterId() == null ? Classification.NEW
 							: Classification.COMPATIBLE_ADDITION;
-					reason = "Independent " + type + " under the proposed parent; no master record overwritten.";
+					reason = "Independent " + type + " under the proposed parent; " + "no master record overwritten.";
 				}
-			} else if (containsUnresolvedImages(incoming) || containsUnresolvedImages(candidate)) {
-				classification = Classification.CONFLICT;
-				reason = "Image-bearing capture requires separate image ownership and content verification.";
 			} else {
-				try {
-					if (identicalAfterRebasing(candidate, incoming, matches)) {
-						classification = Classification.IDENTICAL;
-						reason = "Logical identity, content, ordered regions and resolved dependencies agree.";
-					} else {
-						classification = Classification.CONFLICT;
-						reason = "Matching logical identity has changed content, regions or dependencies.";
-					}
-				} catch (UnresolvedReferenceException exception) {
+				boolean imageBearing = containsUnresolvedImages(incoming) || containsUnresolvedImages(candidate);
+				boolean imagesVerified = verifiedImageOwners.contains(type + ":" + incoming.recordId());
+				if (imageBearing && !imagesVerified) {
 					classification = Classification.CONFLICT;
-					reason = "Unresolved portable dependency: " + exception.getMessage();
+					reason = "Image-bearing capture requires verified " + "image ownership, bytes and order.";
+				} else {
+					try {
+						boolean identical = identicalAfterRebasing(candidate, incoming, matches,
+								imageBearing && imagesVerified);
+						if (identical) {
+							classification = Classification.IDENTICAL;
+							reason = imageBearing
+									? "Capture metadata and rebased dependencies "
+											+ "agree; image ownership, bytes and " + "order have also been verified."
+									: "Logical identity, content, ordered regions "
+											+ "and resolved dependencies agree.";
+						} else {
+							classification = Classification.CONFLICT;
+							reason = "Matching logical identity has changed " + "content, regions or dependencies.";
+						}
+					} catch (UnresolvedReferenceException exception) {
+						classification = Classification.CONFLICT;
+						reason = "Unresolved portable dependency: " + exception.getMessage();
+					}
 				}
 			}
 			Proposal result = new Proposal(type, incoming.recordId(), candidate == null ? null : candidate.recordId(),
@@ -322,6 +355,31 @@ public final class CaptureReconciler {
 			throw new IllegalArgumentException(
 					"Duplicate reconciliation proposal: " + proposal.recordType() + ":" + proposal.incomingId());
 		}
+	}
+
+	private JsonNode withoutImageMaterial(JsonNode source) {
+		if (source.isArray()) {
+			ArrayNode adjusted = MAPPER.createArrayNode();
+			for (JsonNode child : source) {
+				adjusted.add(withoutImageMaterial(child));
+			}
+			return adjusted;
+		}
+		if (!source.isObject()) {
+			return source.deepCopy();
+		}
+		ObjectNode adjusted = MAPPER.createObjectNode();
+		for (Map.Entry<String, JsonNode> field : source.properties()) {
+			String name = field.getKey();
+
+			// The image stage verifies these independently.
+			if (name.equals("question_images") || name.equals("shared_question_context_images")
+					|| name.equals("image_id")) {
+				continue;
+			}
+			adjusted.set(name, withoutImageMaterial(field.getValue()));
+		}
+		return adjusted;
 	}
 
 	/** Read-only identity index for a single portable Subject graph. */

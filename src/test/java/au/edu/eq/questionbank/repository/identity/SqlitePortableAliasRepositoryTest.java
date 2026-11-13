@@ -101,6 +101,40 @@ class SqlitePortableAliasRepositoryTest {
 	}
 
 	@Test
+	void localOriginCannotBeAliasedToAnotherLocalEntity() throws Exception {
+		SqliteDatabase database = createDatabase("local-origin.db");
+		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
+		Subject biology = writer.insertSubject("Biology");
+		Subject chemistry = writer.insertSubject("Chemistry");
+		SqlitePortableIdentityRepository identities = new SqlitePortableIdentityRepository(database);
+		UUID localInstallationId = identities.installationId();
+		UUID biologyId = identities.requireByLocalId(EntityType.SUBJECT, biology.getId()).portableId();
+		UUID chemistryId = identities.requireByLocalId(EntityType.SUBJECT, chemistry.getId()).portableId();
+		SqlitePortableAliasRepository aliases = new SqlitePortableAliasRepository(database);
+		assertThrows(IllegalStateException.class, () -> aliases.approveAlias(localInstallationId, EntityType.SUBJECT,
+				biologyId, chemistryId, "Incorrect local-origin identity mapping"));
+		assertTrue(aliases.findAlias(localInstallationId, EntityType.SUBJECT, biologyId).isEmpty());
+		assertEquals(0, countAliases(database));
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void localOriginCanOnlyReferToItsOwnActiveIdentity() throws Exception {
+		SqliteDatabase database = createDatabase("local-origin-self.db");
+		Subject biology = new SqliteCurriculumWriter(database).insertSubject("Biology");
+		SqlitePortableIdentityRepository identities = new SqlitePortableIdentityRepository(database);
+		UUID installationId = identities.installationId();
+		UUID biologyId = identities.requireByLocalId(EntityType.SUBJECT, biology.getId()).portableId();
+		SqlitePortableAliasRepository aliases = new SqlitePortableAliasRepository(database);
+		assertEquals(biologyId, aliases.approveAlias(installationId, EntityType.SUBJECT, biologyId, biologyId,
+				"Explicit confirmation of local identity"));
+		assertThrows(IllegalStateException.class, () -> aliases.approveAlias(installationId, EntityType.SUBJECT,
+				UUID.randomUUID(), biologyId, "Unknown local-origin identity"));
+		assertEquals(1, countAliases(database));
+		database.verifyIntegrity();
+	}
+
+	@Test
 	void rejectedAndRetiredCanonicalIdentitiesAreNotSilentlyReassigned() throws Exception {
 		SqliteDatabase master = createDatabase("retirement.db");
 		Subject subject = new SqliteCurriculumWriter(master).insertSubject("Biology");
