@@ -99,6 +99,29 @@ class CaptureReconcilerTest {
 		assertEquals(Classification.CONFLICT, proposal(result, duplicate).classification());
 	}
 
+	/**
+	 * The forward-reference exception must not permit a Question to consume an
+	 * image assigned to a different Question.
+	 */
+	@Test
+	void foreignQuestionImageCannotBeAcceptedAsNewCaptureDependency() {
+		Fixture master = fixture("master").withoutCapture();
+		Fixture incoming = fixture("incoming");
+		UUID imageId = id("incoming:foreign-image");
+		ObjectNode questionValues = (ObjectNode) incoming.question().values();
+		questionValues.putArray("question_content_parts").addObject().put("content_order", 0)
+				.put("content_type", "IMAGE").put("image_id", imageId.toString());
+		ExchangeRecord question = record("QUESTION", "incoming:question", questionValues);
+		ObjectNode imageValues = mapper.createObjectNode();
+		imageValues.put("question_id", id("another-question").toString());
+		imageValues.put("image_png", "a".repeat(64));
+		ExchangeRecord image = record("QUESTION_IMAGE", "incoming:foreign-image", imageValues);
+		incoming = incoming.replacing(incoming.question(), question).with(image);
+		Preview result = preview(master, incoming);
+		assertEquals(Classification.CONFLICT, proposal(result, question).classification());
+		assertTrue(proposal(result, question).reason().contains("QUESTION_IMAGE"));
+	}
+
 	/** Unreviewed embedded images cannot be silently deduplicated. */
 	@Test
 	void imageBearingQuestionIsReviewableUntilImageReferencesAreReconciled() {
@@ -130,6 +153,31 @@ class CaptureReconcilerTest {
 		assertEquals(master.context().recordId(), proposal(result, incoming.context()).masterId());
 		assertEquals(incoming.booklet().recordId().toString(),
 				incoming.question().values().path("question_regions").get(0).path("booklet_id").asText());
+	}
+
+	/**
+	 * A new Question may reference its own incoming PNG image even though
+	 * QuestionImage proposals are created after Question reconciliation. The
+	 * dependent Answer must not inherit a false conflict.
+	 */
+	@Test
+	void independentImageBearingQuestionAndAnswerAreAdditions() {
+		Fixture master = fixture("master").withoutCapture();
+		Fixture incoming = fixture("incoming");
+		UUID imageId = id("incoming:question-image");
+		ObjectNode questionValues = (ObjectNode) incoming.question().values();
+		questionValues.putArray("question_images").addObject().put("image_png", "a".repeat(64));
+		questionValues.putArray("question_content_parts").addObject().put("content_order", 0)
+				.put("content_type", "IMAGE").put("image_id", imageId.toString());
+		ExchangeRecord question = record("QUESTION", "incoming:question", questionValues);
+		ObjectNode imageValues = mapper.createObjectNode();
+		imageValues.put("question_id", question.recordId().toString());
+		imageValues.put("image_png", "a".repeat(64));
+		ExchangeRecord image = record("QUESTION_IMAGE", "incoming:question-image", imageValues);
+		incoming = incoming.replacing(incoming.question(), question).with(image);
+		Preview result = preview(master, incoming);
+		assertEquals(Classification.COMPATIBLE_ADDITION, proposal(result, question).classification());
+		assertEquals(Classification.NEW, proposal(result, incoming.answer()).classification());
 	}
 
 	/** Independent captures are additions without replacing master records. */

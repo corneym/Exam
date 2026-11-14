@@ -59,25 +59,38 @@ public final class SubjectReconciliationReviewDialog extends Dialog<Void> {
 	private final ObservableList<Row> allRows = FXCollections.observableArrayList();
 	private final ComboBox<ReviewFilter> filterBox = new ComboBox<>();
 	private final FilteredList<Row> visibleRows = new FilteredList<>(allRows);
+	private final Button importButton = new Button("Import approved...");
+	private boolean importRequested;
 
 	/**
-	 * Creates a window for inspecting and explicitly deciding a complete preview.
+	 * Creates a coordinator review dialog. Its import-request button remains
+	 * disabled until every record and asset is decided and dependencies are safe.
+	 * Requesting import does not itself alter persistent data.
 	 *
-	 * @param owner           parent application window
-	 * @param preview         fresh, validated read-only review session
-	 * @param managedDataRoot protected authoritative application data directory
+	 * @param owner           application parent window
+	 * @param preview         read-only reconciliation session
+	 * @param managedDataRoot protected application data directory
 	 */
 	public SubjectReconciliationReviewDialog(Window owner, SubjectReconciliationReview preview, Path managedDataRoot) {
 		initOwner(Objects.requireNonNull(owner, "owner"));
 		initModality(Modality.WINDOW_MODAL);
-		setTitle("Subject Reconciliation — Review Only");
-		setHeaderText("Compare independent Subject snapshots — no records will be imported");
+		setTitle("Subject Reconciliation — Review and Approval");
+		setHeaderText("Review the complete Subject comparison. Import requires separate confirmation.");
 		review = Objects.requireNonNull(preview, "preview");
 		this.managedDataRoot = Objects.requireNonNull(managedDataRoot, "managedDataRoot");
 		getDialogPane().getButtonTypes().setAll(ButtonType.CLOSE);
 		configureTable();
 		configureContent();
 		refreshSummary();
+	}
+
+	/**
+	 * Indicates that the coordinator expressly requested import after review.
+	 *
+	 * @return true only after the enabled Import approved action was fired
+	 */
+	public boolean importRequested() {
+		return importRequested;
 	}
 
 	/**
@@ -136,7 +149,7 @@ public final class SubjectReconciliationReviewDialog extends Dialog<Void> {
 		return column;
 	}
 
-	/** Creates the controls and concise selection details. */
+	/** Creates controls, detail preview, and explicit import request. */
 	private void configureContent() {
 		Button accept = new Button("Accept selected");
 		accept.setId("examwork-review-accept");
@@ -152,8 +165,15 @@ public final class SubjectReconciliationReviewDialog extends Dialog<Void> {
 		Button save = new Button("Save review report...");
 		save.setId("examwork-review-save");
 		save.setOnAction(_ -> saveReport());
-
-		// Restrict the default table to records requiring attention.
+		importButton.setId("examwork-review-request-import");
+		importButton.setOnAction(_ -> {
+			var snapshot = review.snapshot();
+			if (!snapshot.complete() || !snapshot.dependencySafe()) {
+				return;
+			}
+			importRequested = true;
+			close();
+		});
 		filterBox.setId("examwork-review-filter");
 		filterBox.getItems().setAll(ReviewFilter.values());
 		filterBox.setValue(ReviewFilter.NEEDS_ATTENTION);
@@ -161,29 +181,30 @@ public final class SubjectReconciliationReviewDialog extends Dialog<Void> {
 		filterBox.valueProperty().addListener((_, _, _) -> refreshVisibleRows());
 		HBox filterControls = new HBox(10, new Label("Show:"), filterBox);
 		filterControls.setAlignment(Pos.CENTER_LEFT);
-		HBox actions = new HBox(10, accept, reject, reset, acceptIdenticalButton, save);
+		HBox actions = new HBox(10, accept, reject, reset, acceptIdenticalButton, save, importButton);
 		detail.setWrapText(true);
 		detail.setMinHeight(66);
-		detail.setText("Select a record or asset to inspect its reason " + "and proposed relationship.");
+		detail.setText("Select a record or asset to inspect its reason and proposed relationship.");
 		summary.setWrapText(true);
-		Label warning = new Label("Preview only: accepting a conflict records a justified "
-				+ "review choice, not permission to overwrite data.");
+		Label warning = new Label("Review decisions alone never modify the master. "
+				+ "Import additionally requires explicit conflict resolutions, a full backup and confirmation.");
 		warning.setWrapText(true);
 		VBox content = new VBox(10, filterControls, table, detail, actions, summary, warning);
 		content.setPadding(new Insets(12));
 		VBox.setVgrow(table, Priority.ALWAYS);
-		content.setPrefSize(1000, 680);
+		content.setPrefSize(1100, 680);
 		getDialogPane().setContent(content);
 		table.getSelectionModel().selectedItemProperty().addListener((_, _, selected) -> {
 			detail.setText(selected == null ? "Select a record or asset." : selected.details());
-			boolean hasSelection = selected != null;
-			accept.setDisable(!hasSelection);
-			reject.setDisable(!hasSelection);
-			reset.setDisable(!hasSelection);
+			boolean selectedPresent = selected != null;
+			accept.setDisable(!selectedPresent);
+			reject.setDisable(!selectedPresent);
+			reset.setDisable(!selectedPresent);
 		});
 		accept.setDisable(true);
 		reject.setDisable(true);
 		reset.setDisable(true);
+		importButton.setDisable(true);
 		refreshVisibleRows();
 	}
 
@@ -276,7 +297,7 @@ public final class SubjectReconciliationReviewDialog extends Dialog<Void> {
 		return details.toString();
 	}
 
-	/** Reports decision completeness and parent/child closure independently. */
+	/** Summarises review closure and enables import only when complete. */
 	private void refreshSummary() {
 		var state = review.snapshot();
 		int total = review.reviewKeys().size();
@@ -290,6 +311,7 @@ public final class SubjectReconciliationReviewDialog extends Dialog<Void> {
 				+ (state.dependencySafe() ? "satisfied" : "incomplete") + "   " + completion
 				+ "   No import performed");
 		acceptIdenticalButton.setDisable(review.planAcceptAllIdentical().keys().isEmpty());
+		importButton.setDisable(!state.complete() || !state.dependencySafe());
 	}
 
 	/**

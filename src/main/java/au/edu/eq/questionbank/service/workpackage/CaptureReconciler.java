@@ -109,13 +109,22 @@ public final class CaptureReconciler {
 	}
 
 	/**
-	 * Rejects an independent addition whose referenced parent is not resolved or
-	 * safe.
+	 * Rejects a new capture whose required relationships are unresolved.
+	 *
+	 * <p>
+	 * An incoming Question may reference its own QuestionImage before QuestionImage
+	 * proposals have been produced. That reference is permitted only when the image
+	 * exists in the incoming graph and is owned by the same Question.
+	 *
+	 * <p>
+	 * Image bytes, multiplicity and composition order remain subject to the
+	 * separate ImageReconciler validation stage.
 	 */
-	private String blockingNewDependency(JsonNode node, Map<String, Map<UUID, Proposal>> matches) {
+	private String blockingNewDependency(JsonNode node, Map<String, Map<UUID, Proposal>> matches, Graph incomingGraph,
+			ExchangeRecord owner) {
 		if (node.isArray()) {
 			for (JsonNode child : node) {
-				String problem = blockingNewDependency(child, matches);
+				String problem = blockingNewDependency(child, matches, incomingGraph, owner);
 				if (problem != null) {
 					return problem;
 				}
@@ -137,12 +146,23 @@ public final class CaptureReconciler {
 					} catch (IllegalArgumentException exception) {
 						return field.getKey() + " is not a valid UUID";
 					}
-					Proposal linked = proposal(matches, type, id);
-					if (linked == null || linked.classification() == Classification.CONFLICT) {
-						return type + ":" + id;
+					if ("QUESTION_IMAGE".equals(type) && "QUESTION".equals(owner.recordType())) {
+
+						// QuestionImage proposals follow Question proposals.
+						// Resolve this forward reference against the incoming
+						// graph, but never accept an image owned by another
+						// Question.
+						if (!isOwnedImageReference(incomingGraph, owner.recordId(), id)) {
+							return "QUESTION_IMAGE:" + id + " is not owned by Question " + owner.recordId();
+						}
+					} else {
+						Proposal linked = proposal(matches, type, id);
+						if (linked == null || linked.classification() == Classification.CONFLICT) {
+							return type + ":" + id;
+						}
 					}
 				}
-				String nested = blockingNewDependency(value, matches);
+				String nested = blockingNewDependency(value, matches, incomingGraph, owner);
 				if (nested != null) {
 					return nested;
 				}
@@ -210,6 +230,15 @@ public final class CaptureReconciler {
 		return masterValues.equals(rebased);
 	}
 
+	/**
+	 * Verifies that a forward-referenced QuestionImage belongs to the incoming
+	 * Question, rather than another capture.
+	 */
+	private boolean isOwnedImageReference(Graph incomingGraph, UUID questionId, UUID imageId) {
+		ExchangeRecord image = incomingGraph.require("QUESTION_IMAGE", imageId);
+		return questionId.equals(incomingGraph.reference(image, "question_id"));
+	}
+
 	/** Builds the normalised non-empty identity key for a named capture. */
 	private String key(ExchangeRecord record, String field) {
 		JsonNode value = record.values().path(field);
@@ -220,7 +249,9 @@ public final class CaptureReconciler {
 		return value.asText().trim().toLowerCase(Locale.ROOT);
 	}
 
-	/** Matches one capture entity type beneath its already reviewed parent. */
+	/**
+	 * Matches one capture entity type beneath its already reviewed parent.
+	 */
 	private void matchNamed(String type, String identityField, String parentField, Graph left, Graph right,
 			Map<String, Map<UUID, Proposal>> matches, List<Proposal> results, Set<String> verifiedImageOwners) {
 		String parentType = REFERENCE_TYPES.get(parentField);
@@ -253,7 +284,7 @@ public final class CaptureReconciler {
 				classification = Classification.CONFLICT;
 				reason = "Containing " + parentType + " has not been established as identical.";
 			} else if (candidate == null) {
-				String dependencyProblem = blockingNewDependency(incoming.values(), matches);
+				String dependencyProblem = blockingNewDependency(incoming.values(), matches, right, incoming);
 				if (dependencyProblem != null) {
 					classification = Classification.CONFLICT;
 					reason = "Independent capture has unresolved dependency: " + dependencyProblem;

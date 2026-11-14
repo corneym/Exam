@@ -24,6 +24,7 @@ import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationPreviewSe
 import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationPreviewService.Result;
 import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationReview;
 import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationReview.Decision;
+import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationReview.Key;
 import javafx.application.Platform;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
@@ -172,6 +173,40 @@ class SubjectReconciliationReviewDialogTest {
 		robot.interact(() -> filter.getSelectionModel().select(0));
 		assertEquals(2, table.getItems().size());
 		robot.interact(dialog::close);
+	}
+
+	/**
+	 * Verifies Import approved cannot be requested before every review item is
+	 * decided and that the request records intent without publishing data.
+	 *
+	 * @param robot TestFX semantic UI automation
+	 */
+	@Test
+	void importRequestRequiresCompleteDependencySafeReview(FxRobot robot) {
+		Button importButton = robot.lookup("#examwork-review-request-import").queryButton();
+		assertTrue(importButton.isDisabled());
+		assertFalse(dialog.importRequested());
+
+		// Establish a fully accepted synthetic review without opening a database.
+		robot.interact(() -> {
+			for (Key key : dialog.review().reviewKeys()) {
+				dialog.review().decide(key, Decision.ACCEPT,
+						"Coordinator explicitly accepted this reviewed record or asset");
+			}
+		});
+		ComboBox<?> filter = robot.lookup("#examwork-review-filter").queryAs(ComboBox.class);
+		TableView<?> table = robot.lookup("#examwork-reconciliation-proposals").queryAs(TableView.class);
+		Button accept = robot.lookup("#examwork-review-accept").queryButton();
+		robot.interact(() -> {
+			filter.getSelectionModel().select(2);
+			table.getSelectionModel().select(0);
+			accept.fire();
+		});
+		assertTrue(dialog.review().snapshot().complete());
+		assertTrue(dialog.review().snapshot().dependencySafe());
+		assertFalse(importButton.isDisabled());
+		robot.interact(importButton::fire);
+		assertTrue(dialog.importRequested());
 	}
 
 	/**
