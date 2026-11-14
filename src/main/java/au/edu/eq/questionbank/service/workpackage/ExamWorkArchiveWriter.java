@@ -113,11 +113,16 @@ public final class ExamWorkArchiveWriter {
 		Objects.requireNonNull(manifest, "manifest");
 		Objects.requireNonNull(sources, "sources");
 		Objects.requireNonNull(output, "output");
+		ByteArrayOutputStream manifestBytes = new ByteArrayOutputStream();
+		manifestCodec.write(manifest, manifestBytes);
 		if (manifest.entries().size() + 1 > MAX_ENTRIES) {
 			throw new PackageFormatException(".examwork archive exceeds maximum entry count");
 		}
 		Set<String> requiredPaths = new HashSet<>();
-		long declaredTotal = 0;
+
+		// The validator counts manifest.json towards the total
+		// uncompressed archive limit, so the writer must do the same.
+		long declaredTotal = manifestBytes.size();
 		for (Entry entry : manifest.entries()) {
 			requireRoleAndPath(entry);
 			requiredPaths.add(entry.path());
@@ -167,8 +172,6 @@ public final class ExamWorkArchiveWriter {
 				}
 			}
 		}
-		ByteArrayOutputStream manifestBytes = new ByteArrayOutputStream();
-		manifestCodec.write(manifest, manifestBytes);
 		ZipArchiveOutputStream zip = new ZipArchiveOutputStream(output);
 		zip.setEncoding("UTF-8");
 		zip.setUseZip64(Zip64Mode.AsNeeded);

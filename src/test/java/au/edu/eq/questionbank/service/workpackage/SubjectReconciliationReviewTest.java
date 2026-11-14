@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -15,9 +16,9 @@ import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.service.workpackage.CurriculumReconciler.Classification;
 import au.edu.eq.questionbank.service.workpackage.CurriculumReconciler.Proposal;
-import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationReview.Decision;
 import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationPreviewService.AssetEvidence;
 import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationPreviewService.Result;
+import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationReview.Decision;
 
 /**
  * Verifies explicit, dependency-safe coordinator decisions without any import.
@@ -26,6 +27,58 @@ class SubjectReconciliationReviewTest {
 
 	@TempDir
 	Path directory;
+
+	@Test
+	void acceptAllIdenticalIncludesEligibleRecordsAndAssets() {
+		SubjectReconciliationReview review = fixtureWithBookletAsset();
+		var plan = review.planAcceptAllIdentical();
+		assertEquals(5, plan.recordCount());
+		assertEquals(1, plan.assetCount());
+		assertEquals(1, plan.blockedCount());
+
+		// Preparing the plan never changes the review.
+		assertTrue(review.snapshot().decisions().isEmpty());
+		assertEquals(plan, review.acceptAllIdentical());
+		assertEquals(Decision.ACCEPT, review.choice(key("SUBJECT", 1)).decision());
+		assertEquals(Decision.ACCEPT, review.choice(key("EXAM_BOOKLET", 4)).decision());
+		assertEquals(Decision.UNDECIDED, review.choice(key("QUESTION", 3)).decision());
+		var bookletAsset = review.reviewKeys().stream().filter(key -> "ASSET".equals(key.kind()))
+				.filter(key -> key.value().contains("booklet.pdf")).findFirst().orElseThrow();
+		var questionAsset = review.reviewKeys().stream().filter(key -> "ASSET".equals(key.kind()))
+				.filter(key -> key.value().contains("questions.pdf")).findFirst().orElseThrow();
+		assertEquals(Decision.ACCEPT, review.choice(bookletAsset).decision());
+		assertEquals(Decision.UNDECIDED, review.choice(questionAsset).decision());
+		assertTrue(review.snapshot().dependencySafe());
+		assertFalse(review.snapshot().complete());
+	}
+
+	@Test
+	void bulkAcceptanceIsIdempotent() {
+		SubjectReconciliationReview review = fixtureWithBookletAsset();
+		review.decide(key("SUBJECT", 1), Decision.ACCEPT, "Previously inspected");
+		var first = review.acceptAllIdentical();
+		var afterFirst = review.snapshot().decisions();
+		assertEquals(4, first.recordCount());
+		assertEquals(1, first.assetCount());
+		var second = review.acceptAllIdentical();
+		assertEquals(0, second.recordCount());
+		assertEquals(0, second.assetCount());
+		assertEquals(afterFirst, review.snapshot().decisions());
+		assertEquals("Previously inspected", review.choice(key("SUBJECT", 1)).justification());
+	}
+
+	@Test
+	void bulkAcceptancePreservesRejectionsAndBlockedDependencies() {
+		SubjectReconciliationReview review = fixtureWithBookletAsset();
+		review.decide(key("SOURCE_DOCUMENT", 5), Decision.REJECT, "Source document rejected");
+		var result = review.acceptAllIdentical();
+		assertEquals(3, result.recordCount());
+		assertEquals(0, result.assetCount());
+		assertEquals(3, result.blockedCount());
+		assertEquals(Decision.REJECT, review.choice(key("SOURCE_DOCUMENT", 5)).decision());
+		assertEquals(Decision.UNDECIDED, review.choice(key("EXAM_BOOKLET", 4)).decision());
+		assertTrue(review.snapshot().dependencySafe());
+	}
 
 	/**
 	 * Proves that a conflicting portable record requires explicit coordinator
@@ -149,6 +202,18 @@ class SubjectReconciliationReviewTest {
 						new SubjectReconciliationPreviewService.Dependency("QUESTION", uuid(3), "CURRICULUM_NODE",
 								uuid(6), "classification_node_id")));
 		return new SubjectReconciliationReview(preview);
+	}
+
+	private SubjectReconciliationReview fixtureWithBookletAsset() {
+		Result original = fixture().preview();
+		AssetEvidence bookletAsset = new AssetEvidence("subjects/Biology/exams/booklet.pdf", "SOURCE_PDF",
+				"EXAM_BOOKLET", uuid(4), "subjects/Biology/exams/booklet.pdf", "b".repeat(64), "b".repeat(64),
+				Classification.IDENTICAL, "Matching verified booklet asset");
+		List<AssetEvidence> assets = new ArrayList<>(original.assetEvidence());
+		assets.add(bookletAsset);
+		Result expanded = new Result(original.masterPackageId(), original.incomingPackageId(), original.subjectName(),
+				original.proposals(), original.imageEvidence(), assets, original.dependencies());
+		return new SubjectReconciliationReview(expanded);
 	}
 
 	/** Builds a record review key from the fixture's portable identity. */

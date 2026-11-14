@@ -50,6 +50,29 @@ class ExamWorkArchiveWriterTest {
 	}
 
 	@Test
+	void includesManifestSizeInTotalUncompressedLimit() throws Exception {
+		List<Entry> entries = new ArrayList<>();
+
+		// Four declared assets total exactly 1 GiB.
+		// No large byte arrays need to be allocated.
+		for (int index = 1; index <= 4; index++) {
+			String digest = "%064x".formatted(index);
+			String path = "assets/sha256/" + digest.substring(0, 2) + "/" + digest + ".png";
+			entries.add(new Entry(path, EntryRole.ASSET, 256L * 1024 * 1024, digest));
+		}
+		String emptyDigest = "e3b0c44298fc1c149afbf4c8996fb924" + "27ae41e4649b934ca495991b7852b855";
+		entries.add(new Entry(ExamWorkAssetIndex.INDEX_PATH, EntryRole.INDEX, 0, emptyDigest));
+		ExamWorkManifest manifest = new ExamWorkManifest(1, UUID.randomUUID(), ExamWorkPackageType.SUBJECT_SNAPSHOT,
+				Instant.parse("2026-11-13T00:00:00Z"), UUID.randomUUID(), null, UUID.randomUUID(), "Biology", null,
+				null, "1.0.1", "1.0.1", 24, 24, new Scope(ScopeLevel.SUBJECT, List.of(), List.of()), entries);
+		ByteArrayOutputStream output = new ByteArrayOutputStream();
+		PackageFormatException failure = assertThrows(PackageFormatException.class,
+				() -> writer.write(manifest, Map.of(), output));
+		assertTrue(failure.getMessage().contains("maximum uncompressed size"));
+		assertEquals(0, output.size());
+	}
+
+	@Test
 	void rejectsChangedBinarySourceBytes() throws Exception {
 		Map<String, byte[]> original = exampleContents();
 		ExamWorkManifest manifest = manifest(ExamWorkPackageType.SUBJECT_SNAPSHOT, original);

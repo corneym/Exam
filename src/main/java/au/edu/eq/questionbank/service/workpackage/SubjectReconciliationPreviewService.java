@@ -2,7 +2,9 @@ package au.edu.eq.questionbank.service.workpackage;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -21,10 +23,10 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import au.edu.eq.questionbank.ApplicationVersion;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
-import au.edu.eq.questionbank.service.workpackage.ExamWorkAssetIndex.Reference;
 import au.edu.eq.questionbank.service.workpackage.CurriculumReconciler.Classification;
 import au.edu.eq.questionbank.service.workpackage.CurriculumReconciler.Preview;
 import au.edu.eq.questionbank.service.workpackage.CurriculumReconciler.Proposal;
+import au.edu.eq.questionbank.service.workpackage.ExamWorkAssetIndex.Reference;
 
 /**
  * Coordinates a complete, read-only, baseline-free two-way Subject preview.
@@ -42,7 +44,6 @@ import au.edu.eq.questionbank.service.workpackage.CurriculumReconciler.Proposal;
  */
 public final class SubjectReconciliationPreviewService {
 
-	private static final String RECORDS_PATH = "records/subject-graph.jsonl";
 	private static final Map<String, String> REFERENCE_TYPES = Map.ofEntries(Map.entry("subject_id", "SUBJECT"),
 			Map.entry("syllabus_version_id", "SYLLABUS_VERSION"), Map.entry("parent_id", "CURRICULUM_NODE"),
 			Map.entry("provider_id", "EXAM_PROVIDER"), Map.entry("source_document_id", "SOURCE_DOCUMENT"),
@@ -86,9 +87,30 @@ public final class SubjectReconciliationPreviewService {
 		Preview curriculum = curriculumStage.preview(left.records(), right.records());
 		Preview assessment = new AssessmentReconciler().preview(left.records(), left.assets(), right.records(),
 				right.assets(), curriculum);
-		Preview capture = new CaptureReconciler().preview(left.records(), right.records(), curriculum, assessment);
-		ImageReconciler.ImagePreview images = new ImageReconciler().preview(left.records(), left.assets(),
-				right.records(), right.assets(), capture);
+		CaptureReconciler captureStage = new CaptureReconciler();
+		ImageReconciler imageStage = new ImageReconciler();
+
+		// Pass one establishes candidate capture identities.
+		Preview preliminaryCapture = captureStage.preview(left.records(), right.records(), curriculum, assessment);
+
+		// The independent image stage validates content and provenance.
+		ImageReconciler.ImagePreview preliminaryImages = imageStage.preview(left.records(), left.assets(),
+				right.records(), right.assets(), preliminaryCapture);
+		Set<String> verifiedImageOwners = new HashSet<>();
+		for (ImageReconciler.Evidence evidence : preliminaryImages.evidence()) {
+			if (evidence.classification() == Classification.IDENTICAL) {
+				verifiedImageOwners.add(evidence.ownerType() + ":" + evidence.incomingOwnerId());
+			}
+		}
+
+		// Pass two incorporates verified image evidence and re-evaluates
+		// dependent Answers after any Question classifications improve.
+		Preview capture = captureStage.preview(left.records(), right.records(), curriculum, assessment,
+				verifiedImageOwners);
+
+		// Recalculate the final image report against final capture proposals.
+		ImageReconciler.ImagePreview images = imageStage.preview(left.records(), left.assets(), right.records(),
+				right.assets(), capture);
 		List<Proposal> all = new ArrayList<>();
 		all.addAll(curriculum.proposals());
 		all.addAll(assessment.proposals());
@@ -303,32 +325,66 @@ public final class SubjectReconciliationPreviewService {
 	 * Validates one preselected archive and reads its canonical structured entries.
 	 */
 	private Snapshot read(Path path) throws IOException {
-		ExamWorkManifest manifest = validator.validate(path, ApplicationVersion.current(),
-				SqliteDatabase.latestSchemaVersion());
-		if (manifest.packageType() != ExamWorkPackageType.SUBJECT_SNAPSHOT
-				|| manifest.scope().level() != ExamWorkManifest.ScopeLevel.SUBJECT) {
-			throw new PackageFormatException("Coordinator preview requires complete Subject snapshots");
-		}
-		try (ZipFile zip = ZipFile.builder().setPath(path).get()) {
-			ZipArchiveEntry recordEntry = zip.getEntry(RECORDS_PATH);
-			ZipArchiveEntry assetEntry = zip.getEntry(ExamWorkAssetIndex.INDEX_PATH);
-			if (recordEntry == null || assetEntry == null) {
-				throw new PackageFormatException("Subject snapshot lacks its portable record or asset index");
+		Objects.requireNonNull(path, "path");
+
+		// Validate and consume the same private copy. The external archive
+		// may be replaced or modified without changing this read.
+		Path staged = Files.createTempFile("examwork-preview-", ".examwork");
+		try {
+			Files.copy(path, staged, StandardCopyOption.REPLACE_EXISTING);
+			ExamWorkManifest manifest = validator.validate(staged, ApplicationVersion.current(),
+					SqliteDatabase.latestSchemaVersion());
+			if (manifest.packageType() != ExamWorkPackageType.SUBJECT_SNAPSHOT
+					|| manifest.scope().level() != ExamWorkManifest.ScopeLevel.SUBJECT) {
+				throw new PackageFormatException("Coordinator preview requires complete Subject snapshots");
 			}
-			List<ExchangeRecord> records;
-			ExamWorkAssetIndex assets;
-			try (InputStream input = zip.getInputStream(recordEntry)) {
-				records = codec.readRecords(input);
+			try (ZipFile zip = ZipFile.builder().setPath(staged).get()) {
+				List<ExchangeRecord> records = new ArrayList<>();
+
+				// The archive contract permits multiple current-state record files.
+				// Every declared RECORDS entry must contribute to the preview.
+				for (ExamWorkManifest.Entry entry : manifest.entries()) {
+					if (entry.role() != ExamWorkManifest.EntryRole.RECORDS) {
+						continue;
+					}
+					ZipArchiveEntry zipEntry = zip.getEntry(entry.path());
+					if (zipEntry == null) {
+						throw new PackageFormatException("Missing declared record entry: " + entry.path());
+					}
+					try (InputStream input = zip.getInputStream(zipEntry)) {
+						records.addAll(codec.readRecords(input));
+					}
+				}
+				if (records.isEmpty()) {
+					throw new PackageFormatException("Subject snapshot contains no portable records");
+				}
+				ZipArchiveEntry assetEntry = zip.getEntry(ExamWorkAssetIndex.INDEX_PATH);
+				if (assetEntry == null) {
+					throw new PackageFormatException("Subject snapshot lacks its asset index");
+				}
+				ExamWorkAssetIndex assets;
+				try (InputStream input = zip.getInputStream(assetEntry)) {
+					assets = codec.readAssetIndex(input);
+				}
+
+				// Reject duplicate identities across different record files.
+				Set<String> identities = new HashSet<>();
+				for (ExchangeRecord record : records) {
+					String identity = record.recordType() + ":" + record.recordId();
+					if (!identities.add(identity)) {
+						throw new PackageFormatException(
+								"Duplicate portable identity across record files: " + identity);
+					}
+				}
+				List<ExchangeRecord> subjects = ofType(records, "SUBJECT");
+				if (subjects.size() != 1 || !subjects.getFirst().recordId().equals(manifest.subjectId())
+						|| !manifest.subjectName().equals(subjects.getFirst().values().path("subject_name").asText())) {
+					throw new PackageFormatException("Manifest Subject disagrees with portable Subject records");
+				}
+				return new Snapshot(manifest, List.copyOf(records), assets);
 			}
-			try (InputStream input = zip.getInputStream(assetEntry)) {
-				assets = codec.readAssetIndex(input);
-			}
-			List<ExchangeRecord> subjects = ofType(records, "SUBJECT");
-			if (subjects.size() != 1 || !subjects.getFirst().recordId().equals(manifest.subjectId())
-					|| !manifest.subjectName().equals(subjects.getFirst().values().path("subject_name").asText())) {
-				throw new PackageFormatException("Manifest Subject disagrees with portable Subject records");
-			}
-			return new Snapshot(manifest, records, assets);
+		} finally {
+			Files.deleteIfExists(staged);
 		}
 	}
 

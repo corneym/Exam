@@ -5366,11 +5366,11 @@ public class QuestionBankApplication extends Application {
 	}
 
 	/**
-	 * Opens a read-only comparison of two exported complete Subject snapshots.
+	 * Reviews independently exported Subject snapshots and permits a separate
+	 * explicitly approved, verified and recoverable import request.
 	 *
-	 * <p>
-	 * Archive validation and graph comparison run on a worker thread. The only
-	 * optional output is an explicitly saved review JSON file outside managed data.
+	 * @param primaryStage application owner
+	 * @param config       authoritative master configuration
 	 */
 	private void showSubjectReconciliationReview(Stage primaryStage, ApplicationConfig config) {
 		FileChooser chooser = new FileChooser();
@@ -5396,7 +5396,7 @@ public class QuestionBankApplication extends Application {
 		Alert progress = new Alert(Alert.AlertType.INFORMATION);
 		progress.initOwner(primaryStage);
 		progress.setTitle("Comparing Subject snapshots");
-		progress.setHeaderText("Validating source packages and preparing a read-only preview");
+		progress.setHeaderText("Validating packages and preparing a read-only preview");
 		progress.setContentText("No records or managed files will be changed.");
 		progress.getButtonTypes().setAll(ButtonType.CANCEL);
 		progress.setOnHidden(_ -> {
@@ -5409,6 +5409,10 @@ public class QuestionBankApplication extends Application {
 			SubjectReconciliationReviewDialog dialog = new SubjectReconciliationReviewDialog(primaryStage,
 					new SubjectReconciliationReview(task.getValue()), config.dataRoot());
 			dialog.showAndWait();
+			if (dialog.importRequested()) {
+				new SubjectImportReviewWorkflow(primaryStage, config, dialog.review(), masterFile.toPath(),
+						incomingFile.toPath(), () -> refreshCorpusDashboardHome(-1L)).run();
+			}
 		});
 		task.setOnFailed(_ -> {
 			progress.close();

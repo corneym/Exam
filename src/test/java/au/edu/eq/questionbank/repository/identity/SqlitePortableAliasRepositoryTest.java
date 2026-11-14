@@ -25,6 +25,103 @@ class SqlitePortableAliasRepositoryTest {
 	@TempDir
 	Path tempDirectory;
 
+	/**
+	 * Verifies aliases persist when the caller commits the transaction and remain
+	 * idempotent on repeated approval.
+	 */
+	@Test
+	void callerOwnedApprovalCommitsWithParentTransaction() throws Exception {
+		SqliteDatabase master = createDatabase("alias-commit.db");
+		Subject biology = new SqliteCurriculumWriter(master).insertSubject("Biology");
+		UUID canonical = new SqlitePortableIdentityRepository(master)
+				.requireByLocalId(EntityType.SUBJECT, biology.getId()).portableId();
+		UUID originInstallation = UUID.randomUUID();
+		UUID originRecord = UUID.randomUUID();
+		SqlitePortableAliasRepository aliases = new SqlitePortableAliasRepository(master);
+		try (Connection connection = master.openConnection()) {
+			connection.setAutoCommit(false);
+			aliases.approveAlias(connection, originInstallation, EntityType.SUBJECT, originRecord, canonical,
+					"Approved Biology consolidation");
+			assertEquals(canonical, aliases.approveAlias(connection, originInstallation, EntityType.SUBJECT,
+					originRecord, canonical, "Repeated approval"));
+			connection.commit();
+		}
+		assertEquals(canonical, aliases.findAlias(originInstallation, EntityType.SUBJECT, originRecord).orElseThrow());
+		assertEquals(1, countAliases(master));
+		master.verifyIntegrity();
+	}
+
+	/**
+	 * Verifies that import-time alias approval cannot accidentally commit through
+	 * an auto-commit connection.
+	 */
+	@Test
+	void callerOwnedApprovalRequiresTransaction() throws Exception {
+		SqliteDatabase master = createDatabase("caller-transaction.db");
+		Subject biology = new SqliteCurriculumWriter(master).insertSubject("Biology");
+		UUID canonical = new SqlitePortableIdentityRepository(master)
+				.requireByLocalId(EntityType.SUBJECT, biology.getId()).portableId();
+		SqlitePortableAliasRepository aliases = new SqlitePortableAliasRepository(master);
+		try (Connection connection = master.openConnection()) {
+			assertThrows(IllegalStateException.class, () -> aliases.approveAlias(connection, UUID.randomUUID(),
+					EntityType.SUBJECT, UUID.randomUUID(), canonical, "Approved Biology correspondence"));
+		}
+		assertEquals(0, countAliases(master));
+	}
+
+	/**
+	 * Verifies rollback removes a newly approved alias along with other uncommitted
+	 * import operations.
+	 */
+	@Test
+	void callerOwnedApprovalRollsBackWithParentTransaction() throws Exception {
+		SqliteDatabase master = createDatabase("alias-rollback.db");
+		Subject biology = new SqliteCurriculumWriter(master).insertSubject("Biology");
+		UUID canonical = new SqlitePortableIdentityRepository(master)
+				.requireByLocalId(EntityType.SUBJECT, biology.getId()).portableId();
+		UUID originInstallation = UUID.randomUUID();
+		UUID originRecord = UUID.randomUUID();
+		SqlitePortableAliasRepository aliases = new SqlitePortableAliasRepository(master);
+		try (Connection connection = master.openConnection()) {
+			connection.setAutoCommit(false);
+			UUID approved = aliases.approveAlias(connection, originInstallation, EntityType.SUBJECT, originRecord,
+					canonical, "Approved independently created Biology Subject");
+			assertEquals(canonical, approved);
+			assertEquals(canonical,
+					aliases.findAlias(connection, originInstallation, EntityType.SUBJECT, originRecord).orElseThrow());
+			connection.rollback();
+		}
+		assertTrue(aliases.findAlias(originInstallation, EntityType.SUBJECT, originRecord).isEmpty());
+		assertEquals(0, countAliases(master));
+		master.verifyIntegrity();
+	}
+
+	/**
+	 * Verifies transaction-aware alias approval retains the local-origin identity
+	 * protection introduced before Subject import development.
+	 */
+	@Test
+	void callerOwnedTransactionCannotRedirectLocalOriginIdentity() throws Exception {
+		SqliteDatabase database = createDatabase("local-transaction.db");
+		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
+		Subject biology = writer.insertSubject("Biology");
+		Subject chemistry = writer.insertSubject("Chemistry");
+		SqlitePortableIdentityRepository identities = new SqlitePortableIdentityRepository(database);
+		UUID installationId = identities.installationId();
+		UUID biologyId = identities.requireByLocalId(EntityType.SUBJECT, biology.getId()).portableId();
+		UUID chemistryId = identities.requireByLocalId(EntityType.SUBJECT, chemistry.getId()).portableId();
+		SqlitePortableAliasRepository aliases = new SqlitePortableAliasRepository(database);
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			assertThrows(IllegalStateException.class, () -> aliases.approveAlias(connection, installationId,
+					EntityType.SUBJECT, biologyId, chemistryId, "Incorrect local-origin identity mapping"));
+			connection.rollback();
+		}
+		assertTrue(aliases.findAlias(installationId, EntityType.SUBJECT, biologyId).isEmpty());
+		assertEquals(0, countAliases(database));
+		database.verifyIntegrity();
+	}
+
 	@Test
 	void conflictingCanonicalClaimIsRejectedWithoutChangingApproval() throws Exception {
 		SqliteDatabase master = createDatabase("conflicts.db");
@@ -98,6 +195,40 @@ class SqlitePortableAliasRepositoryTest {
 				new SqliteDatabase(tempDirectory.resolve("master.db")));
 		assertEquals(masterSubjectId,
 				reopened.findAlias(contributorInstallation, EntityType.SUBJECT, contributorSubjectId).orElseThrow());
+	}
+
+	@Test
+	void localOriginCannotBeAliasedToAnotherLocalEntity() throws Exception {
+		SqliteDatabase database = createDatabase("local-origin.db");
+		SqliteCurriculumWriter writer = new SqliteCurriculumWriter(database);
+		Subject biology = writer.insertSubject("Biology");
+		Subject chemistry = writer.insertSubject("Chemistry");
+		SqlitePortableIdentityRepository identities = new SqlitePortableIdentityRepository(database);
+		UUID localInstallationId = identities.installationId();
+		UUID biologyId = identities.requireByLocalId(EntityType.SUBJECT, biology.getId()).portableId();
+		UUID chemistryId = identities.requireByLocalId(EntityType.SUBJECT, chemistry.getId()).portableId();
+		SqlitePortableAliasRepository aliases = new SqlitePortableAliasRepository(database);
+		assertThrows(IllegalStateException.class, () -> aliases.approveAlias(localInstallationId, EntityType.SUBJECT,
+				biologyId, chemistryId, "Incorrect local-origin identity mapping"));
+		assertTrue(aliases.findAlias(localInstallationId, EntityType.SUBJECT, biologyId).isEmpty());
+		assertEquals(0, countAliases(database));
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void localOriginCanOnlyReferToItsOwnActiveIdentity() throws Exception {
+		SqliteDatabase database = createDatabase("local-origin-self.db");
+		Subject biology = new SqliteCurriculumWriter(database).insertSubject("Biology");
+		SqlitePortableIdentityRepository identities = new SqlitePortableIdentityRepository(database);
+		UUID installationId = identities.installationId();
+		UUID biologyId = identities.requireByLocalId(EntityType.SUBJECT, biology.getId()).portableId();
+		SqlitePortableAliasRepository aliases = new SqlitePortableAliasRepository(database);
+		assertEquals(biologyId, aliases.approveAlias(installationId, EntityType.SUBJECT, biologyId, biologyId,
+				"Explicit confirmation of local identity"));
+		assertThrows(IllegalStateException.class, () -> aliases.approveAlias(installationId, EntityType.SUBJECT,
+				UUID.randomUUID(), biologyId, "Unknown local-origin identity"));
+		assertEquals(1, countAliases(database));
+		database.verifyIntegrity();
 	}
 
 	@Test

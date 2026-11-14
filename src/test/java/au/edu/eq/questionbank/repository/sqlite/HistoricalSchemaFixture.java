@@ -156,7 +156,8 @@ public final class HistoricalSchemaFixture {
 	}
 
 	/**
-	 * Removes version-26 revision triggers from a disposable test fixture.
+	 * Removes version-26 revision triggers and newer import-ledger structures from
+	 * a disposable historical test fixture.
 	 *
 	 * @param statement statement operating on the fixture connection
 	 * @throws SQLException if cleanup fails
@@ -165,6 +166,7 @@ public final class HistoricalSchemaFixture {
 		if (statement == null) {
 			throw new NullPointerException("statement");
 		}
+		removeVersion27Objects(statement);
 		List<String> names = new ArrayList<>();
 		try (Statement lookup = statement.getConnection().createStatement(); ResultSet result = lookup.executeQuery("""
 				SELECT name
@@ -184,5 +186,23 @@ public final class HistoricalSchemaFixture {
 		for (String name : names) {
 			statement.execute("DROP TRIGGER \"" + name + "\"");
 		}
+	}
+
+	/**
+	 * Removes import-ledger tables introduced in version 27.
+	 *
+	 * <p>
+	 * Used only when reconstructing an earlier schema in a disposable
+	 * integration-test database. The dependent table is removed first.
+	 *
+	 * @param statement statement operating on the fixture connection
+	 * @throws SQLException if cleanup fails
+	 */
+	public static void removeVersion27Objects(Statement statement) throws SQLException {
+		if (statement == null) {
+			throw new NullPointerException("statement");
+		}
+		statement.execute("DROP TABLE IF EXISTS subject_import_decisions");
+		statement.execute("DROP TABLE IF EXISTS subject_import_packages");
 	}
 }
