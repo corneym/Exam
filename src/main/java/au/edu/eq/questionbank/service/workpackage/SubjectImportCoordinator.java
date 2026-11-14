@@ -144,7 +144,7 @@ public final class SubjectImportCoordinator {
 						requireFreshMaster(masterSubjectId, plan);
 						gate.requireIntact(packageId, backup);
 						journal.publishFiles(packageId);
-						Map<Key, UUID> canonical = writer.apply(connection, plan, staged, decoded);
+						Map<Key, UUID> canonical = writer.apply(connection, plan, staged, decoded, approvalNote);
 						requireForeignKeyIntegrity(connection);
 						journal.verifyPublished(packageId);
 						gate.requireIntact(packageId, backup);

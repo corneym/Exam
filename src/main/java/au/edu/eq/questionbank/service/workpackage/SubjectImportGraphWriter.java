@@ -128,7 +128,7 @@ public final class SubjectImportGraphWriter {
 	 * @throws IOException  if staged binary content or paths cannot be verified
 	 */
 	public Map<Key, UUID> apply(Connection connection, SubjectImportApprovalPlan plan, StagedPackage staged,
-			DecodedPackage decoded) throws SQLException, IOException {
+			DecodedPackage decoded, String approvalNote) throws SQLException, IOException {
 		Objects.requireNonNull(connection, "connection");
 		if (connection.getAutoCommit()) {
 			throw new IllegalStateException("Graph writer needs caller-owned transaction");
@@ -136,6 +136,10 @@ public final class SubjectImportGraphWriter {
 		Objects.requireNonNull(plan, "plan");
 		Objects.requireNonNull(staged, "staged");
 		Objects.requireNonNull(decoded, "decoded");
+		Objects.requireNonNull(approvalNote, "approvalNote");
+		if (approvalNote.isBlank()) {
+			throw new IllegalArgumentException("Subject import requires a coordinator approval note");
+		}
 		if (!decoded.manifest().packageId().equals(staged.packageId())) {
 			throw new SQLException("Package graph identity changed after decoding");
 		}
@@ -147,7 +151,7 @@ public final class SubjectImportGraphWriter {
 		Map<Key, UUID> canonicalIds = new LinkedHashMap<>();
 		Map<EntityType, List<ExchangeRecord>> ordered = new EnumMap<>(EntityType.class);
 		for (ExchangeRecord record : decoded.records()) {
-			ordered.computeIfAbsent(EntityType.valueOf(record.recordType()), key -> new ArrayList<>()).add(record);
+			ordered.computeIfAbsent(EntityType.valueOf(record.recordType()), _ -> new ArrayList<>()).add(record);
 		}
 		for (List<ExchangeRecord> group : ordered.values()) {
 			group.sort(Comparator.comparing(record -> record.recordId().toString()));
@@ -237,8 +241,13 @@ public final class SubjectImportGraphWriter {
 			EntityType type = EntityType.valueOf(key.value().substring(0, key.value().indexOf(':')));
 			UUID original = UUID.fromString(key.value().substring(key.value().indexOf(':') + 1));
 			Action action = actions.get(key);
-			aliases.approveAlias(connection, origin, type, original, entry.getValue(),
-					clippedNote(action.justification()));
+
+			// Ordinary approvals may have no individual justification.
+			// Use the overall coordinator approval note in that case.
+			// Explicit conflict justifications are retained when supplied.
+			String justification = action.justification();
+			String aliasNote = justification.isBlank() ? approvalNote : justification;
+			aliases.approveAlias(connection, origin, type, original, entry.getValue(), clippedNote(aliasNote));
 		}
 		return Map.copyOf(canonicalIds);
 	}

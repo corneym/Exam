@@ -73,6 +73,13 @@ class SubjectImportCoordinatorIntegrationTest {
 			assertEquals(1, count(connection, "SELECT COUNT(*) FROM booklet_applicability_reviews"));
 			assertEquals(1, count(connection, "SELECT COUNT(*) FROM subject_import_packages"));
 			assertTrue(count(connection, "SELECT COUNT(*) FROM portable_identity_aliases") >= 11);
+			assertEquals(count(connection, "SELECT COUNT(*) FROM portable_identity_aliases"), count(connection, """
+					SELECT COUNT(*)
+					FROM portable_identity_aliases
+					WHERE approval_note =
+					    'Coordinator approved independent Biology consolidation'
+					"""),
+					"Aliases without individual explanations must retain " + "the coordinator's overall approval note");
 			try (Statement statement = connection.createStatement();
 					ResultSet resultSet = statement.executeQuery("SELECT image_png FROM question_images")) {
 				assertTrue(resultSet.next());
@@ -214,8 +221,11 @@ class SubjectImportCoordinatorIntegrationTest {
 		incomingExporter.export(1, incoming);
 		var preview = new SubjectReconciliationPreviewService().preview(masterArchive, incoming);
 		SubjectReconciliationReview review = new SubjectReconciliationReview(preview);
+
+		// Ordinary UI approvals do not require individual justifications.
+		// Their identity aliases must inherit the coordinator's import note.
 		for (var key : review.reviewKeys()) {
-			review.decide(key, Decision.ACCEPT, "Reviewed complete Biology addition and identity evidence");
+			review.decide(key, Decision.ACCEPT, "");
 		}
 		Fingerprint reviewedMaster = new SubjectImportSnapshotFingerprint().inspect(masterArchive);
 		Fingerprint reviewedIncoming = new SubjectImportSnapshotFingerprint().inspect(incoming);

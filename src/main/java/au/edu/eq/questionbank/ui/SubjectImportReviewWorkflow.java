@@ -67,6 +67,21 @@ public final class SubjectImportReviewWorkflow {
 		this.refreshAfterImport = Objects.requireNonNull(refreshAfterImport, "refreshAfterImport");
 	}
 
+	/**
+	 * Dismisses a non-cancellable publication dialog after its task has reached a
+	 * terminal state.
+	 *
+	 * <p>
+	 * The dialog has no close buttons while publication is active. Once work has
+	 * finished, restore a valid JavaFX close mechanism before requesting closure.
+	 */
+	static void dismissCompletedProgress(Alert progress) {
+		Objects.requireNonNull(progress, "progress");
+		progress.setOnCloseRequest(null);
+		progress.getButtonTypes().setAll(ButtonType.CLOSE);
+		progress.close();
+	}
+
 	/** Presents conflict operations and starts import only after approval. */
 	public void run() {
 		if (!review.snapshot().complete() || !review.snapshot().dependencySafe()) {
@@ -206,10 +221,12 @@ public final class SubjectImportReviewWorkflow {
 		progress.setTitle("Publishing approved Subject import");
 		progress.setHeaderText("Verifying backup and committing approved Subject data");
 		progress.setContentText("Publication cannot be cancelled once started.");
+
+		// The user cannot cancel publication while it is active.
 		progress.getButtonTypes().clear();
 		progress.setOnCloseRequest(event -> event.consume());
 		task.setOnSucceeded(_ -> {
-			progress.close();
+			dismissCompletedProgress(progress);
 			var result = task.getValue();
 			if (result.applied()) {
 				refreshAfterImport.run();
@@ -223,7 +240,7 @@ public final class SubjectImportReviewWorkflow {
 			success.showAndWait();
 		});
 		task.setOnFailed(_ -> {
-			progress.close();
+			dismissCompletedProgress(progress);
 			Throwable failure = task.getException();
 			error(failure == null ? "Unknown import failure" : failure.getMessage());
 		});
