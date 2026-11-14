@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 26;
+	private static final int LATEST_SCHEMA_VERSION = 27;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -746,6 +746,13 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v25-to-v26.sql", 26);
 			return 26;
 		}
+		if (version == 26) {
+
+			// Install the import ledger without modifying existing Subject data.
+			// The migration runs within the schema initialisation transaction.
+			executeMigration(connection, "/db/migration-v26-to-v27.sql", 27);
+			return 27;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -1056,6 +1063,12 @@ public final class SqliteDatabase {
 			// Structural verification includes the exact material-change
 			// triggers, rather than merely checking their names.
 			SqlitePortableRevisionTriggers.verify(connection);
+		}
+		if (version >= 27) {
+
+			// An import ledger must retain its identity keys and
+			// parent-to-decision foreign-key relationship.
+			verifyVersion27SubjectImportSchema(connection);
 		}
 	}
 
@@ -1682,6 +1695,28 @@ public final class SqliteDatabase {
 		// Shape checks alone cannot detect detached live records or
 		// identities reused from the permanent retirement history.
 		SqlitePortableIdentityAudit.verify(connection);
+	}
+
+	/**
+	 * Verifies the durable Subject import ledger introduced in schema v27.
+	 *
+	 * @param connection connection containing the current schema
+	 * @throws SQLException if required ledger columns or keys are invalid
+	 */
+	private void verifyVersion27SubjectImportSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "subject_import_packages",
+				List.of(column("package_id", true, 1), column("archive_sha256", true, 0),
+						column("origin_installation_id", true, 0), column("subject_portable_id", true, 0),
+						column("master_state_sha256", true, 0), column("approval_sha256", true, 0),
+						column("outcome", true, 0), column("backup_archive_path", false, 0),
+						column("approval_note", true, 0), column("completed_at", true, 0)),
+				List.of(), List.of());
+		verifyTableSchema(connection, "subject_import_decisions",
+				List.of(column("package_id", true, 1), column("entry_kind", true, 2), column("entry_key", true, 3),
+						column("classification", true, 0), column("coordinator_decision", true, 0),
+						column("result", true, 0), column("canonical_portable_id", false, 0),
+						column("master_revision_id", false, 0), column("explanation", true, 0)),
+				List.of(foreignKey("package_id", "subject_import_packages", "package_id")), List.of());
 	}
 
 	private record ForeignKeyColumn(int sequence, String fromColumn, String targetColumn) {

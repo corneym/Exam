@@ -72,30 +72,32 @@ public final class SqlitePortableIdentityRepository {
 	}
 
 	/**
-	 * Finds the portable identity of an existing local entity.
+	 * Resolves a local identity through the caller's database connection.
 	 *
-	 * @param entityType entity type
-	 * @param localId    positive SQLite-local primary key
-	 * @return matching identity, or empty when absent
-	 * @throws SQLException if retrieval fails
+	 * <p>
+	 * Supports records newly inserted in the caller's transaction before that
+	 * transaction has committed. The supplied connection is not closed.
+	 *
+	 * @param connection open database connection
+	 * @param entityType required entity type
+	 * @param localId    positive local primary key
+	 * @return active portable identity, or empty when absent
+	 * @throws SQLException if lookup fails
 	 */
-	public Optional<Identity> findByLocalId(EntityType entityType, long localId) throws SQLException {
+	public Optional<Identity> findByLocalId(Connection connection, EntityType entityType, long localId)
+			throws SQLException {
+		Objects.requireNonNull(connection, "connection");
 		Objects.requireNonNull(entityType, "entityType");
 		if (localId < 1) {
 			throw new IllegalArgumentException("localId must be positive");
 		}
-		try (Connection connection = database.openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
-						SELECT
-						    entity_type,
-						    local_id,
-						    portable_id,
-						    revision_id
-						FROM portable_entity_identities
-						WHERE entity_type = ?
-						  AND local_id = ?
-						  AND retired = 0
-						""")) {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT entity_type, local_id, portable_id, revision_id
+				FROM portable_entity_identities
+				WHERE entity_type = ?
+				  AND local_id = ?
+				  AND retired = 0
+				""")) {
 			statement.setString(1, entityType.name());
 			statement.setLong(2, localId);
 			try (ResultSet result = statement.executeQuery()) {
@@ -112,28 +114,44 @@ public final class SqlitePortableIdentityRepository {
 	}
 
 	/**
-	 * Resolves a canonical portable UUID to its current local entity.
+	 * Finds the portable identity of an existing local entity.
 	 *
-	 * @param entityType required entity type
-	 * @param portableId portable entity UUID
-	 * @return active entity identity, or empty if not active
+	 * @param entityType entity type
+	 * @param localId    positive SQLite-local primary key
+	 * @return matching active identity, or empty when absent
 	 * @throws SQLException if retrieval fails
 	 */
-	public Optional<Identity> findByPortableId(EntityType entityType, UUID portableId) throws SQLException {
+	public Optional<Identity> findByLocalId(EntityType entityType, long localId) throws SQLException {
+		try (Connection connection = database.openConnection()) {
+			return findByLocalId(connection, entityType, localId);
+		}
+	}
+
+	/**
+	 * Resolves a canonical UUID using the caller's database transaction.
+	 *
+	 * <p>
+	 * This permits the Subject importer to resolve identities created by inserts
+	 * that have not yet committed, without opening another connection.
+	 *
+	 * @param connection open database connection
+	 * @param entityType required entity type
+	 * @param portableId portable UUID
+	 * @return active entity identity, or empty when absent
+	 * @throws SQLException if lookup fails
+	 */
+	public Optional<Identity> findByPortableId(Connection connection, EntityType entityType, UUID portableId)
+			throws SQLException {
+		Objects.requireNonNull(connection, "connection");
 		Objects.requireNonNull(entityType, "entityType");
 		Objects.requireNonNull(portableId, "portableId");
-		try (Connection connection = database.openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
-						SELECT
-						    entity_type,
-						    local_id,
-						    portable_id,
-						    revision_id
-						FROM portable_entity_identities
-						WHERE entity_type = ?
-						  AND portable_id = ?
-						  AND retired = 0
-						""")) {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT entity_type, local_id, portable_id, revision_id
+				FROM portable_entity_identities
+				WHERE entity_type = ?
+				  AND portable_id = ?
+				  AND retired = 0
+				""")) {
 			statement.setString(1, entityType.name());
 			statement.setString(2, portableId.toString());
 			try (ResultSet result = statement.executeQuery()) {
@@ -146,6 +164,20 @@ public final class SqlitePortableIdentityRepository {
 				}
 				return Optional.of(identity);
 			}
+		}
+	}
+
+	/**
+	 * Resolves a canonical UUID to its current local entity.
+	 *
+	 * @param entityType required entity type
+	 * @param portableId portable entity UUID
+	 * @return active entity identity, or empty when absent
+	 * @throws SQLException if retrieval fails
+	 */
+	public Optional<Identity> findByPortableId(EntityType entityType, UUID portableId) throws SQLException {
+		try (Connection connection = database.openConnection()) {
+			return findByPortableId(connection, entityType, portableId);
 		}
 	}
 
