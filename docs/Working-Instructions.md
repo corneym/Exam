@@ -76,8 +76,13 @@ The following rules supplement all preceding Java code-change instructions. They
 2. Every time the target class changes, use a level-three Markdown heading containing the **fully qualified class name in bold**, for example:
    `### **au.edu.eq.questionbank.repository.assessment.SqliteExamWriter**`.  It MUST BE in a bigger font than the method name font.
 
-3. Within each class, give every changed method, constructor or field its own level-four Markdown heading, **in bold**, using the actual method signature or field name, for example:
-   `#### **findOrCreateExams(Subject subject, List<ExamRegistration> registrations)**`
+
+3. Within each class, give every changed method, constructor or field its own level-four Markdown heading, in bold, with the entire Java signature enclosed in inline code backticks inside the bold formatting. Example:
+
+   #### **`findOrCreateExams(Subject subject, List<ExamRegistration> registrations)`**
+
+   Never place unprotected Java generic type syntax such as `List<Action>` or `Map<Key, Value>` in a Markdown heading or ordinary prose.
+
 
 4. Immediately beneath the method heading, display the operation in bold: **ADD**, **DELETE**, **REPLACE** or **EDIT**.
 
@@ -92,6 +97,9 @@ The following rules supplement all preceding Java code-change instructions. They
 9. If a correction is required, reproduce the affected code and all outstanding verification commands rather than relying on an earlier response being visible.
 
 10. These presentation rules take precedence over the older `Class:` and `Method:` label format wherever the formats differ. All other existing working instructions remain mandatory.
+
+
+11. Before sending implementation instructions, ensure that every method heading and fenced Java code block is complete. If a response is too long, split it into self-contained batches rather than risking truncated method bodies. Every batch must include all outstanding verification commands.
 
 ## Chat Continuity Protocol
 
