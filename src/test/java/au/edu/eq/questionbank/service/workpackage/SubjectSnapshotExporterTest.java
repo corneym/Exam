@@ -36,8 +36,11 @@ import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.ApplicationVersion;
 import au.edu.eq.questionbank.ManagedDataLayout;
+import au.edu.eq.questionbank.repository.identity.SqliteExamAssignmentGraphReader;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
+import au.edu.eq.questionbank.repository.identity.SqliteSubjectGraphReader.SubjectGraph;
+import au.edu.eq.questionbank.repository.identity.SqliteSubjectPortableRecordReader;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkAssetIndex.Reference;
 
@@ -61,6 +64,118 @@ class SubjectSnapshotExporterTest {
 			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC" + "AAAAC0lEQVR42mP8/x8AAwMCAO+/WZcAAAAASUVORK5CYII=");
 	@TempDir
 	Path directory;
+
+	@Test
+	void assignmentAssetsAreImmutableAfterMasterFileChanges() throws Exception {
+		Fixture fixture = createFixture("assignment-immutable");
+		seedCompleteSubject(fixture);
+		SubjectAssetCollector.CollectedAssets assets = collectAssignedExamAssets(fixture,
+				"assignment-immutable-snapshot.db");
+		Reference questionSource = assets.index().references().stream()
+				.filter(ref -> ref.managedPath().endsWith("/questions.pdf")).findFirst().orElseThrow();
+		Path stagedCopy = assets.stagedFiles().get(questionSource.archivePath());
+		assertNotNull(stagedCopy);
+		assertTrue(Files.isRegularFile(stagedCopy));
+		byte[] originalBytes = Files.readAllBytes(stagedCopy);
+		assertEquals(sha256(originalBytes), questionSource.sha256());
+
+		// Simulate a concurrent coordinator changing the master PDF
+		// after the assignment's asset copy was staged.
+		Path masterPdf = fixture.layout().resolve("subjects/Biology/exams/questions.pdf");
+		Files.writeString(masterPdf, "Changed after assignment asset collection");
+		assertEquals("Changed after assignment asset collection", Files.readString(masterPdf));
+
+		// The contributor's staged baseline remains byte-identical.
+		assertArrayEquals(originalBytes, Files.readAllBytes(stagedCopy));
+		assertEquals(sha256(Files.readAllBytes(stagedCopy)), questionSource.sha256());
+	}
+
+	@Test
+	void assignmentAssetsExcludeOtherExamsAndUnreferencedFiles() throws Exception {
+		Fixture fixture = createFixture("assigned-assets");
+		seedCompleteSubject(fixture);
+
+		// Another Exam belongs to the same Subject, but must not
+		// contribute files to the selected assignment.
+		execute(fixture.database(), """
+				INSERT INTO source_documents (id, relative_path)
+				VALUES (
+				    54,
+				    'subjects/Biology/exams/unassigned.pdf'
+				)
+				""", """
+				INSERT INTO exams (
+				    id, subject_id, provider_id, exam_year, exam_name
+				)
+				VALUES (
+				    32, 1, 1, 2026, 'Unassigned Examination'
+				)
+				""", """
+				INSERT INTO exam_booklets (
+				    id, exam_id, source_document_id, booklet_name
+				)
+				VALUES (
+				    64, 32, 54, 'Unassigned Paper'
+				)
+				""");
+
+		// Do not create the unassigned PDF. Its absence must not
+		// prevent a valid different Exam being packaged.
+		SubjectAssetCollector.CollectedAssets assets = collectAssignedExamAssets(fixture,
+				"assigned-assets-snapshot.db");
+		List<Reference> references = assets.index().references();
+		assertEquals(5, references.size());
+		assertEquals(2, references.stream().filter(ref -> ref.usage().equals("SOURCE_PDF")).count());
+		assertEquals(1, references.stream().filter(ref -> ref.usage().equals("SYLLABUS_PDF")).count());
+		assertEquals(2, references.stream().filter(ref -> ref.usage().startsWith("EMBEDDED_")).count());
+		assertEquals(0, references.stream().filter(ref -> ref.usage().equals("INVENTORIED")).count());
+		assertTrue(references.stream().anyMatch(ref -> ref.managedPath().endsWith("/questions.pdf")));
+		assertTrue(references.stream().anyMatch(ref -> ref.managedPath().endsWith("/answers.pdf")));
+		assertTrue(references.stream().anyMatch(ref -> ref.managedPath().endsWith("/syllabus.pdf")));
+		assertFalse(references.stream().anyMatch(ref -> ref.managedPath().endsWith("/unassigned.pdf")));
+
+		// Retained Subject files are not Exam assignment dependencies.
+		assertFalse(references.stream().anyMatch(ref -> ref.managedPath().endsWith("/retained.xlsx")));
+		assertFalse(references.stream().anyMatch(ref -> ref.managedPath().endsWith("/legacy.xlsx")));
+		assertFalse(references.stream().anyMatch(ref -> ref.managedPath().endsWith("/unreferenced-notes.txt")));
+	}
+
+	@Test
+	void assignmentAssetsRejectMissingRequiredPdf() throws Exception {
+		Fixture fixture = createFixture("assignment-missing-source");
+		seedCompleteSubject(fixture);
+		Path questionPdf = fixture.layout().resolve("subjects/Biology/exams/questions.pdf");
+		Files.delete(questionPdf);
+		IOException failure = assertThrows(IOException.class,
+				() -> collectAssignedExamAssets(fixture, "assignment-missing-source-snapshot.db"));
+		assertNotNull(failure.getMessage());
+		assertTrue(failure.getMessage().contains("managed asset"));
+	}
+
+	@Test
+	void assignmentGraphProducesClosedPortableRecordReferences() throws Exception {
+		Fixture fixture = createFixture("assignment-record-closure");
+		seedCompleteSubject(fixture);
+		Path snapshot = directory.resolve("assignment-record-closure-snapshot.db");
+		fixture.database().createConsistentSnapshot(snapshot);
+		SqliteExamAssignmentGraphReader reader = new SqliteExamAssignmentGraphReader(snapshot);
+		SubjectGraph graph = reader.read(1, 31);
+
+		// The existing portable reader checks every recognised UUID
+		// relationship, including ordered content-part dependencies.
+		List<ExchangeRecord> records = new SqliteSubjectPortableRecordReader(snapshot).read(graph);
+		assertEquals(1, records.stream().filter(record -> record.recordType().equals("EXAM")).count());
+		assertEquals(2, records.stream().filter(record -> record.recordType().equals("EXAM_BOOKLET")).count());
+		assertEquals(1, records.stream().filter(record -> record.recordType().equals("ANSWER_FILE")).count());
+		assertEquals(1, records.stream().filter(record -> record.recordType().equals("QUESTION")).count());
+		assertEquals(1,
+				records.stream().filter(record -> record.recordType().equals("SHARED_QUESTION_CONTEXT")).count());
+		assertEquals(1, records.stream().filter(record -> record.recordType().equals("ANSWER")).count());
+		assertEquals(2, records.stream().filter(record -> record.recordType().equals("SYLLABUS_VERSION")).count());
+
+		// Every selected portable relationship was resolved.
+		assertTrue(records.stream().allMatch(record -> record.recordId() != null));
+	}
 
 	/**
 	 * Verifies export is observational and leaves existing Subject records, other
@@ -477,6 +592,18 @@ class SubjectSnapshotExporterTest {
 		Files.write(archive, original);
 		assertThrows(IOException.class, () -> exporter(fixture).export(1, archive));
 		assertArrayEquals(original, Files.readAllBytes(archive));
+	}
+
+	private SubjectAssetCollector.CollectedAssets collectAssignedExamAssets(Fixture fixture, String snapshotName)
+			throws Exception {
+		Path snapshot = directory.resolve(snapshotName);
+		fixture.database().createConsistentSnapshot(snapshot);
+		SqliteExamAssignmentGraphReader reader = new SqliteExamAssignmentGraphReader(snapshot);
+		SubjectGraph graph = reader.read(1, 31);
+		Path staging = Files.createTempDirectory(directory, "assignment-assets-stage-");
+		SubjectAssetCollector collector = new SubjectAssetCollector(SqliteDatabase.readOnly(snapshot), fixture.layout(),
+				staging);
+		return collector.collectAssignment(graph);
 	}
 
 	private long count(List<ExchangeRecord> records, String type) {

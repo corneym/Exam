@@ -95,29 +95,52 @@ public final class SubjectAssetCollector {
 
 	/**
 	 * Collects all referenced and retained Subject assets into immutable staged
-	 * copies suitable for the common archive writer.
-	 *
-	 * <p>
-	 * The collector includes referenced source PDFs and syllabus PDFs, inventoried
-	 * Subject-first files, Question image BLOBs and ordered Shared Context image
-	 * BLOBs.
+	 * copies suitable for a complete Subject snapshot.
 	 *
 	 * @param graph selected Subject graph from the same SQLite snapshot
 	 * @return asset index and staged binary archive sources
 	 * @throws SQLException if database content or identity retrieval fails
-	 * @throws IOException  if an asset is missing, unsafe, inconsistent, too large
-	 *                      or cannot be staged
+	 * @throws IOException  if an asset cannot be verified or staged
 	 */
 	public CollectedAssets collect(SubjectGraph graph) throws SQLException, IOException {
+		return collect(graph, true);
+	}
+
+	/**
+	 * Collects only binary dependencies referenced by one assigned Exam graph.
+	 *
+	 * <p>
+	 * Unlike Subject snapshot collection, this operation does not inventory
+	 * unreferenced managed files. Existing Question and Answer PDFs, syllabus PDFs
+	 * and embedded images are staged as immutable content-addressed copies.
+	 *
+	 * @param graph complete selected Exam graph
+	 * @return referenced asset index and staged binary archive sources
+	 * @throws SQLException if database content or identities cannot be read
+	 * @throws IOException  if a referenced asset is unavailable or invalid
+	 */
+	public CollectedAssets collectAssignment(SubjectGraph graph) throws SQLException, IOException {
+		return collect(graph, false);
+	}
+
+	private CollectedAssets collect(SubjectGraph graph, boolean includeInventory) throws SQLException, IOException {
 		Objects.requireNonNull(graph, "graph");
 		if (!references.isEmpty() || !stagedFiles.isEmpty()) {
 			throw new IllegalStateException("An asset collector can be used only once");
 		}
+
+		// All referenced content is independently verified against
+		// the selected graph and copied into immutable staging.
 		collectSourceDocuments(graph);
 		collectSyllabusPdfs(graph);
 		collectQuestionImages(graph);
 		collectSharedContextImages(graph);
-		inventoryManagedFiles(graph);
+		if (includeInventory) {
+
+			// Full Subject snapshots preserve retained unreferenced
+			// files. Exam assignments deliberately exclude them.
+			inventoryManagedFiles(graph);
+		}
 		ExamWorkAssetIndex index;
 		try {
 			index = new ExamWorkAssetIndex(references);
