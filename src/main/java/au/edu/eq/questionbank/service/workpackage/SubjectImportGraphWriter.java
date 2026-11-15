@@ -119,10 +119,12 @@ public final class SubjectImportGraphWriter {
 	/**
 	 * Inserts an approved Subject graph in the caller's open transaction.
 	 *
-	 * @param connection caller-owned transaction; commit and rollback are external
-	 * @param plan       approved import plan
-	 * @param staged     verified staged package with all approved binary content
-	 * @param decoded    independently validated decoded Subject graph
+	 * @param connection   caller-owned transaction; commit and rollback are
+	 *                     external
+	 * @param plan         approved import plan
+	 * @param staged       verified staged package with all approved binary content
+	 * @param decoded      independently validated decoded Subject graph
+	 * @param approvalNote non-blank coordinator approval note for the import
 	 * @return canonical identities resolved or inserted for accepted records
 	 * @throws SQLException if persistence, relationships or aliasing fail
 	 * @throws IOException  if staged binary content or paths cannot be verified

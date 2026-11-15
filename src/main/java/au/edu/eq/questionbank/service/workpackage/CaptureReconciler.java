@@ -209,12 +209,6 @@ public final class CaptureReconciler {
 		return false;
 	}
 
-	/** Compares all persisted values after resolving independent portable UUIDs. */
-	private boolean identicalAfterRebasing(ExchangeRecord master, ExchangeRecord incoming,
-			Map<String, Map<UUID, Proposal>> matches) {
-		return identicalAfterRebasing(master, incoming, matches, false);
-	}
-
 	private boolean identicalAfterRebasing(ExchangeRecord master, ExchangeRecord incoming,
 			Map<String, Map<UUID, Proposal>> matches, boolean imageVerified) {
 		JsonNode masterValues = master.values();
