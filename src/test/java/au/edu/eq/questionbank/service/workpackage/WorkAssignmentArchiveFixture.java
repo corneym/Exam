@@ -38,6 +38,20 @@ final class WorkAssignmentArchiveFixture {
 	private WorkAssignmentArchiveFixture() {
 	}
 
+	static ObjectNode fields(String... entries) {
+		if (entries.length % 2 != 0) {
+			throw new IllegalArgumentException("Fields must be supplied as key/value pairs");
+		}
+		ObjectNode node = JsonNodeFactory.instance.objectNode();
+
+		// Check the bound for both array elements before accessing
+		// a key/value pair.
+		for (int i = 0; i + 1 < entries.length; i += 2) {
+			node.put(entries[i], entries[i + 1]);
+		}
+		return node;
+	}
+
 	static Path write(Path destination) throws Exception {
 		Instant issued = Instant.parse("2026-11-16T00:00:00Z");
 		ObjectNode current = fields("subject_id", id(1).toString(), "syllabus_name", "Biology 2025");
@@ -114,14 +128,6 @@ final class WorkAssignmentArchiveFixture {
 	private static String assetPath(byte[] bytes) throws Exception {
 		String digest = hash(bytes);
 		return "assets/sha256/" + digest.substring(0, 2) + "/" + digest + ".pdf";
-	}
-
-	private static ObjectNode fields(String... entries) {
-		ObjectNode node = JsonNodeFactory.instance.objectNode();
-		for (int i = 0; i < entries.length; i += 2) {
-			node.put(entries[i], entries[i + 1]);
-		}
-		return node;
 	}
 
 	private static String hash(byte[] bytes) throws Exception {
