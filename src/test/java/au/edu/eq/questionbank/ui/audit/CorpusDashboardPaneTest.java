@@ -135,6 +135,53 @@ class CorpusDashboardPaneTest {
 	}
 
 	@Test
+	@SuppressWarnings("unchecked")
+	void assignmentModeDisablesCoordinatorActionsButRetainsCapture(FxRobot robot) {
+		Button addExam = robot.lookup("#corpus-dashboard-add-exam").queryButton();
+		Button addCurriculum = robot.lookup("#corpus-dashboard-add-curriculum").queryButton();
+		Button mapCurriculum = robot.lookup("#corpus-dashboard-map-curriculum").queryButton();
+		Button manageAssets = robot.lookup("#corpus-dashboard-manage-exam-assets").queryButton();
+		Button lifecycle = robot.lookup("#corpus-dashboard-exam-lifecycle").queryButton();
+		Button captureQuestions = robot.lookup("#corpus-dashboard-capture-questions").queryButton();
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		robot.interact(() -> pane.setAssignmentExamScope(fixture.activeExam.getId()));
+		assertTrue(addExam.isDisable());
+		assertTrue(addCurriculum.isDisable());
+		assertTrue(mapCurriculum.isDisable());
+		assertTrue(manageAssets.isDisable());
+		assertTrue(lifecycle.isDisable());
+
+		// The assigned active Exam still permits Question capture.
+		robot.interact(() -> booklets.getSelectionModel().select(fixture.activePaperStatus));
+		assertFalse(captureQuestions.isDisable());
+
+		// Exiting assignment mode restores coordinator controls.
+		robot.interact(() -> pane.setAssignmentExamScope(null));
+		assertFalse(addExam.isDisable());
+		assertFalse(addCurriculum.isDisable());
+		assertFalse(mapCurriculum.isDisable());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void assignmentScopeShowsOnlyTheAssignedExamAndQuestionWork(FxRobot robot) {
+		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		TableView<QuestionCorpusWorkItem> work = robot.lookup("#corpus-dashboard-question-work")
+				.queryAs(TableView.class);
+		assertEquals(2, exams.getItems().size());
+		robot.interact(() -> pane.setAssignmentExamScope(fixture.activeExam.getId()));
+		assertEquals(1, exams.getItems().size());
+		assertEquals(fixture.activeExam.getId(), exams.getItems().getFirst().exam().getId());
+		assertEquals(fixture.activeExam.getId(), exams.getSelectionModel().getSelectedItem().exam().getId());
+		assertTrue(work.getItems().stream()
+				.allMatch(item -> item.question().getExam().getId() == fixture.activeExam.getId()));
+
+		// Ordinary mode recovers the complete Subject scope.
+		robot.interact(() -> pane.setAssignmentExamScope(null));
+		assertEquals(2, exams.getItems().size());
+	}
+
+	@Test
 	void bookletActionsSeparateCaptureFromInspectionAndScrollWhenNarrow(FxRobot robot) {
 		ScrollPane actions = robot.lookup("#corpus-dashboard-booklet-actions-scroll").queryAs(ScrollPane.class);
 		HBox row = (HBox) actions.getContent();

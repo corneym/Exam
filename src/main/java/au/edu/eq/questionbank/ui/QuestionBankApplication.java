@@ -161,7 +161,9 @@ import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 import au.edu.eq.questionbank.service.revision.RevisionCorpusBuilder;
 import au.edu.eq.questionbank.service.revision.RevisionGroupingMode;
 import au.edu.eq.questionbank.service.revision.RevisionPresentationPlanner;
+import au.edu.eq.questionbank.service.workpackage.ContributorAssignmentDashboardContextResolver;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest;
+import au.edu.eq.questionbank.service.workpackage.SqliteContributorAssignmentSessionRepository;
 import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationPreviewService;
 import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationReview;
 import au.edu.eq.questionbank.service.workpackage.SubjectSnapshotExporter;
@@ -205,6 +207,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.ChoiceDialog;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuBar;
@@ -224,6 +227,7 @@ import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import javafx.stage.Window;
+import javafx.util.StringConverter;
 
 /**
  * Composition root for the Exam Question Bank desktop application.
@@ -361,6 +365,14 @@ public class QuestionBankApplication extends Application {
 	private PerformanceFxStallProbe performanceFxStallProbe;
 	private PerformanceRuntimeSampler performanceRuntimeSampler;
 	private ScreenAwareWindows screenAwareWindows;
+	private ContributorAssignmentDashboardContextResolver.Context activeAssignmentContext;
+	private ContributorAssignmentDashboardContextResolver contributorAssignmentResolver;
+	private SqliteContributorAssignmentSessionRepository contributorAssignments;
+	private final Button assignmentExitButton = new Button("Exit assignment mode");
+	private boolean assignmentSelectionInProgress;
+	private final ComboBox<SqliteContributorAssignmentSessionRepository.Session> assignmentSelector = new ComboBox<>();
+	private final Button assignmentSwitchButton = new Button("Switch assignment");
+	private final HBox assignmentToolbar = new HBox(SECTION_SPACING);
 
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
@@ -946,6 +958,80 @@ public class QuestionBankApplication extends Application {
 		return false;
 	}
 
+	private void changeContributorAssignment(UUID assignmentId) {
+		if (!allowWorkingSubjectChange()) {
+			return;
+		}
+		if (applicationBusyOverlay != null && applicationBusyOverlay.isBusy()) {
+			return;
+		}
+		var previousContext = activeAssignmentContext;
+		try {
+
+			// Validate the target before changing persistent selection.
+			if (assignmentId != null) {
+				contributorAssignmentResolver.require(assignmentId);
+				contributorAssignments.select(assignmentId);
+			} else {
+				contributorAssignments.clearActive();
+			}
+			var newContext = contributorAssignmentResolver.active().orElse(null);
+			activeAssignmentContext = newContext;
+			assignmentSelectionInProgress = true;
+			try {
+				if (newContext != null && !Objects.equals(workingSubject, newContext.subject())) {
+
+					// Use the existing Subject refresh pipeline.
+					curriculumSelectorPane.selectSubject(newContext.subject());
+				} else {
+
+					// The Subject may be unchanged while the assigned
+					// Exam changes. Invalidate older async generations
+					// and rebuild the Dashboard from persistence.
+					startWorkingSubjectRefresh(workingSubject);
+				}
+				showCorpusDashboardHome();
+				refreshActiveExamContext();
+				refreshContributorAssignmentToolbar();
+			} finally {
+				assignmentSelectionInProgress = false;
+			}
+		} catch (SQLException | RuntimeException failure) {
+
+			// Restore persisted selection if activation or UI setup
+			// fails. The assignment's captured work is untouched.
+			try {
+				if (previousContext == null) {
+					contributorAssignments.clearActive();
+				} else {
+					contributorAssignments.select(previousContext.session().assignmentId());
+				}
+				activeAssignmentContext = previousContext;
+				assignmentSelectionInProgress = true;
+				try {
+
+					// The database selection has been restored. Restore the
+					// visible Subject and invalidate any snapshot requested
+					// for the unsuccessful target assignment.
+					if (previousContext != null && !Objects.equals(workingSubject, previousContext.subject())) {
+						curriculumSelectorPane.selectSubject(previousContext.subject());
+					} else {
+						startWorkingSubjectRefresh(workingSubject);
+					}
+					showCorpusDashboardHome();
+					refreshActiveExamContext();
+					refreshContributorAssignmentToolbar();
+				} finally {
+					assignmentSelectionInProgress = false;
+				}
+			} catch (SQLException | RuntimeException rollbackFailure) {
+				failure.addSuppressed(rollbackFailure);
+			}
+			showAlert(Alert.AlertType.ERROR, "Contributor Assignment", "The assignment could not be selected.",
+					failureMessage(failure));
+		}
+	}
+
 	private void changeCorpusDashboardBookletReview(ExamBooklet booklet, boolean reviewed) {
 		if (booklet == null) {
 			throw new NullPointerException("booklet");
@@ -1315,6 +1401,43 @@ public class QuestionBankApplication extends Application {
 		if (answerCapturePane != null) {
 			answerCapturePane.setWorkingSubject(subject, snapshot.questions());
 		}
+	}
+
+	private void configureContributorAssignmentToolbar() {
+		assignmentToolbar.setId("corpus-dashboard-assignment-toolbar");
+		assignmentToolbar.setAlignment(Pos.CENTER_LEFT);
+		Label label = new Label("Contributor assignment");
+		assignmentSelector.setId("corpus-dashboard-assignment-selector");
+		assignmentSelector.setPromptText("Select installed assignment");
+		assignmentSelector.setPrefWidth(360);
+		assignmentSelector.setConverter(new StringConverter<>() {
+
+			@Override
+			public SqliteContributorAssignmentSessionRepository.Session fromString(String text) {
+
+				// The selector is not editable. Typed conversion
+				// must never create an unregistered assignment.
+				return null;
+			}
+
+			@Override
+			public String toString(SqliteContributorAssignmentSessionRepository.Session session) {
+				if (session == null) {
+					return "";
+				}
+				String shortId = session.assignmentId().toString().substring(0, 8);
+				return "Exam " + session.examLocalId() + " — " + session.contributorName() + " (" + shortId + ")";
+			}
+		});
+		assignmentSwitchButton.setId("corpus-dashboard-switch-assignment");
+		assignmentSwitchButton.setOnAction(_ -> switchContributorAssignment());
+		assignmentExitButton.setId("corpus-dashboard-exit-assignment");
+		assignmentExitButton.setOnAction(_ -> exitContributorAssignment());
+		assignmentSelector.valueProperty().addListener((_, _, _) -> updateContributorAssignmentActions());
+		assignmentToolbar.getChildren().setAll(label, assignmentSelector, assignmentSwitchButton, assignmentExitButton);
+		assignmentToolbar.setVisible(false);
+		assignmentToolbar.setManaged(false);
+		updateContributorAssignmentActions();
 	}
 
 	private void configurePdfWorkspace() {
@@ -1873,23 +1996,19 @@ public class QuestionBankApplication extends Application {
 		showCorpusDashboardNoSubject();
 		corpusDashboardSubjectHost.setId("corpus-dashboard-subject-host");
 		corpusDashboardSubjectHost.setAlignment(Pos.CENTER_LEFT);
+		configureContributorAssignmentToolbar();
 		Label heading = new Label("CORPUS DASHBOARD");
-		heading.setStyle(
-				"-fx-font-weight: bold; -fx-font-size: 14px; -fx-background-color: -fx-background; -fx-padding: 0 5 0 5;");
-		VBox dashboardBody = new VBox(SECTION_SPACING, corpusDashboardSubjectHost, corpusDashboardHost);
+		heading.setStyle("-fx-font-weight: bold; -fx-font-size: 14px;" + " -fx-background-color: -fx-background;"
+				+ " -fx-padding: 0 5 0 5;");
+		VBox dashboardBody = new VBox(SECTION_SPACING, corpusDashboardSubjectHost, assignmentToolbar,
+				corpusDashboardHost);
 		dashboardBody.setPadding(new Insets(14, 10, 10, 10));
-		dashboardBody.setStyle("-fx-border-color: #b0b0b0; -fx-border-width: 1; -fx-border-radius: 3;");
+		dashboardBody.setStyle("-fx-border-color: #b0b0b0;" + " -fx-border-width: 1;" + " -fx-border-radius: 3;");
 		VBox.setVgrow(corpusDashboardHost, Priority.ALWAYS);
-
-		// The Dashboard title sits in its border while Subject selection and all
-		// Subject-level work remain inside the same visual region.
 		StackPane dashboardSection = new StackPane(dashboardBody, heading);
 		dashboardSection.setId("corpus-dashboard-home-section");
 		dashboardSection.setPadding(new Insets(4, 0, 0, 0));
 		StackPane.setAlignment(heading, Pos.TOP_LEFT);
-
-		// Lift the legend slightly across the upper border rather than letting it sit
-		// visually inside the section body.
 		StackPane.setMargin(heading, new Insets(-3, 0, 0, 10));
 		VBox home = new VBox(dashboardSection);
 		home.setId("corpus-dashboard-home");
@@ -2307,6 +2426,16 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void exitContributorAssignment() {
+		if (activeAssignmentContext == null) {
+			return;
+		}
+
+		// This changes only the selected session. It does not mark
+		// the assignment complete and does not discard captured work.
+		changeContributorAssignment(null);
+	}
+
 	private void failCorpusDashboardQuestionCorrection(Runnable returnHandler, Throwable failure) {
 		if (corpusDashboardCaptureReturnHandler != returnHandler) {
 
@@ -2691,8 +2820,23 @@ public class QuestionBankApplication extends Application {
 		if (restoringWorkingSubject) {
 			return;
 		}
+		if (activeAssignmentContext != null
+				&& (newSubject == null || newSubject.getId() != activeAssignmentContext.subject().getId())) {
+
+			// A selected assignment owns the Working Subject. Restore its
+			// authoritative value without clearing any capture state.
+			Platform.runLater(() -> {
+				restoringWorkingSubject = true;
+				try {
+					curriculumSelectorPane.selectSubject(activeAssignmentContext.subject());
+				} finally {
+					restoringWorkingSubject = false;
+				}
+			});
+			return;
+		}
 		boolean subjectValueChanged = !Objects.equals(workingSubject, newSubject);
-		boolean guardedSubjectChange = workingSubject != null && subjectValueChanged;
+		boolean guardedSubjectChange = workingSubject != null && subjectValueChanged && !assignmentSelectionInProgress;
 		if (guardedSubjectChange && !allowWorkingSubjectChange()) {
 
 			// The application-managed Subject handler has not cleared curriculum,
@@ -3621,7 +3765,7 @@ public class QuestionBankApplication extends Application {
 		// editing overrides this immediately with read-only task context.
 		changeExamAssetsButton.setVisible(true);
 		changeExamAssetsButton.setManaged(true);
-		changeExamAssetsButton.setDisable(workingSubject == null);
+		changeExamAssetsButton.setDisable(workingSubject == null || activeAssignmentContext != null);
 		ExamBooklet booklet = examMetadataPane == null ? null : examMetadataPane.getBooklet();
 		setActiveExamBookletContext(booklet);
 	}
@@ -3632,6 +3776,31 @@ public class QuestionBankApplication extends Application {
 		// replaces its data from authoritative persistence asynchronously.
 		showCorpusDashboardHome();
 		refreshCorpusDashboardHome(-1L);
+	}
+
+	private void refreshContributorAssignmentToolbar() {
+		try {
+			List<SqliteContributorAssignmentSessionRepository.Session> installed = contributorAssignments.findAll();
+			assignmentSelector.getItems().setAll(installed);
+			if (activeAssignmentContext == null) {
+				assignmentSelector.getSelectionModel().clearSelection();
+			} else {
+				var currentId = activeAssignmentContext.session().assignmentId();
+				var selected = installed.stream().filter(session -> session.assignmentId().equals(currentId))
+						.findFirst()
+						.orElseThrow(() -> new IllegalStateException("Selected assignment is not installed"));
+				assignmentSelector.getSelectionModel().select(selected);
+			}
+
+			// A stored assignment can be re-entered after exiting mode.
+			// Hide the row only for databases with no installed assignments.
+			boolean available = !installed.isEmpty();
+			assignmentToolbar.setVisible(available);
+			assignmentToolbar.setManaged(available);
+			updateContributorAssignmentActions();
+		} catch (SQLException exception) {
+			throw new IllegalStateException("Could not load installed contributor assignments", exception);
+		}
 	}
 
 	private void refreshCorpusDashboardHome(long preferredQuestionId) {
@@ -4029,6 +4198,21 @@ public class QuestionBankApplication extends Application {
 		}
 		closeRestorePreparation(preparation);
 		completeSuccessfulRestore(primaryStage, restoreResult);
+	}
+
+	private void restoreContributorAssignmentAtStartup() {
+		if (activeAssignmentContext == null) {
+			return;
+		}
+
+		// The existing Subject transition starts the normal asynchronous
+		// curriculum, Question/Answer and Dashboard snapshot loaders.
+		// No special contributor capture queues are introduced.
+		curriculumSelectorPane.selectSubject(activeAssignmentContext.subject());
+
+		// The Dashboard displays the assigned Subject as read-only.
+		// Syllabus selection remains available for permitted classification.
+		curriculumSelectorPane.setSubjectEditingEnabled(false);
 	}
 
 	private void restoreManagedPdfSessions(PdfWorkspacePane.DocumentMode displayedBeforeCorrection,
@@ -4472,6 +4656,12 @@ public class QuestionBankApplication extends Application {
 		dashboard.setDescriptorAssignmentHandler(this::showDashboardDescriptorAssignment);
 		dashboard.setQuestionWorkDescriptorAssignmentHandler(this::showDashboardQuestionWorkDescriptorAssignment);
 		dashboard.setQuestionInspectionHandler(this::showDashboardQuestionInspection);
+
+		// The assignment is selected at Exam level, not Booklet level.
+		// This also restricts Subject-wide Question Work headline counts.
+		if (activeAssignmentContext != null) {
+			dashboard.setAssignmentExamScope(activeAssignmentContext.session().examLocalId());
+		}
 		corpusDashboardPane = dashboard;
 		corpusDashboardHost.getChildren().setAll(dashboard);
 	}
@@ -5466,8 +5656,10 @@ public class QuestionBankApplication extends Application {
 		// Imported Question work may have locked Subject and syllabus together.
 		// Releasing that lock here restores editing only after navigation has
 		// returned to Dashboard; active capture retains its syllabus constraint.
+		// Assignment mode keeps the same Subject context but does not
+		// expose the ordinary editable Subject selector or Add Subject.
 		curriculumSelectorPane.setSyllabusContextLocked(false);
-		curriculumSelectorPane.setSubjectEditingEnabled(true);
+		curriculumSelectorPane.setSubjectEditingEnabled(activeAssignmentContext == null);
 		workspaceSubjectHost.getChildren().remove(workingSubjectContext);
 		corpusDashboardSubjectHost.getChildren().setAll(workingSubjectContext);
 	}
@@ -5568,10 +5760,18 @@ public class QuestionBankApplication extends Application {
 				applicationConfig = config;
 				curriculumSelectionModel = new CurriculumSelectionModelFactory().create(config);
 				SqliteDatabase database = new SqliteDatabase(config.databasePath());
+				contributorAssignments = new SqliteContributorAssignmentSessionRepository(database);
+				contributorAssignmentResolver = new ContributorAssignmentDashboardContextResolver(database);
+
+				// Read the selected assignment before constructing Dashboard state.
+				// An ordinary database returns empty and behaves as before.
+				activeAssignmentContext = contributorAssignmentResolver.active().orElse(null);
 				configureShutdown(config);
 				initialiseCaptureWorkflow(primaryStage, config, database);
 				configurePdfWorkspace();
 				configurePrimaryStage(primaryStage, config);
+				restoreContributorAssignmentAtStartup();
+				refreshContributorAssignmentToolbar();
 			} catch (SQLException | RuntimeException | Error failure) {
 				operation.failed();
 				throw failure;
@@ -6149,6 +6349,18 @@ public class QuestionBankApplication extends Application {
 		startWorkingSubjectDashboardRefresh(subject, generation);
 	}
 
+	private void switchContributorAssignment() {
+		var selected = assignmentSelector.getValue();
+		if (selected == null) {
+			return;
+		}
+		if (activeAssignmentContext != null
+				&& activeAssignmentContext.session().assignmentId().equals(selected.assignmentId())) {
+			return;
+		}
+		changeContributorAssignment(selected.assignmentId());
+	}
+
 	private void synchroniseActiveExamLifecycle(Exam updatedExam) {
 		ExamBooklet activeBooklet = examMetadataPane.getBooklet();
 		if (activeBooklet == null || activeBooklet.getExam().getId() != updatedExam.getId()) {
@@ -6173,6 +6385,14 @@ public class QuestionBankApplication extends Application {
 		}
 		captureSelectionState.claim(CaptureSelectionOwner.SHARED_CONTEXT);
 		return true;
+	}
+
+	private void updateContributorAssignmentActions() {
+		var selected = assignmentSelector.getValue();
+		boolean sameAssignment = selected != null && activeAssignmentContext != null
+				&& selected.assignmentId().equals(activeAssignmentContext.session().assignmentId());
+		assignmentSwitchButton.setDisable(selected == null || sameAssignment);
+		assignmentExitButton.setDisable(activeAssignmentContext == null);
 	}
 
 	private void useExamAssetsBookletForCapture(ExamBooklet booklet, ApplicationConfig config) {
