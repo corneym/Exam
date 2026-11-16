@@ -21,6 +21,7 @@ import java.util.stream.Stream;
 
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ApplicationVersion;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.workpackage.SqliteContributorAssignmentSessionRepository.LocalIds;
@@ -114,6 +115,15 @@ public final class WorkAssignmentInstallationCoordinator {
 			recoverPending(root);
 			var inspection = new WorkAssignmentPackageInspector().inspect(source, ApplicationVersion.current(),
 					SqliteDatabase.latestSchemaVersion());
+
+			// The coordinator's own installation must never consume
+			// its issued package as contributor work. Use persisted
+			// installation identity, not filesystem path comparisons.
+			UUID localInstallationId = new SqlitePortableIdentityRepository(database).installationId();
+			if (localInstallationId.equals(inspection.manifest().originInstallationId())) {
+				throw new IOException("Cannot install a contributor assignment into "
+						+ "its originating coordinator installation. " + "Use a separate contributor data directory.");
+			}
 			UUID assignmentId = inspection.manifest().assignmentId();
 			UUID packageId = inspection.manifest().packageId();
 			var existing = sessions.find(assignmentId);

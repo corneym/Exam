@@ -136,6 +136,100 @@ class WorkAssignmentInstallationCoordinatorTest {
 		fixture.contributorDatabase().verifyIntegrity();
 	}
 
+	@Test
+	void issuanceFailureLeavesNoRegisteredAssignment() throws Exception {
+		Fixture fixture = fixture();
+		Path destination = directory.resolve("invalid-assignment.examwork");
+
+		// Required source PDFs belong to the coordinator.
+		// A missing PDF must block issuance before registration.
+		Files.delete(fixture.sourceAnswerPdf());
+		WorkAssignmentExporter.Request request = new WorkAssignmentExporter.Request(fixture.exam(), UUID.randomUUID(),
+				UUID.randomUUID(), "Integration Contributor", false, destination);
+		WorkAssignmentIssuanceService issuer = new WorkAssignmentIssuanceService(fixture.sourceDatabase(),
+				new ManagedDataLayout(fixture.source().dataRoot()));
+		IOException failure = assertThrows(IOException.class, () -> issuer.issue(request));
+		assertTrue(failure.getMessage().contains("missing or unreadable"));
+		assertFalse(Files.exists(destination));
+		assertEquals(0, count(fixture.sourceDatabase(), "SELECT COUNT(*) " + "FROM exam_work_assignments"));
+	}
+
+	@Test
+	void issuedAssignmentInstallsAndRestoresWithoutChangingBaseline() throws Exception {
+		Fixture fixture = fixture();
+		UUID assignmentId = UUID.randomUUID();
+		Path issuedPath = directory.resolve("coordinator-issued.examwork");
+		WorkAssignmentExporter.Request request = new WorkAssignmentExporter.Request(fixture.exam(), assignmentId,
+				UUID.randomUUID(), "Integration Contributor", false, issuedPath);
+		WorkAssignmentIssuanceService issuer = new WorkAssignmentIssuanceService(fixture.sourceDatabase(),
+				new ManagedDataLayout(fixture.source().dataRoot()));
+		WorkAssignmentLedger.Assignment issued = issuer.issue(request);
+		assertEquals(assignmentId, issued.assignmentId());
+		assertEquals(WorkAssignmentLedger.State.ACTIVE, issued.state());
+		assertTrue(Files.isRegularFile(issuedPath));
+		WorkAssignmentLedger ledger = new WorkAssignmentLedger(fixture.sourceDatabase());
+		WorkAssignmentLedger.Baseline original = ledger.readBaseline(assignmentId);
+		WorkAssignmentInstallationCoordinator installer = new WorkAssignmentInstallationCoordinator(
+				fixture.contributor());
+		var installed = installer.install(issuedPath);
+		assertFalse(installed.replay());
+		assertEquals(assignmentId, installed.assignmentId());
+
+		// The same Exam is installed with both Question Booklets
+		// and their shared AnswerFile.
+		assertEquals(1, count(fixture.contributorDatabase(), "SELECT COUNT(*) FROM exams"));
+		assertEquals(2, count(fixture.contributorDatabase(), "SELECT COUNT(*) FROM exam_booklets"));
+		assertEquals(1, count(fixture.contributorDatabase(), "SELECT COUNT(*) FROM answer_files"));
+		var sessions = new SqliteContributorAssignmentSessionRepository(fixture.contributorDatabase());
+		assertEquals(assignmentId, sessions.active().orElseThrow().assignmentId());
+		var contributorBaseline = sessions.readBaseline(assignmentId);
+		assertArrayEquals(original.records(), contributorBaseline.records());
+		assertArrayEquals(original.assets(), contributorBaseline.assets());
+
+		// Subsequent coordinator edits do not rewrite the issued
+		// immutable baseline.
+		execute(fixture.sourceDatabase(), """
+				UPDATE questions
+				SET question_text = 'Edited after assignment issuance'
+				WHERE id = 81
+				""");
+		assertArrayEquals(original.records(), ledger.readBaseline(assignmentId).records());
+		sessions.clearActive();
+		assertTrue(sessions.active().isEmpty());
+		assertTrue(sessions.find(assignmentId).isPresent());
+
+		// Reopen the same contributor database to simulate restart.
+		SqliteDatabase reopened = new SqliteDatabase(fixture.contributor().databasePath());
+		var reopenedSessions = new SqliteContributorAssignmentSessionRepository(reopened);
+		assertTrue(reopenedSessions.active().isEmpty());
+		reopenedSessions.select(assignmentId);
+		assertEquals(assignmentId, reopenedSessions.active().orElseThrow().assignmentId());
+
+		// Re-importing the original package is idempotent.
+		var replay = installer.install(issuedPath);
+		assertTrue(replay.replay());
+		assertEquals(1, count(reopened, "SELECT COUNT(*) FROM " + "contributor_assignment_sessions"));
+		assertArrayEquals(original.records(), reopenedSessions.readBaseline(assignmentId).records());
+		fixture.sourceDatabase().verifyIntegrity();
+		reopened.verifyIntegrity();
+	}
+
+	@Test
+	void rejectsInstallationIntoOriginatingCoordinator() throws Exception {
+		Fixture fixture = fixture();
+		var installer = new WorkAssignmentInstallationCoordinator(fixture.source());
+		IOException failure = assertThrows(IOException.class, () -> installer.install(fixture.archive()));
+		assertTrue(failure.getMessage().contains("originating coordinator installation"));
+
+		// Rejection must occur before changing the master database
+		// or replacing its authoritative source PDFs.
+		assertEquals(1, count(fixture.sourceDatabase(), "SELECT COUNT(*) FROM exams"));
+		assertEquals(0, count(fixture.sourceDatabase(), "SELECT COUNT(*) " + "FROM contributor_assignment_sessions"));
+		assertTrue(Files.isRegularFile(fixture.sourceQuestionPdf()));
+		assertTrue(Files.isRegularFile(fixture.sourceAnswerPdf()));
+		fixture.sourceDatabase().verifyIntegrity();
+	}
+
 	private int count(SqliteDatabase database, String sql) throws SQLException {
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();

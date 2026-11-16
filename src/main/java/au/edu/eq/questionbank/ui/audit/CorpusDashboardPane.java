@@ -191,6 +191,9 @@ public final class CorpusDashboardPane extends VBox {
 	private final ProgressIndicator examLifecycleProgressIndicator = new ProgressIndicator();
 	private final HBox examLifecycleProgressRow = new HBox(SPACING);
 	private Long assignmentExamId;
+	private final Button createContributorAssignmentButton = new Button("Create Contributor Assignment");
+	private Consumer<Exam> createContributorAssignmentHandler = _ -> {
+	};
 
 	/**
 	 * Creates a Subject-scoped operational Dashboard from one persistence snapshot.
@@ -484,6 +487,21 @@ public final class CorpusDashboardPane extends VBox {
 
 		// Bulk UNKNOWN resolution remains an existing operational Dashboard feature.
 		bulkResponseTypeHandler = handler;
+	}
+
+	/**
+	 * Supplies the coordinator-owned operation for issuing a whole-Exam contributor
+	 * assignment.
+	 *
+	 * <p>
+	 * The Dashboard supplies the selected Exam. The application handles contributor
+	 * details, destination selection and package issuance.
+	 *
+	 * @param handler operation receiving the selected Exam
+	 * @throws NullPointerException if handler is null
+	 */
+	public void setCreateContributorAssignmentHandler(Consumer<Exam> handler) {
+		createContributorAssignmentHandler = Objects.requireNonNull(handler, "handler");
 	}
 
 	/**
@@ -861,7 +879,7 @@ public final class CorpusDashboardPane extends VBox {
 		examEmptyStateRow.setAlignment(Pos.CENTER_LEFT);
 		examEmptyStateScroll = createHorizontalScrollRow("corpus-dashboard-empty-exam-scroll", examEmptyStateRow);
 		HBox selectedExamTitleRow = new HBox(SPACING, selectedExamLabel, declaredExamStateLabel, manageExamAssetsButton,
-				inspectExamQuestionsButton, examLifecycleButton);
+				createContributorAssignmentButton, inspectExamQuestionsButton, examLifecycleButton);
 		selectedExamTitleRow.setAlignment(Pos.CENTER_LEFT);
 		HBox.setHgrow(selectedExamLabel, Priority.ALWAYS);
 		ScrollPane examActionsScroll = createHorizontalScrollRow("corpus-dashboard-exam-actions-scroll",
@@ -1272,6 +1290,15 @@ public final class CorpusDashboardPane extends VBox {
 
 	private void configureCommandActions() {
 		addExamButton.setOnAction(_ -> addExamHandler.run());
+		createContributorAssignmentButton.setOnAction(_ -> {
+			ExamCorpusStatus selected = examTable.getSelectionModel().getSelectedItem();
+			if (selected == null || assignmentExamId != null || createContributorAssignmentButton.isDisabled()) {
+				return;
+			}
+
+			// Issuance is always Exam-wide, never booklet-specific.
+			createContributorAssignmentHandler.accept(selected.exam());
+		});
 		assignDescriptorsButton.setOnAction(_ -> assignSelectedBookletDescriptors());
 		assignQuestionWorkDescriptorsButton.setOnAction(_ -> assignQuestionWorkDescriptors());
 		inspectBookletQuestionsButton.setOnAction(_ -> inspectSelectedBookletQuestions());
@@ -1315,6 +1342,11 @@ public final class CorpusDashboardPane extends VBox {
 		addExamButton.setId("corpus-dashboard-add-exam");
 		addExamButton.setTooltip(new Tooltip("Add an Exam to the current Subject."));
 		addExamButton.setMinWidth(Region.USE_PREF_SIZE);
+		createContributorAssignmentButton.setId("corpus-dashboard-create-contributor-assignment");
+		createContributorAssignmentButton.setMinWidth(Region.USE_PREF_SIZE);
+		createContributorAssignmentButton.setDisable(true);
+		createContributorAssignmentButton.setTooltip(new Tooltip("Issue the selected complete Exam structure and PDFs "
+				+ "for offline Question capture and classification."));
 
 		// Status labels must remain readable as the adjacent panel grows or
 		// shrinks, rather than forcing the enclosing section to be wider.
@@ -2449,10 +2481,13 @@ public final class CorpusDashboardPane extends VBox {
 
 	private void updateExamAssetsActionState() {
 		ExamCorpusStatus selectedExam = examTable.getSelectionModel().getSelectedItem();
+		boolean coordinatorExamSelected = selectedExam != null && assignmentExamId == null;
 
-		// Workers capture against immutable supplied Exam assets.
-		// They do not enter the structural editing workspace.
-		manageExamAssetsButton.setDisable(selectedExam == null || assignmentExamId != null);
+		// Contributor work uses immutable coordinator-supplied
+		// Exam assets. Structural management and assignment issuance
+		// are both coordinator-only operations.
+		manageExamAssetsButton.setDisable(!coordinatorExamSelected);
+		createContributorAssignmentButton.setDisable(!coordinatorExamSelected);
 	}
 
 	private void updateExamEmptyState() {

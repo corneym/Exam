@@ -581,6 +581,35 @@ class CorpusDashboardPaneTest {
 	}
 
 	@Test
+	@SuppressWarnings("unchecked")
+	void coordinatorCanIssueOnlyFromSelectedExam(FxRobot robot) {
+		Button createAssignment = robot.lookup("#corpus-dashboard-create-contributor-assignment").queryButton();
+		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		AtomicReference<Exam> requested = new AtomicReference<>();
+		robot.interact(() -> pane.setCreateContributorAssignmentHandler(requested::set));
+		assertFalse(createAssignment.isDisabled());
+
+		// Issuance uses the actual selected Exam identity.
+		robot.interact(() -> exams.getSelectionModel().select(fixture.activeExamStatus));
+		robot.interact(createAssignment::fire);
+		assertEquals(fixture.activeExam.getId(), requested.get().getId());
+		requested.set(null);
+
+		// No Exam selected means no issuance.
+		robot.interact(() -> exams.getSelectionModel().clearSelection());
+		assertTrue(createAssignment.isDisabled());
+		robot.interact(createAssignment::fire);
+		assertNull(requested.get());
+
+		// An active contributor assignment cannot issue
+		// another coordinator assignment.
+		robot.interact(() -> pane.setAssignmentExamScope(fixture.activeExam.getId()));
+		assertTrue(createAssignment.isDisabled());
+		robot.interact(createAssignment::fire);
+		assertNull(requested.get());
+	}
+
+	@Test
 	void curriculumMappingReviewIsSeparateFromCorpusCompleteness(FxRobot robot) {
 		Label mappingReview = robot.lookup("#corpus-dashboard-mapping-review").queryAs(Label.class);
 		Button needsAttention = robot.lookup("#corpus-dashboard-summary-attention").queryButton();
