@@ -95,6 +95,52 @@ public final class SqlitePortableContentRepository {
 	}
 
 	/**
+	 * Reads canonical portable content inside the caller's transaction.
+	 *
+	 * <p>
+	 * Unlike the ordinary snapshot overload, this method sees uncommitted changes
+	 * made using the supplied connection. It neither commits, rolls back nor closes
+	 * that connection.
+	 *
+	 * <p>
+	 * This is used to verify contributor assignment records before reusing an
+	 * existing entity or accepting a newly installed graph.
+	 *
+	 * @param connection caller-owned open SQLite transaction
+	 * @param type       persistent portable entity type
+	 * @param localId    positive SQLite-local entity identifier
+	 * @return canonical portable record and content fingerprint
+	 * @throws SQLException             if persistence or identity resolution fails
+	 * @throws IllegalStateException    if autocommit is enabled
+	 * @throws IllegalArgumentException if localId is not positive or the entity
+	 *                                  type is unsupported
+	 * @throws NullPointerException     if connection or type is null
+	 */
+	public Snapshot snapshot(Connection connection, EntityType type, long localId) throws SQLException {
+		Objects.requireNonNull(connection, "connection");
+		Objects.requireNonNull(type, "type");
+		if (connection.getAutoCommit()) {
+			throw new IllegalStateException("Portable snapshot requires a caller-owned transaction");
+		}
+		if (localId < 1) {
+			throw new IllegalArgumentException("localId must be positive");
+		}
+		EntityTable entity = ENTITIES.get(type);
+		if (entity == null) {
+			throw new IllegalArgumentException("Unsupported portable entity type: " + type);
+		}
+		UUID[] identity = identity(connection, type, localId);
+		Map<String, Object> values = readEntity(connection, entity.tableName(), localId);
+		for (ChildTable child : entity.children()) {
+			values.put(child.tableName(), readChildren(connection, child, localId));
+		}
+		JsonNode json = mapper.valueToTree(values);
+		ExchangeRecord record = new ExchangeRecord(ExchangeRecord.CURRENT_RECORD_VERSION, type.name(), identity[0],
+				identity[1], null, json);
+		return new Snapshot(record, fingerprint(type, json));
+	}
+
+	/**
 	 * Reads a portable record and its deterministic content fingerprint.
 	 *
 	 * @param type    type of the persisted entity
@@ -107,24 +153,12 @@ public final class SqlitePortableContentRepository {
 		if (localId < 1) {
 			throw new IllegalArgumentException("localId must be positive");
 		}
-		EntityTable entity = ENTITIES.get(type);
-		if (entity == null) {
-			throw new IllegalArgumentException("Unsupported portable entity type: " + type);
-		}
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
-				UUID[] identity = identity(connection, type, localId);
-				Map<String, Object> values = readEntity(connection, entity.tableName(), localId);
-				for (ChildTable child : entity.children()) {
-					values.put(child.tableName(), readChildren(connection, child, localId));
-				}
-				JsonNode json = mapper.valueToTree(values);
-				ExchangeRecord record = new ExchangeRecord(ExchangeRecord.CURRENT_RECORD_VERSION, type.name(),
-						identity[0], identity[1], null, json);
-				String fingerprint = fingerprint(type, json);
+				Snapshot result = snapshot(connection, type, localId);
 				connection.commit();
-				return new Snapshot(record, fingerprint);
+				return result;
 			} catch (SQLException | RuntimeException exception) {
 				try {
 					connection.rollback();

@@ -3,6 +3,7 @@ package au.edu.eq.questionbank.repository.identity;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -20,6 +21,62 @@ class SqlitePortableContentRepositoryTest {
 
 	@TempDir
 	Path tempDirectory;
+
+	@Test
+	void callerConnectionSnapshotDetectsUncommittedRevisionAndContent() throws Exception {
+		SqliteDatabase database = createDatabase("transaction-change.db");
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					INSERT INTO subjects (id, subject_name)
+					VALUES (82, 'Biology')
+					""");
+		}
+		SqlitePortableContentRepository content = new SqlitePortableContentRepository(database);
+		Snapshot original = content.snapshot(EntityType.SUBJECT, 82);
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try (Statement statement = connection.createStatement()) {
+				statement.execute("""
+						UPDATE subjects
+						SET subject_name = 'Chemistry'
+						WHERE id = 82
+						""");
+			}
+			Snapshot changed = content.snapshot(connection, EntityType.SUBJECT, 82);
+			assertEquals(original.record().recordId(), changed.record().recordId());
+			assertNotEquals(original.record().revisionId(), changed.record().revisionId());
+			assertNotEquals(original.contentSha256(), changed.contentSha256());
+			assertEquals("Chemistry", changed.record().values().path("subject_name").asText());
+			connection.rollback();
+		}
+		Snapshot restored = content.snapshot(EntityType.SUBJECT, 82);
+		assertEquals(original.record(), restored.record());
+		assertEquals(original.contentSha256(), restored.contentSha256());
+	}
+
+	@Test
+	void callerConnectionSnapshotSeesUncommittedInsertWithoutCommitting() throws Exception {
+		SqliteDatabase database = createDatabase("transaction-snapshot.db");
+		SqlitePortableContentRepository content = new SqlitePortableContentRepository(database);
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try (Statement statement = connection.createStatement()) {
+				statement.execute("""
+						INSERT INTO subjects (id, subject_name)
+						VALUES (81, 'Chemistry')
+						""");
+			}
+			Snapshot result = content.snapshot(connection, EntityType.SUBJECT, 81);
+			assertEquals("SUBJECT", result.record().recordType());
+			assertEquals("Chemistry", result.record().values().path("subject_name").asText());
+			assertEquals(64, result.contentSha256().length());
+
+			// The reader must not commit the caller's transaction.
+			connection.rollback();
+		}
+		assertThrows(SQLException.class, () -> content.snapshot(EntityType.SUBJECT, 81));
+		database.verifyIntegrity();
+	}
 
 	@Test
 	void canonicalQuestionUsesPortableReferencesAndOrderedChildren() throws Exception {
