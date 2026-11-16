@@ -97,15 +97,19 @@ class SqliteSubjectImportLedgerTest {
 	}
 
 	/**
-	 * Confirms an interrupted version-27 schema migration rolls back before
-	 * retrying the normal migration.
+	 * Confirms an interrupted version-27 migration rolls back before retrying the
+	 * complete migration to the latest schema version.
 	 */
 	@Test
 	void failedSchemaMigrationIsRecoverable() throws Exception {
 		SqliteDatabase database = database("migration.db");
+
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+
 			HistoricalSchemaFixture.removeVersion27Objects(statement);
+
 			statement.execute("UPDATE schema_version SET version = 26");
+
 			statement.execute("""
 					CREATE TRIGGER reject_v27
 					BEFORE UPDATE OF version ON schema_version
@@ -115,9 +119,14 @@ class SqliteSubjectImportLedgerTest {
 					END
 					""");
 		}
+
 		assertEquals(26, database.schemaVersion());
+
 		assertThrows(SQLException.class, database::initialiseSchema);
+
+		// The failed migration must leave the database at v26.
 		assertEquals(26, database.schemaVersion());
+
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("""
@@ -126,67 +135,89 @@ class SqliteSubjectImportLedgerTest {
 						WHERE type = 'table'
 						  AND name = 'subject_import_packages'
 						""")) {
+
 			assertTrue(result.next());
 			assertEquals(0, result.getInt(1));
 		}
+
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+
 			statement.execute("DROP TRIGGER reject_v27");
 		}
+
 		database.initialiseSchema();
-		assertEquals(27, database.schemaVersion());
+
+		// The retry now migrates through v27 and on to v28.
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
+
 		database.verifySchema();
 		database.verifyIntegrity();
 	}
 
 	/**
-	 * Verifies a genuine v26-to-v27 migration preserves existing Subject data and
-	 * its previously assigned portable identity.
+	 * Verifies migration from v26 through the latest schema preserves existing
+	 * Subject data and its permanent portable identity.
 	 */
 	@Test
 	void schemaMigrationPreservesExistingSubjects() throws Exception {
 		SqliteDatabase database = database("preserve.db");
+
 		String originalPortableId;
+
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+
 			statement.execute("""
 					INSERT INTO subjects (id, subject_name)
 					VALUES (10, 'Biology')
 					""");
+
 			try (ResultSet result = statement.executeQuery("""
 					SELECT portable_id
 					FROM portable_entity_identities
 					WHERE entity_type = 'SUBJECT'
 					  AND local_id = 10
 					""")) {
+
 				assertTrue(result.next());
 				originalPortableId = result.getString(1);
 			}
 
-			// Reconstruct the exact immediately preceding schema.
-			// This is a disposable test fixture, not production data.
+			// Reconstruct the genuine immediately preceding v26
+			// schema using the historical fixture cleanup.
 			HistoricalSchemaFixture.removeVersion27Objects(statement);
+
 			statement.execute("UPDATE schema_version SET version = 26");
 		}
+
 		assertEquals(26, database.schemaVersion());
 		database.verifySchema();
+
 		database.initialiseSchema();
-		assertEquals(27, database.schemaVersion());
+
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
+
 		database.verifySchema();
 		database.verifyIntegrity();
+
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+
 			try (ResultSet result = statement.executeQuery("""
 					SELECT subject_name
 					FROM subjects
 					WHERE id = 10
 					""")) {
+
 				assertTrue(result.next());
 				assertEquals("Biology", result.getString(1));
 			}
+
 			try (ResultSet result = statement.executeQuery("""
 					SELECT portable_id
 					FROM portable_entity_identities
 					WHERE entity_type = 'SUBJECT'
 					  AND local_id = 10
 					""")) {
+
 				assertTrue(result.next());
 				assertEquals(originalPortableId, result.getString(1));
 			}

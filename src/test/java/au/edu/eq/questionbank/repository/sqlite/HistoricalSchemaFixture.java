@@ -189,20 +189,48 @@ public final class HistoricalSchemaFixture {
 	}
 
 	/**
-	 * Removes import-ledger tables introduced in version 27.
+	 * Removes Subject import-ledger structures introduced in v27, after removing
+	 * any newer assignment-ledger structures.
 	 *
 	 * <p>
-	 * Used only when reconstructing an earlier schema in a disposable
-	 * integration-test database. The dependent table is removed first.
+	 * Used only for disposable historical migration test fixtures.
 	 *
 	 * @param statement statement operating on the fixture connection
 	 * @throws SQLException if cleanup fails
 	 */
 	public static void removeVersion27Objects(Statement statement) throws SQLException {
+
 		if (statement == null) {
 			throw new NullPointerException("statement");
 		}
+
+		removeVersion28Objects(statement);
+
 		statement.execute("DROP TABLE IF EXISTS subject_import_decisions");
 		statement.execute("DROP TABLE IF EXISTS subject_import_packages");
+	}
+
+	/**
+	 * Removes the assignment-ledger structures introduced in version 28.
+	 *
+	 * <p>
+	 * The dependent lifecycle table is dropped before the immutable issuance table.
+	 * SQLite automatically drops triggers attached to each table when that table is
+	 * dropped.
+	 *
+	 * <p>
+	 * This operation is restricted to disposable historical test fixtures and must
+	 * never be used on production data.
+	 *
+	 * @param statement statement operating on the fixture connection
+	 * @throws SQLException if cleanup fails
+	 */
+	public static void removeVersion28Objects(Statement statement) throws SQLException {
+		if (statement == null) {
+			throw new NullPointerException("statement");
+		}
+
+		statement.execute("DROP TABLE IF EXISTS exam_work_assignment_states");
+		statement.execute("DROP TABLE IF EXISTS exam_work_assignments");
 	}
 }

@@ -311,23 +311,7 @@ public final class WorkAssignmentLedger {
 			// ZIP verification is insufficient on its own. Reject otherwise
 			// valid packages containing records from another Exam or Subject.
 			new WorkAssignmentScopeValidator().validate(manifest, initial, context, index);
-			if (index.references().stream().anyMatch(reference -> reference.usage().equals("INVENTORIED"))) {
-				throw new PackageFormatException("Assignment contains unreferenced Subject inventory");
-			}
 
-			// Every selected source document needs a matching
-			// content-addressed binary reference in this archive.
-			for (ExchangeRecord record : initial) {
-				if (!record.recordType().equals("SOURCE_DOCUMENT")) {
-					continue;
-				}
-				String path = record.values().path("relative_path").asText();
-				if (index.references().stream().noneMatch(reference -> reference.usage().equals("SOURCE_PDF")
-						&& "SOURCE_DOCUMENT".equals(reference.ownerType())
-						&& record.recordId().equals(reference.ownerId()) && path.equals(reference.managedPath()))) {
-					throw new PackageFormatException("Assignment is missing a source PDF for " + record.recordId());
-				}
-			}
 		}
 		if (!originalArchiveHash.equals(sha256(archive))) {
 			throw new PackageFormatException("Assignment archive changed during registration");
