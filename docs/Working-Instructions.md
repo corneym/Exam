@@ -76,8 +76,13 @@ The following rules supplement all preceding Java code-change instructions. They
 2. Every time the target class changes, use a level-three Markdown heading containing the **fully qualified class name in bold**, for example:
    `### **au.edu.eq.questionbank.repository.assessment.SqliteExamWriter**`.  It MUST BE in a bigger font than the method name font.
 
-3. Within each class, give every changed method, constructor or field its own level-four Markdown heading, **in bold**, using the actual method signature or field name, for example:
-   `#### **findOrCreateExams(Subject subject, List<ExamRegistration> registrations)**`
+
+3. Within each class, give every changed method, constructor or field its own level-four Markdown heading, in bold, with the entire Java signature enclosed in inline code backticks inside the bold formatting. Example:
+
+   #### **`findOrCreateExams(Subject subject, List<ExamRegistration> registrations)`**
+
+   Never place unprotected Java generic type syntax such as `List<Action>` or `Map<Key, Value>` in a Markdown heading or ordinary prose.
+
 
 4. Immediately beneath the method heading, display the operation in bold: **ADD**, **DELETE**, **REPLACE** or **EDIT**.
 
@@ -92,6 +97,9 @@ The following rules supplement all preceding Java code-change instructions. They
 9. If a correction is required, reproduce the affected code and all outstanding verification commands rather than relying on an earlier response being visible.
 
 10. These presentation rules take precedence over the older `Class:` and `Method:` label format wherever the formats differ. All other existing working instructions remain mandatory.
+
+
+11. Before sending implementation instructions, ensure that every method heading and fenced Java code block is complete. If a response is too long, split it into self-contained batches rather than risking truncated method bodies. Every batch must include all outstanding verification commands.
 
 ## Chat Continuity Protocol
 
@@ -191,6 +199,29 @@ Within each class, present changes in this order:
 Keep overloaded methods adjacent.
 
 If multiple changes affect the same method, present them together rather than making me revisit that method later.
+
+### Mandatory Javadoc compliance gate
+
+Treat Javadoc completeness as a release-blocking requirement for every Java implementation batch, not as documentation cleanup to perform later.
+
+**Before providing any Java code, perform a declaration-by-declaration Javadoc audit of every new or modified production class.**
+
+1. Inspect every new or changed public or protected class, interface, enum, record, constructor and method, including nested types.
+2. Every new public class must have class-level Javadoc and an explicitly declared, documented constructor where an implicit default constructor would otherwise produce a Javadoc warning.
+3. Every public or protected method must have appropriate Javadoc, including `@param`, `@return` and `@throws` tags where applicable.
+4. Explicitly overridden record accessors require their own Javadoc. Record-level `@param` documentation is not a substitute when an accessor is explicitly implemented.
+5. Review enum constants, public fields and other exposed API declarations for documentation requirements.
+6. Ensure documentation describes actual behaviour, including validation rules, failure conditions and defensive-copy semantics.
+7. When providing a new class in several implementation batches, include all required class and constructor documentation in the first batch. Do not introduce undocumented placeholder public APIs.
+8. Before finalising a batch, re-examine every Java snippet as though it were being submitted to Maven Javadoc verification. Check all declarations introduced or altered by that batch, not merely the main method being implemented.
+9. Include the command `mvn -DskipTests javadoc:javadoc` in the verification instructions for every batch that creates or changes public or protected production APIs.
+10. Treat **every Javadoc warning as a verification failure**. A batch with Javadoc warnings is not complete, regardless of whether compilation and JUnit tests pass.
+11. Never claim Javadoc verification has passed unless it has actually been executed successfully. When execution is unavailable, explicitly distinguish a static Javadoc audit from Maven-verified compliance.
+12. If Javadoc fails, correct every reported warning before continuing implementation. Do not defer documentation corrections to a later batch or pull-request review.
+
+**Pre-delivery acceptance rule:** A Java implementation batch must not be presented as complete unless its API documentation has been audited and its outstanding verification requirements have been stated explicitly.
+
+The purpose of this gate is to prevent predictable Javadoc failures from reaching the user's Eclipse working tree.
 
 ### Implementation workflow
 

@@ -19,6 +19,7 @@ import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
 import au.edu.eq.questionbank.repository.assessment.ExamMetadataCorrectionService;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
+import au.edu.eq.questionbank.service.document.CoordinatorExamPdfImportService;
 import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.pdf.PdfFilePicker;
@@ -425,8 +426,8 @@ public final class ExamMetadataPane extends VBox {
 			return false;
 		}
 		try {
-			Path storedPath = pdfStore.importExamPdf(pendingPdfPath, input.subject().getName(), input.providerName(),
-					input.year(), input.assessmentName());
+			Path storedPath = new CoordinatorExamPdfImportService(pdfStore, examWriter).importPdf(pendingPdfPath,
+					input.subject().getName(), input.providerName(), input.year(), input.assessmentName());
 			ExamBooklet importedBooklet = createExamBooklet(input, storedPath);
 			booklet = importedBooklet;
 			currentPdfPath = storedPath;
@@ -450,6 +451,9 @@ public final class ExamMetadataPane extends VBox {
 			return false;
 		} catch (IllegalArgumentException e) {
 			showFileError(e.getMessage());
+			return false;
+		} catch (IllegalStateException e) {
+			showError(e.getMessage());
 			return false;
 		}
 	}

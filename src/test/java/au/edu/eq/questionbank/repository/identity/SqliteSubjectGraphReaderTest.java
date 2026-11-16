@@ -24,6 +24,31 @@ public class SqliteSubjectGraphReaderTest {
 	Path directory;
 
 	@Test
+	void assignmentGraphRemainsFixedAfterMasterChanges() throws Exception {
+		SqliteDatabase database = createDatabase("assignment-baseline.db");
+		seedPopulatedSubjects(database);
+		Path snapshot = directory.resolve("assignment-baseline-snapshot.db");
+		database.createConsistentSnapshot(snapshot);
+		SqliteExamAssignmentGraphReader baselineReader = new SqliteExamAssignmentGraphReader(snapshot);
+		SubjectGraph baseline = baselineReader.read(1, 31);
+
+		// The authoritative master remains editable after issue.
+		execute(database, """
+				INSERT INTO exam_booklets (
+				    id, exam_id, source_document_id, booklet_name
+				)
+				VALUES (65, 31, 51, 'New Master Booklet')
+				""");
+		SubjectGraph retainedBaseline = baselineReader.read(1, 31);
+		assertEquals(List.of(61L, 62L), baseline.ids(EntityType.EXAM_BOOKLET));
+		assertEquals(List.of(61L, 62L), retainedBaseline.ids(EntityType.EXAM_BOOKLET));
+		Path newerSnapshot = directory.resolve("assignment-new-master-snapshot.db");
+		database.createConsistentSnapshot(newerSnapshot);
+		SubjectGraph currentMaster = new SqliteExamAssignmentGraphReader(newerSnapshot).read(1, 31);
+		assertEquals(List.of(61L, 62L, 65L), currentMaster.ids(EntityType.EXAM_BOOKLET));
+	}
+
+	@Test
 	void detachedSnapshotDoesNotObserveLaterLiveChanges() throws Exception {
 		SqliteDatabase database = createDatabase("live-changes.db");
 		seedPopulatedSubjects(database);
@@ -95,6 +120,54 @@ public class SqliteSubjectGraphReaderTest {
 	}
 
 	@Test
+	void excludesOtherExamsWithinTheSameSubject() throws Exception {
+		SqliteDatabase database = createDatabase("assignment-isolation.db");
+		seedPopulatedSubjects(database);
+
+		// Introduce another Biology Exam, with its own source PDF
+		// and Question, before taking the snapshot.
+		execute(database, """
+				INSERT INTO source_documents (id, relative_path)
+				VALUES (54, 'subjects/Biology/exams/unrelated.pdf')
+				""", """
+				INSERT INTO exams (
+				    id, subject_id, provider_id,
+				    exam_year, exam_name
+				)
+				VALUES (32, 1, 1, 2026, 'Unassigned Examination')
+				""", """
+				INSERT INTO exam_booklets (
+				    id, exam_id, source_document_id, booklet_name
+				)
+				VALUES (64, 32, 54, 'Unassigned Paper')
+				""", """
+				INSERT INTO questions (
+				    id, booklet_id, classification_node_id,
+				    question_code, question_text,
+				    marks, shared_context_capture_required
+				)
+				VALUES (83, 64, 102, '1', 'Unassigned question', 1, 0)
+				""");
+		Path snapshot = directory.resolve("assignment-isolation-snapshot.db");
+		database.createConsistentSnapshot(snapshot);
+		SqliteExamAssignmentGraphReader reader = new SqliteExamAssignmentGraphReader(snapshot);
+		SubjectGraph assigned = reader.read(1, 31);
+		SubjectGraph other = reader.read(1, 32);
+		assertEquals(List.of(31L), assigned.ids(EntityType.EXAM));
+		assertEquals(List.of(61L, 62L), assigned.ids(EntityType.EXAM_BOOKLET));
+		assertEquals(List.of(81L), assigned.ids(EntityType.QUESTION));
+		assertEquals(List.of(51L, 52L), assigned.ids(EntityType.SOURCE_DOCUMENT));
+		assertEquals(List.of(32L), other.ids(EntityType.EXAM));
+		assertEquals(List.of(64L), other.ids(EntityType.EXAM_BOOKLET));
+		assertEquals(List.of(83L), other.ids(EntityType.QUESTION));
+		assertEquals(List.of(54L), other.ids(EntityType.SOURCE_DOCUMENT));
+
+		// Only the shared Subject curriculum is present in both
+		// graphs. Assessment records do not cross assignments.
+		assertEquals(assigned.ids(EntityType.SYLLABUS_VERSION), other.ids(EntityType.SYLLABUS_VERSION));
+	}
+
+	@Test
 	void rejectsCrossSubjectCurriculumMapping() throws Exception {
 		SqliteDatabase database = createDatabase("cross-mapping.db");
 		seedPopulatedSubjects(database);
@@ -129,6 +202,56 @@ public class SqliteSubjectGraphReaderTest {
 		SqliteSubjectGraphReader reader = snapshotReader(database, "cross-review-snapshot.db");
 		SQLException failure = assertThrows(SQLException.class, () -> reader.read(1));
 		assertTrue(failure.getMessage().contains("cross-Subject curriculum mapping review"));
+	}
+
+	@Test
+	void rejectsExamOutsideAssignedSubject() throws Exception {
+		SqliteDatabase database = createDatabase("assignment-ownership.db");
+		seedPopulatedSubjects(database);
+		Path snapshot = directory.resolve("assignment-ownership-snapshot.db");
+		database.createConsistentSnapshot(snapshot);
+		SqliteExamAssignmentGraphReader reader = new SqliteExamAssignmentGraphReader(snapshot);
+
+		// Exam 41 belongs to Chemistry, not Biology.
+		assertThrows(IllegalArgumentException.class, () -> reader.read(1, 41));
+		assertThrows(IllegalArgumentException.class, () -> reader.read(1, 999));
+		assertThrows(IllegalArgumentException.class, () -> reader.read(1, 0));
+	}
+
+	@Test
+	void selectsWholeExamIncludingSharedDependencies() throws Exception {
+		SqliteDatabase database = createDatabase("assignment-complete.db");
+		seedPopulatedSubjects(database);
+		Path snapshot = directory.resolve("assignment-complete-snapshot.db");
+		database.createConsistentSnapshot(snapshot);
+		SubjectGraph graph = new SqliteExamAssignmentGraphReader(snapshot).read(1, 31);
+		assertEquals(1L, graph.subjectId());
+		assertEquals("Biology", graph.subjectName());
+
+		// Only the assigned Exam is editable capture scope.
+		assertEquals(List.of(31L), graph.ids(EntityType.EXAM));
+
+		// Every Question booklet is present.
+		assertEquals(List.of(61L, 62L), graph.ids(EntityType.EXAM_BOOKLET));
+
+		// Both booklets share one AnswerFile.
+		assertEquals(List.of(71L), graph.ids(EntityType.ANSWER_FILE));
+
+		// Shared source documents appear once.
+		assertEquals(List.of(51L, 52L), graph.ids(EntityType.SOURCE_DOCUMENT));
+
+		// Existing Question, Answer and Shared Context work survives.
+		assertEquals(List.of(81L), graph.ids(EntityType.QUESTION));
+		assertEquals(List.of(141L), graph.ids(EntityType.ANSWER));
+		assertEquals(List.of(121L), graph.ids(EntityType.SHARED_QUESTION_CONTEXT));
+		assertEquals(List.of(91L), graph.ids(EntityType.SOURCE_QUESTION));
+		assertEquals(List.of(131L), graph.ids(EntityType.QUESTION_IMAGE));
+
+		// The original 2019 and current 2025 syllabus dependencies
+		// remain available.
+		assertEquals(List.of(11L, 12L), graph.ids(EntityType.SYLLABUS_VERSION));
+		assertEquals(List.of(101L, 102L), graph.ids(EntityType.CURRICULUM_NODE));
+		assertEquals(List.of(111L), graph.ids(EntityType.CURRICULUM_MAPPING));
 	}
 
 	private SqliteDatabase createDatabase(String filename) throws SQLException {

@@ -190,6 +190,10 @@ public final class CorpusDashboardPane extends VBox {
 	private final Label examLifecycleProgressLabel = new Label("Updating Exam state...");
 	private final ProgressIndicator examLifecycleProgressIndicator = new ProgressIndicator();
 	private final HBox examLifecycleProgressRow = new HBox(SPACING);
+	private Long assignmentExamId;
+	private final Button createContributorAssignmentButton = new Button("Create Contributor Assignment");
+	private Consumer<Exam> createContributorAssignmentHandler = _ -> {
+	};
 
 	/**
 	 * Creates a Subject-scoped operational Dashboard from one persistence snapshot.
@@ -424,6 +428,35 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	/**
+	 * Restricts the Dashboard to one assigned Exam, or restores ordinary mode.
+	 *
+	 * <p>
+	 * The restriction applies to Exam lists, summary counts, Question Work,
+	 * structural actions and Exam lifecycle actions. Ordinary filters cannot
+	 * broaden it.
+	 *
+	 * @param examId assigned local Exam ID, or null for ordinary mode
+	 * @throws IllegalArgumentException if the Exam is not in this Dashboard
+	 */
+	public void setAssignmentExamScope(Long examId) {
+		if (examId != null) {
+			if (examId.longValue() < 1) {
+				throw new IllegalArgumentException("Assignment Exam ID must be positive");
+			}
+			boolean exists = examStatuses.stream().anyMatch(status -> status.exam().getId() == examId.longValue());
+			if (!exists) {
+				throw new IllegalArgumentException("Assigned Exam is unavailable on the Dashboard: " + examId);
+			}
+		}
+		assignmentExamId = examId;
+
+		// Curriculum authoring is coordinator-owned. Classification
+		// of captured Questions remains available through Question Work.
+		addCurriculumButton.setDisable(assignmentExamId != null);
+		clearFilters();
+	}
+
+	/**
 	 * Supplies Question correction initiated through a selected Question booklet's
 	 * Capture Questions action.
 	 *
@@ -457,6 +490,21 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	/**
+	 * Supplies the coordinator-owned operation for issuing a whole-Exam contributor
+	 * assignment.
+	 *
+	 * <p>
+	 * The Dashboard supplies the selected Exam. The application handles contributor
+	 * details, destination selection and package issuance.
+	 *
+	 * @param handler operation receiving the selected Exam
+	 * @throws NullPointerException if handler is null
+	 */
+	public void setCreateContributorAssignmentHandler(Consumer<Exam> handler) {
+		createContributorAssignmentHandler = Objects.requireNonNull(handler, "handler");
+	}
+
+	/**
 	 * Supplies the existing Search workflow used to assign missing Descriptors
 	 * within the selected Question booklet.
 	 *
@@ -465,18 +513,6 @@ public final class CorpusDashboardPane extends VBox {
 	 */
 	public void setDescriptorAssignmentHandler(Consumer<ExamBooklet> handler) {
 		descriptorAssignmentHandler = Objects.requireNonNull(handler, "handler");
-	}
-
-	/**
-	 * Supplies the Search workflow for the missing-Descriptor Questions currently
-	 * displayed in QUESTION WORK, potentially spanning several Exams and booklets.
-	 *
-	 * @param handler operation receiving an immutable snapshot of displayed
-	 *                Questions that need Descriptors, independent of row selection
-	 * @throws NullPointerException if handler is null
-	 */
-	public void setQuestionWorkDescriptorAssignmentHandler(Consumer<List<Question>> handler) {
-		questionWorkDescriptorAssignmentHandler = Objects.requireNonNull(handler, "handler");
 	}
 
 	/**
@@ -611,6 +647,18 @@ public final class CorpusDashboardPane extends VBox {
 		// Dashboard owns the structural selection; Search owns retrieval and
 		// inspection once that explicit scope has been handed off.
 		questionInspectionHandler = handler;
+	}
+
+	/**
+	 * Supplies the Search workflow for the missing-Descriptor Questions currently
+	 * displayed in QUESTION WORK, potentially spanning several Exams and booklets.
+	 *
+	 * @param handler operation receiving an immutable snapshot of displayed
+	 *                Questions that need Descriptors, independent of row selection
+	 * @throws NullPointerException if handler is null
+	 */
+	public void setQuestionWorkDescriptorAssignmentHandler(Consumer<List<Question>> handler) {
+		questionWorkDescriptorAssignmentHandler = Objects.requireNonNull(handler, "handler");
 	}
 
 	void replaceData(List<ExamCorpusStatus> updatedStatuses, List<Question> updatedQuestions) {
@@ -831,7 +879,7 @@ public final class CorpusDashboardPane extends VBox {
 		examEmptyStateRow.setAlignment(Pos.CENTER_LEFT);
 		examEmptyStateScroll = createHorizontalScrollRow("corpus-dashboard-empty-exam-scroll", examEmptyStateRow);
 		HBox selectedExamTitleRow = new HBox(SPACING, selectedExamLabel, declaredExamStateLabel, manageExamAssetsButton,
-				inspectExamQuestionsButton, examLifecycleButton);
+				createContributorAssignmentButton, inspectExamQuestionsButton, examLifecycleButton);
 		selectedExamTitleRow.setAlignment(Pos.CENTER_LEFT);
 		HBox.setHgrow(selectedExamLabel, Priority.ALWAYS);
 		ScrollPane examActionsScroll = createHorizontalScrollRow("corpus-dashboard-exam-actions-scroll",
@@ -1242,6 +1290,15 @@ public final class CorpusDashboardPane extends VBox {
 
 	private void configureCommandActions() {
 		addExamButton.setOnAction(_ -> addExamHandler.run());
+		createContributorAssignmentButton.setOnAction(_ -> {
+			ExamCorpusStatus selected = examTable.getSelectionModel().getSelectedItem();
+			if (selected == null || assignmentExamId != null || createContributorAssignmentButton.isDisabled()) {
+				return;
+			}
+
+			// Issuance is always Exam-wide, never booklet-specific.
+			createContributorAssignmentHandler.accept(selected.exam());
+		});
 		assignDescriptorsButton.setOnAction(_ -> assignSelectedBookletDescriptors());
 		assignQuestionWorkDescriptorsButton.setOnAction(_ -> assignQuestionWorkDescriptors());
 		inspectBookletQuestionsButton.setOnAction(_ -> inspectSelectedBookletQuestions());
@@ -1285,6 +1342,11 @@ public final class CorpusDashboardPane extends VBox {
 		addExamButton.setId("corpus-dashboard-add-exam");
 		addExamButton.setTooltip(new Tooltip("Add an Exam to the current Subject."));
 		addExamButton.setMinWidth(Region.USE_PREF_SIZE);
+		createContributorAssignmentButton.setId("corpus-dashboard-create-contributor-assignment");
+		createContributorAssignmentButton.setMinWidth(Region.USE_PREF_SIZE);
+		createContributorAssignmentButton.setDisable(true);
+		createContributorAssignmentButton.setTooltip(new Tooltip("Issue the selected complete Exam structure and PDFs "
+				+ "for offline Question capture and classification."));
 
 		// Status labels must remain readable as the adjacent panel grows or
 		// shrinks, rather than forcing the enclosing section to be wider.
@@ -1927,6 +1989,12 @@ public final class CorpusDashboardPane extends VBox {
 		return coverage.capturedExplanationCount() + " / " + coverage.eligibleQuestionCount();
 	}
 
+	private List<Question> missingDescriptorQuestionsShown() {
+		return questionTable.getItems().stream()
+				.filter(item -> item.status().hasProblem(QuestionCorpusProblem.MISSING_DESCRIPTOR))
+				.map(QuestionCorpusWorkItem::question).toList();
+	}
+
 	private List<QuestionCorpusWorkItem> missingMcqExplanationWorkItems(List<Question> sourceQuestions) {
 
 		// Reuse ordinary Question audit status for all existing columns. Explanation
@@ -1998,12 +2066,6 @@ public final class CorpusDashboardPane extends VBox {
 				expectations.expectedQuestionBookletCount());
 	}
 
-	private List<Question> missingDescriptorQuestionsShown() {
-		return questionTable.getItems().stream()
-				.filter(item -> item.status().hasProblem(QuestionCorpusProblem.MISSING_DESCRIPTOR))
-				.map(QuestionCorpusWorkItem::question).toList();
-	}
-
 	private List<Question> questionsForSelectedScope() {
 		ExamCorpusStatus selectedExam = examTable.getSelectionModel().getSelectedItem();
 		if (selectedExam == null) {
@@ -2060,7 +2122,7 @@ public final class CorpusDashboardPane extends VBox {
 			curriculumMappingSummaryLabel.setText("No curriculum has been added.");
 			return;
 		}
-		mapCurriculumButton.setDisable(mappingCoverages.isEmpty());
+		mapCurriculumButton.setDisable(assignmentExamId != null || mappingCoverages.isEmpty());
 		if (mappingCoverages.isEmpty()) {
 
 			// Curriculum exists, but no historical-to-current pair currently requires
@@ -2218,12 +2280,11 @@ public final class CorpusDashboardPane extends VBox {
 		Integer year = yearBox.getValue();
 		ExamCaptureState state = examStateBox.getValue();
 
-		// Provider, year and declared state define the ordinary structural scope.
-		// Summary
-		// drill-down is deliberately applied later so headline counts do not change
-		// when
-		// one of their own buttons is selected.
+		// Assignment scope is an additional mandatory restriction.
+		// Ordinary Provider/Year/State filters may narrow it further
+		// but can never expose another Exam.
 		return examStatuses.stream()
+				.filter(status -> assignmentExamId == null || status.exam().getId() == assignmentExamId.longValue())
 				.filter(status -> provider == null || status.exam().getProvider().getId() == provider.getId())
 				.filter(status -> year == null || status.exam().getYear() == year.intValue())
 				.filter(status -> state == null || status.declaredCaptureState() == state).toList();
@@ -2366,16 +2427,17 @@ public final class CorpusDashboardPane extends VBox {
 
 	private void updateAddExamActionState() {
 
-		// Every Exam must belong to a Subject with curriculum. Prevent structural Exam
-		// creation until that prerequisite exists instead of allowing an invalid path.
+		// All required Exam structure is issued by the coordinator.
+		if (assignmentExamId != null) {
+			addExamButton.setDisable(true);
+			noExamsLabel.setText("The assigned Exam is supplied by the coordinator.");
+			return;
+		}
 		addExamButton.setDisable(!curriculumAvailable);
 		if (!curriculumAvailable) {
 			noExamsLabel.setText("Add curriculum before adding an Exam.");
 			return;
 		}
-
-		// Once curriculum exists, ordinary Exam onboarding becomes the next structural
-		// action for an otherwise empty Subject.
 		noExamsLabel.setText("No Exams have been added.");
 	}
 
@@ -2419,12 +2481,13 @@ public final class CorpusDashboardPane extends VBox {
 
 	private void updateExamAssetsActionState() {
 		ExamCorpusStatus selectedExam = examTable.getSelectionModel().getSelectedItem();
+		boolean coordinatorExamSelected = selectedExam != null && assignmentExamId == null;
 
-		// Exam / Assets is always accessible for a selected Exam.
-		// COMPLETE Exams remain inspectable, and new Exams can
-		// still be created from this workspace.
-		// Structural editing restrictions belong to ExamAssetsPane.
-		manageExamAssetsButton.setDisable(selectedExam == null);
+		// Contributor work uses immutable coordinator-supplied
+		// Exam assets. Structural management and assignment issuance
+		// are both coordinator-only operations.
+		manageExamAssetsButton.setDisable(!coordinatorExamSelected);
+		createContributorAssignmentButton.setDisable(!coordinatorExamSelected);
 	}
 
 	private void updateExamEmptyState() {
@@ -2440,6 +2503,15 @@ public final class CorpusDashboardPane extends VBox {
 
 	private void updateExamLifecycleActionState() {
 		ExamCorpusStatus selected = examTable.getSelectionModel().getSelectedItem();
+		if (assignmentExamId != null) {
+
+			// Contributor assignment completion is independent of the
+			// authoritative Exam's ACTIVE/COMPLETE lifecycle.
+			examLifecycleButton.setText("Coordinator only");
+			examLifecycleButton.setDisable(true);
+			examLifecycleButton.setTooltip(new Tooltip("Only the coordinator changes Exam lifecycle state."));
+			return;
+		}
 		if (selected == null) {
 			examLifecycleButton.setText("Mark Complete");
 			examLifecycleButton.setDisable(true);

@@ -36,8 +36,14 @@ import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.ApplicationVersion;
 import au.edu.eq.questionbank.ManagedDataLayout;
+import au.edu.eq.questionbank.model.Exam;
+import au.edu.eq.questionbank.model.ExamProvider;
+import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.repository.identity.SqliteExamAssignmentGraphReader;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
+import au.edu.eq.questionbank.repository.identity.SqliteSubjectGraphReader.SubjectGraph;
+import au.edu.eq.questionbank.repository.identity.SqliteSubjectPortableRecordReader;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkAssetIndex.Reference;
 
@@ -61,6 +67,372 @@ class SubjectSnapshotExporterTest {
 			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC" + "AAAAC0lEQVR42mP8/x8AAwMCAO+/WZcAAAAASUVORK5CYII=");
 	@TempDir
 	Path directory;
+
+	@Test
+	void assignmentArchiveContainsWholeExamAndImmutableBaseline() throws Exception {
+		Fixture fixture = createAssignmentFixture("issued-assignment");
+		Path archive = fixture.exportDirectory().resolve("biology-assignment.examwork");
+		WorkAssignmentExporter.Request request = assignmentRequest(archive, true);
+		ExamWorkManifest manifest = new WorkAssignmentExporter(fixture.database(), fixture.layout()).export(request);
+		assertEquals(ExamWorkPackageType.WORK_ASSIGNMENT, manifest.packageType());
+		assertEquals(request.assignmentId(), manifest.assignmentId());
+		assertNotNull(manifest.baselineSnapshotId());
+		assertEquals(manifest.originInstallationId(), manifest.intendedMasterInstallationId());
+		assertEquals(ExamWorkManifest.ScopeLevel.EXAMS, manifest.scope().level());
+		assertEquals(1, manifest.scope().examIds().size());
+		assertTrue(manifest.scope().bookletIds().isEmpty());
+		List<ExchangeRecord> records = readArchiveRecords(archive, "records/subject-graph.jsonl");
+		List<ExchangeRecord> baseline = readArchiveRecords(archive, "baseline/initial-records.jsonl");
+		assertEquals(records, baseline);
+		assertEquals(1, count(records, "SUBJECT"));
+		assertEquals(1, count(records, "EXAM"));
+		assertEquals(2, count(records, "EXAM_BOOKLET"));
+		assertEquals(1, count(records, "ANSWER_FILE"));
+		assertEquals(2, count(records, "SOURCE_DOCUMENT"));
+		assertEquals(1, count(records, "QUESTION"));
+		assertEquals(1, count(records, "ANSWER"));
+		assertEquals(1, count(records, "QUESTION_IMAGE"));
+		assertEquals(1, count(records, "SHARED_QUESTION_CONTEXT"));
+		ExchangeRecord exam = findRecord(records, "EXAM");
+		assertEquals(manifest.scope().examIds().getFirst(), exam.recordId());
+		List<ExchangeRecord> booklets = records.stream().filter(record -> record.recordType().equals("EXAM_BOOKLET"))
+				.toList();
+		String firstAnswerFile = booklets.get(0).values().path("answer_file_id").asText();
+		String secondAnswerFile = booklets.get(1).values().path("answer_file_id").asText();
+
+		// Both Booklets reference one shared AnswerFile.
+		assertEquals(firstAnswerFile, secondAnswerFile);
+		assertEquals(findRecord(records, "ANSWER_FILE").recordId().toString(), firstAnswerFile);
+		assertEquals(manifest, new ExamWorkArchiveValidator().validate(archive, ApplicationVersion.current(),
+				SqliteDatabase.latestSchemaVersion()));
+	}
+
+	@Test
+	void assignmentArchiveExcludesUnassignedExamAndFiles() throws Exception {
+		Fixture fixture = createAssignmentFixture("assignment-scope");
+		execute(fixture.database(), """
+				INSERT INTO source_documents (id, relative_path)
+				VALUES (
+				    54,
+				    'subjects/Biology/exams/unassigned.pdf'
+				)
+				""", """
+				INSERT INTO exams (
+				    id, subject_id, provider_id,
+				    exam_year, exam_name
+				)
+				VALUES (
+				    32, 1, 1, 2026, 'Unassigned Examination'
+				)
+				""", """
+				INSERT INTO exam_booklets (
+				    id, exam_id, source_document_id, booklet_name
+				)
+				VALUES (
+				    64, 32, 54, 'Unassigned Paper'
+				)
+				""");
+
+		// There is deliberately no unassigned.pdf on disk.
+		// It must not be needed for the selected Exam.
+		Path archive = fixture.exportDirectory().resolve("isolated-assignment.examwork");
+		new WorkAssignmentExporter(fixture.database(), fixture.layout()).export(assignmentRequest(archive, true));
+		List<ExchangeRecord> records = readArchiveRecords(archive, "records/subject-graph.jsonl");
+		assertEquals(1, count(records, "EXAM"));
+		assertEquals(2, count(records, "EXAM_BOOKLET"));
+		assertEquals(2, count(records, "SOURCE_DOCUMENT"));
+		ExamWorkAssetIndex assets = readAssetIndex(archive);
+		assertFalse(assets.references().stream()
+				.anyMatch(reference -> reference.managedPath().endsWith("/unassigned.pdf")));
+		assertFalse(assets.references().stream().anyMatch(reference -> reference.usage().equals("INVENTORIED")));
+		assertEquals(2,
+				assets.references().stream().filter(reference -> reference.usage().equals("SOURCE_PDF")).count());
+	}
+
+	@Test
+	void assignmentArchiveIdentifiesCurrentAndLegacySyllabuses() throws Exception {
+		Fixture fixture = createAssignmentFixture("assignment-syllabuses");
+		Path archive = fixture.exportDirectory().resolve("syllabus-assignment.examwork");
+		ExamWorkManifest manifest = new WorkAssignmentExporter(fixture.database(), fixture.layout())
+				.export(assignmentRequest(archive, true));
+		List<ExchangeRecord> contexts = readArchiveRecords(archive, "records/assignment-context.jsonl");
+		assertEquals(1, contexts.size());
+		ExchangeRecord context = contexts.getFirst();
+		assertEquals("WORK_ASSIGNMENT_CONTEXT", context.recordType());
+		assertEquals(manifest.assignmentId(), context.recordId());
+		assertEquals(manifest.baselineSnapshotId(), context.revisionId());
+		assertEquals(manifest.baselineSnapshotId().toString(), context.values().path("baseline_snapshot_id").asText());
+		assertTrue(context.values().path("legacy_capture_enabled").asBoolean());
+		assertEquals("Contributor One", context.values().path("contributor_name").asText());
+		List<ExchangeRecord> records = readArchiveRecords(archive, "records/subject-graph.jsonl");
+		String currentId = context.values().path("current_syllabus_id").asText();
+		String legacyId = context.values().path("legacy_syllabus_id").asText();
+		ExchangeRecord current = records.stream().filter(record -> record.recordType().equals("SYLLABUS_VERSION"))
+				.filter(record -> record.recordId().toString().equals(currentId)).findFirst().orElseThrow();
+		ExchangeRecord historical = records.stream().filter(record -> record.recordType().equals("SYLLABUS_VERSION"))
+				.filter(record -> record.recordId().toString().equals(legacyId)).findFirst().orElseThrow();
+		assertEquals(1, current.values().path("is_current").asInt());
+		assertEquals(0, historical.values().path("is_current").asInt());
+		assertEquals("Biology 2019", historical.values().path("syllabus_name").asText());
+	}
+
+	@Test
+	void assignmentArchiveRetainsBaselineAfterMasterEdits() throws Exception {
+		Fixture fixture = createAssignmentFixture("assignment-concurrency");
+		Path archive = fixture.exportDirectory().resolve("immutable-baseline.examwork");
+		new WorkAssignmentExporter(fixture.database(), fixture.layout()).export(assignmentRequest(archive, true));
+		List<ExchangeRecord> baselineBefore = readArchiveRecords(archive, "baseline/initial-records.jsonl");
+		ExamWorkAssetIndex assetsBefore = readAssetIndex(archive);
+
+		// The coordinator remains free to change master records.
+		execute(fixture.database(), """
+				UPDATE questions
+				SET question_text = 'Coordinator changed this question'
+				WHERE id = 81
+				""");
+		Path source = fixture.layout().resolve("subjects/Biology/exams/questions.pdf");
+		Files.writeString(source, "Coordinator replaced the question document");
+		List<ExchangeRecord> baselineAfter = readArchiveRecords(archive, "baseline/initial-records.jsonl");
+		ExamWorkAssetIndex assetsAfter = readAssetIndex(archive);
+		assertEquals(baselineBefore, baselineAfter);
+		assertEquals(assetsBefore, assetsAfter);
+		Reference packagedPdf = assetsAfter.references().stream()
+				.filter(reference -> reference.managedPath().endsWith("/questions.pdf")).findFirst().orElseThrow();
+
+		// Original source bytes remain in the issued archive.
+		try (ZipFile zip = new ZipFile(archive.toFile())) {
+			ZipEntry entry = zip.getEntry(packagedPdf.archivePath());
+			assertNotNull(entry);
+			try (var input = zip.getInputStream(entry)) {
+				assertEquals("Biology questions PDF", new String(input.readAllBytes(), StandardCharsets.UTF_8));
+			}
+		}
+	}
+
+	@Test
+	void assignmentAssetsAreImmutableAfterMasterFileChanges() throws Exception {
+		Fixture fixture = createFixture("assignment-immutable");
+		seedCompleteSubject(fixture);
+		SubjectAssetCollector.CollectedAssets assets = collectAssignedExamAssets(fixture,
+				"assignment-immutable-snapshot.db");
+		Reference questionSource = assets.index().references().stream()
+				.filter(ref -> ref.managedPath().endsWith("/questions.pdf")).findFirst().orElseThrow();
+		Path stagedCopy = assets.stagedFiles().get(questionSource.archivePath());
+		assertNotNull(stagedCopy);
+		assertTrue(Files.isRegularFile(stagedCopy));
+		byte[] originalBytes = Files.readAllBytes(stagedCopy);
+		assertEquals(sha256(originalBytes), questionSource.sha256());
+
+		// Simulate a concurrent coordinator changing the master PDF
+		// after the assignment's asset copy was staged.
+		Path masterPdf = fixture.layout().resolve("subjects/Biology/exams/questions.pdf");
+		Files.writeString(masterPdf, "Changed after assignment asset collection");
+		assertEquals("Changed after assignment asset collection", Files.readString(masterPdf));
+
+		// The contributor's staged baseline remains byte-identical.
+		assertArrayEquals(originalBytes, Files.readAllBytes(stagedCopy));
+		assertEquals(sha256(Files.readAllBytes(stagedCopy)), questionSource.sha256());
+	}
+
+	@Test
+	void assignmentAssetsExcludeOtherExamsAndUnreferencedFiles() throws Exception {
+		Fixture fixture = createFixture("assigned-assets");
+		seedCompleteSubject(fixture);
+
+		// Another Exam belongs to the same Subject, but must not
+		// contribute files to the selected assignment.
+		execute(fixture.database(), """
+				INSERT INTO source_documents (id, relative_path)
+				VALUES (
+				    54,
+				    'subjects/Biology/exams/unassigned.pdf'
+				)
+				""", """
+				INSERT INTO exams (
+				    id, subject_id, provider_id, exam_year, exam_name
+				)
+				VALUES (
+				    32, 1, 1, 2026, 'Unassigned Examination'
+				)
+				""", """
+				INSERT INTO exam_booklets (
+				    id, exam_id, source_document_id, booklet_name
+				)
+				VALUES (
+				    64, 32, 54, 'Unassigned Paper'
+				)
+				""");
+
+		// Do not create the unassigned PDF. Its absence must not
+		// prevent a valid different Exam being packaged.
+		SubjectAssetCollector.CollectedAssets assets = collectAssignedExamAssets(fixture,
+				"assigned-assets-snapshot.db");
+		List<Reference> references = assets.index().references();
+		assertEquals(5, references.size());
+		assertEquals(2, references.stream().filter(ref -> ref.usage().equals("SOURCE_PDF")).count());
+		assertEquals(1, references.stream().filter(ref -> ref.usage().equals("SYLLABUS_PDF")).count());
+		assertEquals(2, references.stream().filter(ref -> ref.usage().startsWith("EMBEDDED_")).count());
+		assertEquals(0, references.stream().filter(ref -> ref.usage().equals("INVENTORIED")).count());
+		assertTrue(references.stream().anyMatch(ref -> ref.managedPath().endsWith("/questions.pdf")));
+		assertTrue(references.stream().anyMatch(ref -> ref.managedPath().endsWith("/answers.pdf")));
+		assertTrue(references.stream().anyMatch(ref -> ref.managedPath().endsWith("/syllabus.pdf")));
+		assertFalse(references.stream().anyMatch(ref -> ref.managedPath().endsWith("/unassigned.pdf")));
+
+		// Retained Subject files are not Exam assignment dependencies.
+		assertFalse(references.stream().anyMatch(ref -> ref.managedPath().endsWith("/retained.xlsx")));
+		assertFalse(references.stream().anyMatch(ref -> ref.managedPath().endsWith("/legacy.xlsx")));
+		assertFalse(references.stream().anyMatch(ref -> ref.managedPath().endsWith("/unreferenced-notes.txt")));
+	}
+
+	@Test
+	void assignmentAssetsRejectMissingRequiredPdf() throws Exception {
+		Fixture fixture = createFixture("assignment-missing-source");
+		seedCompleteSubject(fixture);
+		Path questionPdf = fixture.layout().resolve("subjects/Biology/exams/questions.pdf");
+		Files.delete(questionPdf);
+		IOException failure = assertThrows(IOException.class,
+				() -> collectAssignedExamAssets(fixture, "assignment-missing-source-snapshot.db"));
+		assertNotNull(failure.getMessage());
+		assertTrue(failure.getMessage().contains("managed asset"));
+	}
+
+	@Test
+	void assignmentCompletionDoesNotRewriteBaseline() throws Exception {
+		Fixture fixture = createAssignmentFixture("assignment-completion");
+		Path archive = fixture.exportDirectory().resolve("completion.examwork");
+		WorkAssignmentLedger.Assignment issued = new WorkAssignmentIssuanceService(fixture.database(), fixture.layout())
+				.issue(assignmentRequest(archive, false));
+		WorkAssignmentLedger ledger = new WorkAssignmentLedger(fixture.database());
+		WorkAssignmentLedger.Baseline before = ledger.readBaseline(issued.assignmentId());
+		ledger.finish(issued.assignmentId(), WorkAssignmentLedger.State.COMPLETE);
+		WorkAssignmentLedger.Assignment completed = ledger.find(issued.assignmentId()).orElseThrow();
+		assertEquals(WorkAssignmentLedger.State.COMPLETE, completed.state());
+		WorkAssignmentLedger.Baseline after = ledger.readBaseline(issued.assignmentId());
+		assertArrayEquals(before.records(), after.records());
+		assertArrayEquals(before.assets(), after.assets());
+		assertThrows(IllegalStateException.class,
+				() -> ledger.finish(issued.assignmentId(), WorkAssignmentLedger.State.CANCELLED));
+	}
+
+	@Test
+	void assignmentExportDoesNotOverwriteExistingPackage() throws Exception {
+		Fixture fixture = createAssignmentFixture("assignment-overwrite");
+		Path archive = fixture.exportDirectory().resolve("existing-assignment.examwork");
+		byte[] existing = "Existing package must remain intact".getBytes(StandardCharsets.UTF_8);
+		Files.write(archive, existing);
+		assertThrows(IOException.class, () -> new WorkAssignmentExporter(fixture.database(), fixture.layout())
+				.export(assignmentRequest(archive, true)));
+		assertArrayEquals(existing, Files.readAllBytes(archive));
+	}
+
+	@Test
+	void assignmentExportRejectsInvalidPrerequisites() throws Exception {
+		Fixture fixture = createAssignmentFixture("assignment-blocked");
+		execute(fixture.database(), """
+				UPDATE syllabus_versions
+				SET is_current = 0
+				WHERE id = 12
+				""");
+		Path archive = fixture.exportDirectory().resolve("blocked-assignment.examwork");
+		WorkAssignmentExporter exporter = new WorkAssignmentExporter(fixture.database(), fixture.layout());
+		assertThrows(IOException.class, () -> exporter.export(assignmentRequest(archive, true)));
+		assertFalse(Files.exists(archive));
+
+		// Restore the current syllabus, then remove the original
+		// 2019 identity required by legacy classification.
+		execute(fixture.database(), """
+				UPDATE syllabus_versions
+				SET is_current = 1
+				WHERE id = 12
+				""", """
+				UPDATE syllabus_versions
+				SET syllabus_name = 'Biology 2018'
+				WHERE id = 11
+				""");
+		assertThrows(IOException.class, () -> exporter.export(assignmentRequest(archive, true)));
+		assertFalse(Files.exists(archive));
+	}
+
+	@Test
+	void assignmentExportRejectsMissingSourceAsset() throws Exception {
+		Fixture fixture = createAssignmentFixture("assignment-missing-pdf");
+		Path answerPdf = fixture.layout().resolve("subjects/Biology/exams/answers.pdf");
+		Files.delete(answerPdf);
+		Path archive = fixture.exportDirectory().resolve("missing-pdf.examwork");
+		assertThrows(IOException.class, () -> new WorkAssignmentExporter(fixture.database(), fixture.layout())
+				.export(assignmentRequest(archive, true)));
+		assertFalse(Files.exists(archive));
+	}
+
+	@Test
+	void assignmentGraphProducesClosedPortableRecordReferences() throws Exception {
+		Fixture fixture = createFixture("assignment-record-closure");
+		seedCompleteSubject(fixture);
+		Path snapshot = directory.resolve("assignment-record-closure-snapshot.db");
+		fixture.database().createConsistentSnapshot(snapshot);
+		SqliteExamAssignmentGraphReader reader = new SqliteExamAssignmentGraphReader(snapshot);
+		SubjectGraph graph = reader.read(1, 31);
+
+		// The existing portable reader checks every recognised UUID
+		// relationship, including ordered content-part dependencies.
+		List<ExchangeRecord> records = new SqliteSubjectPortableRecordReader(snapshot).read(graph);
+		assertEquals(1, records.stream().filter(record -> record.recordType().equals("EXAM")).count());
+		assertEquals(2, records.stream().filter(record -> record.recordType().equals("EXAM_BOOKLET")).count());
+		assertEquals(1, records.stream().filter(record -> record.recordType().equals("ANSWER_FILE")).count());
+		assertEquals(1, records.stream().filter(record -> record.recordType().equals("QUESTION")).count());
+		assertEquals(1,
+				records.stream().filter(record -> record.recordType().equals("SHARED_QUESTION_CONTEXT")).count());
+		assertEquals(1, records.stream().filter(record -> record.recordType().equals("ANSWER")).count());
+		assertEquals(2, records.stream().filter(record -> record.recordType().equals("SYLLABUS_VERSION")).count());
+
+		// Every selected portable relationship was resolved.
+		assertTrue(records.stream().allMatch(record -> record.recordId() != null));
+	}
+
+	@Test
+	void contributorPreflightAcceptsValidWholeExamAssignment() throws Exception {
+		Fixture fixture = createAssignmentFixture("contributor-inspection");
+		Path archive = fixture.exportDirectory().resolve("contributor.examwork");
+		ExamWorkManifest issued = new WorkAssignmentExporter(fixture.database(), fixture.layout())
+				.export(assignmentRequest(archive, true));
+		WorkAssignmentPackageInspector.Inspection inspection = new WorkAssignmentPackageInspector().inspect(archive,
+				ApplicationVersion.current(), SqliteDatabase.latestSchemaVersion());
+		assertEquals(issued, inspection.manifest());
+		assertEquals(inspection.records(), inspection.baseline());
+		assertEquals(1, inspection.records().stream().filter(record -> record.recordType().equals("EXAM")).count());
+		assertEquals(2,
+				inspection.records().stream().filter(record -> record.recordType().equals("EXAM_BOOKLET")).count());
+		assertEquals(issued.assignmentId(), inspection.context().recordId());
+		assertTrue(inspection.archiveSha256().matches("[0-9a-f]{64}"));
+	}
+
+	@Test
+	void contributorPreflightRejectsOrdinarySubjectSnapshot() throws Exception {
+		Fixture fixture = createAssignmentFixture("contributor-snapshot-rejection");
+		Path archive = fixture.exportDirectory().resolve("subject-only.examwork");
+		new SubjectSnapshotExporter(fixture.database(), fixture.layout()).export(1, archive);
+		PackageFormatException failure = assertThrows(PackageFormatException.class,
+				() -> new WorkAssignmentPackageInspector().inspect(archive, ApplicationVersion.current(),
+						SqliteDatabase.latestSchemaVersion()));
+		assertTrue(failure.getMessage().contains("WORK_ASSIGNMENT"));
+	}
+
+	@Test
+	void duplicateAssignmentRegistrationIsRejected() throws Exception {
+		Fixture fixture = createAssignmentFixture("assignment-duplicate");
+		Path archive = fixture.exportDirectory().resolve("duplicate.examwork");
+		WorkAssignmentLedger.Assignment issued = new WorkAssignmentIssuanceService(fixture.database(), fixture.layout())
+				.issue(assignmentRequest(archive, true));
+		WorkAssignmentLedger ledger = new WorkAssignmentLedger(fixture.database());
+		WorkAssignmentLedger.Baseline before = ledger.readBaseline(issued.assignmentId());
+
+		// The same issued archive cannot create a second assignment.
+		assertThrows(SQLException.class, () -> ledger.register(archive));
+		WorkAssignmentLedger.Baseline after = ledger.readBaseline(issued.assignmentId());
+		assertArrayEquals(before.records(), after.records());
+		assertArrayEquals(before.assets(), after.assets());
+		assertEquals(WorkAssignmentLedger.State.ACTIVE, ledger.find(issued.assignmentId()).orElseThrow().state());
+	}
 
 	/**
 	 * Verifies export is observational and leaves existing Subject records, other
@@ -178,6 +550,22 @@ class SubjectSnapshotExporterTest {
 				SqliteDatabase.latestSchemaVersion()));
 	}
 
+	@Test
+	void failedIssueLeavesNoPublishedArchive() throws Exception {
+		Fixture fixture = createAssignmentFixture("failed-issue");
+
+		// Destroy the explicit current-syllabus selection.
+		execute(fixture.database(), """
+				UPDATE syllabus_versions
+				SET is_current = 0
+				WHERE id = 12
+				""");
+		Path archive = fixture.exportDirectory().resolve("invalid-issue.examwork");
+		assertThrows(IOException.class, () -> new WorkAssignmentIssuanceService(fixture.database(), fixture.layout())
+				.issue(assignmentRequest(archive, true)));
+		assertFalse(Files.exists(archive));
+	}
+
 	/**
 	 * Verifies that referenced assets and retained unreferenced files are present,
 	 * content-addressed and attributed correctly.
@@ -225,6 +613,43 @@ class SubjectSnapshotExporterTest {
 		}
 	}
 
+	@Test
+	void issueRegistersAnImmutableWholeExamBaseline() throws Exception {
+		Fixture fixture = createAssignmentFixture("registered-assignment");
+		Path archive = fixture.exportDirectory().resolve("registered.examwork");
+		WorkAssignmentExporter.Request request = assignmentRequest(archive, true);
+		WorkAssignmentLedger.Assignment issued = new WorkAssignmentIssuanceService(fixture.database(), fixture.layout())
+				.issue(request);
+		assertEquals(request.assignmentId(), issued.assignmentId());
+		assertEquals(WorkAssignmentLedger.State.ACTIVE, issued.state());
+		WorkAssignmentLedger ledger = new WorkAssignmentLedger(fixture.database());
+		WorkAssignmentLedger.Baseline baseline = ledger.readBaseline(issued.assignmentId());
+		try (ZipFile zip = new ZipFile(archive.toFile())) {
+			ZipEntry recordsEntry = zip.getEntry("baseline/initial-records.jsonl");
+			ZipEntry assetsEntry = zip.getEntry(ExamWorkAssetIndex.INDEX_PATH);
+			assertNotNull(recordsEntry);
+			assertNotNull(assetsEntry);
+			try (var input = zip.getInputStream(recordsEntry)) {
+				assertArrayEquals(input.readAllBytes(), baseline.records());
+			}
+			try (var input = zip.getInputStream(assetsEntry)) {
+				assertArrayEquals(input.readAllBytes(), baseline.assets());
+			}
+		}
+
+		// The coordinator can still alter live master data.
+		execute(fixture.database(), """
+				UPDATE questions
+				SET question_text = 'Changed by coordinator'
+				WHERE id = 81
+				""");
+		Files.writeString(fixture.layout().resolve("subjects/Biology/exams/questions.pdf"), "Updated master source");
+		WorkAssignmentLedger.Baseline retained = ledger.readBaseline(issued.assignmentId());
+		assertArrayEquals(baseline.records(), retained.records());
+		assertArrayEquals(baseline.assets(), retained.assets());
+		assertEquals(WorkAssignmentLedger.State.ACTIVE, ledger.find(issued.assignmentId()).orElseThrow().state());
+	}
+
 	/**
 	 * Verifies an incorrect stored source digest causes a failure instead of
 	 * publication with an inconsistent asset reference.
@@ -259,6 +684,28 @@ class SubjectSnapshotExporterTest {
 		assertTrue(failure.getMessage().contains("Missing or invalid managed asset"));
 		assertFalse(Files.exists(archive));
 		assertEquals(2, countSubjectExams(fixture.database()));
+	}
+
+	@Test
+	void multipleAssignmentsForSameExamRemainIndependent() throws Exception {
+		Fixture fixture = createAssignmentFixture("multiple-assignments");
+		Path firstArchive = fixture.exportDirectory().resolve("first.examwork");
+		Path secondArchive = fixture.exportDirectory().resolve("second.examwork");
+		WorkAssignmentExporter.Request first = assignmentRequest(firstArchive, true);
+		WorkAssignmentExporter.Request second = new WorkAssignmentExporter.Request(first.exam(), UUID.randomUUID(),
+				UUID.randomUUID(), "Contributor Two", false, secondArchive);
+		WorkAssignmentIssuanceService issuance = new WorkAssignmentIssuanceService(fixture.database(),
+				fixture.layout());
+		WorkAssignmentLedger.Assignment firstIssued = issuance.issue(first);
+		WorkAssignmentLedger.Assignment secondIssued = issuance.issue(second);
+		assertEquals(firstIssued.examPortableId(), secondIssued.examPortableId());
+		assertFalse(firstIssued.assignmentId().equals(secondIssued.assignmentId()));
+		WorkAssignmentLedger ledger = new WorkAssignmentLedger(fixture.database());
+		assertEquals(2, ledger.findForExam(firstIssued.examPortableId()).size());
+		ledger.finish(firstIssued.assignmentId(), WorkAssignmentLedger.State.COMPLETE);
+		assertEquals(WorkAssignmentLedger.State.COMPLETE,
+				ledger.find(firstIssued.assignmentId()).orElseThrow().state());
+		assertEquals(WorkAssignmentLedger.State.ACTIVE, ledger.find(secondIssued.assignmentId()).orElseThrow().state());
 	}
 
 	/**
@@ -462,6 +909,35 @@ class SubjectSnapshotExporterTest {
 		}
 	}
 
+	@Test
+	void registersAssignmentWithPortableSourceDocumentsWithoutManagedPaths() throws Exception {
+		Fixture fixture = createAssignmentFixture("portable-source-registration");
+		Path archive = fixture.exportDirectory().resolve("portable-source-registration.examwork");
+		WorkAssignmentExporter.Request request = assignmentRequest(archive, true);
+
+		// Export the same whole-Exam package that the coordinator
+		// registers during ordinary assignment issuance.
+		new WorkAssignmentExporter(fixture.database(), fixture.layout()).export(request);
+		List<ExchangeRecord> records = readRecords(archive);
+		List<ExchangeRecord> sourceDocuments = records.stream()
+				.filter(record -> record.recordType().equals("SOURCE_DOCUMENT")).toList();
+		assertEquals(2, sourceDocuments.size());
+
+		// Portable records omit machine-local managed paths by design.
+		// The asset-reference index owns those paths instead.
+		for (ExchangeRecord document : sourceDocuments) {
+			assertFalse(document.values().has("relative_path"));
+			long references = readAssetIndex(archive).references().stream()
+					.filter(reference -> "SOURCE_PDF".equals(reference.usage()))
+					.filter(reference -> "SOURCE_DOCUMENT".equals(reference.ownerType()))
+					.filter(reference -> document.recordId().equals(reference.ownerId())).count();
+			assertEquals(1, references);
+		}
+		WorkAssignmentLedger.Assignment issued = new WorkAssignmentLedger(fixture.database()).register(archive);
+		assertEquals(request.assignmentId(), issued.assignmentId());
+		assertEquals(WorkAssignmentLedger.State.ACTIVE, issued.state());
+	}
+
 	/**
 	 * Verifies an existing destination cannot be replaced by a later export.
 	 */
@@ -479,6 +955,35 @@ class SubjectSnapshotExporterTest {
 		assertArrayEquals(original, Files.readAllBytes(archive));
 	}
 
+	@Test
+	void rejectsSubjectSnapshotAsWorkAssignment() throws Exception {
+		Fixture fixture = createAssignmentFixture("assignment-package-type");
+		Path archive = fixture.exportDirectory().resolve("subject-snapshot.examwork");
+		new SubjectSnapshotExporter(fixture.database(), fixture.layout()).export(1, archive);
+		WorkAssignmentLedger ledger = new WorkAssignmentLedger(fixture.database());
+		PackageFormatException failure = assertThrows(PackageFormatException.class, () -> ledger.register(archive));
+		assertTrue(failure.getMessage().contains("WORK_ASSIGNMENT"));
+	}
+
+	private WorkAssignmentExporter.Request assignmentRequest(Path destination, boolean legacyCaptureEnabled) {
+		Exam exam = new Exam(31, new Subject(1, "Biology"), new ExamProvider(1, "QCAA"), 2025, "External Assessment");
+		return new WorkAssignmentExporter.Request(exam, UUID.fromString("f5324089-e12c-4f98-a017-7bca42bf4b35"),
+				UUID.fromString("bcb630ef-c798-48ae-8615-71d61e4d44f4"), "Contributor One", legacyCaptureEnabled,
+				destination);
+	}
+
+	private SubjectAssetCollector.CollectedAssets collectAssignedExamAssets(Fixture fixture, String snapshotName)
+			throws Exception {
+		Path snapshot = directory.resolve(snapshotName);
+		fixture.database().createConsistentSnapshot(snapshot);
+		SqliteExamAssignmentGraphReader reader = new SqliteExamAssignmentGraphReader(snapshot);
+		SubjectGraph graph = reader.read(1, 31);
+		Path staging = Files.createTempDirectory(directory, "assignment-assets-stage-");
+		SubjectAssetCollector collector = new SubjectAssetCollector(SqliteDatabase.readOnly(snapshot), fixture.layout(),
+				staging);
+		return collector.collectAssignment(graph);
+	}
+
 	private long count(List<ExchangeRecord> records, String type) {
 		return records.stream().filter(record -> record.recordType().equals(type)).count();
 	}
@@ -493,6 +998,22 @@ class SubjectSnapshotExporterTest {
 			result.next();
 			return result.getInt(1);
 		}
+	}
+
+	private Fixture createAssignmentFixture(String name) throws Exception {
+		Fixture fixture = createFixture(name);
+		seedCompleteSubject(fixture);
+
+		// The existing Subject export fixture has two Question
+		// Booklets and one AnswerFile, but does not explicitly
+		// declare its expected AnswerFile count.
+		execute(fixture.database(), """
+				UPDATE exams
+				SET expected_question_booklet_count = 2,
+				    expected_answer_file_count = 1
+				WHERE id = 31
+				""");
+		return fixture;
 	}
 
 	private Fixture createFixture(String name) throws Exception {
@@ -543,6 +1064,16 @@ class SubjectSnapshotExporterTest {
 			throw new IOException("PNG encoder is unavailable");
 		}
 		return output.toByteArray();
+	}
+
+	private List<ExchangeRecord> readArchiveRecords(Path archive, String entryPath) throws IOException {
+		try (ZipFile zip = new ZipFile(archive.toFile())) {
+			ZipEntry entry = zip.getEntry(entryPath);
+			assertNotNull(entry, "Missing archive entry: " + entryPath);
+			try (var input = zip.getInputStream(entry)) {
+				return new ExamWorkJsonlCodec().readRecords(input);
+			}
+		}
 	}
 
 	private ExamWorkAssetIndex readAssetIndex(Path archive) throws Exception {

@@ -42,6 +42,26 @@ final class SqlitePortableIdentitySchema {
 	private SqlitePortableIdentitySchema() {
 	}
 
+	static String identityImmutableTriggerSql() {
+		return """
+				CREATE TRIGGER app_portable_identity_immutable
+				BEFORE UPDATE OF
+				    entity_type,
+				    local_id,
+				    portable_id
+				ON portable_entity_identities
+				WHEN OLD.entity_type IS NOT NEW.entity_type
+				  OR OLD.local_id IS NOT NEW.local_id
+				  OR OLD.portable_id IS NOT NEW.portable_id
+				BEGIN
+				    SELECT RAISE(
+				        ABORT,
+				        'Portable entity identity is immutable'
+				    );
+				END
+				""";
+	}
+
 	static void migrate(Connection connection) throws SQLException {
 		Objects.requireNonNull(connection, "connection");
 		installTables(connection);
@@ -181,26 +201,6 @@ final class SqlitePortableIdentitySchema {
 				      AND local_id = OLD.id;
 				END
 				""".formatted(deleteTriggerName(entity), entity.tableName(), entity.entityType(), entity.entityType());
-	}
-
-	private static String identityImmutableTriggerSql() {
-		return """
-				CREATE TRIGGER app_portable_identity_immutable
-				BEFORE UPDATE OF
-				    entity_type,
-				    local_id,
-				    portable_id
-				ON portable_entity_identities
-				WHEN OLD.entity_type IS NOT NEW.entity_type
-				  OR OLD.local_id IS NOT NEW.local_id
-				  OR OLD.portable_id IS NOT NEW.portable_id
-				BEGIN
-				    SELECT RAISE(
-				        ABORT,
-				        'Portable entity identity is immutable'
-				    );
-				END
-				""";
 	}
 
 	private static String idUpdateTriggerName(EntityTable entity) {

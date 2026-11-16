@@ -126,6 +126,10 @@ public final class AnswerPdfReplacementService {
 		if (replacementPdf == null) {
 			throw new NullPointerException("replacementPdf");
 		}
+
+		// AnswerFile replacement is coordinator-only, including any
+		// byte-identical operation that could backfill asset metadata.
+		examWriter.requireCoordinatorStructureEdit();
 		Path replacement = replacementPdf.toAbsolutePath().normalize();
 		if (!Files.isRegularFile(replacement)) {
 			throw new IOException("Replacement Answer PDF is not a regular file: " + replacement);

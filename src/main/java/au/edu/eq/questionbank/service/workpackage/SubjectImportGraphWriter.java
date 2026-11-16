@@ -3,12 +3,14 @@ package au.edu.eq.questionbank.service.workpackage;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Savepoint;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -30,8 +32,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 
 import au.edu.eq.questionbank.ApplicationVersion;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableAliasRepository;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableContentRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
+import au.edu.eq.questionbank.repository.sqlite.SqliteContributorIdentityBinder;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkAssetIndex.Reference;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest.EntryRole;
@@ -104,6 +108,7 @@ public final class SubjectImportGraphWriter {
 			Map.entry(EntityType.QUESTION_IMAGE, new Table("question_images")));
 	private final SqlitePortableAliasRepository aliases;
 	private final SqlitePortableIdentityRepository identities;
+	private final SqliteDatabase database;
 
 	/**
 	 * Constructs a graph writer for the active master database.
@@ -111,7 +116,7 @@ public final class SubjectImportGraphWriter {
 	 * @param database authoritative SQLite database
 	 */
 	public SubjectImportGraphWriter(SqliteDatabase database) {
-		Objects.requireNonNull(database, "database");
+		this.database = Objects.requireNonNull(database, "database");
 		aliases = new SqlitePortableAliasRepository(database);
 		identities = new SqlitePortableIdentityRepository(database);
 	}
@@ -119,10 +124,12 @@ public final class SubjectImportGraphWriter {
 	/**
 	 * Inserts an approved Subject graph in the caller's open transaction.
 	 *
-	 * @param connection caller-owned transaction; commit and rollback are external
-	 * @param plan       approved import plan
-	 * @param staged     verified staged package with all approved binary content
-	 * @param decoded    independently validated decoded Subject graph
+	 * @param connection   caller-owned transaction; commit and rollback are
+	 *                     external
+	 * @param plan         approved import plan
+	 * @param staged       verified staged package with all approved binary content
+	 * @param decoded      independently validated decoded Subject graph
+	 * @param approvalNote non-blank coordinator approval note for the import
 	 * @return canonical identities resolved or inserted for accepted records
 	 * @throws SQLException if persistence, relationships or aliasing fail
 	 * @throws IOException  if staged binary content or paths cannot be verified
@@ -323,6 +330,212 @@ public final class SubjectImportGraphWriter {
 			throw new IOException("Incoming archive belongs to an unapproved Subject");
 		}
 		return new DecodedPackage(manifest, List.copyOf(records), index);
+	}
+
+	/**
+	 * Installs a validated whole-Exam assignment graph in the caller's uncommitted
+	 * SQLite transaction.
+	 *
+	 * <p>
+	 * Existing records are reused only when their original portable UUID, revision
+	 * and complete canonical content match the issued baseline. New records retain
+	 * their coordinator-issued UUIDs and revisions.
+	 *
+	 * <p>
+	 * This method inserts database records only. It does not publish managed source
+	 * files, register the assignment session, activate contributor mode or commit
+	 * the transaction. Those actions require the coordinating installation service
+	 * and its recovery journal.
+	 *
+	 * @param connection caller-owned installation transaction
+	 * @param extraction verified private archive and extracted assets
+	 * @return immutable mapping from issued portable records to local IDs
+	 * @throws SQLException          if a record conflicts or insertion fails
+	 * @throws IOException           if the archive or extracted assets changed
+	 * @throws IllegalStateException if the connection uses autocommit
+	 * @throws NullPointerException  if a required argument is null
+	 */
+	public Map<Key, Long> installAssignment(Connection connection, WorkAssignmentAssetExtractor.Extraction extraction)
+			throws SQLException, IOException {
+		Objects.requireNonNull(connection, "connection");
+		Objects.requireNonNull(extraction, "extraction");
+		if (connection.getAutoCommit()) {
+			throw new IllegalStateException("Assignment graph installation requires a transaction");
+		}
+
+		// Reinspect the actual private archive. The extraction's
+		// caller-supplied metadata is not sufficient authority.
+		var verified = new WorkAssignmentPackageInspector().inspect(extraction.staged().archive(),
+				ApplicationVersion.current(), SqliteDatabase.latestSchemaVersion());
+		if (!verified.archiveSha256().equals(extraction.staged().inspection().archiveSha256())
+				|| !verified.manifest().equals(extraction.staged().inspection().manifest())) {
+			throw new IOException("Assignment archive changed after private staging");
+		}
+		StagedPackage staged = assignmentStaging(verified, extraction);
+		DecodedPackage decoded = new DecodedPackage(verified.manifest(), verified.records(), verified.assets());
+		Map<EntityType, List<ExchangeRecord>> ordered = new EnumMap<>(EntityType.class);
+		for (ExchangeRecord record : verified.records()) {
+			EntityType type = EntityType.valueOf(record.recordType());
+			if (!TABLES.containsKey(type)) {
+				throw new SQLException("Unsupported assignment entity type: " + type);
+			}
+			ordered.computeIfAbsent(type, _ -> new ArrayList<>()).add(record);
+		}
+		for (List<ExchangeRecord> group : ordered.values()) {
+			group.sort(Comparator.comparing(record -> record.recordId().toString()));
+		}
+		Savepoint checkpoint = connection.setSavepoint();
+		try {
+			Map<Key, Long> localIds = new LinkedHashMap<>();
+			Set<Key> inserted = new HashSet<>();
+			SqlitePortableContentRepository content = new SqlitePortableContentRepository(database);
+
+			// Capture the existing keys before the first inserted row.
+			SqliteContributorIdentityBinder binder = new SqliteContributorIdentityBinder(connection);
+
+			// Resolve all existing identities first, so that a newly
+			// inserted record can reference an unchanged dependency.
+			for (EntityType type : ORDER) {
+				for (ExchangeRecord record : ordered.getOrDefault(type, List.of())) {
+					var existing = identities.findByPortableId(connection, type, record.recordId());
+					if (existing.isEmpty()) {
+						continue;
+					}
+					long localId = existing.orElseThrow().localId();
+					requireExistingAssignmentRecord(connection, content, type, localId, record, verified.assets());
+					localIds.put(SubjectReconciliationReview.recordKey(type.name(), record.recordId()), localId);
+				}
+			}
+
+			// Rebase portable references to local primary keys using
+			// the same dependency ordering as Subject import.
+			for (EntityType type : ORDER) {
+				for (ExchangeRecord record : ordered.getOrDefault(type, List.of())) {
+					Key key = SubjectReconciliationReview.recordKey(type.name(), record.recordId());
+					if (localIds.containsKey(key)) {
+						continue;
+					}
+					long localId = insertBase(connection, type, record, decoded, staged, localIds);
+					localIds.put(key, localId);
+					inserted.add(key);
+				}
+			}
+
+			// Optional circular/deferred relationships are repaired
+			// only after every base identity has a local ID.
+			for (EntityType type : ORDER) {
+				for (ExchangeRecord record : ordered.getOrDefault(type, List.of())) {
+					Key key = SubjectReconciliationReview.recordKey(type.name(), record.recordId());
+					if (inserted.contains(key)) {
+						repairDeferredReferences(connection, type, localIds.get(key), record.values(), localIds);
+					}
+				}
+			}
+
+			// Insert ordered children, including Question regions,
+			// Shared Context parts and Answer regions.
+			for (EntityType type : ORDER) {
+				if (type == EntityType.EXAM_BOOKLET) {
+					continue;
+				}
+				for (ExchangeRecord record : ordered.getOrDefault(type, List.of())) {
+					Key key = SubjectReconciliationReview.recordKey(type.name(), record.recordId());
+					if (inserted.contains(key)) {
+						insertChildren(connection, type, localIds.get(key), record, decoded, staged, localIds);
+					}
+				}
+			}
+
+			// Booklet review evidence is restored after all ordinary
+			// Question, Answer and Shared Context content.
+			for (ExchangeRecord record : ordered.getOrDefault(EntityType.EXAM_BOOKLET, List.of())) {
+				Key key = SubjectReconciliationReview.recordKey(EntityType.EXAM_BOOKLET.name(), record.recordId());
+				if (inserted.contains(key)) {
+					insertChildren(connection, EntityType.EXAM_BOOKLET, localIds.get(key), record, decoded, staged,
+							localIds);
+				}
+			}
+			List<SqliteContributorIdentityBinder.Binding> bindings = new ArrayList<>();
+			for (EntityType type : ORDER) {
+				for (ExchangeRecord record : ordered.getOrDefault(type, List.of())) {
+					Key key = SubjectReconciliationReview.recordKey(type.name(), record.recordId());
+					if (inserted.contains(key)) {
+						bindings.add(new SqliteContributorIdentityBinder.Binding(type, localIds.get(key),
+								record.recordId(), record.revisionId()));
+					}
+				}
+			}
+
+			// Replace trigger-generated identities only after all
+			// child inserts and revision invalidation have completed.
+			binder.bindNew(bindings);
+
+			// Compare the entire reconstructed portable graph,
+			// including nested child content and original revisions.
+			for (EntityType type : ORDER) {
+				for (ExchangeRecord record : ordered.getOrDefault(type, List.of())) {
+					Key key = SubjectReconciliationReview.recordKey(type.name(), record.recordId());
+					ExchangeRecord persisted = content.snapshot(connection, type, localIds.get(key)).record();
+					if (!record.equals(persisted)) {
+						throw new SQLException("Installed assignment record differs " + "from issued baseline: " + key);
+					}
+				}
+			}
+			connection.releaseSavepoint(checkpoint);
+			return Map.copyOf(localIds);
+		} catch (SQLException | IOException | RuntimeException failure) {
+			try {
+				connection.rollback(checkpoint);
+			} catch (SQLException rollbackFailure) {
+				failure.addSuppressed(rollbackFailure);
+			}
+			try {
+				connection.releaseSavepoint(checkpoint);
+			} catch (SQLException releaseFailure) {
+				failure.addSuppressed(releaseFailure);
+			}
+			throw failure;
+		}
+	}
+
+	private StagedPackage assignmentStaging(WorkAssignmentPackageInspector.Inspection inspection,
+			WorkAssignmentAssetExtractor.Extraction extraction) throws IOException {
+		Map<String, ExamWorkManifest.Entry> declared = new HashMap<>();
+		for (ExamWorkManifest.Entry entry : inspection.manifest().entries()) {
+			if (entry.role() == EntryRole.ASSET) {
+				declared.put(entry.path(), entry);
+			}
+		}
+		Set<String> extractedPaths = new HashSet<>();
+		for (var asset : extraction.assets()) {
+			ExamWorkManifest.Entry entry = declared.get(asset.archivePath());
+			if (entry == null || !extractedPaths.add(asset.archivePath()) || entry.size() != asset.size()
+					|| !entry.sha256().equals(asset.sha256())) {
+				throw new IOException("Extracted assignment asset inventory differs " + "from manifest");
+			}
+			extraction.requireVerifiedAsset(asset.archivePath());
+		}
+		if (!extractedPaths.equals(declared.keySet())) {
+			throw new IOException("Assignment extraction omitted physical assets");
+		}
+		List<StagedAsset> adapted = new ArrayList<>();
+		for (Reference reference : inspection.assets().references()) {
+			Path source = extraction.requireVerifiedAsset(reference.archivePath());
+			AssetKind kind;
+			try {
+				kind = SubjectImportAssetStager.kindFor(reference);
+			} catch (IllegalArgumentException exception) {
+				throw new IOException("Unsupported assignment asset usage", exception);
+			}
+			adapted.add(new StagedAsset(reference.managedPath(), reference.archivePath(), source, reference.sha256(),
+					reference.size(), kind));
+		}
+
+		// Adapt only the verified binary inventory to the existing
+		// table-mapping routines. No Subject import approval, alias
+		// or publication policy is inherited.
+		return new StagedPackage(inspection.manifest().packageId(), inspection.archiveSha256(),
+				extraction.staged().directory(), extraction.staged().archive(), adapted);
 	}
 
 	/**
@@ -597,6 +810,53 @@ public final class SubjectImportGraphWriter {
 			throw new SQLException("Imported relationship has no approved local identity: " + type + ":" + uuid);
 		}
 		return local;
+	}
+
+	private void requireExistingAssignmentRecord(Connection connection, SqlitePortableContentRepository content,
+			EntityType type, long localId, ExchangeRecord record, ExamWorkAssetIndex assets) throws SQLException {
+		ExchangeRecord actual = content.snapshot(connection, type, localId).record();
+		if (!record.equals(actual)) {
+			throw new SQLException("Existing contributor record differs from " + "the issued baseline: " + type + ":"
+					+ record.recordId());
+		}
+		String column;
+		String table;
+		String usage;
+		if (type == EntityType.SOURCE_DOCUMENT) {
+			table = "source_documents";
+			column = "relative_path";
+			usage = "SOURCE_PDF";
+		} else if (type == EntityType.SYLLABUS_VERSION) {
+			table = "syllabus_versions";
+			column = "source_pdf_path";
+			usage = "SYLLABUS_PDF";
+		} else {
+			return;
+		}
+		String expectedPath = null;
+		for (Reference reference : assets.references()) {
+			if (!usage.equals(reference.usage()) || !type.name().equals(reference.ownerType())
+					|| !record.recordId().equals(reference.ownerId())) {
+				continue;
+			}
+			if (expectedPath != null) {
+				throw new SQLException("Duplicate assignment asset binding for " + record.recordId());
+			}
+			expectedPath = reference.managedPath();
+		}
+		String sql = "SELECT " + column + " FROM " + table + " WHERE id = ?";
+		try (PreparedStatement statement = connection.prepareStatement(sql)) {
+			statement.setLong(1, localId);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next() || !Objects.equals(expectedPath, result.getString(1))) {
+					throw new SQLException("Existing assignment source path " + "differs from issued dependency: "
+							+ record.recordId());
+				}
+				if (result.next()) {
+					throw new SQLException("Duplicate existing assignment source row");
+				}
+			}
+		}
 	}
 
 	/**

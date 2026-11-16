@@ -34,43 +34,43 @@ public final class CurriculumSourcePdfService {
 	}
 
 	/**
-	 * Copies a syllabus PDF into managed curriculum storage and persists its
-	 * managed path.
-	 * <p>
-	 * Attachment is immediate and independent of saving draft nodes. On success the
-	 * session receives the updated syllabus snapshot. New attachments persist a
-	 * portable data-root-relative Subject-first path; historical persisted paths
-	 * remain readable during migration.
+	 * Attaches a managed syllabus source PDF and persists its reference.
 	 *
-	 * @param session   current editable authoring session
-	 * @param sourcePdf external or already-managed source PDF
-	 * @return absolute path of the managed PDF
-	 * @throws IOException              if the file cannot be copied or cleanup of
-	 *                                  an unpublished copy fails
-	 * @throws NullPointerException     if either argument is {@code null}
-	 * @throws IllegalArgumentException if the source file or managed path is
-	 *                                  invalid
-	 * @throws IllegalStateException    if the curriculum is not editable or the
-	 *                                  metadata update fails
+	 * <p>
+	 * The repository checks contributor assignment restrictions before any new file
+	 * is copied. The existing cleanup contract preserves previously authoritative
+	 * PDFs if persistence fails.
+	 *
+	 * @param session   current curriculum authoring session
+	 * @param sourcePdf existing source PDF
+	 * @return absolute path to the managed PDF
+	 * @throws IOException              if copying or cleanup fails
+	 * @throws NullPointerException     if session is null
+	 * @throws IllegalArgumentException if the PDF is invalid
+	 * @throws IllegalStateException    if the curriculum is not editable,
+	 *                                  assignment mode prohibits attachment, or
+	 *                                  persistence fails
 	 */
 	public Path attachPdf(CurriculumAuthoringSession session, Path sourcePdf) throws IOException {
 		if (session == null) {
 			throw new NullPointerException("session");
 		}
+
+		// This must run before store.managePdf(), which creates a
+		// new managed file even if the subsequent SQL update fails.
+		repository.requireCoordinatorStructureEdit();
 		SyllabusVersion current = session.syllabusVersion();
 		if (current.getCurriculumStatus() != CurriculumStatus.IN_PROGRESS) {
-			throw new IllegalStateException("Final curriculum must be reopened before changing its source PDF");
+			throw new IllegalStateException("Final curriculum must be reopened before " + "changing its source PDF");
 		}
-
-		// Prepare a distinct copy before publishing its path; the current PDF stays
-		// intact.
 		String relativePath = store.managePdf(current, sourcePdf);
 		SyllabusVersion updated;
 		try {
 			updated = repository.updateSourcePdfPath(current, relativePath);
 		} catch (RuntimeException failure) {
 
-			// Only the unpublished copy belongs to this failed attachment attempt.
+			// Delete only the new unpublished copy. The previous
+			// authoritative managed PDF must remain untouched.
 			try {
 				store.deleteManagedPdf(relativePath);
 			} catch (IOException cleanupFailure) {
@@ -78,8 +78,6 @@ public final class CurriculumSourcePdfService {
 			}
 			throw failure;
 		}
-
-		// Reflect the replacement in memory only after its metadata has been persisted.
 		session.replaceSyllabusVersion(updated);
 		return store.resolveManagedPdf(relativePath);
 	}

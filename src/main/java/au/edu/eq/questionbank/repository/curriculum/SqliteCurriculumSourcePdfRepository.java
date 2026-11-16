@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.repository.curriculum;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 
 import au.edu.eq.questionbank.model.CurriculumStatus;
@@ -26,6 +27,42 @@ public final class SqliteCurriculumSourcePdfRepository implements CurriculumSour
 			throw new NullPointerException("database");
 		}
 		this.database = database;
+	}
+
+	/**
+	 * Requires ordinary coordinator mode before attaching or replacing an
+	 * authoritative syllabus source PDF.
+	 *
+	 * <p>
+	 * This method prevents managed file creation before the later syllabus metadata
+	 * update. SQLite structural triggers remain responsible for rejecting changes
+	 * at persistence time.
+	 *
+	 * @throws IllegalStateException if an assignment is selected or contributor
+	 *                               selection cannot be inspected safely
+	 */
+	@Override
+	public void requireCoordinatorStructureEdit() {
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT assignment_id
+						FROM contributor_assignment_selection
+						WHERE singleton_id = 1
+						""");
+				ResultSet result = statement.executeQuery()) {
+			if (!result.next()) {
+				throw new IllegalStateException("Contributor assignment selection is missing");
+			}
+			if (result.getString("assignment_id") != null) {
+				throw new IllegalStateException("Authoritative syllabus PDF attachment is prohibited "
+						+ "while a contributor assignment is selected");
+			}
+			if (result.next()) {
+				throw new IllegalStateException("Multiple contributor assignment selection rows");
+			}
+		} catch (SQLException exception) {
+			throw new IllegalStateException("Cannot verify contributor assignment mode", exception);
+		}
 	}
 
 	@Override

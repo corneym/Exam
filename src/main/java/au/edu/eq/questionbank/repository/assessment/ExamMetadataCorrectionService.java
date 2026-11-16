@@ -122,6 +122,10 @@ public final class ExamMetadataCorrectionService {
 	public Result correct(Exam exam, String providerName, int year, String assessmentName)
 			throws SQLException, IOException {
 		validateCorrection(exam, providerName, year, assessmentName);
+
+		// Metadata correction may move managed Question and Answer PDFs.
+		// Reject assignment mode before planning or performing any move.
+		examWriter.requireCoordinatorStructureEdit();
 		List<Relocation> relocations = createRelocationPlan(exam, providerName, year, assessmentName);
 		List<Relocation> completedMoves = new ArrayList<>();
 		try {

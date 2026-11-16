@@ -97,8 +97,8 @@ class SqliteSubjectImportLedgerTest {
 	}
 
 	/**
-	 * Confirms an interrupted version-27 schema migration rolls back before
-	 * retrying the normal migration.
+	 * Confirms an interrupted version-27 migration rolls back before retrying the
+	 * complete migration to the latest schema version.
 	 */
 	@Test
 	void failedSchemaMigrationIsRecoverable() throws Exception {
@@ -117,6 +117,8 @@ class SqliteSubjectImportLedgerTest {
 		}
 		assertEquals(26, database.schemaVersion());
 		assertThrows(SQLException.class, database::initialiseSchema);
+
+		// The failed migration must leave the database at v26.
 		assertEquals(26, database.schemaVersion());
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();
@@ -133,14 +135,16 @@ class SqliteSubjectImportLedgerTest {
 			statement.execute("DROP TRIGGER reject_v27");
 		}
 		database.initialiseSchema();
-		assertEquals(27, database.schemaVersion());
+
+		// The retry now migrates through v27 and on to v28.
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		database.verifySchema();
 		database.verifyIntegrity();
 	}
 
 	/**
-	 * Verifies a genuine v26-to-v27 migration preserves existing Subject data and
-	 * its previously assigned portable identity.
+	 * Verifies migration from v26 through the latest schema preserves existing
+	 * Subject data and its permanent portable identity.
 	 */
 	@Test
 	void schemaMigrationPreservesExistingSubjects() throws Exception {
@@ -161,15 +165,15 @@ class SqliteSubjectImportLedgerTest {
 				originalPortableId = result.getString(1);
 			}
 
-			// Reconstruct the exact immediately preceding schema.
-			// This is a disposable test fixture, not production data.
+			// Reconstruct the genuine immediately preceding v26
+			// schema using the historical fixture cleanup.
 			HistoricalSchemaFixture.removeVersion27Objects(statement);
 			statement.execute("UPDATE schema_version SET version = 26");
 		}
 		assertEquals(26, database.schemaVersion());
 		database.verifySchema();
 		database.initialiseSchema();
-		assertEquals(27, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		database.verifySchema();
 		database.verifyIntegrity();
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {

@@ -126,6 +126,10 @@ public final class QuestionBookletPdfReplacementService {
 		if (replacementPdf == null) {
 			throw new NullPointerException("replacementPdf");
 		}
+
+		// Reject contributor-mode replacement before inspecting or changing
+		// the managed PDF. The SQLite triggers remain the final safeguard.
+		new SqliteExamWriter(database).requireCoordinatorStructureEdit();
 		Path replacement = replacementPdf.toAbsolutePath().normalize();
 		if (!Files.isRegularFile(replacement)) {
 			throw new IOException("Replacement Question PDF is not a regular file: " + replacement);
