@@ -5967,10 +5967,11 @@ public class QuestionBankApplication extends Application {
 				"The application will activate the assignment " + "after all records and assets have been committed.");
 		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
 
-		// Do not expose Hide/Cancel during a database-and-filesystem
-		// transaction. Its completion is owned by the installer.
-		progress.getButtonTypes().clear();
-		progress.setOnCloseRequest(event -> event.consume());
+		// Hide dismisses only the progress presentation.
+		// It does not cancel or interrupt the installation.
+		// The task always reports its final success or failure.
+		ButtonType hideButton = new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE);
+		progress.getButtonTypes().setAll(hideButton);
 		task.setOnSucceeded(_ -> {
 			contributorAssignmentInstallationRunning = false;
 			progress.close();

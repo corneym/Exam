@@ -12,6 +12,7 @@ import java.sql.Statement;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
@@ -35,11 +36,16 @@ import au.edu.eq.questionbank.service.workpackage.SqliteContributorAssignmentSes
 import au.edu.eq.questionbank.service.workpackage.WorkAssignmentExporter;
 import au.edu.eq.questionbank.service.workpackage.WorkAssignmentInstallationCoordinator;
 import au.edu.eq.questionbank.service.workpackage.WorkAssignmentIssuanceService;
+import javafx.scene.Node;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBase;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.TableView;
 import javafx.stage.Stage;
+import javafx.stage.Window;
 
 @Tag("ui")
 @Tag("workflow-ui")
@@ -50,6 +56,7 @@ class ContributorAssignmentDashboardWorkflowTest {
 	private UUID assignmentId;
 	private ApplicationConfig contributor;
 	private Stage primaryStage;
+	private Path assignmentArchive;
 
 	@Test
 	@SuppressWarnings("unchecked")
@@ -117,26 +124,106 @@ class ContributorAssignmentDashboardWorkflowTest {
 						.active().orElseThrow().assignmentId());
 	}
 
+	@Test
+	void reimportClosesProgressDialogAndPreservesAssignment(FxRobot robot) throws Exception {
+
+		Method importMethod = QuestionBankApplication.class.getDeclaredMethod("startContributorAssignmentInstallation",
+				Stage.class, ApplicationConfig.class, Path.class);
+
+		importMethod.setAccessible(true);
+
+		// Exercise the real import progress and completion handlers.
+		// Replaying the existing package must not duplicate work.
+		robot.interact(() -> {
+			try {
+				importMethod.invoke(application, primaryStage, contributor, assignmentArchive);
+			} catch (ReflectiveOperationException exception) {
+				throw new IllegalStateException(exception);
+			}
+		});
+
+		AtomicReference<DialogPane> successDialog = new AtomicReference<>();
+
+		WaitForAsyncUtils.waitFor(15, TimeUnit.SECONDS, () -> {
+			robot.interact(() -> {
+				successDialog.set(null);
+
+				for (Window window : Window.getWindows()) {
+					if (!(window instanceof Stage stage) || !stage.isShowing()
+							|| !"Contributor Assignment Installed".equals(stage.getTitle())
+							|| stage.getScene() == null) {
+						continue;
+					}
+
+					if (stage.getScene().getRoot() instanceof DialogPane pane) {
+						successDialog.set(pane);
+						break;
+					}
+				}
+			});
+
+			return successDialog.get() != null;
+		});
+
+		robot.interact(() -> {
+
+			// The completion notification must not leave the
+			// previous modal progress window blocking the app.
+			boolean progressStillShowing = Window.getWindows().stream().filter(Window::isShowing)
+					.filter(window -> window instanceof Stage).map(window -> (Stage) window)
+					.anyMatch(stage -> "Import Contributor Assignment".equals(stage.getTitle()));
+
+			assertFalse(progressStillShowing);
+
+			Node confirmation = successDialog.get().lookupButton(ButtonType.OK);
+
+			assertTrue(confirmation instanceof ButtonBase);
+
+			((ButtonBase) confirmation).fire();
+		});
+
+		var sessions = new SqliteContributorAssignmentSessionRepository(new SqliteDatabase(contributor.databasePath()));
+
+		assertEquals(assignmentId, sessions.active().orElseThrow().assignmentId());
+
+		assertEquals(1, sessions.findAll().size());
+	}
+
 	@Start
 	void start(Stage stage) throws Exception {
 		primaryStage = stage;
+
 		Path root = Files.createTempDirectory("contributor-dashboard-workflow-");
+
 		ApplicationConfig coordinator = ApplicationConfig.fromDataRoot(root.resolve("coordinator"));
+
 		contributor = ApplicationConfig.fromDataRoot(root.resolve("contributor"));
+
 		Files.createDirectories(coordinator.dataRoot());
 		Files.createDirectories(contributor.dataRoot());
+
 		SqliteDatabase master = new SqliteDatabase(coordinator.databasePath());
+
 		SqliteDatabase worker = new SqliteDatabase(contributor.databasePath());
+
 		master.initialiseSchema();
 		worker.initialiseSchema();
+
 		prepareMaster(master, coordinator.dataRoot());
+
 		Exam exam = new Exam(31, new Subject(1, "Biology"), new ExamProvider(21, "QCAA"), 2025, "External Assessment");
+
 		assignmentId = UUID.randomUUID();
-		Path archive = root.resolve("biology-assignment.examwork");
+
+		assignmentArchive = root.resolve("biology-assignment.examwork");
+
 		var request = new WorkAssignmentExporter.Request(exam, assignmentId, UUID.randomUUID(), "Test Contributor",
-				false, archive);
+				false, assignmentArchive);
+
 		new WorkAssignmentIssuanceService(master, new ManagedDataLayout(coordinator.dataRoot())).issue(request);
-		new WorkAssignmentInstallationCoordinator(contributor).install(archive);
+
+		new WorkAssignmentInstallationCoordinator(contributor).install(assignmentArchive);
+
 		application = new QuestionBankApplication();
 		startDesktopApplication(application);
 	}
