@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 27;
+	private static final int LATEST_SCHEMA_VERSION = 28;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -405,13 +405,24 @@ public final class SqliteDatabase {
 	}
 
 	private void executeMigration(Connection connection, String resourcePath, int expectedVersion) throws SQLException {
+		executeMigration(connection, resourcePath, expectedVersion, _ -> {
+		});
+	}
+
+	private void executeMigration(Connection connection, String resourcePath, int expectedVersion,
+			MigrationPostProcessor postProcessor) throws SQLException {
 		String sql;
 		try {
 			sql = SqlResourceLoader.load(resourcePath);
-		} catch (IOException e) {
-			throw new SQLException("Unable to load migration resource: " + resourcePath, e);
+		} catch (IOException exception) {
+			throw new SQLException("Unable to load migration resource: " + resourcePath, exception);
 		}
+
+		// The caller owns the migration transaction. SQL installation,
+		// supplementary Java installation and verification must either
+		// succeed together or all roll back.
 		SqlScriptExecutor.execute(connection, sql);
+		postProcessor.apply(connection);
 		int actualVersion = readSchemaVersion(connection);
 		if (actualVersion != expectedVersion) {
 			throw new SQLException(
@@ -753,6 +764,14 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v26-to-v27.sql", 27);
 			return 27;
 		}
+		if (version == 27) {
+
+			// The schema tables and protection triggers are installed in
+			// one transaction. Verification occurs after both steps.
+			executeMigration(connection, "/db/migration-v27-to-v28.sql", 28,
+					SqliteExamWorkAssignmentLedgerTriggers::install);
+			return 28;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -1069,6 +1088,12 @@ public final class SqliteDatabase {
 			// An import ledger must retain its identity keys and
 			// parent-to-decision foreign-key relationship.
 			verifyVersion27SubjectImportSchema(connection);
+		}
+		if (version >= 28) {
+
+			// Every assignment baseline is durable and protected.
+			// The lifecycle must remain separately mutable.
+			verifyVersion28ExamAssignmentSchema(connection);
 		}
 	}
 
@@ -1719,6 +1744,28 @@ public final class SqliteDatabase {
 				List.of(foreignKey("package_id", "subject_import_packages", "package_id")), List.of());
 	}
 
+	/**
+	 * Verifies the coordinator's immutable assignment ledger.
+	 *
+	 * @param connection database connection being validated
+	 * @throws SQLException if tables or protection triggers are invalid
+	 */
+	private void verifyVersion28ExamAssignmentSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "exam_work_assignments",
+				List.of(column("assignment_id", true, 1), column("package_id", true, 0),
+						column("baseline_snapshot_id", true, 0), column("master_installation_id", true, 0),
+						column("subject_portable_id", true, 0), column("exam_portable_id", true, 0),
+						column("contributor_id", true, 0), column("contributor_name", true, 0),
+						column("issued_at", true, 0), column("archive_sha256", true, 0),
+						column("records_sha256", true, 0), column("assets_sha256", true, 0),
+						column("baseline_records", true, 0), column("baseline_assets", true, 0)),
+				List.of(), List.of(List.of("package_id"), List.of("baseline_snapshot_id")));
+		verifyTableSchema(connection, "exam_work_assignment_states",
+				List.of(column("assignment_id", true, 1), column("state", true, 0), column("updated_at", true, 0)),
+				List.of(foreignKey("assignment_id", "exam_work_assignments", "assignment_id")), List.of());
+		SqliteExamWorkAssignmentLedgerTriggers.verify(connection);
+	}
+
 	private record ForeignKeyColumn(int sequence, String fromColumn, String targetColumn) {
 	}
 
@@ -1726,5 +1773,11 @@ public final class SqliteDatabase {
 	}
 
 	private record ForeignKeyRequirement(String fromColumn, String targetTable, String targetColumn) {
+	}
+
+	@FunctionalInterface
+	private interface MigrationPostProcessor {
+
+		void apply(Connection connection) throws SQLException;
 	}
 }
