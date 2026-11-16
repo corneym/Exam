@@ -43,9 +43,7 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 
 	@Test
 	void migratesHistoricalVersion27FixtureToVersion28() throws Exception {
-
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("version-27-to-28.db"));
-
 		database.initialiseSchema();
 
 		// Reconstruct a genuine version-27 schema in a disposable
@@ -53,25 +51,21 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 		// version-28 tables present and invalidate the migration test.
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-
 			try {
 				try (Statement statement = connection.createStatement()) {
 					HistoricalSchemaFixture.removeVersion28Objects(statement);
-
 					statement.execute("""
 							UPDATE schema_version
 							SET version = 27
 							WHERE version = 28
 							""");
 				}
-
 				connection.commit();
 			} catch (SQLException failure) {
 				connection.rollback();
 				throw failure;
 			}
 		}
-
 		assertEquals(27, database.schemaVersion());
 
 		// The reconstructed v27 database must be internally valid.
@@ -80,13 +74,10 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 		// Exercise the production migration and its Java-installed
 		// protection triggers.
 		database.initialiseSchema();
-
 		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
-
 		try (Connection connection = database.openConnection()) {
 			SqliteExamWorkAssignmentLedgerTriggers.verify(connection);
 		}
-
 		database.verifySchema();
 	}
 

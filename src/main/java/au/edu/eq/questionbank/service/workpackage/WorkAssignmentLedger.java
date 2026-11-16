@@ -311,7 +311,6 @@ public final class WorkAssignmentLedger {
 			// ZIP verification is insufficient on its own. Reject otherwise
 			// valid packages containing records from another Exam or Subject.
 			new WorkAssignmentScopeValidator().validate(manifest, initial, context, index);
-
 		}
 		if (!originalArchiveHash.equals(sha256(archive))) {
 			throw new PackageFormatException("Assignment archive changed during registration");

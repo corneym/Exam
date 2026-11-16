@@ -199,13 +199,10 @@ public final class HistoricalSchemaFixture {
 	 * @throws SQLException if cleanup fails
 	 */
 	public static void removeVersion27Objects(Statement statement) throws SQLException {
-
 		if (statement == null) {
 			throw new NullPointerException("statement");
 		}
-
 		removeVersion28Objects(statement);
-
 		statement.execute("DROP TABLE IF EXISTS subject_import_decisions");
 		statement.execute("DROP TABLE IF EXISTS subject_import_packages");
 	}
@@ -229,7 +226,6 @@ public final class HistoricalSchemaFixture {
 		if (statement == null) {
 			throw new NullPointerException("statement");
 		}
-
 		statement.execute("DROP TABLE IF EXISTS exam_work_assignment_states");
 		statement.execute("DROP TABLE IF EXISTS exam_work_assignments");
 	}

@@ -911,39 +911,29 @@ class SubjectSnapshotExporterTest {
 
 	@Test
 	void registersAssignmentWithPortableSourceDocumentsWithoutManagedPaths() throws Exception {
-
 		Fixture fixture = createAssignmentFixture("portable-source-registration");
-
 		Path archive = fixture.exportDirectory().resolve("portable-source-registration.examwork");
-
 		WorkAssignmentExporter.Request request = assignmentRequest(archive, true);
 
 		// Export the same whole-Exam package that the coordinator
 		// registers during ordinary assignment issuance.
 		new WorkAssignmentExporter(fixture.database(), fixture.layout()).export(request);
-
 		List<ExchangeRecord> records = readRecords(archive);
-
 		List<ExchangeRecord> sourceDocuments = records.stream()
 				.filter(record -> record.recordType().equals("SOURCE_DOCUMENT")).toList();
-
 		assertEquals(2, sourceDocuments.size());
 
 		// Portable records omit machine-local managed paths by design.
 		// The asset-reference index owns those paths instead.
 		for (ExchangeRecord document : sourceDocuments) {
 			assertFalse(document.values().has("relative_path"));
-
 			long references = readAssetIndex(archive).references().stream()
 					.filter(reference -> "SOURCE_PDF".equals(reference.usage()))
 					.filter(reference -> "SOURCE_DOCUMENT".equals(reference.ownerType()))
 					.filter(reference -> document.recordId().equals(reference.ownerId())).count();
-
 			assertEquals(1, references);
 		}
-
 		WorkAssignmentLedger.Assignment issued = new WorkAssignmentLedger(fixture.database()).register(archive);
-
 		assertEquals(request.assignmentId(), issued.assignmentId());
 		assertEquals(WorkAssignmentLedger.State.ACTIVE, issued.state());
 	}
