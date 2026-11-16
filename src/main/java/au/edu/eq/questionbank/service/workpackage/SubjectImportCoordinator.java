@@ -39,8 +39,8 @@ import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationReview.Ke
  * Coordinates an approved and recoverable Subject import into the master.
  *
  * <p>
- * All operations run under the shared managed-asset publication lock. Before any
- * publication, the coordinator creates a validated full backup, copies and
+ * All operations run under the shared managed-asset publication lock. Before
+ * any publication, the coordinator creates a validated full backup, copies and
  * validates contributor bytes, acquires a SQLite write reservation and
  * re-exports the master Subject to reject a stale preview.
  *
@@ -179,7 +179,8 @@ public final class SubjectImportCoordinator {
 
 	/**
 	 * Acquires the shared publication lock and restores both kinds of interrupted
-	 * package publication. The path argument must identify this root's Subject stage.
+	 * package publication. The path argument must identify this root's Subject
+	 * stage.
 	 *
 	 * @param stagingRoot private Subject import staging directory
 	 * @throws IOException  if unresolved unsafe publication evidence remains

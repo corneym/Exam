@@ -33,8 +33,9 @@ class WorkAssignmentPublicationJournalTest {
 		Path question = fixture.config().dataRoot().resolve(WorkAssignmentArchiveFixture.QUESTION_PATH);
 		try (var connection = fixture.database().openConnection(); var statement = connection.createStatement()) {
 			statement.execute("INSERT INTO subjects (id, subject_name) VALUES (1, 'Biology')");
-			statement.execute("INSERT INTO syllabus_versions (id, subject_id, syllabus_name, is_current, source_pdf_path) "
-					+ "VALUES (1, 1, '2025', 1, '" + WorkAssignmentArchiveFixture.QUESTION_PATH + "')");
+			statement.execute(
+					"INSERT INTO syllabus_versions (id, subject_id, syllabus_name, is_current, source_pdf_path) "
+							+ "VALUES (1, 1, '2025', 1, '" + WorkAssignmentArchiveFixture.QUESTION_PATH + "')");
 		}
 		assertFalse(journal.recover(packageId));
 		assertArrayEquals(WorkAssignmentArchiveFixture.QUESTION_BYTES, Files.readAllBytes(question));

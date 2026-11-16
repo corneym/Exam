@@ -46,7 +46,8 @@ class SubjectImportPublicationJournalTest {
 		fixture.journal().publishFiles(fixture.staged().packageId());
 		SqliteDatabase database = new SqliteDatabase(fixture.config().databasePath());
 		try (var connection = database.openConnection();
-				var statement = connection.prepareStatement("INSERT INTO source_documents (relative_path) VALUES (?)")) {
+				var statement = connection
+						.prepareStatement("INSERT INTO source_documents (relative_path) VALUES (?)")) {
 			statement.setString(1, fixture.staged().assets().getFirst().managedPath().replace("exams/", "exams/./"));
 			statement.executeUpdate();
 		}
@@ -86,7 +87,9 @@ class SubjectImportPublicationJournalTest {
 		Fixture fixture = fixture();
 		fixture.journal().prepare(fixture.staged(), fixture.backup());
 		fixture.journal().publishFiles(fixture.staged().packageId());
-		// Simulate termination after managed unlink but before durable evidence cleanup.
+
+		// Simulate termination after managed unlink but before durable evidence
+		// cleanup.
 		Files.delete(fixture.destination());
 		assertFalse(fixture.journal().recover(fixture.staged().packageId()));
 		assertFalse(Files.exists(fixture.staged().directory()));
@@ -101,7 +104,8 @@ class SubjectImportPublicationJournalTest {
 		SqliteDatabase database = new SqliteDatabase(fixture.config().databasePath());
 		try (var lock = ManagedAssetPublicationLock.acquire(fixture.config().dataRoot());
 				var references = new ManagedAssetRecoveryReferences(fixture.config(), lock);
-				var other = database.openConnection(); var statement = other.createStatement()) {
+				var other = database.openConnection();
+				var statement = other.createStatement()) {
 			statement.execute("PRAGMA busy_timeout = 1");
 			assertFalse(references.contains(fixture.destination()));
 			SQLException busy = assertThrows(SQLException.class,

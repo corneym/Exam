@@ -13,8 +13,9 @@ import java.util.Objects;
 
 /**
  * Exclusive data-root boundary shared by package publication, recovery and
- * ordinary managed-PDF reuse. Acquire this lock before reserving a SQLite writer.
- * Locks are non-reentrant and must remain held until publication or recovery ends.
+ * ordinary managed-PDF reuse. Acquire this lock before reserving a SQLite
+ * writer. Locks are non-reentrant and must remain held until publication or
+ * recovery ends.
  */
 public final class ManagedAssetPublicationLock implements AutoCloseable {
 
@@ -35,7 +36,8 @@ public final class ManagedAssetPublicationLock implements AutoCloseable {
 	 *
 	 * @param dataRoot authoritative managed-data root
 	 * @return owned lock, to be closed by the acquiring thread
-	 * @throws IOException if the root/lock is unsafe or another operation owns it
+	 * @throws IOException          if the root/lock is unsafe or another operation
+	 *                              owns it
 	 * @throws NullPointerException if dataRoot is null
 	 */
 	public static ManagedAssetPublicationLock acquire(Path dataRoot) throws IOException {
@@ -115,8 +117,8 @@ public final class ManagedAssetPublicationLock implements AutoCloseable {
 							&& Files.isRegularFile(entry, LinkOption.NOFOLLOW_LINKS)) {
 						continue;
 					}
-					throw new IOException("Recover pending Subject/assignment publications before importing PDFs: "
-							+ entry);
+					throw new IOException(
+							"Recover pending Subject/assignment publications before importing PDFs: " + entry);
 				}
 			}
 		}

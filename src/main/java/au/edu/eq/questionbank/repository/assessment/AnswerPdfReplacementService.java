@@ -112,7 +112,8 @@ public final class AnswerPdfReplacementService {
 	 * @param replacementPdf selected replacement PDF
 	 * @return committed replacement result
 	 * @throws IOException              if managed document bytes cannot be read or
-	 *                                  copied, or package publication/recovery is pending
+	 *                                  copied, or package publication/recovery is
+	 *                                  pending
 	 * @throws SQLException             if persistence fails
 	 * @throws NullPointerException     if either argument is {@code null}
 	 * @throws IllegalArgumentException if duplicate managed content cannot be
@@ -136,6 +137,7 @@ public final class AnswerPdfReplacementService {
 		}
 		try (var lock = ManagedAssetPublicationLock.acquire(managedDataLayout.dataRoot())) {
 			lock.requireNoPendingPublications();
+
 			// Keep adoption, registration and failed-copy cleanup in one publication
 			// boundary: another importer must not adopt a copy we can still roll back.
 			return replaceManagedPdf(booklet, replacementPdf);

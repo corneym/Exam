@@ -139,8 +139,9 @@ public class PdfStore {
 	 * @param assessmentName assessment name
 	 * @return absolute stored PDF path; an existing byte-identical file is reused
 	 * @throws IOException              if the source is not a regular file, the
-	 *                                  file cannot be copied, different bytes occupy
-	 *                                  the destination, or publication/recovery is pending
+	 *                                  file cannot be copied, different bytes
+	 *                                  occupy the destination, or
+	 *                                  publication/recovery is pending
 	 * @throws NullPointerException     if {@code sourcePath} is {@code null}
 	 * @throws IllegalArgumentException if a managed directory component or year is
 	 *                                  invalid
@@ -151,6 +152,7 @@ public class PdfStore {
 			throws IOException {
 		Path destination = managedDestination(sourcePath, subjectName, providerName, year, assessmentName);
 		try (var lock = ManagedAssetPublicationLock.acquire(requireSubjectFirstLayout().dataRoot())) {
+
 			// An identical file may still belong to an interrupted package. Ordinary
 			// intake cannot adopt it before package recovery has resolved ownership.
 			lock.requireNoPendingPublications();

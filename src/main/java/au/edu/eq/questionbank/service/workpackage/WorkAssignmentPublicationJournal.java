@@ -239,8 +239,9 @@ public final class WorkAssignmentPublicationJournal {
 	 * <p>
 	 * A committed matching assignment session preserves all published files.
 	 * Without a committed session, only newly created hard links with no current
-	 * authoritative database reference may be removed. Reused files remain untouched.
-	 * Recovery holds the shared publication lock and a SQLite writer reservation.
+	 * authoritative database reference may be removed. Reused files remain
+	 * untouched. Recovery holds the shared publication lock and a SQLite writer
+	 * reservation.
 	 *
 	 * <p>
 	 * Any changed, replaced or unexplained destination causes recovery to fail
@@ -283,6 +284,7 @@ public final class WorkAssignmentPublicationJournal {
 				if (committed || references.contains(destination)) {
 					throw new IOException("Committed assignment source file is missing: " + file.managedPath());
 				}
+
 				// An earlier uncommitted publisher may already have removed a reused
 				// file. With no committed reference, only private evidence remains.
 				continue;

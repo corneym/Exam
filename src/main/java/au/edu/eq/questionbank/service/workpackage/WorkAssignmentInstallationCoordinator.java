@@ -33,8 +33,8 @@ import au.edu.eq.questionbank.service.workpackage.WorkAssignmentArchiveStager.St
  * insertion and immutable session registration.
  *
  * <p>
- * A shared data-root lock serialises both Subject and assignment publication and
- * recovery. A committed assignment session is the durable completion marker
+ * A shared data-root lock serialises both Subject and assignment publication
+ * and recovery. A committed assignment session is the durable completion marker
  * used by the publication journal.
  *
  * <p>
@@ -150,8 +150,7 @@ public final class WorkAssignmentInstallationCoordinator {
 	}
 
 	private Result installNew(Path source, WorkAssignmentPackageInspector.Inspection original,
-			ManagedAssetPublicationLock lock)
-			throws IOException, SQLException {
+			ManagedAssetPublicationLock lock) throws IOException, SQLException {
 		StagedAssignment staged = stager.stage(source);
 		UUID packageId = original.manifest().packageId();
 		UUID assignmentId = original.manifest().assignmentId();

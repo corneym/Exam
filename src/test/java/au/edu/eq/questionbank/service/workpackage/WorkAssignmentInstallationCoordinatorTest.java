@@ -58,6 +58,7 @@ class WorkAssignmentInstallationCoordinatorTest {
 		Fixture fixture = fixture();
 		Path unrelated = preserveUnrelatedSubject(fixture);
 		StagedPackage interrupted = publishSubjectWithoutCommit(fixture);
+
 		// Recreate the pre-correction sequence: the old installer only inspected its
 		// own journal root. Temporarily hide Subject evidence from the new barrier.
 		Path saved = directory.resolve("pre-upgrade-subject-evidence");
@@ -91,6 +92,7 @@ class WorkAssignmentInstallationCoordinatorTest {
 			journal.prepare(extraction);
 			journal.publishFiles(staged.inspection().manifest().packageId());
 		}
+
 		// Preserve publication ownership evidence while a real installation commits
 		// the graph and immutable session. Restoring it simulates interrupted cleanup.
 		Path saved = directory.resolve("committed-assignment-evidence");
@@ -114,8 +116,8 @@ class WorkAssignmentInstallationCoordinatorTest {
 			assertThrows(IOException.class,
 					() -> new WorkAssignmentInstallationCoordinator(fixture.contributor()).install(fixture.archive()));
 			assertThrows(IOException.class, () -> recoverAll(fixture));
-			assertThrows(IOException.class, () -> new SubjectImportPublicationJournal(fixture.contributor())
-					.recover(interrupted.packageId()));
+			assertThrows(IOException.class,
+					() -> new SubjectImportPublicationJournal(fixture.contributor()).recover(interrupted.packageId()));
 		}
 		assertTrue(Files.exists(interrupted.directory()));
 		assertEquals(0, count(fixture.contributorDatabase(), "SELECT COUNT(*) FROM contributor_assignment_sessions"));
@@ -127,6 +129,7 @@ class WorkAssignmentInstallationCoordinatorTest {
 	void bothUncommittedJournalsRecoverWhenAssignmentHadReusedSubjectFiles() throws Exception {
 		Fixture fixture = fixture();
 		StagedPackage subject = publishSubjectWithoutCommit(fixture);
+
 		// Model two pending journals left by the former separate-lock protocol.
 		var assignment = new WorkAssignmentArchiveStager(fixture.contributor()).stage(fixture.archive());
 		var extraction = new WorkAssignmentAssetExtractor(fixture.contributor()).extract(assignment);
@@ -193,8 +196,8 @@ class WorkAssignmentInstallationCoordinatorTest {
 			String hash = new SourceDocumentHashService().sha256(source);
 			Path copy = Files.copy(source, stage.resolve("assets/%05d.bin".formatted(assets.size())));
 			String managed = new ManagedDataLayout(fixture.source().dataRoot()).relativePath(source);
-			assets.add(new StagedAsset(managed, "assets/sha256/" + hash.substring(0, 2) + "/" + hash + ".pdf",
-					copy, hash, Files.size(copy), AssetKind.MANAGED_FILE));
+			assets.add(new StagedAsset(managed, "assets/sha256/" + hash.substring(0, 2) + "/" + hash + ".pdf", copy,
+					hash, Files.size(copy), AssetKind.MANAGED_FILE));
 		}
 		var staged = new StagedPackage(manifest.packageId(), "b".repeat(64), stage, archive, assets);
 		try (var lock = ManagedAssetPublicationLock.acquire(fixture.contributor().dataRoot())) {
@@ -241,8 +244,10 @@ class WorkAssignmentInstallationCoordinatorTest {
 		assertEquals(1, count(fixture.contributorDatabase(), "SELECT COUNT(*) FROM subjects"));
 		assertEquals(0, count(fixture.contributorDatabase(), "SELECT COUNT(*) FROM exams"));
 		assertEquals(0, count(fixture.contributorDatabase(), "SELECT COUNT(*) FROM contributor_assignment_sessions"));
-		Path question = fixture.contributor().dataRoot().resolve("subjects/Biology/exams/QCAA/2025/External Assessment/questions.pdf");
-		Path answer = fixture.contributor().dataRoot().resolve("subjects/Biology/exams/QCAA/2025/External Assessment/answers.pdf");
+		Path question = fixture.contributor().dataRoot()
+				.resolve("subjects/Biology/exams/QCAA/2025/External Assessment/questions.pdf");
+		Path answer = fixture.contributor().dataRoot()
+				.resolve("subjects/Biology/exams/QCAA/2025/External Assessment/answers.pdf");
 
 		// Both files were newly published before the database
 		// conflict. Recovery must remove both owned hard links.
@@ -298,8 +303,10 @@ class WorkAssignmentInstallationCoordinatorTest {
 		var sessions = new SqliteContributorAssignmentSessionRepository(fixture.contributorDatabase());
 		assertTrue(sessions.find(fixture.assignmentId()).isPresent());
 		assertTrue(sessions.active().isPresent());
-		Path question = fixture.contributor().dataRoot().resolve("subjects/Biology/exams/QCAA/2025/External Assessment/questions.pdf");
-		Path answer = fixture.contributor().dataRoot().resolve("subjects/Biology/exams/QCAA/2025/External Assessment/answers.pdf");
+		Path question = fixture.contributor().dataRoot()
+				.resolve("subjects/Biology/exams/QCAA/2025/External Assessment/questions.pdf");
+		Path answer = fixture.contributor().dataRoot()
+				.resolve("subjects/Biology/exams/QCAA/2025/External Assessment/answers.pdf");
 		assertArrayEquals(Files.readAllBytes(fixture.sourceQuestionPdf()), Files.readAllBytes(question));
 		assertArrayEquals(Files.readAllBytes(fixture.sourceAnswerPdf()), Files.readAllBytes(answer));
 
@@ -440,7 +447,8 @@ class WorkAssignmentInstallationCoordinatorTest {
 		SqliteDatabase contributorDatabase = new SqliteDatabase(contributor.databasePath());
 		sourceDatabase.initialiseSchema();
 		contributorDatabase.initialiseSchema();
-		Path questionPdf = source.dataRoot().resolve("subjects/Biology/exams/QCAA/2025/External Assessment/questions.pdf");
+		Path questionPdf = source.dataRoot()
+				.resolve("subjects/Biology/exams/QCAA/2025/External Assessment/questions.pdf");
 		Path answerPdf = source.dataRoot().resolve("subjects/Biology/exams/QCAA/2025/External Assessment/answers.pdf");
 		Files.createDirectories(questionPdf.getParent());
 		Files.writeString(questionPdf, "Question PDF test content");
@@ -475,8 +483,9 @@ class WorkAssignmentInstallationCoordinatorTest {
 				    (51, 'subjects/Biology/exams/QCAA/2025/External Assessment/questions.pdf'),
 				    (52, 'subjects/Biology/exams/QCAA/2025/External Assessment/answers.pdf')
 				""");
-		try (var connection = sourceDatabase.openConnection(); var statement = connection.prepareStatement(
-				"UPDATE source_documents SET content_sha256 = ? WHERE id = ?")) {
+		try (var connection = sourceDatabase.openConnection();
+				var statement = connection
+						.prepareStatement("UPDATE source_documents SET content_sha256 = ? WHERE id = ?")) {
 			statement.setString(1, new SourceDocumentHashService().sha256(questionPdf));
 			statement.setLong(2, 51);
 			statement.executeUpdate();

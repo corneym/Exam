@@ -32,6 +32,7 @@ final class ManagedAssetRecoveryReferences implements AutoCloseable {
 		try {
 			connection.setAutoCommit(false);
 			try (var statement = connection.createStatement()) {
+
 				// Reserve before reading: no other operation can commit a new reference
 				// between this inventory and the final filesystem deletion.
 				if (statement.executeUpdate("UPDATE installation_identity SET installation_id = installation_id "
@@ -71,8 +72,8 @@ final class ManagedAssetRecoveryReferences implements AutoCloseable {
 					references.add(layout.resolve(rows.getString(1)));
 				}
 			}
-			try (var rows = statement.executeQuery(
-					"SELECT source_pdf_path FROM syllabus_versions WHERE source_pdf_path IS NOT NULL")) {
+			try (var rows = statement
+					.executeQuery("SELECT source_pdf_path FROM syllabus_versions WHERE source_pdf_path IS NOT NULL")) {
 				while (rows.next()) {
 					references.add(layout.resolve(rows.getString(1)));
 				}
@@ -95,6 +96,7 @@ final class ManagedAssetRecoveryReferences implements AutoCloseable {
 					throw new IOException("Cannot establish ownership through an indirect managed path: " + current);
 				}
 			} catch (NoSuchFileException absent) {
+
 				// A missing ordinary component cannot alias another managed destination.
 				return;
 			}

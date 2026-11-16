@@ -38,13 +38,15 @@ import au.edu.eq.questionbank.service.workpackage.SubjectImportBackupGate.Certif
  * <p>
  * The journal is made durable before any managed destination is created. Files
  * are published as hard links to verified staged files, atomically and without
- * a replace option. The package ledger identifies completed imports; authoritative
- * database references also protect files adopted by later operations.
+ * a replace option. The package ledger identifies completed imports;
+ * authoritative database references also protect files adopted by later
+ * operations.
  *
  * <p>
- * Publication requires the shared data-root lock. Recovery acquires that lock and
- * a SQLite writer reservation; close or roll back failed transactions first. It is
- * deliberately fail-closed if staged evidence or published bytes differ.
+ * Publication requires the shared data-root lock. Recovery acquires that lock
+ * and a SQLite writer reservation; close or roll back failed transactions
+ * first. It is deliberately fail-closed if staged evidence or published bytes
+ * differ.
  */
 public final class SubjectImportPublicationJournal {
 
@@ -191,6 +193,7 @@ public final class SubjectImportPublicationJournal {
 		}
 		boolean applied = packageEntry.isPresent() && packageEntry.get().outcome() == PackageOutcome.APPLIED;
 		List<FileIntent> removable = new ArrayList<>();
+
 		// Validate the complete inventory before deleting anything. References remain
 		// stable until recovery ends, including references committed by other imports.
 		for (FileIntent file : intent.files()) {

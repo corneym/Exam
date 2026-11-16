@@ -12,7 +12,9 @@ import java.util.UUID;
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ManagedAssetPublicationLock;
 
-/** Resolves both package journal generations before either importer may proceed. */
+/**
+ * Resolves both package journal generations before either importer may proceed.
+ */
 final class ManagedAssetPublicationRecovery {
 
 	private ManagedAssetPublicationRecovery() {
@@ -57,6 +59,7 @@ final class ManagedAssetPublicationRecovery {
 			throw new IOException("Unknown publication staging directory: " + entry, failure);
 		}
 		if (!Files.exists(entry.resolve("publication.properties"), LinkOption.NOFOLLOW_LINKS)) {
+
 			// Publication requires a durable journal. A stage without one is either
 			// unpublished or the remainder of already-resolved staging cleanup.
 			discardPrivateStage(entry);
