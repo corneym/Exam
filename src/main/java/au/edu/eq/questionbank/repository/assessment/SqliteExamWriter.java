@@ -1039,6 +1039,44 @@ public final class SqliteExamWriter {
 	}
 
 	/**
+	 * Requires ordinary coordinator editing mode before changing Exam structure or
+	 * managed Exam assets.
+	 *
+	 * <p>
+	 * This is an early service-boundary check for operations that may alter managed
+	 * files before their final SQLite write. Persistent assignment triggers
+	 * independently reject prohibited database changes.
+	 *
+	 * <p>
+	 * The check does not acquire a long-lived filesystem or database lock. Callers
+	 * must retain rollback handling for an assignment selection that changes during
+	 * a multi-step operation.
+	 *
+	 * @throws SQLException          if contributor selection cannot be read
+	 * @throws IllegalStateException if an assignment is selected
+	 */
+	public void requireCoordinatorStructureEdit() throws SQLException {
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT assignment_id
+						FROM contributor_assignment_selection
+						WHERE singleton_id = 1
+						""");
+				ResultSet result = statement.executeQuery()) {
+			if (!result.next()) {
+				throw new SQLException("Contributor assignment selection is missing");
+			}
+			if (result.getString("assignment_id") != null) {
+				throw new IllegalStateException("Coordinator-owned Exam and source assets "
+						+ "cannot be changed while a contributor " + "assignment is selected");
+			}
+			if (result.next()) {
+				throw new SQLException("Multiple contributor assignment selection rows");
+			}
+		}
+	}
+
+	/**
 	 * Changes an Exam's declared lifecycle state.
 	 *
 	 * A transition to COMPLETE requires explicit applicability-review confirmations

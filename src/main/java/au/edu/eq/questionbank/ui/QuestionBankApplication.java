@@ -149,6 +149,7 @@ import au.edu.eq.questionbank.service.curriculum.CurriculumSourcePdfStore;
 import au.edu.eq.questionbank.service.curriculum.CurriculumWorkbookStore;
 import au.edu.eq.questionbank.service.curriculum.SubtopicMappingEvidenceService;
 import au.edu.eq.questionbank.service.curriculum.TfIdfCurriculumMappingSuggester;
+import au.edu.eq.questionbank.service.document.CoordinatorExamPdfImportService;
 import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
 import au.edu.eq.questionbank.service.legacy.LegacyExamRegistrationService;
 import au.edu.eq.questionbank.service.legacy.LegacyQuestionWorkbookStore;
@@ -2777,8 +2778,8 @@ public class QuestionBankApplication extends Application {
 		// bytes already managed as a Question booklet or another Answer asset.
 		String sourceHash = requireNewManagedPdfContent(sourcePath, writer, "Answer booklet");
 		PdfStore pdfStore = createExamPdfStore(config);
-		Path storedPath = pdfStore.importExamPdf(sourcePath, exam.getSubject().getName(), exam.getProvider().getName(),
-				exam.getYear(), exam.getName());
+		Path storedPath = new CoordinatorExamPdfImportService(pdfStore, writer).importPdf(sourcePath,
+				exam.getSubject().getName(), exam.getProvider().getName(), exam.getYear(), exam.getName());
 		String storedHash = new SourceDocumentHashService().sha256(storedPath);
 		if (!sourceHash.equals(storedHash)) {
 
@@ -2933,8 +2934,8 @@ public class QuestionBankApplication extends Application {
 		SqliteExamWriter writer = new SqliteExamWriter(database);
 		String sourceHash = requireNewManagedPdfContent(sourcePath, writer, "Question booklet");
 		PdfStore pdfStore = createExamPdfStore(config);
-		Path storedPath = pdfStore.importExamPdf(sourcePath, exam.getSubject().getName(), exam.getProvider().getName(),
-				exam.getYear(), exam.getName());
+		Path storedPath = new CoordinatorExamPdfImportService(pdfStore, writer).importPdf(sourcePath,
+				exam.getSubject().getName(), exam.getProvider().getName(), exam.getYear(), exam.getName());
 		String storedHash = new SourceDocumentHashService().sha256(storedPath);
 		if (!sourceHash.equals(storedHash)) {
 			throw new IOException("Question booklet PDF changed while being copied");
