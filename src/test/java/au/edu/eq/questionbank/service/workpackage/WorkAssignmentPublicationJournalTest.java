@@ -57,6 +57,32 @@ class WorkAssignmentPublicationJournalTest {
 	}
 
 	@Test
+	void destinationConflictPreventsAllNewPublication() throws Exception {
+		Fixture fixture = fixture();
+		var extraction = fixture.extraction();
+		var journal = fixture.journal();
+		var packageId = extraction.staged().inspection().manifest().packageId();
+		journal.prepare(extraction);
+		Path question = fixture.config().dataRoot().resolve(WorkAssignmentArchiveFixture.QUESTION_PATH);
+		Path answer = fixture.config().dataRoot().resolve(WorkAssignmentArchiveFixture.ANSWER_PATH);
+
+		// Introduce a conflicting Question PDF after journal
+		// preparation but before publication.
+		Files.createDirectories(question.getParent());
+		Files.writeString(question, "Independent local PDF");
+		assertThrows(IOException.class, () -> journal.publishFiles(packageId));
+
+		// The pre-existing file is preserved.
+		assertEquals("Independent local PDF", Files.readString(question));
+
+		// The valid Answer PDF must not have been published first.
+		assertFalse(Files.exists(answer));
+
+		// Preserve journal evidence for further investigation.
+		assertTrue(Files.isRegularFile(extraction.staged().directory().resolve("publication.properties")));
+	}
+
+	@Test
 	void existingIdenticalFilesSurviveFailedInstallation() throws Exception {
 		Fixture fixture = fixture();
 		Path question = fixture.config().dataRoot().resolve(WorkAssignmentArchiveFixture.QUESTION_PATH);

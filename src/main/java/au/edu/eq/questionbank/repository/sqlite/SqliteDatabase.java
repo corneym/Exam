@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 29;
+	private static final int LATEST_SCHEMA_VERSION = 31;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -780,6 +780,21 @@ public final class SqliteDatabase {
 					SqliteContributorAssignmentSessionTriggers::install);
 			return 29;
 		}
+		if (version == 29) {
+
+			// Version 30 prevents contributor assignment mode from
+			// changing authoritative Subject, Exam or asset metadata.
+			executeMigration(connection, "/db/migration-v29-to-v30.sql", 30,
+					SqliteAssignmentStructureTriggers::install);
+			return 30;
+		}
+		if (version == 30) {
+
+			// Version 31 restricts contributor capture and classification
+			// to the selected Exam and permitted syllabus versions.
+			executeMigration(connection, "/db/migration-v30-to-v31.sql", 31, SqliteAssignmentScopeTriggers::install);
+			return 31;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -1108,6 +1123,18 @@ public final class SqliteDatabase {
 			// Contributor installation records and durable active selection
 			// must be present independently of the coordinator ledger.
 			verifyVersion29ContributorAssignmentSchema(connection);
+		}
+		if (version >= 30) {
+
+			// Verify exact trigger definitions, not merely their names.
+			// A missing or weakened write barrier is a schema failure.
+			SqliteAssignmentStructureTriggers.verify(connection);
+		}
+		if (version >= 31) {
+
+			// Every capture table must retain its assignment-scope
+			// INSERT, UPDATE and DELETE barriers.
+			SqliteAssignmentScopeTriggers.verify(connection);
 		}
 	}
 

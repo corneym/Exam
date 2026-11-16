@@ -179,19 +179,41 @@ public final class WorkAssignmentPublicationJournal {
 	}
 
 	/**
-	 * Publishes new source files without replacing existing files.
+	 * Publishes assignment source files without replacing existing files.
 	 *
 	 * <p>
-	 * Existing files recorded as reusable are reverified, not replaced. New files
-	 * are created as hard links to staged content. A failed publication must be
-	 * followed by recovery after the installation's SQLite transaction has rolled
-	 * back.
+	 * Every staged asset and managed destination is checked before any publication
+	 * begins. This prevents a pre-existing corrupt asset or destination conflict
+	 * from causing partial publication.
+	 *
+	 * <p>
+	 * Files are rechecked during publication because filesystem state may change
+	 * after preflight. Partial publication remains possible after an external
+	 * interruption; the caller must then invoke recovery after rolling back its
+	 * SQLite transaction.
 	 *
 	 * @param packageId validated assignment package identity
-	 * @throws IOException if journal, staged files or destinations are unsafe
+	 * @throws IOException          if journal evidence, staged files, existing
+	 *                              assets or destination paths are unsafe
+	 * @throws NullPointerException if packageId is null
 	 */
 	public void publishFiles(UUID packageId) throws IOException {
 		Intent intent = read(packageId);
+
+		// Phase 1: Verify the entire publication set before creating
+		// any managed directories or files.
+		for (FileIntent file : intent.files()) {
+			requireStagedFile(packageId, file);
+			Path destination = requireDestination(file.managedPath());
+			if (file.reused()) {
+				requireMatchingBytes(destination, file);
+			} else if (Files.exists(destination, LinkOption.NOFOLLOW_LINKS)) {
+				throw new IOException("Assignment cannot replace existing file: " + file.managedPath());
+			}
+		}
+
+		// Phase 2: Publish only after all staged files and
+		// destination decisions have passed preflight.
 		for (FileIntent file : intent.files()) {
 			Path source = requireStagedFile(packageId, file);
 			Path destination = requireDestination(file.managedPath());
@@ -200,13 +222,12 @@ public final class WorkAssignmentPublicationJournal {
 				continue;
 			}
 			createSafeParents(destination.getParent());
+
+			// Repeat the existence check immediately before creation.
+			// CREATE_LINK must never replace an existing destination.
 			if (Files.exists(destination, LinkOption.NOFOLLOW_LINKS)) {
 				throw new IOException("Assignment cannot replace existing file: " + file.managedPath());
 			}
-
-			// Hard-link creation is atomic and fails if the target
-			// already exists. The staged source remains available
-			// as proof of ownership during recovery.
 			Files.createLink(destination, source);
 		}
 	}

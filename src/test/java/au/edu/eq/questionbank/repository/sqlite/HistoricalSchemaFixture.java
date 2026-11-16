@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.repository.sqlite;
 
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -17,6 +18,21 @@ import java.util.List;
 public final class HistoricalSchemaFixture {
 
 	private HistoricalSchemaFixture() {
+	}
+
+	public static void removeAssignmentGuardObjects(Statement statement) throws SQLException {
+		if (statement == null) {
+			throw new NullPointerException("statement");
+		}
+		removeAssignmentScopeObjects(statement);
+		dropAssignmentTriggers(statement, "trg_contributor_structure_*");
+	}
+
+	public static void removeAssignmentScopeObjects(Statement statement) throws SQLException {
+		if (statement == null) {
+			throw new NullPointerException("statement");
+		}
+		dropAssignmentTriggers(statement, "trg_contributor_scope_*");
 	}
 
 	/**
@@ -242,8 +258,35 @@ public final class HistoricalSchemaFixture {
 			throw new NullPointerException("statement");
 		}
 
-		// Delete the referencing selection table before its parent.
+		// Later schema versions install guards on earlier tables.
+		// Remove those guards before reconstructing version 28.
+		removeAssignmentGuardObjects(statement);
 		statement.execute("DROP TABLE IF EXISTS contributor_assignment_selection");
 		statement.execute("DROP TABLE IF EXISTS contributor_assignment_sessions");
+	}
+
+	private static void dropAssignmentTriggers(Statement statement, String pattern) throws SQLException {
+		List<String> names = new ArrayList<>();
+		try (PreparedStatement lookup = statement.getConnection().prepareStatement("""
+				SELECT name
+				FROM sqlite_master
+				WHERE type = 'trigger'
+				  AND name GLOB ?
+				ORDER BY name
+				""")) {
+			lookup.setString(1, pattern);
+			try (ResultSet result = lookup.executeQuery()) {
+				while (result.next()) {
+					String name = result.getString(1);
+					if (!name.matches("trg_contributor_(structure|scope)_[a-z_]+")) {
+						throw new SQLException("Unexpected contributor trigger: " + name);
+					}
+					names.add(name);
+				}
+			}
+		}
+		for (String name : names) {
+			statement.execute("DROP TRIGGER \"" + name + "\"");
+		}
 	}
 }

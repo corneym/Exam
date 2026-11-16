@@ -21,10 +21,11 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 	void createsLatestSchemaWithProtectedCoordinatorLedger() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("ledger-schema.db"));
 		database.initialiseSchema();
-		assertEquals(29, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		try (Connection connection = database.openConnection()) {
 			SqliteExamWorkAssignmentLedgerTriggers.verify(connection);
 			SqliteContributorAssignmentSessionTriggers.verify(connection);
+			SqliteAssignmentStructureTriggers.verify(connection);
 		}
 	}
 
@@ -46,19 +47,15 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 	void migratesHistoricalVersion27FixtureThroughLatestSchema() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("version-27-upgrade.db"));
 		database.initialiseSchema();
-
-		// Reconstruct genuine v27 storage in a disposable database.
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-			try {
-				try (Statement statement = connection.createStatement()) {
-					HistoricalSchemaFixture.removeVersion28Objects(statement);
-					statement.execute("""
-							UPDATE schema_version
-							SET version = 27
-							WHERE version = 29
-							""");
-				}
+			try (Statement statement = connection.createStatement()) {
+				HistoricalSchemaFixture.removeVersion28Objects(statement);
+				statement.execute("""
+						UPDATE schema_version
+						SET version = 27
+						WHERE version = %d
+						""".formatted(SqliteDatabase.latestSchemaVersion()));
 				connection.commit();
 			} catch (SQLException failure) {
 				connection.rollback();
@@ -72,6 +69,7 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 		try (Connection connection = database.openConnection()) {
 			SqliteExamWorkAssignmentLedgerTriggers.verify(connection);
 			SqliteContributorAssignmentSessionTriggers.verify(connection);
+			SqliteAssignmentStructureTriggers.verify(connection);
 		}
 		database.verifySchema();
 		database.verifyIntegrity();

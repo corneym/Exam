@@ -46,15 +46,13 @@ class SqliteContributorAssignmentSessionSchemaTest {
 		database.initialiseSchema();
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-			try {
-				try (Statement statement = connection.createStatement()) {
-					HistoricalSchemaFixture.removeVersion29Objects(statement);
-					statement.execute("""
-							UPDATE schema_version
-							SET version = 28
-							WHERE version = 29
-							""");
-				}
+			try (Statement statement = connection.createStatement()) {
+				HistoricalSchemaFixture.removeVersion29Objects(statement);
+				statement.execute("""
+						UPDATE schema_version
+						SET version = 28
+						WHERE version = %d
+						""".formatted(SqliteDatabase.latestSchemaVersion()));
 				connection.commit();
 			} catch (SQLException failure) {
 				connection.rollback();
@@ -64,12 +62,13 @@ class SqliteContributorAssignmentSessionSchemaTest {
 		assertEquals(28, database.schemaVersion());
 		database.verifySchema();
 		database.initialiseSchema();
-		assertEquals(29, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		database.verifySchema();
 		database.verifyIntegrity();
 		try (Connection connection = database.openConnection()) {
 			assertNull(activeAssignment(connection));
 			SqliteContributorAssignmentSessionTriggers.verify(connection);
+			SqliteAssignmentStructureTriggers.verify(connection);
 		}
 	}
 
