@@ -18,12 +18,13 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 	Path directory;
 
 	@Test
-	void createsVersion28WithProtectedLedger() throws Exception {
+	void createsLatestSchemaWithProtectedCoordinatorLedger() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("ledger-schema.db"));
 		database.initialiseSchema();
-		assertEquals(28, database.schemaVersion());
+		assertEquals(29, database.schemaVersion());
 		try (Connection connection = database.openConnection()) {
 			SqliteExamWorkAssignmentLedgerTriggers.verify(connection);
+			SqliteContributorAssignmentSessionTriggers.verify(connection);
 		}
 	}
 
@@ -42,13 +43,11 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 	}
 
 	@Test
-	void migratesHistoricalVersion27FixtureToVersion28() throws Exception {
-		SqliteDatabase database = new SqliteDatabase(directory.resolve("version-27-to-28.db"));
+	void migratesHistoricalVersion27FixtureThroughLatestSchema() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(directory.resolve("version-27-upgrade.db"));
 		database.initialiseSchema();
 
-		// Reconstruct a genuine version-27 schema in a disposable
-		// database. Merely changing schema_version would leave the
-		// version-28 tables present and invalidate the migration test.
+		// Reconstruct genuine v27 storage in a disposable database.
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
@@ -57,7 +56,7 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 					statement.execute("""
 							UPDATE schema_version
 							SET version = 27
-							WHERE version = 28
+							WHERE version = 29
 							""");
 				}
 				connection.commit();
@@ -67,18 +66,15 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 			}
 		}
 		assertEquals(27, database.schemaVersion());
-
-		// The reconstructed v27 database must be internally valid.
 		database.verifySchema();
-
-		// Exercise the production migration and its Java-installed
-		// protection triggers.
 		database.initialiseSchema();
 		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		try (Connection connection = database.openConnection()) {
 			SqliteExamWorkAssignmentLedgerTriggers.verify(connection);
+			SqliteContributorAssignmentSessionTriggers.verify(connection);
 		}
 		database.verifySchema();
+		database.verifyIntegrity();
 	}
 
 	@Test

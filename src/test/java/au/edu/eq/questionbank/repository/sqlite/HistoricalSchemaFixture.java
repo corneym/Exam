@@ -208,16 +208,11 @@ public final class HistoricalSchemaFixture {
 	}
 
 	/**
-	 * Removes the assignment-ledger structures introduced in version 28.
+	 * Removes assignment-ledger structures introduced in version 28, after removing
+	 * newer contributor-session structures.
 	 *
 	 * <p>
-	 * The dependent lifecycle table is dropped before the immutable issuance table.
-	 * SQLite automatically drops triggers attached to each table when that table is
-	 * dropped.
-	 *
-	 * <p>
-	 * This operation is restricted to disposable historical test fixtures and must
-	 * never be used on production data.
+	 * Only for disposable historical migration fixtures.
 	 *
 	 * @param statement statement operating on the fixture connection
 	 * @throws SQLException if cleanup fails
@@ -226,7 +221,29 @@ public final class HistoricalSchemaFixture {
 		if (statement == null) {
 			throw new NullPointerException("statement");
 		}
+		removeVersion29Objects(statement);
 		statement.execute("DROP TABLE IF EXISTS exam_work_assignment_states");
 		statement.execute("DROP TABLE IF EXISTS exam_work_assignments");
+	}
+
+	/**
+	 * Removes contributor assignment-session structures introduced in schema
+	 * version 29.
+	 *
+	 * <p>
+	 * Only for disposable historical migration fixtures. This method must never be
+	 * used on production data.
+	 *
+	 * @param statement statement operating on the fixture connection
+	 * @throws SQLException if cleanup fails
+	 */
+	public static void removeVersion29Objects(Statement statement) throws SQLException {
+		if (statement == null) {
+			throw new NullPointerException("statement");
+		}
+
+		// Delete the referencing selection table before its parent.
+		statement.execute("DROP TABLE IF EXISTS contributor_assignment_selection");
+		statement.execute("DROP TABLE IF EXISTS contributor_assignment_sessions");
 	}
 }
