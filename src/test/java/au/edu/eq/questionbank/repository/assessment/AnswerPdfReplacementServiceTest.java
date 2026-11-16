@@ -4,11 +4,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -35,6 +37,37 @@ class AnswerPdfReplacementServiceTest {
 
 	@TempDir
 	Path tempDirectory;
+
+	@Test
+	void replacementCannotAdoptAnIdenticalUnresolvedPublication() throws Exception {
+		Path dataRoot = Files.createDirectories(tempDirectory.resolve("data"));
+		ManagedDataLayout layout = new ManagedDataLayout(dataRoot);
+		SqliteDatabase database = new SqliteDatabase(dataRoot.resolve("questionbank.db"));
+		database.initialiseSchema();
+		Subject subject = new SqliteCurriculumWriter(database).insertSubject("Biology");
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		PdfStore store = new PdfStore(layout);
+		Path examDirectory = Files.createDirectories(layout.examDirectory("Biology", "QCAA", 2025, "External Assessment"));
+		Path questions = Files.writeString(examDirectory.resolve("questions.pdf"), "Questions");
+		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(subject, "QCAA", 2025,
+				"External Assessment", "Paper 1", store.relativePath(questions));
+		Path old = Files.writeString(examDirectory.resolve("old.pdf"), "Original answers");
+		var hashes = new SourceDocumentHashService();
+		var writer = new SqliteAnswerWriter(database, examWriter);
+		AnswerFile original = writer.findOrCreateAnswerFile(booklet, "old.pdf", store.relativePath(old), hashes.sha256(old));
+		Path incoming = Files.writeString(tempDirectory.resolve("answers.pdf"), "Correct answers");
+		Path published = Files.copy(incoming, examDirectory.resolve("answers.pdf"));
+		Path pending = Files.createDirectories(dataRoot.resolve(".subject-import-staging").resolve(UUID.randomUUID().toString()));
+		var service = new AnswerPdfReplacementService(database, layout, dataRoot.resolve("pdf"));
+		assertThrows(java.io.IOException.class, () -> service.replace(booklet, incoming));
+		assertEquals(original.getId(), writer.findAnswerFile(booklet).getId());
+		assertTrue(examWriter.findSourceDocumentsByHash(hashes.sha256(incoming)).isEmpty());
+		assertEquals(-1, Files.mismatch(incoming, published));
+		assertTrue(Files.exists(old));
+		Files.delete(pending);
+		assertTrue(service.replace(booklet, incoming).changed());
+		assertEquals(hashes.sha256(published), writer.findAnswerFile(booklet).getSourceDocument().getContentSha256());
+	}
 
 	@Test
 	void identicalReplacementBackfillsMissingHashWithoutInvalidatingAnswerRegions() throws Exception {

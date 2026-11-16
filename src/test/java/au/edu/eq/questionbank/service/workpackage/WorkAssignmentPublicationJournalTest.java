@@ -23,6 +23,46 @@ class WorkAssignmentPublicationJournalTest {
 	Path directory;
 
 	@Test
+	void committedCurriculumReferenceProtectsAnOtherwiseUncommittedPublication() throws Exception {
+		Fixture fixture = fixture();
+		var journal = fixture.journal();
+		var extraction = fixture.extraction();
+		var packageId = extraction.staged().inspection().manifest().packageId();
+		journal.prepare(extraction);
+		journal.publishFiles(packageId);
+		Path question = fixture.config().dataRoot().resolve(WorkAssignmentArchiveFixture.QUESTION_PATH);
+		try (var connection = fixture.database().openConnection(); var statement = connection.createStatement()) {
+			statement.execute("INSERT INTO subjects (id, subject_name) VALUES (1, 'Biology')");
+			statement.execute("INSERT INTO syllabus_versions (id, subject_id, syllabus_name, is_current, source_pdf_path) "
+					+ "VALUES (1, 1, '2025', 1, '" + WorkAssignmentArchiveFixture.QUESTION_PATH + "')");
+		}
+		assertFalse(journal.recover(packageId));
+		assertArrayEquals(WorkAssignmentArchiveFixture.QUESTION_BYTES, Files.readAllBytes(question));
+		assertFalse(Files.exists(fixture.config().dataRoot().resolve(WorkAssignmentArchiveFixture.ANSWER_PATH)));
+		assertFalse(Files.exists(extraction.staged().directory()));
+	}
+
+	@Test
+	void interruptedRollbackCanFinishAfterOnlyOnePublishedFileWasRemoved() throws Exception {
+		Fixture fixture = fixture();
+		var extraction = fixture.extraction();
+		var packageId = extraction.staged().inspection().manifest().packageId();
+		fixture.journal().prepare(extraction);
+		fixture.journal().publishFiles(packageId);
+		Path question = fixture.config().dataRoot().resolve(WorkAssignmentArchiveFixture.QUESTION_PATH);
+		Path answer = fixture.config().dataRoot().resolve(WorkAssignmentArchiveFixture.ANSWER_PATH);
+		Files.delete(question);
+		new SubjectImportCoordinator(fixture.config())
+				.recoverPending(fixture.config().dataRoot().resolve(".subject-import-staging"));
+		assertFalse(Files.exists(question));
+		assertFalse(Files.exists(answer));
+		assertFalse(Files.exists(extraction.staged().directory()));
+		new SubjectImportCoordinator(fixture.config())
+				.recoverPending(fixture.config().dataRoot().resolve(".subject-import-staging"));
+		fixture.database().verifyIntegrity();
+	}
+
+	@Test
 	void changedDestinationIsNeverDeletedDuringRecovery() throws Exception {
 		Fixture fixture = fixture();
 		var extraction = fixture.extraction();

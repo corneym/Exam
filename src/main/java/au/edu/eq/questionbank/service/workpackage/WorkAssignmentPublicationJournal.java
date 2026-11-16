@@ -25,6 +25,7 @@ import java.util.UUID;
 import java.util.stream.Stream;
 
 import au.edu.eq.questionbank.ApplicationConfig;
+import au.edu.eq.questionbank.ManagedAssetPublicationLock;
 import au.edu.eq.questionbank.ApplicationVersion;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
@@ -237,8 +238,9 @@ public final class WorkAssignmentPublicationJournal {
 	 *
 	 * <p>
 	 * A committed matching assignment session preserves all published files.
-	 * Without a committed session, only newly created hard links may be removed.
-	 * Reused files remain untouched in both cases.
+	 * Without a committed session, only newly created hard links with no current
+	 * authoritative database reference may be removed. Reused files remain untouched.
+	 * Recovery holds the shared publication lock and a SQLite writer reservation.
 	 *
 	 * <p>
 	 * Any changed, replaced or unexplained destination causes recovery to fail
@@ -250,6 +252,19 @@ public final class WorkAssignmentPublicationJournal {
 	 * @throws SQLException if committed-session lookup fails
 	 */
 	public boolean recover(UUID packageId) throws IOException, SQLException {
+		try (var lock = ManagedAssetPublicationLock.acquire(config.dataRoot())) {
+			return recover(packageId, lock);
+		}
+	}
+
+	boolean recover(UUID packageId, ManagedAssetPublicationLock lock) throws IOException, SQLException {
+		try (var references = new ManagedAssetRecoveryReferences(config, lock)) {
+			return recoverOwnedFiles(packageId, references);
+		}
+	}
+
+	private boolean recoverOwnedFiles(UUID packageId, ManagedAssetRecoveryReferences references)
+			throws IOException, SQLException {
 		Intent intent = read(packageId);
 		var session = new SqliteContributorAssignmentSessionRepository(new SqliteDatabase(config.databasePath()))
 				.find(intent.assignmentId());
@@ -264,22 +279,23 @@ public final class WorkAssignmentPublicationJournal {
 		for (FileIntent file : intent.files()) {
 			Path source = requireStagedFile(packageId, file);
 			Path destination = requireDestination(file.managedPath());
-			if (file.reused()) {
-				requireMatchingBytes(destination, file);
-				continue;
-			}
 			if (!Files.exists(destination, LinkOption.NOFOLLOW_LINKS)) {
-				if (committed) {
+				if (committed || references.contains(destination)) {
 					throw new IOException("Committed assignment source file is missing: " + file.managedPath());
 				}
+				// An earlier uncommitted publisher may already have removed a reused
+				// file. With no committed reference, only private evidence remains.
 				continue;
 			}
 			requireMatchingBytes(destination, file);
+			if (file.reused()) {
+				continue;
+			}
 			if (!Files.isSameFile(source, destination)) {
 				throw new IOException("Assignment publication file is no longer " + "owned by its staging evidence: "
 						+ file.managedPath());
 			}
-			if (!committed) {
+			if (!committed && !references.contains(destination)) {
 				created.add(destination);
 			}
 		}
@@ -289,6 +305,7 @@ public final class WorkAssignmentPublicationJournal {
 						.filter(file -> requireDestinationUnchecked(file.managedPath()).equals(destination)).findFirst()
 						.orElseThrow();
 				Path source = requireStagedFile(packageId, matching);
+				requireMatchingBytes(destination, matching);
 				if (!Files.isSameFile(source, destination)) {
 					throw new IOException("Assignment file changed during rollback");
 				}

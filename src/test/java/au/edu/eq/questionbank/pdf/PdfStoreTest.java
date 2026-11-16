@@ -7,16 +7,44 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.ManagedDataLayout;
+import au.edu.eq.questionbank.ManagedAssetPublicationLock;
 
 class PdfStoreTest {
 
 	@TempDir
 	Path tempDir;
+
+	@Test
+	void identicalOrdinaryIntakeCannotAdoptUnresolvedPackageFiles() throws Exception {
+		Path source = tempDir.resolve("paper.pdf");
+		Files.writeString(source, "Identical PDF contents");
+		Path root = tempDir.resolve("data");
+		PdfStore store = new PdfStore(new ManagedDataLayout(root));
+		Path destination = store.managedDestination(source, "Biology", "QCAA", 2025, "External Assessment");
+		Files.createDirectories(destination.getParent());
+		Files.copy(source, destination);
+		for (String name : List.of(".subject-import-staging", ".assignment-install-staging")) {
+			Path pending = Files.createDirectories(root.resolve(name).resolve(UUID.randomUUID().toString()));
+			assertThrows(java.io.IOException.class,
+					() -> store.importExamPdf(source, "Biology", "QCAA", 2025, "External Assessment"));
+			assertThrows(java.io.IOException.class,
+					() -> store.importExamPdf(destination, "Biology", "QCAA", 2025, "External Assessment"));
+			assertEquals(-1, Files.mismatch(source, destination));
+			Files.delete(pending);
+		}
+		try (var lock = ManagedAssetPublicationLock.acquire(root)) {
+			assertThrows(java.io.IOException.class,
+					() -> store.importExamPdf(source, "Biology", "QCAA", 2025, "External Assessment"));
+		}
+		assertEquals(destination, store.importExamPdf(source, "Biology", "QCAA", 2025, "External Assessment"));
+	}
 
 	@Test
 	void importsExamPdfIntoSubjectFirstAssessmentHierarchy() throws Exception {

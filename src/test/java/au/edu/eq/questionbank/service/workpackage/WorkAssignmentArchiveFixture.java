@@ -30,8 +30,8 @@ import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest.ScopeLevel;
 
 final class WorkAssignmentArchiveFixture {
 
-	static final String QUESTION_PATH = "subjects/Biology/exams/questions.pdf";
-	static final String ANSWER_PATH = "subjects/Biology/exams/answers.pdf";
+	static final String QUESTION_PATH = "subjects/Biology/exams/QCAA/2025/External Assessment/questions.pdf";
+	static final String ANSWER_PATH = "subjects/Biology/exams/QCAA/2025/External Assessment/answers.pdf";
 	static final byte[] QUESTION_BYTES = "%PDF-1.4\nQuestion fixture\n".getBytes(StandardCharsets.UTF_8);
 	static final byte[] ANSWER_BYTES = "%PDF-1.4\nAnswer fixture\n".getBytes(StandardCharsets.UTF_8);
 
