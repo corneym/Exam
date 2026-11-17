@@ -553,6 +553,85 @@ class SqliteAssignmentScopeTriggersTest {
 		database.verifyIntegrity();
 	}
 
+	@Test
+	void version31SqlResourceInstallsExactScopeTriggers() throws Exception {
+		SqliteDatabase database = fixture(false);
+
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+
+			try {
+				// Reconstruct the database at schema version 29.
+				// Both version 30 and 31 must then be installed
+				// exclusively from their SQL migration resources.
+				try (Statement statement = connection.createStatement()) {
+					HistoricalSchemaFixture.removeAssignmentGuardObjects(statement);
+
+					statement.execute("""
+							UPDATE schema_version
+							SET version = 29
+							WHERE version = 33
+							""");
+				}
+
+				SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v29-to-v30.sql"));
+
+				SqliteAssignmentStructureTriggers.verifyLegacy(connection);
+
+				SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v30-to-v31.sql"));
+
+				// Compare every SQL-installed scope trigger against
+				// the original Java-generated v31 definitions.
+				SqliteAssignmentScopeTriggers.verifyLegacy(connection);
+
+				try (Statement statement = connection.createStatement(); var result = statement.executeQuery("""
+						SELECT COUNT(*)
+						FROM sqlite_master
+						WHERE type = 'trigger'
+						  AND name GLOB 'trg_contributor_scope_*'
+						""")) {
+
+					assertTrue(result.next());
+					assertEquals(39, result.getInt(1));
+				}
+
+				connection.commit();
+
+			} catch (Exception failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
+
+		assertEquals(31, database.schemaVersion());
+		database.verifySchema();
+
+		// Confirm that the SQL-installed triggers enforce the
+		// original assignment boundary.
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+
+			assertBlocked(statement, """
+					UPDATE questions
+					SET booklet_id = 62
+					WHERE id = 1
+					""");
+		}
+
+		// Continue through the existing version 32 and 33 migrations.
+		database.initialiseSchema();
+
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
+
+		database.verifySchema();
+
+		try (Connection connection = database.openConnection()) {
+			SqliteAssignmentStructureTriggers.verify(connection);
+			SqliteAssignmentScopeTriggers.verify(connection);
+		}
+
+		database.verifyIntegrity();
+	}
+
 	private void assertBlocked(Statement statement, String sql) {
 		SQLException failure = assertThrows(SQLException.class, () -> statement.execute(sql));
 		assertTrue(failure.getMessage().contains("Capture or classification is outside selected assignment"),

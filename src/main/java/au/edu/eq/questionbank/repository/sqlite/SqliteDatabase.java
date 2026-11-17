@@ -811,9 +811,9 @@ public final class SqliteDatabase {
 		}
 		if (version == 30) {
 
-			// Version 31 restricts contributor capture and classification
-			// to the selected Exam and permitted syllabus versions.
-			executeMigration(connection, "/db/migration-v30-to-v31.sql", 31, SqliteAssignmentScopeTriggers::install);
+			// Version 31 installs contributor capture and classification
+			// scope guards directly from the versioned SQL migration.
+			executeMigration(connection, "/db/migration-v30-to-v31.sql", 31);
 			return 31;
 		}
 		if (version == 31) {
