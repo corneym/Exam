@@ -1,25 +1,30 @@
 name: CI
 
 on:
-  workflow_call:
-    inputs:
-      source_ref:
-        description: 'Commit SHA to test for a pinned release; defaults to event SHA'
-        required: false
-        type: string
-        default: ''
-  push:
-    branches:
-      - main
-      - 'feature/**'
-      - 'issue/**'
-      - 'refactor/**'
-      - 'chore/**'
-      - 'revision/**'
+workflow_call:
+  inputs:
+    source_ref:
+      description: 'Commit SHA to test for a pinned release; defaults to event SHA'
+      required: false
+      type: string
+      default: ''
 
-  pull_request:
-    branches:
-      - main
+workflow_dispatch:
+
+push:
+  branches:
+    - main
+    - 'feature/**'
+    - 'issue/**'
+    - 'refactor/**'
+    - 'chore/**'
+    - 'revision/**'
+    - 'codex/**'
+
+pull_request:
+  branches:
+    - main
+    - 'revision/**'
 
 permissions:
   contents: read
