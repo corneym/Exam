@@ -8,6 +8,9 @@ on:
         required: false
         type: string
         default: ''
+
+  workflow_dispatch:
+
   push:
     branches:
       - main
@@ -21,6 +24,7 @@ on:
   pull_request:
     branches:
       - main
+      - 'revision/**'
 
 permissions:
   contents: read
