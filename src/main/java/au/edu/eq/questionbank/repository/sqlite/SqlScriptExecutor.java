@@ -54,12 +54,7 @@ final class SqlScriptExecutor {
 		}
 	}
 
-	private static boolean isCommentOnly(String sql) {
-		String withoutComments = sql.replaceAll("(?s)/\\*.*?\\*/", " ").replaceAll("(?m)--[^\\r\\n]*", " ");
-		return withoutComments.isBlank();
-	}
-
-	private static List<String> splitStatements(String sql) throws SQLException {
+	static List<String> splitStatements(String sql) throws SQLException {
 		List<String> statements = new ArrayList<>();
 		StringBuilder current = new StringBuilder();
 		char closingQuote = 0;
@@ -144,5 +139,10 @@ final class SqlScriptExecutor {
 			statements.add(remaining);
 		}
 		return List.copyOf(statements);
+	}
+
+	private static boolean isCommentOnly(String sql) {
+		String withoutComments = sql.replaceAll("(?s)/\\*.*?\\*/", " ").replaceAll("(?m)--[^\\r\\n]*", " ");
+		return withoutComments.isBlank();
 	}
 }

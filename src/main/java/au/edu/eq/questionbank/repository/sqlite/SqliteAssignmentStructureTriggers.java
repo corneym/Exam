@@ -47,11 +47,13 @@ final class SqliteAssignmentStructureTriggers {
 	}
 
 	static void verify(Connection connection) throws SQLException {
-		verify(connection, true);
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_contributor_structure_", "contributor structure",
+				"/db/migration-v29-to-v30.sql", "/db/migration-v31-to-v32.sql");
 	}
 
 	static void verifyLegacy(Connection connection) throws SQLException {
-		verify(connection, false);
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_contributor_structure_", "contributor structure",
+				"/db/migration-v29-to-v30.sql");
 	}
 
 	private static String definition(String table, String operation, boolean pendingMcqEnabled) {
@@ -98,85 +100,5 @@ final class SqliteAssignmentStructureTriggers {
 
 	private static String name(String table, String operation) {
 		return "trg_contributor_structure_" + table + "_" + operation;
-	}
-
-	private static String normalise(String definition) {
-		return Objects.requireNonNull(definition, "definition").replaceAll("\\s+", " ").strip();
-	}
-
-	private static String pendingMcqDefinition() {
-		return """
-				CREATE TRIGGER trg_contributor_structure_exam_booklets_pending_mcq_update
-				BEFORE UPDATE OF pending_mcq_shared_context_id
-				ON exam_booklets
-				WHEN (
-				    SELECT assignment_id
-				    FROM contributor_assignment_selection
-				    WHERE singleton_id = 1
-				    ) IS NOT NULL
-				AND NOT (
-				    EXISTS (
-				        SELECT 1
-				        FROM contributor_assignment_sessions session
-				        JOIN contributor_assignment_selection selected
-				            ON selected.assignment_id = session.assignment_id
-				        WHERE selected.singleton_id = 1
-				          AND session.exam_local_id = OLD.exam_id
-				    )
-				    AND (
-				        NEW.pending_mcq_shared_context_id IS NULL
-				        OR EXISTS (
-				            SELECT 1
-				            FROM shared_question_contexts context
-				            WHERE context.id = NEW.pending_mcq_shared_context_id
-				              AND context.booklet_id = OLD.id
-				        )
-				    )
-				)
-				BEGIN
-				    SELECT RAISE(
-				        ABORT,
-				        'Coordinator-owned structure is read-only in assignment mode'
-				    );
-				END
-				""".strip();
-	}
-
-	private static void verify(Connection connection, boolean pendingMcqEnabled) throws SQLException {
-		Objects.requireNonNull(connection, "connection");
-		for (String table : TABLES) {
-			for (String operation : OPERATIONS) {
-				verifyTrigger(connection, table, name(table, operation),
-						definition(table, operation, pendingMcqEnabled));
-			}
-		}
-		if (pendingMcqEnabled) {
-			verifyTrigger(connection, "exam_booklets", "trg_contributor_structure_exam_booklets_pending_mcq_update",
-					pendingMcqDefinition());
-		}
-	}
-
-	private static void verifyTrigger(Connection connection, String table, String triggerName, String expected)
-			throws SQLException {
-		try (PreparedStatement statement = connection.prepareStatement("""
-				SELECT tbl_name, sql
-				FROM sqlite_master
-				WHERE type = 'trigger'
-				  AND name = ?
-				""")) {
-			statement.setString(1, triggerName);
-			try (ResultSet result = statement.executeQuery()) {
-				if (!result.next()) {
-					throw new SQLException("Missing contributor structure trigger: " + triggerName);
-				}
-				if (!table.equals(result.getString("tbl_name"))
-						|| !normalise(expected).equals(normalise(result.getString("sql")))) {
-					throw new SQLException("Altered contributor structure trigger: " + triggerName);
-				}
-				if (result.next()) {
-					throw new SQLException("Duplicate contributor structure trigger: " + triggerName);
-				}
-			}
-		}
 	}
 }

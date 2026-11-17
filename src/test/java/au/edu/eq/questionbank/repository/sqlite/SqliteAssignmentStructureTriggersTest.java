@@ -18,6 +18,28 @@ class SqliteAssignmentStructureTriggersTest {
 	Path directory;
 
 	@Test
+	void alteredStructureTriggerFailsSchemaVerification() throws Exception {
+		SqliteDatabase database = fixture();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					DROP TRIGGER trg_contributor_structure_exams_update
+					""");
+
+			// A present but weakened trigger must fail integrity verification.
+			statement.execute("""
+					CREATE TRIGGER trg_contributor_structure_exams_update
+					BEFORE UPDATE ON exams
+					BEGIN
+					    SELECT 1;
+					END
+					""");
+		}
+		SQLException failure = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(failure.getMessage()
+				.contains("Altered contributor structure trigger: " + "trg_contributor_structure_exams_update"));
+	}
+
+	@Test
 	void migratesVersion29AndRestoresStructuralGuards() throws Exception {
 		SqliteDatabase database = fixture();
 		try (Connection connection = database.openConnection()) {
@@ -284,6 +306,23 @@ class SqliteAssignmentStructureTriggersTest {
 					""");
 		}
 		database.verifyIntegrity();
+	}
+
+	@Test
+	void unexpectedStructureTriggerFailsSchemaVerification() throws Exception {
+		SqliteDatabase database = fixture();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					CREATE TRIGGER trg_contributor_structure_unexpected_guard
+					BEFORE UPDATE ON subjects
+					BEGIN
+					    SELECT 1;
+					END
+					""");
+		}
+		SQLException failure = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(failure.getMessage()
+				.contains("Unexpected contributor structure trigger: " + "trg_contributor_structure_unexpected_guard"));
 	}
 
 	@Test
