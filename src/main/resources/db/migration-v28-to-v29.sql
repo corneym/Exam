@@ -1,4 +1,3 @@
-
 -- Schema v29: contributor-side assignment installations.
 -- Separate from the coordinator's immutable issuance ledger.
 
@@ -111,6 +110,47 @@ ON contributor_assignment_sessions (
     exam_portable_id,
     installed_at
 );
+
+-- Original version 29 protection of installed assignment evidence and
+-- the singleton active assignment-selection record.
+
+CREATE TRIGGER trg_contributor_assignment_session_no_delete
+BEFORE DELETE ON contributor_assignment_sessions
+BEGIN
+    SELECT RAISE(
+        ABORT,
+        'Installed assignment evidence cannot be deleted'
+    );
+END;
+
+CREATE TRIGGER trg_contributor_assignment_session_no_update
+BEFORE UPDATE ON contributor_assignment_sessions
+BEGIN
+    SELECT RAISE(
+        ABORT,
+        'Installed assignment evidence cannot be modified'
+    );
+END;
+
+CREATE TRIGGER trg_contributor_assignment_selection_no_delete
+BEFORE DELETE ON contributor_assignment_selection
+BEGIN
+    SELECT RAISE(
+        ABORT,
+        'Contributor selection singleton cannot be deleted'
+    );
+END;
+
+CREATE TRIGGER trg_contributor_assignment_selection_id_immutable
+BEFORE UPDATE OF singleton_id
+ON contributor_assignment_selection
+WHEN NEW.singleton_id IS NOT OLD.singleton_id
+BEGIN
+    SELECT RAISE(
+        ABORT,
+        'Contributor selection identity is immutable'
+    );
+END;
 
 UPDATE schema_version
 SET version = 29

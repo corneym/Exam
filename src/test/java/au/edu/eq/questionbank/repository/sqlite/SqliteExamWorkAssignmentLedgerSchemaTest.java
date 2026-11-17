@@ -18,6 +18,30 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 	Path directory;
 
 	@Test
+	void alteredLedgerProtectionTriggerFailsSchemaVerification() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(directory.resolve("altered-ledger-trigger.db"));
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					DROP TRIGGER trg_exam_work_assignments_no_update
+					""");
+
+			// The name and owning table remain correct, but the
+			// replacement no longer protects immutable baseline data.
+			statement.execute("""
+					CREATE TRIGGER trg_exam_work_assignments_no_update
+					BEFORE UPDATE ON exam_work_assignments
+					BEGIN
+					    SELECT 1;
+					END
+					""");
+		}
+		SQLException failure = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(failure.getMessage()
+				.contains("Altered assignment protection trigger: " + "trg_exam_work_assignments_no_update"));
+	}
+
+	@Test
 	void createsLatestSchemaWithProtectedCoordinatorLedger() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("ledger-schema.db"));
 		database.initialiseSchema();
@@ -146,6 +170,27 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 					    '11111111-1111-4111-8111-111111111111'
 					"""));
 		}
+	}
+
+	@Test
+	void unexpectedLedgerProtectionTriggerFailsSchemaVerification() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(directory.resolve("unexpected-ledger-trigger.db"));
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+
+			// Additional triggers in the protected namespace must be
+			// rejected rather than silently accepted.
+			statement.execute("""
+					CREATE TRIGGER trg_exam_work_assignment_unexpected_guard
+					BEFORE UPDATE ON exam_work_assignment_states
+					BEGIN
+					    SELECT 1;
+					END
+					""");
+		}
+		SQLException failure = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(failure.getMessage()
+				.contains("Unexpected assignment protection trigger: " + "trg_exam_work_assignment_unexpected_guard"));
 	}
 
 	@Test

@@ -1,8 +1,6 @@
 package au.edu.eq.questionbank.repository.sqlite;
 
 import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
@@ -82,37 +80,11 @@ final class SqliteExamWorkAssignmentLedgerTriggers {
 	}
 
 	static void verify(Connection connection) throws SQLException {
-		Objects.requireNonNull(connection, "connection");
-		for (String expected : definitions()) {
-			String triggerName = expected.strip().split("\\s+")[2];
-			try (PreparedStatement statement = connection.prepareStatement("""
-					SELECT sql
-					FROM sqlite_master
-					WHERE type = 'trigger'
-					  AND name = ?
-					""")) {
-				statement.setString(1, triggerName);
-				try (ResultSet result = statement.executeQuery()) {
-					if (!result.next()) {
-						throw new SQLException("Missing assignment protection trigger: " + triggerName);
-					}
-					String actual = result.getString("sql");
-
-					// Verify the full definition rather than the name
-					// alone. A same-named permissive replacement must fail.
-					if (actual == null || !normalise(actual).equals(normalise(expected))) {
-						throw new SQLException("Altered assignment protection trigger: " + triggerName);
-					}
-				}
-			}
-		}
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_exam_work_assignment", "assignment protection",
+				"/db/migration-v27-to-v28.sql");
 	}
 
 	private static List<String> definitions() {
 		return List.of(IMMUTABLE_DELETE, IMMUTABLE_UPDATE, INITIAL_STATE, STATE_DELETE, STATE_TRANSITION);
-	}
-
-	private static String normalise(String sql) {
-		return sql.replaceAll("\\s+", " ").strip();
 	}
 }

@@ -795,10 +795,9 @@ public final class SqliteDatabase {
 		}
 		if (version == 28) {
 
-			// Contributor installation records and active selection are
-			// separate from coordinator issuance and lifecycle state.
-			executeMigration(connection, "/db/migration-v28-to-v29.sql", 29,
-					SqliteContributorAssignmentSessionTriggers::install);
+			// Schema v29 installs contributor assignment-session structures
+			// and their four protection triggers in one migration transaction.
+			executeMigration(connection, "/db/migration-v28-to-v29.sql", 29);
 			return 29;
 		}
 		if (version == 29) {

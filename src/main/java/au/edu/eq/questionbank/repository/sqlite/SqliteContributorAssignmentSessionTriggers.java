@@ -1,8 +1,6 @@
 package au.edu.eq.questionbank.repository.sqlite;
 
 import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
@@ -74,36 +72,11 @@ final class SqliteContributorAssignmentSessionTriggers {
 	}
 
 	static void verify(Connection connection) throws SQLException {
-		Objects.requireNonNull(connection, "connection");
-		for (String definition : definitions()) {
-			String triggerName = definition.strip().split("\\s+")[2];
-			try (PreparedStatement statement = connection.prepareStatement("""
-					SELECT sql
-					FROM sqlite_master
-					WHERE type = 'trigger'
-					  AND name = ?
-					""")) {
-				statement.setString(1, triggerName);
-				try (ResultSet result = statement.executeQuery()) {
-					if (!result.next()) {
-						throw new SQLException("Missing contributor assignment trigger: " + triggerName);
-					}
-					String actual = result.getString("sql");
-
-					// A same-named weakened trigger is not acceptable.
-					if (actual == null || !normalise(actual).equals(normalise(definition))) {
-						throw new SQLException("Altered contributor assignment trigger: " + triggerName);
-					}
-				}
-			}
-		}
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_contributor_assignment_", "contributor assignment",
+				"/db/migration-v28-to-v29.sql");
 	}
 
 	private static List<String> definitions() {
 		return List.of(SESSION_NO_DELETE, SESSION_NO_UPDATE, SELECTION_NO_DELETE, SELECTION_ID_IMMUTABLE);
-	}
-
-	private static String normalise(String sql) {
-		return sql.replaceAll("\\s+", " ").strip();
 	}
 }
