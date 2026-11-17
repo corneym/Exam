@@ -20,7 +20,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-) AND EXISTS (
+)
+ AND EXISTS (
     SELECT 1
     FROM curriculum_nodes node
     WHERE node.id = NEW.classification_node_id
@@ -39,7 +40,8 @@ JOIN contributor_assignment_selection selected
 WHERE selected.singleton_id = 1
   AND session.legacy_syllabus_local_id IS NOT NULL
 )
-) AND (NEW.source_question_id IS NULL OR EXISTS (
+)
+ AND (NEW.source_question_id IS NULL OR EXISTS (
     SELECT 1
     FROM source_questions source
     WHERE source.id = NEW.source_question_id
@@ -76,7 +78,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-) AND EXISTS (
+)
+ AND EXISTS (
     SELECT 1
     FROM curriculum_nodes node
     WHERE node.id = OLD.classification_node_id
@@ -95,7 +98,8 @@ JOIN contributor_assignment_selection selected
 WHERE selected.singleton_id = 1
   AND session.legacy_syllabus_local_id IS NOT NULL
 )
-)) AND (EXISTS (
+)
+) AND (EXISTS (
     SELECT 1
     FROM exam_booklets booklet
     WHERE booklet.id = NEW.booklet_id
@@ -105,7 +109,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-) AND EXISTS (
+)
+ AND EXISTS (
     SELECT 1
     FROM curriculum_nodes node
     WHERE node.id = NEW.classification_node_id
@@ -124,7 +129,8 @@ JOIN contributor_assignment_selection selected
 WHERE selected.singleton_id = 1
   AND session.legacy_syllabus_local_id IS NOT NULL
 )
-) AND (NEW.source_question_id IS NULL OR EXISTS (
+)
+ AND (NEW.source_question_id IS NULL OR EXISTS (
     SELECT 1
     FROM source_questions source
     WHERE source.id = NEW.source_question_id
@@ -155,7 +161,8 @@ AND NOT ((NOT EXISTS (
     SELECT 1
     FROM exam_booklets parent
     WHERE parent.id = OLD.booklet_id
-)) OR (EXISTS (
+)
+) OR (EXISTS (
     SELECT 1
     FROM exam_booklets booklet
     WHERE booklet.id = OLD.booklet_id
@@ -165,7 +172,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-) AND EXISTS (
+)
+ AND EXISTS (
     SELECT 1
     FROM curriculum_nodes node
     WHERE node.id = OLD.classification_node_id
@@ -184,7 +192,8 @@ JOIN contributor_assignment_selection selected
 WHERE selected.singleton_id = 1
   AND session.legacy_syllabus_local_id IS NOT NULL
 )
-) AND (OLD.source_question_id IS NULL OR EXISTS (
+)
+ AND (OLD.source_question_id IS NULL OR EXISTS (
     SELECT 1
     FROM source_questions source
     WHERE source.id = OLD.source_question_id
@@ -224,12 +233,14 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-) AND EXISTS (
+)
+ AND EXISTS (
     SELECT 1
     FROM questions question
     WHERE question.id = NEW.question_id
       AND question.booklet_id = NEW.booklet_id
-))
+)
+)
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -256,12 +267,14 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-) AND EXISTS (
+)
+ AND EXISTS (
     SELECT 1
     FROM questions question
     WHERE question.id = OLD.question_id
       AND question.booklet_id = OLD.booklet_id
-)) AND (EXISTS (
+)
+) AND (EXISTS (
     SELECT 1
     FROM questions question
     JOIN exam_booklets booklet
@@ -273,12 +286,14 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-) AND EXISTS (
+)
+ AND EXISTS (
     SELECT 1
     FROM questions question
     WHERE question.id = NEW.question_id
       AND question.booklet_id = NEW.booklet_id
-)))
+)
+))
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -297,7 +312,8 @@ AND NOT ((NOT EXISTS (
     SELECT 1
     FROM questions parent
     WHERE parent.id = OLD.question_id
-)) OR (EXISTS (
+)
+) OR (EXISTS (
     SELECT 1
     FROM questions question
     JOIN exam_booklets booklet
@@ -309,12 +325,14 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-) AND EXISTS (
+)
+ AND EXISTS (
     SELECT 1
     FROM questions question
     WHERE question.id = OLD.question_id
       AND question.booklet_id = OLD.booklet_id
-)))
+)
+))
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -342,7 +360,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-))
+)
+)
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -369,7 +388,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-)) AND (EXISTS (
+)
+) AND (EXISTS (
     SELECT 1
     FROM questions question
     JOIN exam_booklets booklet
@@ -381,7 +401,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-)))
+)
+))
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -400,7 +421,8 @@ AND NOT ((NOT EXISTS (
     SELECT 1
     FROM questions parent
     WHERE parent.id = OLD.question_id
-)) OR (EXISTS (
+)
+) OR (EXISTS (
     SELECT 1
     FROM questions question
     JOIN exam_booklets booklet
@@ -412,7 +434,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-)))
+)
+))
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -440,7 +463,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-))
+)
+)
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -467,7 +491,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-)) AND (EXISTS (
+)
+) AND (EXISTS (
     SELECT 1
     FROM questions question
     JOIN exam_booklets booklet
@@ -479,7 +504,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-)))
+)
+))
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -498,7 +524,8 @@ AND NOT ((NOT EXISTS (
     SELECT 1
     FROM questions parent
     WHERE parent.id = OLD.question_id
-)) OR (EXISTS (
+)
+) OR (EXISTS (
     SELECT 1
     FROM questions question
     JOIN exam_booklets booklet
@@ -510,7 +537,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-)))
+)
+))
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -538,7 +566,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-) AND EXISTS (
+)
+ AND EXISTS (
     SELECT 1
     FROM curriculum_nodes node
     WHERE node.id = NEW.current_curriculum_node_id
@@ -557,7 +586,8 @@ JOIN contributor_assignment_selection selected
 WHERE selected.singleton_id = 1
   AND session.legacy_syllabus_local_id IS NOT NULL
 )
-))
+)
+)
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -584,7 +614,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-) AND EXISTS (
+)
+ AND EXISTS (
     SELECT 1
     FROM curriculum_nodes node
     WHERE node.id = OLD.current_curriculum_node_id
@@ -603,7 +634,8 @@ JOIN contributor_assignment_selection selected
 WHERE selected.singleton_id = 1
   AND session.legacy_syllabus_local_id IS NOT NULL
 )
-)) AND (EXISTS (
+)
+) AND (EXISTS (
     SELECT 1
     FROM questions question
     JOIN exam_booklets booklet
@@ -615,7 +647,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-) AND EXISTS (
+)
+ AND EXISTS (
     SELECT 1
     FROM curriculum_nodes node
     WHERE node.id = NEW.current_curriculum_node_id
@@ -634,7 +667,8 @@ JOIN contributor_assignment_selection selected
 WHERE selected.singleton_id = 1
   AND session.legacy_syllabus_local_id IS NOT NULL
 )
-)))
+)
+))
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -653,7 +687,8 @@ AND NOT ((NOT EXISTS (
     SELECT 1
     FROM questions parent
     WHERE parent.id = OLD.question_id
-)) OR (EXISTS (
+)
+) OR (EXISTS (
     SELECT 1
     FROM questions question
     JOIN exam_booklets booklet
@@ -665,7 +700,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-) AND EXISTS (
+)
+ AND EXISTS (
     SELECT 1
     FROM curriculum_nodes node
     WHERE node.id = OLD.current_curriculum_node_id
@@ -684,7 +720,8 @@ JOIN contributor_assignment_selection selected
 WHERE selected.singleton_id = 1
   AND session.legacy_syllabus_local_id IS NOT NULL
 )
-)))
+)
+))
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -710,7 +747,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-))
+)
+)
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -735,7 +773,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-)) AND (EXISTS (
+)
+) AND (EXISTS (
     SELECT 1
     FROM exam_booklets booklet
     WHERE booklet.id = NEW.booklet_id
@@ -745,7 +784,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-)))
+)
+))
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -764,7 +804,8 @@ AND NOT ((NOT EXISTS (
     SELECT 1
     FROM exam_booklets parent
     WHERE parent.id = OLD.booklet_id
-)) OR (EXISTS (
+)
+) OR (EXISTS (
     SELECT 1
     FROM exam_booklets booklet
     WHERE booklet.id = OLD.booklet_id
@@ -774,7 +815,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-)))
+)
+))
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -800,7 +842,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-))
+)
+)
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -825,7 +868,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-)) AND (EXISTS (
+)
+) AND (EXISTS (
     SELECT 1
     FROM exam_booklets booklet
     WHERE booklet.id = NEW.booklet_id
@@ -835,7 +879,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-)))
+)
+))
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -854,7 +899,8 @@ AND NOT ((NOT EXISTS (
     SELECT 1
     FROM exam_booklets parent
     WHERE parent.id = OLD.booklet_id
-)) OR (EXISTS (
+)
+) OR (EXISTS (
     SELECT 1
     FROM exam_booklets booklet
     WHERE booklet.id = OLD.booklet_id
@@ -864,7 +910,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-)))
+)
+))
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -892,7 +939,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-))
+)
+)
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -919,7 +967,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-)) AND (EXISTS (
+)
+) AND (EXISTS (
     SELECT 1
     FROM shared_question_contexts context
     JOIN exam_booklets booklet
@@ -931,7 +980,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-)))
+)
+))
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -950,7 +1000,8 @@ AND NOT ((NOT EXISTS (
     SELECT 1
     FROM shared_question_contexts parent
     WHERE parent.id = OLD.shared_context_id
-)) OR (EXISTS (
+)
+) OR (EXISTS (
     SELECT 1
     FROM shared_question_contexts context
     JOIN exam_booklets booklet
@@ -962,7 +1013,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-)))
+)
+))
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -990,7 +1042,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-))
+)
+)
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -1017,7 +1070,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-)) AND (EXISTS (
+)
+) AND (EXISTS (
     SELECT 1
     FROM shared_question_contexts context
     JOIN exam_booklets booklet
@@ -1029,7 +1083,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-)))
+)
+))
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -1048,7 +1103,8 @@ AND NOT ((NOT EXISTS (
     SELECT 1
     FROM shared_question_contexts parent
     WHERE parent.id = OLD.shared_context_id
-)) OR (EXISTS (
+)
+) OR (EXISTS (
     SELECT 1
     FROM shared_question_contexts context
     JOIN exam_booklets booklet
@@ -1060,7 +1116,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-)))
+)
+))
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -1088,7 +1145,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-))
+)
+)
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -1115,7 +1173,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-)) AND (EXISTS (
+)
+) AND (EXISTS (
     SELECT 1
     FROM shared_question_contexts context
     JOIN exam_booklets booklet
@@ -1127,7 +1186,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-)))
+)
+))
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -1146,7 +1206,8 @@ AND NOT ((NOT EXISTS (
     SELECT 1
     FROM shared_question_contexts parent
     WHERE parent.id = OLD.shared_context_id
-)) OR (EXISTS (
+)
+) OR (EXISTS (
     SELECT 1
     FROM shared_question_contexts context
     JOIN exam_booklets booklet
@@ -1158,7 +1219,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-)))
+)
+))
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -1186,7 +1248,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-))
+)
+)
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -1213,7 +1276,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-)) AND (EXISTS (
+)
+) AND (EXISTS (
     SELECT 1
     FROM questions question
     JOIN exam_booklets booklet
@@ -1225,7 +1289,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-)))
+)
+))
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -1244,7 +1309,8 @@ AND NOT ((NOT EXISTS (
     SELECT 1
     FROM questions parent
     WHERE parent.id = OLD.question_id
-)) OR (EXISTS (
+)
+) OR (EXISTS (
     SELECT 1
     FROM questions question
     JOIN exam_booklets booklet
@@ -1256,7 +1322,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-)))
+)
+))
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -1286,7 +1353,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-) AND EXISTS (
+)
+ AND EXISTS (
     SELECT 1
     FROM answers answer
     JOIN questions question
@@ -1294,8 +1362,10 @@ WHERE selected.singleton_id = 1
     JOIN exam_booklets booklet
         ON booklet.id = question.booklet_id
     WHERE answer.id = NEW.answer_id
-      AND booklet.answer_file_id = NEW.answer_file_id
-))
+      AND booklet.answer_file_id =
+          NEW.answer_file_id
+)
+)
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -1324,7 +1394,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-) AND EXISTS (
+)
+ AND EXISTS (
     SELECT 1
     FROM answers answer
     JOIN questions question
@@ -1332,8 +1403,10 @@ WHERE selected.singleton_id = 1
     JOIN exam_booklets booklet
         ON booklet.id = question.booklet_id
     WHERE answer.id = OLD.answer_id
-      AND booklet.answer_file_id = OLD.answer_file_id
-)) AND (EXISTS (
+      AND booklet.answer_file_id =
+          OLD.answer_file_id
+)
+) AND (EXISTS (
     SELECT 1
     FROM answers answer
     JOIN questions question
@@ -1347,7 +1420,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-) AND EXISTS (
+)
+ AND EXISTS (
     SELECT 1
     FROM answers answer
     JOIN questions question
@@ -1355,8 +1429,10 @@ WHERE selected.singleton_id = 1
     JOIN exam_booklets booklet
         ON booklet.id = question.booklet_id
     WHERE answer.id = NEW.answer_id
-      AND booklet.answer_file_id = NEW.answer_file_id
-)))
+      AND booklet.answer_file_id =
+          NEW.answer_file_id
+)
+))
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -1375,7 +1451,8 @@ AND NOT ((NOT EXISTS (
     SELECT 1
     FROM answers parent
     WHERE parent.id = OLD.answer_id
-)) OR (EXISTS (
+)
+) OR (EXISTS (
     SELECT 1
     FROM answers answer
     JOIN questions question
@@ -1389,7 +1466,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-) AND EXISTS (
+)
+ AND EXISTS (
     SELECT 1
     FROM answers answer
     JOIN questions question
@@ -1397,8 +1475,10 @@ WHERE selected.singleton_id = 1
     JOIN exam_booklets booklet
         ON booklet.id = question.booklet_id
     WHERE answer.id = OLD.answer_id
-      AND booklet.answer_file_id = OLD.answer_file_id
-)))
+      AND booklet.answer_file_id =
+          OLD.answer_file_id
+)
+))
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -1424,7 +1504,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-))
+)
+)
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -1449,7 +1530,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-)) AND (EXISTS (
+)
+) AND (EXISTS (
     SELECT 1
     FROM exam_booklets booklet
     WHERE booklet.id = NEW.booklet_id
@@ -1459,7 +1541,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-)))
+)
+))
 BEGIN
     SELECT RAISE(
         ABORT,
@@ -1478,7 +1561,8 @@ AND NOT ((NOT EXISTS (
     SELECT 1
     FROM exam_booklets parent
     WHERE parent.id = OLD.booklet_id
-)) OR (EXISTS (
+)
+) OR (EXISTS (
     SELECT 1
     FROM exam_booklets booklet
     WHERE booklet.id = OLD.booklet_id
@@ -1488,7 +1572,8 @@ JOIN contributor_assignment_selection selected
     ON selected.assignment_id = session.assignment_id
 WHERE selected.singleton_id = 1
 )
-)))
+)
+))
 BEGIN
     SELECT RAISE(
         ABORT,
