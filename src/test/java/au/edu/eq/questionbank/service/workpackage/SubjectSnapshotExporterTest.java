@@ -1220,7 +1220,7 @@ class SubjectSnapshotExporterTest {
 				    source_question_id, shared_context_id
 				)
 				VALUES (
-				    81, 61, 102, '1',
+				    81, 61, 106, '1',
 				    'Biology question', 2, 0, 91, 121
 				)
 				""", """
@@ -1241,7 +1241,7 @@ class SubjectSnapshotExporterTest {
 				INSERT INTO question_output_exclusions (
 				    question_id, current_curriculum_node_id
 				)
-				VALUES (81, 102)
+				VALUES (81, 106)
 				""", """
 				INSERT INTO shared_question_context_regions (
 				    shared_context_id, region_order,
