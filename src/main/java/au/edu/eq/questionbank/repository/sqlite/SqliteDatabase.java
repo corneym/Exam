@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 31;
+	private static final int LATEST_SCHEMA_VERSION = 32;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -795,6 +795,14 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v30-to-v31.sql", 31, SqliteAssignmentScopeTriggers::install);
 			return 31;
 		}
+		if (version == 31) {
+
+			// Version 32 permits MCQ continuation metadata updates only
+			// within the selected assignment's Booklets.
+			executeMigration(connection, "/db/migration-v31-to-v32.sql", 32,
+					SqliteAssignmentStructureTriggers::enablePendingMcqContinuation);
+			return 32;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -1126,15 +1134,29 @@ public final class SqliteDatabase {
 		}
 		if (version >= 30) {
 
-			// Verify exact trigger definitions, not merely their names.
-			// A missing or weakened write barrier is a schema failure.
-			SqliteAssignmentStructureTriggers.verify(connection);
+			// Schema versions 30 and 31 use the original structural guards.
+			// Version 32 introduces the narrowly scoped MCQ continuation update.
+			if (version >= 32) {
+				SqliteAssignmentStructureTriggers.verify(connection);
+			} else {
+				SqliteAssignmentStructureTriggers.verifyLegacy(connection);
+			}
 		}
 		if (version >= 31) {
 
 			// Every capture table must retain its assignment-scope
 			// INSERT, UPDATE and DELETE barriers.
 			SqliteAssignmentScopeTriggers.verify(connection);
+		}
+		if (version >= 30) {
+
+			// Versions 30 and 31 retain the original blanket Booklet UPDATE
+			// protection. Version 32 introduces the narrowly scoped exception.
+			if (version >= 32) {
+				SqliteAssignmentStructureTriggers.verify(connection);
+			} else {
+				SqliteAssignmentStructureTriggers.verifyLegacy(connection);
+			}
 		}
 	}
 

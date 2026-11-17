@@ -21,8 +21,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.ApplicationConfig;
-import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.ManagedAssetPublicationLock;
+import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Subject;
@@ -54,65 +54,10 @@ class WorkAssignmentInstallationCoordinatorTest {
 	}
 
 	@Test
-	void recoveryPreservesSubjectPublicationAlreadyAdoptedByCommittedAssignment() throws Exception {
-		Fixture fixture = fixture();
-		Path unrelated = preserveUnrelatedSubject(fixture);
-		StagedPackage interrupted = publishSubjectWithoutCommit(fixture);
-
-		// Recreate the pre-correction sequence: the old installer only inspected its
-		// own journal root. Temporarily hide Subject evidence from the new barrier.
-		Path saved = directory.resolve("pre-upgrade-subject-evidence");
-		Files.move(interrupted.directory(), saved);
-		var installer = new WorkAssignmentInstallationCoordinator(fixture.contributor());
-		installer.install(fixture.archive());
-		Files.move(saved, interrupted.directory());
-		execute(fixture.contributorDatabase(), "UPDATE questions SET question_text = 'Contributor work'");
-		var sessions = new SqliteContributorAssignmentSessionRepository(fixture.contributorDatabase());
-		var baseline = sessions.readBaseline(fixture.assignmentId());
-		assertEquals(0, count(fixture.contributorDatabase(), "SELECT COUNT(*) FROM subject_import_packages"));
-		recoverAll(fixture);
-		assertFalse(Files.exists(interrupted.directory()));
-		assertAllCommittedFilesVerified(fixture);
-		recoverAll(fixture);
-		assertTrue(installer.install(fixture.archive()).replay());
-		assertEquals(1, count(fixture.contributorDatabase(),
-				"SELECT COUNT(*) FROM questions WHERE question_text = 'Contributor work'"));
-		assertArrayEquals(baseline.records(), sessions.readBaseline(fixture.assignmentId()).records());
-		assertArrayEquals(baseline.assets(), sessions.readBaseline(fixture.assignmentId()).assets());
-		assertUnrelatedSubjectUnchanged(fixture, unrelated);
-	}
-
-	@Test
-	void committedAssignmentPublicationSurvivesSubjectRecoveryAndReplay() throws Exception {
-		Fixture fixture = fixture();
-		var staged = new WorkAssignmentArchiveStager(fixture.contributor()).stage(fixture.archive());
-		var extraction = new WorkAssignmentAssetExtractor(fixture.contributor()).extract(staged);
-		var journal = new WorkAssignmentPublicationJournal(fixture.contributor());
-		try (var lock = ManagedAssetPublicationLock.acquire(fixture.contributor().dataRoot())) {
-			journal.prepare(extraction);
-			journal.publishFiles(staged.inspection().manifest().packageId());
-		}
-
-		// Preserve publication ownership evidence while a real installation commits
-		// the graph and immutable session. Restoring it simulates interrupted cleanup.
-		Path saved = directory.resolve("committed-assignment-evidence");
-		Files.move(staged.directory(), saved);
-		var installer = new WorkAssignmentInstallationCoordinator(fixture.contributor());
-		installer.install(fixture.archive());
-		Files.move(saved, staged.directory());
-		recoverAll(fixture);
-		assertFalse(Files.exists(staged.directory()));
-		assertAllCommittedFilesVerified(fixture);
-		assertTrue(installer.install(fixture.archive()).replay());
-		recoverAll(fixture);
-		assertAllCommittedFilesVerified(fixture);
-	}
-
-	@Test
 	void bothImportersAndDirectRecoveryRequireTheSamePublicationLock() throws Exception {
 		Fixture fixture = fixture();
 		StagedPackage interrupted = publishSubjectWithoutCommit(fixture);
-		try (var lock = ManagedAssetPublicationLock.acquire(fixture.contributor().dataRoot())) {
+		try (var _ = ManagedAssetPublicationLock.acquire(fixture.contributor().dataRoot())) {
 			assertThrows(IOException.class,
 					() -> new WorkAssignmentInstallationCoordinator(fixture.contributor()).install(fixture.archive()));
 			assertThrows(IOException.class, () -> recoverAll(fixture));
@@ -133,7 +78,7 @@ class WorkAssignmentInstallationCoordinatorTest {
 		// Model two pending journals left by the former separate-lock protocol.
 		var assignment = new WorkAssignmentArchiveStager(fixture.contributor()).stage(fixture.archive());
 		var extraction = new WorkAssignmentAssetExtractor(fixture.contributor()).extract(assignment);
-		try (var lock = ManagedAssetPublicationLock.acquire(fixture.contributor().dataRoot())) {
+		try (var _ = ManagedAssetPublicationLock.acquire(fixture.contributor().dataRoot())) {
 			var journal = new WorkAssignmentPublicationJournal(fixture.contributor());
 			journal.prepare(extraction);
 			journal.publishFiles(assignment.inspection().manifest().packageId());
@@ -149,68 +94,30 @@ class WorkAssignmentInstallationCoordinatorTest {
 		assertAllCommittedFilesVerified(fixture);
 	}
 
-	private void assertAllCommittedFilesVerified(Fixture fixture) throws Exception {
-		var hashes = new SourceDocumentHashService();
-		try (var connection = fixture.contributorDatabase().openConnection();
-				var statement = connection.createStatement();
-				var rows = statement.executeQuery("SELECT relative_path, content_sha256 FROM source_documents")) {
-			int verified = 0;
-			while (rows.next()) {
-				Path file = new ManagedDataLayout(fixture.contributor().dataRoot()).resolve(rows.getString(1));
-				assertTrue(Files.isRegularFile(file), rows.getString(1));
-				assertEquals(rows.getString(2), hashes.sha256(file));
-				verified++;
-			}
-			assertEquals(2, verified);
+	@Test
+	void committedAssignmentPublicationSurvivesSubjectRecoveryAndReplay() throws Exception {
+		Fixture fixture = fixture();
+		var staged = new WorkAssignmentArchiveStager(fixture.contributor()).stage(fixture.archive());
+		var extraction = new WorkAssignmentAssetExtractor(fixture.contributor()).extract(staged);
+		var journal = new WorkAssignmentPublicationJournal(fixture.contributor());
+		try (var _ = ManagedAssetPublicationLock.acquire(fixture.contributor().dataRoot())) {
+			journal.prepare(extraction);
+			journal.publishFiles(staged.inspection().manifest().packageId());
 		}
-		assertEquals(1, count(fixture.contributorDatabase(), "SELECT COUNT(*) FROM contributor_assignment_sessions"));
-		fixture.contributorDatabase().verifyIntegrity();
-	}
 
-	private Path preserveUnrelatedSubject(Fixture fixture) throws Exception {
-		execute(fixture.contributorDatabase(), "INSERT INTO subjects (id, subject_name) VALUES (77, 'Chemistry')");
-		Path unrelated = fixture.contributor().dataRoot().resolve("subjects/Chemistry/keep.pdf");
-		Files.createDirectories(unrelated.getParent());
-		Files.writeString(unrelated, "Unrelated authoritative material");
-		return unrelated;
-	}
-
-	private void assertUnrelatedSubjectUnchanged(Fixture fixture, Path unrelated) throws Exception {
-		assertEquals("Unrelated authoritative material", Files.readString(unrelated));
-		assertEquals(1, count(fixture.contributorDatabase(),
-				"SELECT COUNT(*) FROM subjects WHERE id = 77 AND subject_name = 'Chemistry'"));
-	}
-
-	private StagedPackage publishSubjectWithoutCommit(Fixture fixture) throws Exception {
-		Path incoming = directory.resolve("subject-snapshot.examwork");
-		var manifest = new SubjectSnapshotExporter(fixture.sourceDatabase(),
-				new ManagedDataLayout(fixture.source().dataRoot())).export(1, incoming);
-		var backup = new SubjectImportBackupGate(fixture.contributor()).createVerifiedFullBackup(manifest.packageId(),
-				directory.resolve("backups"));
-		Path stage = fixture.contributor().dataRoot().resolve(".subject-import-staging")
-				.resolve(manifest.packageId().toString());
-		Files.createDirectories(stage.resolve("assets"));
-		Path archive = Files.copy(incoming, stage.resolve("incoming.examwork"));
-		List<StagedAsset> assets = new ArrayList<>();
-		for (Path source : List.of(fixture.sourceQuestionPdf(), fixture.sourceAnswerPdf())) {
-			String hash = new SourceDocumentHashService().sha256(source);
-			Path copy = Files.copy(source, stage.resolve("assets/%05d.bin".formatted(assets.size())));
-			String managed = new ManagedDataLayout(fixture.source().dataRoot()).relativePath(source);
-			assets.add(new StagedAsset(managed, "assets/sha256/" + hash.substring(0, 2) + "/" + hash + ".pdf", copy,
-					hash, Files.size(copy), AssetKind.MANAGED_FILE));
-		}
-		var staged = new StagedPackage(manifest.packageId(), "b".repeat(64), stage, archive, assets);
-		try (var lock = ManagedAssetPublicationLock.acquire(fixture.contributor().dataRoot())) {
-			var journal = new SubjectImportPublicationJournal(fixture.contributor());
-			journal.prepare(staged, backup);
-			journal.publishFiles(staged.packageId());
-		}
-		return staged;
-	}
-
-	private void recoverAll(Fixture fixture) throws Exception {
-		new SubjectImportCoordinator(fixture.contributor())
-				.recoverPending(fixture.contributor().dataRoot().resolve(".subject-import-staging"));
+		// Preserve publication ownership evidence while a real installation commits
+		// the graph and immutable session. Restoring it simulates interrupted cleanup.
+		Path saved = directory.resolve("committed-assignment-evidence");
+		Files.move(staged.directory(), saved);
+		var installer = new WorkAssignmentInstallationCoordinator(fixture.contributor());
+		installer.install(fixture.archive());
+		Files.move(saved, staged.directory());
+		recoverAll(fixture);
+		assertFalse(Files.exists(staged.directory()));
+		assertAllCommittedFilesVerified(fixture);
+		assertTrue(installer.install(fixture.archive()).replay());
+		recoverAll(fixture);
+		assertAllCommittedFilesVerified(fixture);
 	}
 
 	@Test
@@ -402,6 +309,35 @@ class WorkAssignmentInstallationCoordinatorTest {
 	}
 
 	@Test
+	void recoveryPreservesSubjectPublicationAlreadyAdoptedByCommittedAssignment() throws Exception {
+		Fixture fixture = fixture();
+		Path unrelated = preserveUnrelatedSubject(fixture);
+		StagedPackage interrupted = publishSubjectWithoutCommit(fixture);
+
+		// Recreate the pre-correction sequence: the old installer only inspected its
+		// own journal root. Temporarily hide Subject evidence from the new barrier.
+		Path saved = directory.resolve("pre-upgrade-subject-evidence");
+		Files.move(interrupted.directory(), saved);
+		var installer = new WorkAssignmentInstallationCoordinator(fixture.contributor());
+		installer.install(fixture.archive());
+		Files.move(saved, interrupted.directory());
+		execute(fixture.contributorDatabase(), "UPDATE questions SET question_text = 'Contributor work'");
+		var sessions = new SqliteContributorAssignmentSessionRepository(fixture.contributorDatabase());
+		var baseline = sessions.readBaseline(fixture.assignmentId());
+		assertEquals(0, count(fixture.contributorDatabase(), "SELECT COUNT(*) FROM subject_import_packages"));
+		recoverAll(fixture);
+		assertFalse(Files.exists(interrupted.directory()));
+		assertAllCommittedFilesVerified(fixture);
+		recoverAll(fixture);
+		assertTrue(installer.install(fixture.archive()).replay());
+		assertEquals(1, count(fixture.contributorDatabase(),
+				"SELECT COUNT(*) FROM questions WHERE question_text = 'Contributor work'"));
+		assertArrayEquals(baseline.records(), sessions.readBaseline(fixture.assignmentId()).records());
+		assertArrayEquals(baseline.assets(), sessions.readBaseline(fixture.assignmentId()).assets());
+		assertUnrelatedSubjectUnchanged(fixture, unrelated);
+	}
+
+	@Test
 	void rejectsInstallationIntoOriginatingCoordinator() throws Exception {
 		Fixture fixture = fixture();
 		var installer = new WorkAssignmentInstallationCoordinator(fixture.source());
@@ -415,6 +351,30 @@ class WorkAssignmentInstallationCoordinatorTest {
 		assertTrue(Files.isRegularFile(fixture.sourceQuestionPdf()));
 		assertTrue(Files.isRegularFile(fixture.sourceAnswerPdf()));
 		fixture.sourceDatabase().verifyIntegrity();
+	}
+
+	private void assertAllCommittedFilesVerified(Fixture fixture) throws Exception {
+		var hashes = new SourceDocumentHashService();
+		try (var connection = fixture.contributorDatabase().openConnection();
+				var statement = connection.createStatement();
+				var rows = statement.executeQuery("SELECT relative_path, content_sha256 FROM source_documents")) {
+			int verified = 0;
+			while (rows.next()) {
+				Path file = new ManagedDataLayout(fixture.contributor().dataRoot()).resolve(rows.getString(1));
+				assertTrue(Files.isRegularFile(file), rows.getString(1));
+				assertEquals(rows.getString(2), hashes.sha256(file));
+				verified++;
+			}
+			assertEquals(2, verified);
+		}
+		assertEquals(1, count(fixture.contributorDatabase(), "SELECT COUNT(*) FROM contributor_assignment_sessions"));
+		fixture.contributorDatabase().verifyIntegrity();
+	}
+
+	private void assertUnrelatedSubjectUnchanged(Fixture fixture, Path unrelated) throws Exception {
+		assertEquals("Unrelated authoritative material", Files.readString(unrelated));
+		assertEquals(1, count(fixture.contributorDatabase(),
+				"SELECT COUNT(*) FROM subjects WHERE id = 77 AND subject_name = 'Chemistry'"));
 	}
 
 	private int count(SqliteDatabase database, String sql) throws SQLException {
@@ -465,13 +425,14 @@ class WorkAssignmentInstallationCoordinatorTest {
 				""");
 		execute(sourceDatabase, """
 				INSERT INTO curriculum_nodes (
-				    id, syllabus_version_id, curriculum_code,
-				    curriculum_name, curriculum_level, display_order
+				    id, syllabus_version_id, parent_id,
+				    curriculum_code, curriculum_name,
+				    curriculum_level, display_order
 				)
-				VALUES (
-				    101, 11, 'B25U1',
-				    'Biology Unit', 'UNIT', 0
-				)
+				VALUES
+				    (101, 11, NULL, 'B25U1', 'Biology Unit', 'UNIT', 0),
+				    (102, 11, 101, 'B25U1T1', 'Biology Topic', 'TOPIC', 0),
+				    (103, 11, 102, 'B25U1T1D1', 'Biology Descriptor', 'DESCRIPTOR', 0)
 				""");
 		execute(sourceDatabase, """
 				INSERT INTO exam_providers (id, provider_name)
@@ -527,7 +488,7 @@ class WorkAssignmentInstallationCoordinatorTest {
 				    shared_context_capture_required
 				)
 				VALUES (
-				    81, 61, 101,
+				    81, 61, 103,
 				    '1', 'Biology question', 2, 0
 				)
 				""");
@@ -544,6 +505,46 @@ class WorkAssignmentInstallationCoordinatorTest {
 				archive, questionPdf, answerPdf);
 		export(fixture, assignmentId, archive);
 		return fixture;
+	}
+
+	private Path preserveUnrelatedSubject(Fixture fixture) throws Exception {
+		execute(fixture.contributorDatabase(), "INSERT INTO subjects (id, subject_name) VALUES (77, 'Chemistry')");
+		Path unrelated = fixture.contributor().dataRoot().resolve("subjects/Chemistry/keep.pdf");
+		Files.createDirectories(unrelated.getParent());
+		Files.writeString(unrelated, "Unrelated authoritative material");
+		return unrelated;
+	}
+
+	private StagedPackage publishSubjectWithoutCommit(Fixture fixture) throws Exception {
+		Path incoming = directory.resolve("subject-snapshot.examwork");
+		var manifest = new SubjectSnapshotExporter(fixture.sourceDatabase(),
+				new ManagedDataLayout(fixture.source().dataRoot())).export(1, incoming);
+		var backup = new SubjectImportBackupGate(fixture.contributor()).createVerifiedFullBackup(manifest.packageId(),
+				directory.resolve("backups"));
+		Path stage = fixture.contributor().dataRoot().resolve(".subject-import-staging")
+				.resolve(manifest.packageId().toString());
+		Files.createDirectories(stage.resolve("assets"));
+		Path archive = Files.copy(incoming, stage.resolve("incoming.examwork"));
+		List<StagedAsset> assets = new ArrayList<>();
+		for (Path source : List.of(fixture.sourceQuestionPdf(), fixture.sourceAnswerPdf())) {
+			String hash = new SourceDocumentHashService().sha256(source);
+			Path copy = Files.copy(source, stage.resolve("assets/%05d.bin".formatted(assets.size())));
+			String managed = new ManagedDataLayout(fixture.source().dataRoot()).relativePath(source);
+			assets.add(new StagedAsset(managed, "assets/sha256/" + hash.substring(0, 2) + "/" + hash + ".pdf", copy,
+					hash, Files.size(copy), AssetKind.MANAGED_FILE));
+		}
+		var staged = new StagedPackage(manifest.packageId(), "b".repeat(64), stage, archive, assets);
+		try (var _ = ManagedAssetPublicationLock.acquire(fixture.contributor().dataRoot())) {
+			var journal = new SubjectImportPublicationJournal(fixture.contributor());
+			journal.prepare(staged, backup);
+			journal.publishFiles(staged.packageId());
+		}
+		return staged;
+	}
+
+	private void recoverAll(Fixture fixture) throws Exception {
+		new SubjectImportCoordinator(fixture.contributor())
+				.recoverPending(fixture.contributor().dataRoot().resolve(".subject-import-staging"));
 	}
 
 	private record Fixture(ApplicationConfig source, ApplicationConfig contributor, SqliteDatabase sourceDatabase,

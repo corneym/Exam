@@ -13,8 +13,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.ManagedAssetPublicationLock;
+import au.edu.eq.questionbank.ManagedDataLayout;
 
 class PdfStoreTest {
 
@@ -39,7 +39,7 @@ class PdfStoreTest {
 			assertEquals(-1, Files.mismatch(source, destination));
 			Files.delete(pending);
 		}
-		try (var lock = ManagedAssetPublicationLock.acquire(root)) {
+		try (var _ = ManagedAssetPublicationLock.acquire(root)) {
 			assertThrows(java.io.IOException.class,
 					() -> store.importExamPdf(source, "Biology", "QCAA", 2025, "External Assessment"));
 		}
