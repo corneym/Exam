@@ -22,8 +22,8 @@ import java.util.regex.Pattern;
  */
 final class SqliteMigrationTriggerVerifier {
 
-	private static final Pattern CREATE = Pattern.compile(
-			"(?is)^CREATE\\s+TRIGGER\\s+([a-z_][a-z0-9_]*)" + "\\s+BEFORE\\b.*?\\bON\\s+([a-z_][a-z0-9_]*)\\b.*$");
+	private static final Pattern CREATE = Pattern.compile("(?is)^CREATE\\s+TRIGGER\\s+([a-z_][a-z0-9_]*)"
+			+ "\\s+(?:BEFORE|AFTER)\\b.*?\\bON\\s+" + "([a-z_][a-z0-9_]*)\\b.*$");
 	private static final Pattern DROP = Pattern.compile("(?is)^DROP\\s+TRIGGER\\s+([a-z_][a-z0-9_]*)\\s*;?$");
 
 	private SqliteMigrationTriggerVerifier() {

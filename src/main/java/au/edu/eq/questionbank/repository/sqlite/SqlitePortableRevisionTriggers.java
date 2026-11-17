@@ -1,5 +1,8 @@
 package au.edu.eq.questionbank.repository.sqlite;
 
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -10,15 +13,17 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Installs and verifies transactional portable-record revision triggers.
+ * Verifies transactional portable-record revision triggers and supports
+ * reconstruction of historical trigger definitions.
  *
  * <p>
  * Direct changes advance an entity's revision. Mutations to owned child tables
  * advance the owning entity's revision. No-op updates do not advance revisions.
  *
  * <p>
- * Trigger definitions are installed through JDBC because the existing SQL
- * script executor does not parse CREATE TRIGGER bodies.
+ * Schema version 26 installs its original trigger definitions from a versioned
+ * SQL migration. The Java installer remains available for historical test
+ * fixtures while exact-definition verification is being consolidated.
  */
 final class SqlitePortableRevisionTriggers {
 
@@ -76,24 +81,20 @@ final class SqlitePortableRevisionTriggers {
 	}
 
 	/**
-	 * Verifies all required revision triggers against the current database table
-	 * definitions.
+	 * Verifies all required portable revision triggers against the original version
+	 * 26 SQL migration definitions.
+	 *
+	 * <p>
+	 * Checks trigger presence, owning tables and SQL definitions. Missing, altered
+	 * or unexpected revision triggers cause verification to fail.
 	 *
 	 * @param connection verification connection
-	 * @throws SQLException if triggers are missing or incorrect
+	 * @throws SQLException         if the triggers differ from the migration
+	 *                              definitions
+	 * @throws NullPointerException if {@code connection} is null
 	 */
 	static void verify(Connection connection) throws SQLException {
-		Objects.requireNonNull(connection, "connection");
-		for (EntityTable entity : ENTITIES) {
-			verifyTrigger(connection, entityTriggerName(entity), entity.tableName(),
-					entityUpdateSql(connection, entity));
-		}
-		for (ChildTable child : CHILDREN) {
-			verifyTrigger(connection, childTriggerName(child, "insert"), child.tableName(), childInsertSql(child));
-			verifyTrigger(connection, childTriggerName(child, "update"), child.tableName(),
-					childUpdateSql(connection, child));
-			verifyTrigger(connection, childTriggerName(child, "delete"), child.tableName(), childDeleteSql(child));
-		}
+		SqliteMigrationTriggerVerifier.verify(connection, "app_revision_", "revision", "/db/migration-v25-to-v26.sql");
 	}
 
 	private static String changedColumns(Connection connection, String tableName, boolean excludeId)

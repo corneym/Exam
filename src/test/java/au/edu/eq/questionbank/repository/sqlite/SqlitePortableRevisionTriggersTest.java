@@ -28,6 +28,28 @@ class SqlitePortableRevisionTriggersTest {
 	Path tempDirectory;
 
 	@Test
+	void alteredRevisionTriggerFailsSchemaVerification() throws Exception {
+		SqliteDatabase database = createDatabase("altered-revision.db");
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					DROP TRIGGER app_revision_questions_update
+					""");
+
+			// A trigger with the correct name and table but no revision
+			// update must fail exact-definition verification.
+			statement.execute("""
+					CREATE TRIGGER app_revision_questions_update
+					AFTER UPDATE ON questions
+					BEGIN
+					    SELECT 1;
+					END
+					""");
+		}
+		SQLException failure = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(failure.getMessage().contains("Altered revision trigger: app_revision_questions_update"));
+	}
+
+	@Test
 	void failedTransactionRestoresOriginalRevision() throws Exception {
 		SqliteDatabase database = createDatabase("transaction.db");
 		seedGraph(database);
@@ -140,6 +162,18 @@ class SqlitePortableRevisionTriggersTest {
 	}
 
 	@Test
+	void missingRevisionTriggerFailsSchemaVerification() throws Exception {
+		SqliteDatabase database = createDatabase("missing-revision.db");
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					DROP TRIGGER app_revision_questions_update
+					""");
+		}
+		SQLException failure = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(failure.getMessage().contains("Missing revision trigger: app_revision_questions_update"));
+	}
+
+	@Test
 	void orderedQuestionAndAnswerChildrenAdvanceOwningRevisions() throws Exception {
 		SqliteDatabase database = createDatabase("children.db");
 		seedGraph(database);
@@ -238,6 +272,113 @@ class SqlitePortableRevisionTriggersTest {
 		}
 		assertNotEquals(imageBefore, revision(database, EntityType.QUESTION_IMAGE, 1));
 		assertNotEquals(ownerBefore, revision(database, EntityType.QUESTION, 1));
+	}
+
+	@Test
+	void unexpectedRevisionTriggerFailsSchemaVerification() throws Exception {
+		SqliteDatabase database = createDatabase("unexpected-revision.db");
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+
+			// An additional revision trigger could unexpectedly advance
+			// identities, so it must also fail integrity verification.
+			statement.execute("""
+					CREATE TRIGGER app_revision_unexpected_update
+					AFTER UPDATE ON questions
+					BEGIN
+					    SELECT 1;
+					END
+					""");
+		}
+		SQLException failure = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(failure.getMessage().contains("Unexpected revision trigger: app_revision_unexpected_update"));
+	}
+
+	@Test
+	void version26SqlResourceInstallsExactRevisionTriggers() throws Exception {
+		SqliteDatabase database = createDatabase("v26-resource.db");
+		seedGraph(database);
+		UUID original = revision(database, EntityType.QUESTION, 1);
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				try (Statement statement = connection.createStatement()) {
+
+					// Reconstruct the original version-25 state in a
+					// disposable database while preserving portable IDs.
+					HistoricalSchemaFixture.removeVersion26Objects(statement);
+					statement.execute("""
+							UPDATE schema_version
+							SET version = 25
+							WHERE version = 33
+							""");
+				}
+
+				// The schema-version change is not committed yet.
+				// Verify it using the connection that owns the transaction.
+				try (Statement versionStatement = connection.createStatement();
+						ResultSet versionResult = versionStatement.executeQuery("""
+								SELECT version
+								FROM schema_version
+								""")) {
+					assertTrue(versionResult.next());
+					assertEquals(25, versionResult.getInt("version"));
+					assertFalse(versionResult.next());
+				}
+
+				// Install exclusively through the SQL resource, without
+				// invoking the original Java trigger generator.
+				SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v25-to-v26.sql"));
+
+				// Verify every installed definition against the original
+				// Java-generated SQL, including material-change predicates.
+				SqlitePortableRevisionTriggers.verify(connection);
+				try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery("""
+						SELECT COUNT(*)
+						FROM sqlite_master
+						WHERE type = 'trigger'
+						  AND name GLOB 'app_revision_*'
+						""")) {
+					assertTrue(result.next());
+					assertEquals(44, result.getInt(1));
+				}
+				connection.commit();
+			} catch (Exception failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
+		assertEquals(26, database.schemaVersion());
+		database.verifySchema();
+
+		// Installing revision tracking must not change existing identities.
+		assertEquals(original, revision(database, EntityType.QUESTION, 1));
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+
+			// A no-op must preserve the existing revision.
+			statement.execute("""
+					UPDATE questions
+					SET question_text = question_text
+					WHERE id = 1
+					""");
+		}
+		assertEquals(original, revision(database, EntityType.QUESTION, 1));
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+
+			// A material content change must advance its revision.
+			statement.execute("""
+					UPDATE questions
+					SET question_text = 'Revision from SQL trigger'
+					WHERE id = 1
+					""");
+		}
+		assertNotEquals(original, revision(database, EntityType.QUESTION, 1));
+
+		// A historical database must still migrate all the way to
+		// the unchanged latest schema.
+		database.initialiseSchema();
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
+		database.verifySchema();
+		database.verifyIntegrity();
 	}
 
 	private SqliteDatabase createDatabase(String filename) throws SQLException {

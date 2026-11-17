@@ -773,9 +773,9 @@ public final class SqliteDatabase {
 		}
 		if (version == 25) {
 
-			// Install mutation tracking within the same migration transaction.
-			// A failed trigger installation must leave the v25 database intact.
-			SqlitePortableRevisionTriggers.install(connection);
+			// Schema v26 installs all 44 material-change revision triggers
+			// from the frozen SQL definitions. Trigger installation and the
+			// version update share the existing migration transaction.
 			executeMigration(connection, "/db/migration-v25-to-v26.sql", 26);
 			return 26;
 		}
