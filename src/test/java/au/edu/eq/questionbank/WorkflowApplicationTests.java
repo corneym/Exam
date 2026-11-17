@@ -5,9 +5,13 @@ import org.junit.platform.suite.api.IncludeTags;
 import org.junit.platform.suite.api.SelectPackages;
 import org.junit.platform.suite.api.Suite;
 
+/**
+ * Runs application Dashboard, export and contributor assignment workflow tests
+ * in the application CI shard.
+ */
 @Suite
 @SelectPackages("au.edu.eq.questionbank.ui")
 @IncludeTags("workflow-ui")
-@IncludeClassNamePatterns(".*(CorpusDashboardWorkflowTest|ExportWorkflowTest)")
+@IncludeClassNamePatterns(".*(CorpusDashboardWorkflowTest|ContributorAssignmentDashboardWorkflowTest|ExportWorkflowTest)")
 public class WorkflowApplicationTests {
 }

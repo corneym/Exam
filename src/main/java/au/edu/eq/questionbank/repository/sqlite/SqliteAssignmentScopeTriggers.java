@@ -60,46 +60,41 @@ final class SqliteAssignmentScopeTriggers {
 	private SqliteAssignmentScopeTriggers() {
 	}
 
-	static void install(Connection connection) throws SQLException {
+	static void enableClassificationLevels(Connection connection) throws SQLException {
 		Objects.requireNonNull(connection, "connection");
+
+		// Replace only the Question INSERT and UPDATE guards.
+		// All other assignment scope triggers retain their definitions.
 		try (Statement statement = connection.createStatement()) {
-			for (String table : TABLES) {
-				for (String operation : OPERATIONS) {
-					statement.execute(definition(table, operation));
-				}
+			for (String operation : List.of("insert", "update")) {
+				statement.execute("DROP TRIGGER " + name("questions", operation));
+				statement.execute(definition("questions", operation, true));
 			}
 		}
 		verify(connection);
 	}
 
-	static void verify(Connection connection) throws SQLException {
+	static void install(Connection connection) throws SQLException {
 		Objects.requireNonNull(connection, "connection");
-		for (String table : TABLES) {
-			for (String operation : OPERATIONS) {
-				String name = name(table, operation);
-				String expected = definition(table, operation);
-				try (PreparedStatement statement = connection.prepareStatement("""
-						SELECT tbl_name, sql
-						FROM sqlite_master
-						WHERE type = 'trigger'
-						  AND name = ?
-						""")) {
-					statement.setString(1, name);
-					try (ResultSet result = statement.executeQuery()) {
-						if (!result.next()) {
-							throw new SQLException("Missing contributor scope trigger: " + name);
-						}
-						if (!table.equals(result.getString("tbl_name"))
-								|| !normalise(expected).equals(normalise(result.getString("sql")))) {
-							throw new SQLException("Altered contributor scope trigger: " + name);
-						}
-						if (result.next()) {
-							throw new SQLException("Duplicate contributor scope trigger: " + name);
-						}
-					}
+
+		// Schema version 31 installs the original scope definitions.
+		// Classification-level enforcement is introduced by version 33.
+		try (Statement statement = connection.createStatement()) {
+			for (String table : TABLES) {
+				for (String operation : OPERATIONS) {
+					statement.execute(definition(table, operation, false));
 				}
 			}
 		}
+		verifyLegacy(connection);
+	}
+
+	static void verify(Connection connection) throws SQLException {
+		verify(connection, true);
+	}
+
+	static void verifyLegacy(Connection connection) throws SQLException {
+		verify(connection, false);
 	}
 
 	private static String answer(String answerId) {
@@ -128,6 +123,19 @@ final class SqliteAssignmentScopeTriggers {
 				""".formatted(bookletId, EXAM_QUERY);
 	}
 
+	private static String classifiable(String nodeId) {
+		return """
+				EXISTS (
+				    SELECT 1
+				    FROM curriculum_nodes node
+				    WHERE node.id = %s
+				      AND node.curriculum_level IN (
+				          'SUBTOPIC', 'DESCRIPTOR'
+				      )
+				)
+				""".formatted(nodeId);
+	}
+
 	private static String classification(String nodeId) {
 		return """
 				EXISTS (
@@ -152,13 +160,30 @@ final class SqliteAssignmentScopeTriggers {
 				""".formatted(contextId, EXAM_QUERY);
 	}
 
-	private static String definition(String table, String operation) {
+	private static String definition(String table, String operation, boolean enforceClassificationLevels) {
 		String permitted = switch (operation) {
 		case "insert" -> predicate(table, "NEW");
 		case "delete" -> deletionPredicate(table, "OLD");
 		case "update" -> "(" + originalPredicate(table, "OLD") + ") AND (" + predicate(table, "NEW") + ")";
 		default -> throw new IllegalArgumentException("Unsupported contributor scope operation");
 		};
+		if (enforceClassificationLevels && table.equals("questions")) {
+			if (operation.equals("insert")) {
+
+				// Every newly captured Question needs a classifiable node.
+				permitted = "(" + permitted + ") AND (" + classifiable("NEW.classification_node_id") + ")";
+			} else if (operation.equals("update")) {
+
+				// Preserve editing of historical Questions whose existing
+				// classifications predate enforcement. Any deliberate
+				// reclassification must use a Subtopic or Descriptor.
+				String validClassification = """
+						NEW.classification_node_id = OLD.classification_node_id
+						OR (%s)
+						""".formatted(classifiable("NEW.classification_node_id"));
+				permitted = "(" + permitted + ") AND (" + validClassification + ")";
+			}
+		}
 		return """
 				CREATE TRIGGER %s
 				BEFORE %s ON %s
@@ -303,5 +328,35 @@ final class SqliteAssignmentScopeTriggers {
 				      AND booklet.exam_id IN (%s)
 				)
 				""".formatted(questionId, EXAM_QUERY);
+	}
+
+	private static void verify(Connection connection, boolean enforceClassificationLevels) throws SQLException {
+		Objects.requireNonNull(connection, "connection");
+		for (String table : TABLES) {
+			for (String operation : OPERATIONS) {
+				String triggerName = name(table, operation);
+				String expected = definition(table, operation, enforceClassificationLevels);
+				try (PreparedStatement statement = connection.prepareStatement("""
+						SELECT tbl_name, sql
+						FROM sqlite_master
+						WHERE type = 'trigger'
+						  AND name = ?
+						""")) {
+					statement.setString(1, triggerName);
+					try (ResultSet result = statement.executeQuery()) {
+						if (!result.next()) {
+							throw new SQLException("Missing contributor scope trigger: " + triggerName);
+						}
+						if (!table.equals(result.getString("tbl_name"))
+								|| !normalise(expected).equals(normalise(result.getString("sql")))) {
+							throw new SQLException("Altered contributor scope trigger: " + triggerName);
+						}
+						if (result.next()) {
+							throw new SQLException("Duplicate contributor scope trigger: " + triggerName);
+						}
+					}
+				}
+			}
+		}
 	}
 }

@@ -506,9 +506,9 @@ class SubjectSnapshotExporterTest {
 		Path archive = fixture.exportDirectory().resolve("biology.examwork");
 		ExamWorkManifest manifest = exporter(fixture).export(1, archive);
 		List<ExchangeRecord> records = readRecords(archive);
-		assertEquals(18, records.size());
+		assertEquals(22, records.size());
 		assertEquals(2, count(records, "SYLLABUS_VERSION"));
-		assertEquals(2, count(records, "CURRICULUM_NODE"));
+		assertEquals(6, count(records, "CURRICULUM_NODE"));
 		assertEquals(2, count(records, "EXAM_BOOKLET"));
 		assertEquals(1, count(records, "ANSWER_FILE"));
 		assertEquals(1, count(records, "QUESTION_IMAGE"));
@@ -1133,8 +1133,16 @@ class SubjectSnapshotExporterTest {
 				VALUES
 				    (101, 11, NULL, 'B19U1', 'Biology 2019 Unit',
 				     'UNIT', 0),
+				    (103, 11, 101, 'B19U1T1', 'Biology 2019 Topic',
+				     'TOPIC', 0),
+				    (104, 11, 103, 'B19U1T1S1', 'Biology 2019 Subtopic',
+				     'SUBTOPIC', 0),
 				    (102, 12, NULL, 'B25U1', 'Biology 2025 Unit',
 				     'UNIT', 0),
+				    (105, 12, 102, 'B25U1T1', 'Biology 2025 Topic',
+				     'TOPIC', 0),
+				    (106, 12, 105, 'B25U1T1S1', 'Biology 2025 Subtopic',
+				     'SUBTOPIC', 0),
 				    (201, 21, NULL, 'C25U1', 'Chemistry Unit',
 				     'UNIT', 0)
 				""", """

@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 31;
+	private static final int LATEST_SCHEMA_VERSION = 33;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -198,11 +198,19 @@ public final class SqliteDatabase {
 	/**
 	 * Opens a SQLite connection with the configured access mode.
 	 *
+	 * <p>
+	 * Foreign-key enforcement and recursive triggers are enabled on every
+	 * connection. Recursive triggers ensure that implicit DELETE operations
+	 * performed by SQLite REPLACE statements execute the existing assignment scope
+	 * and structural DELETE guards.
+	 *
+	 * <p>
 	 * When a diagnostic probe is active, the returned connection also records JDBC
 	 * operations. Ordinary application connections remain unchanged.
 	 *
 	 * @return an open database connection
-	 * @throws SQLException if the database cannot be opened or configured
+	 * @throws SQLException if the database cannot be opened or configured, or
+	 *                      recursive trigger enforcement is unavailable
 	 */
 	public Connection openConnection() throws SQLException {
 		SqliteReadProbe probe = SqliteReadProbe.active();
@@ -233,6 +241,20 @@ public final class SqliteDatabase {
 				}
 				statement.execute("PRAGMA busy_timeout = 5000");
 				statement.execute("PRAGMA foreign_keys = ON");
+
+				// REPLACE may implicitly delete a conflicting row.
+				// Its DELETE triggers must execute so contributor scope
+				// enforcement cannot be bypassed by replacement.
+				statement.execute("PRAGMA recursive_triggers = ON");
+
+				// Fail closed if the SQLite connection did not accept the
+				// required trigger configuration.
+				try (ResultSet result = statement.executeQuery("PRAGMA recursive_triggers")) {
+					if (!result.next() || result.getInt(1) != 1) {
+						throw new SQLException(
+								"SQLite recursive triggers are required " + "for contributor assignment protection");
+					}
+				}
 			}
 			if (probe == null) {
 				return connection;
@@ -795,6 +817,30 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v30-to-v31.sql", 31, SqliteAssignmentScopeTriggers::install);
 			return 31;
 		}
+		if (version == 31) {
+
+			// Version 32 permits MCQ continuation metadata updates only
+			// within the selected assignment's Booklets.
+			executeMigration(connection, "/db/migration-v31-to-v32.sql", 32,
+					SqliteAssignmentStructureTriggers::enablePendingMcqContinuation);
+			return 32;
+		}
+		if (version == 31) {
+
+			// Version 32 permits MCQ continuation metadata updates only
+			// within the selected assignment's Booklets.
+			executeMigration(connection, "/db/migration-v31-to-v32.sql", 32,
+					SqliteAssignmentStructureTriggers::enablePendingMcqContinuation);
+			return 32;
+		}
+		if (version == 32) {
+
+			// Version 33 restricts contributor Question classifications
+			// to Subtopics and Descriptors.
+			executeMigration(connection, "/db/migration-v32-to-v33.sql", 33,
+					SqliteAssignmentScopeTriggers::enableClassificationLevels);
+			return 33;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -1125,16 +1171,18 @@ public final class SqliteDatabase {
 			verifyVersion29ContributorAssignmentSchema(connection);
 		}
 		if (version >= 30) {
-
-			// Verify exact trigger definitions, not merely their names.
-			// A missing or weakened write barrier is a schema failure.
-			SqliteAssignmentStructureTriggers.verify(connection);
+			if (version >= 32) {
+				SqliteAssignmentStructureTriggers.verify(connection);
+			} else {
+				SqliteAssignmentStructureTriggers.verifyLegacy(connection);
+			}
 		}
 		if (version >= 31) {
-
-			// Every capture table must retain its assignment-scope
-			// INSERT, UPDATE and DELETE barriers.
-			SqliteAssignmentScopeTriggers.verify(connection);
+			if (version >= 33) {
+				SqliteAssignmentScopeTriggers.verify(connection);
+			} else {
+				SqliteAssignmentScopeTriggers.verifyLegacy(connection);
+			}
 		}
 	}
 

@@ -36,13 +36,18 @@ final class SqliteAssignmentGuardFixture {
 					""");
 			statement.execute("""
 					INSERT INTO curriculum_nodes (
-					    id, syllabus_version_id, curriculum_code,
-					    curriculum_name, curriculum_level, display_order
+					    id, syllabus_version_id, parent_id,
+					    curriculum_code, curriculum_name,
+					    curriculum_level, display_order
 					)
 					VALUES
-					    (101, 11, 'B25', 'Biology current', 'UNIT', 0),
-					    (102, 12, 'B19', 'Biology legacy', 'UNIT', 0),
-					    (201, 21, 'C25', 'Chemistry current', 'UNIT', 0)
+					    (101, 11, NULL, 'B25', 'Biology current', 'UNIT', 0),
+					    (103, 11, 101, 'B25.T1', 'Biology Topic', 'TOPIC', 0),
+					    (104, 11, 103, 'B25.T1.S1', 'Biology Subtopic', 'SUBTOPIC', 0),
+					    (102, 12, NULL, 'B19', 'Biology legacy', 'UNIT', 0),
+					    (105, 12, 102, 'B19.T1', 'Legacy Topic', 'TOPIC', 0),
+					    (106, 12, 105, 'B19.T1.S1', 'Legacy Subtopic', 'SUBTOPIC', 0),
+					    (201, 21, NULL, 'C25', 'Chemistry current', 'UNIT', 0)
 					""");
 			statement.execute("""
 					INSERT INTO exam_providers (id, provider_name)

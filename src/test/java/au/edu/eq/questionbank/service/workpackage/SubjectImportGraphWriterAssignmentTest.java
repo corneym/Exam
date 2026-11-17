@@ -193,13 +193,17 @@ class SubjectImportGraphWriterAssignmentTest {
 					""");
 			statement.execute("""
 					INSERT INTO curriculum_nodes (
-					    id, syllabus_version_id, curriculum_code,
-					    curriculum_name, curriculum_level, display_order
+					    id, syllabus_version_id, parent_id,
+					    curriculum_code, curriculum_name,
+					    curriculum_level, display_order
 					)
-					VALUES (
-					    101, 11, 'B25U1',
-					    'Biology Unit', 'UNIT', 0
-					)
+					VALUES
+					    (101, 11, NULL, 'B25U1',
+					     'Biology Unit', 'UNIT', 0),
+					    (102, 11, 101, 'B25U1T1',
+					     'Biology Topic', 'TOPIC', 0),
+					    (103, 11, 102, 'B25U1T1S1',
+					     'Biology Subtopic', 'SUBTOPIC', 0)
 					""");
 			statement.execute("""
 					INSERT INTO exam_providers (id, provider_name)
@@ -252,7 +256,7 @@ class SubjectImportGraphWriterAssignmentTest {
 					VALUES (
 					    81,
 					    61,
-					    101,
+					    103,
 					    '1',
 					    'Biology question',
 					    2,

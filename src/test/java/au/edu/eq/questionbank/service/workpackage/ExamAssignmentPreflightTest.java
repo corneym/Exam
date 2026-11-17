@@ -26,6 +26,19 @@ class ExamAssignmentPreflightTest {
 	Path directory;
 
 	@Test
+	void acceptsSyllabusWithSubtopicInsteadOfDescriptor() throws Exception {
+		Fixture fixture = fixture();
+		execute(fixture.database(), """
+				UPDATE curriculum_nodes
+				SET curriculum_level = 'SUBTOPIC'
+				WHERE id = 106
+				""");
+		ExamAssignmentPreflight.Result result = fixture.preflight().check(fixture.exam(), true);
+		assertEquals("2025", result.currentSyllabus().getName());
+		assertEquals("2019", result.legacy2019Syllabus().getName());
+	}
+
+	@Test
 	void acceptsWholeExamWithCurrentAndLegacySyllabuses() throws Exception {
 		Fixture fixture = fixture();
 		ExamAssignmentPreflight.Result result = fixture.preflight().check(fixture.exam(), true);
@@ -34,6 +47,30 @@ class ExamAssignmentPreflightTest {
 		assertEquals("2025", result.currentSyllabus().getName());
 		assertTrue(result.currentSyllabus().isCurrent());
 		assertEquals("2019", result.legacy2019Syllabus().getName());
+	}
+
+	@Test
+	void rejectsCurrentSyllabusContainingOnlyUnitsOrTopics() throws Exception {
+		Fixture fixture = fixture();
+
+		// A Unit and Topic without a classifiable descendant are insufficient.
+		execute(fixture.database(), """
+				DELETE FROM curriculum_nodes
+				WHERE id = 106
+				""");
+		IOException topicsOnly = assertThrows(IOException.class,
+				() -> fixture.preflight().check(fixture.exam(), false));
+		assertTrue(topicsOnly.getMessage().contains("no usable Subtopic or Descriptor"));
+		assertTrue(topicsOnly.getMessage().contains("2025"));
+
+		// A Unit without any child nodes must also be rejected.
+		execute(fixture.database(), """
+				DELETE FROM curriculum_nodes
+				WHERE id = 104
+				""");
+		IOException unitsOnly = assertThrows(IOException.class, () -> fixture.preflight().check(fixture.exam(), false));
+		assertTrue(unitsOnly.getMessage().contains("no usable Subtopic or Descriptor"));
+		assertTrue(unitsOnly.getMessage().contains("2025"));
 	}
 
 	@Test
@@ -94,6 +131,18 @@ class ExamAssignmentPreflightTest {
 	}
 
 	@Test
+	void rejectsUnclassifiableOriginal2019Syllabus() throws Exception {
+		Fixture fixture = fixture();
+		execute(fixture.database(), """
+				DELETE FROM curriculum_nodes
+				WHERE id = 105
+				""");
+		IOException failure = assertThrows(IOException.class, () -> fixture.preflight().check(fixture.exam(), true));
+		assertTrue(failure.getMessage().contains("no usable Subtopic or Descriptor"));
+		assertTrue(failure.getMessage().contains("2019"));
+	}
+
+	@Test
 	void rejectsUnregisteredExam() throws Exception {
 		Fixture fixture = fixture();
 		Exam unknown = new Exam(999, new Subject(1, "Biology"), new ExamProvider(1, "QCAA"), 2025, "Unknown Exam");
@@ -150,7 +199,11 @@ class ExamAssignmentPreflightTest {
 				)
 				VALUES
 				    (101, 11, NULL, '1', 'Legacy Unit', 'UNIT', 0),
-				    (102, 12, NULL, '1', 'Current Unit', 'UNIT', 0)
+				    (103, 11, 101, '1.1', 'Legacy Topic', 'TOPIC', 0),
+				    (105, 11, 103, '1.1.1', 'Legacy Descriptor', 'DESCRIPTOR', 0),
+				    (102, 12, NULL, '1', 'Current Unit', 'UNIT', 0),
+				    (104, 12, 102, '1.1', 'Current Topic', 'TOPIC', 0),
+				    (106, 12, 104, '1.1.1', 'Current Descriptor', 'DESCRIPTOR', 0)
 				""");
 		execute(database, """
 				INSERT INTO exam_providers (id, provider_name)

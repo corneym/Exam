@@ -1,25 +1,20 @@
 package au.edu.eq.questionbank.service.workpackage;
 
 import java.io.IOException;
-import java.nio.channels.FileChannel;
-import java.nio.channels.FileLock;
-import java.nio.channels.OverlappingFileLockException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
-import java.util.Comparator;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
-import java.util.stream.Stream;
 
 import au.edu.eq.questionbank.ApplicationConfig;
+import au.edu.eq.questionbank.ManagedAssetPublicationLock;
 import au.edu.eq.questionbank.ApplicationVersion;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
@@ -38,8 +33,8 @@ import au.edu.eq.questionbank.service.workpackage.WorkAssignmentArchiveStager.St
  * insertion and immutable session registration.
  *
  * <p>
- * An exclusive installation lock serialises assignment installation and
- * recovery. A committed assignment session is the durable completion marker
+ * A shared data-root lock serialises both Subject and assignment publication
+ * and recovery. A committed assignment session is the durable completion marker
  * used by the publication journal.
  *
  * <p>
@@ -54,7 +49,6 @@ import au.edu.eq.questionbank.service.workpackage.WorkAssignmentArchiveStager.St
  */
 public final class WorkAssignmentInstallationCoordinator {
 
-	private static final String LOCK_FILE = ".install.lock";
 	private final ApplicationConfig config;
 	private final SqliteDatabase database;
 	private final WorkAssignmentArchiveStager stager;
@@ -79,7 +73,7 @@ public final class WorkAssignmentInstallationCoordinator {
 	 * Installs and activates a whole-Exam assignment.
 	 *
 	 * <p>
-	 * Interrupted earlier installations are recovered before another package is
+	 * Interrupted Subject imports and assignments are recovered before a package is
 	 * processed. A previously installed identical assignment is selected without
 	 * overwriting its existing contributor work.
 	 *
@@ -102,17 +96,13 @@ public final class WorkAssignmentInstallationCoordinator {
 	public Result install(Path incomingArchive) throws IOException, SQLException {
 		Objects.requireNonNull(incomingArchive, "incomingArchive");
 		Path source = incomingArchive.toAbsolutePath().normalize();
-		Path root = stagingRoot();
-		if (source.startsWith(root)) {
+		Path root = config.dataRoot().resolve(".assignment-install-staging");
+		if (source.startsWith(root) || source.startsWith(config.dataRoot().resolve(".subject-import-staging"))) {
 			throw new IOException("Cannot import directly from private assignment staging");
 		}
-		Path lockPath = root.resolve(LOCK_FILE);
-		try (FileChannel channel = FileChannel.open(lockPath, StandardOpenOption.CREATE, StandardOpenOption.WRITE,
-				LinkOption.NOFOLLOW_LINKS); FileLock lock = channel.tryLock()) {
-			if (lock == null) {
-				throw new IOException("Another assignment installation is running");
-			}
-			recoverPending(root);
+		try (var lock = ManagedAssetPublicationLock.acquire(config.dataRoot())) {
+			stagingRoot();
+			ManagedAssetPublicationRecovery.recoverPending(config, lock);
 			var inspection = new WorkAssignmentPackageInspector().inspect(source, ApplicationVersion.current(),
 					SqliteDatabase.latestSchemaVersion());
 
@@ -136,9 +126,7 @@ public final class WorkAssignmentInstallationCoordinator {
 				sessions.select(assignmentId);
 				return new Result(assignmentId, packageId, true, false);
 			}
-			return installNew(source, inspection);
-		} catch (OverlappingFileLockException exception) {
-			throw new IOException("Another assignment installation holds the lock", exception);
+			return installNew(source, inspection, lock);
 		}
 	}
 
@@ -161,25 +149,8 @@ public final class WorkAssignmentInstallationCoordinator {
 		}
 	}
 
-	private void discardUnjournalled(Path directory) throws IOException {
-		if (Files.exists(directory.resolve("publication.properties"), LinkOption.NOFOLLOW_LINKS)) {
-			throw new IOException("Journalled assignment requires formal recovery");
-		}
-
-		// No publication may occur without a durable journal.
-		// Therefore an unjournalled stage contains only private files.
-		try (Stream<Path> paths = Files.walk(directory)) {
-			for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
-				if (Files.isSymbolicLink(path)) {
-					throw new IOException("Symbolic link in private assignment stage");
-				}
-				Files.delete(path);
-			}
-		}
-	}
-
-	private Result installNew(Path source, WorkAssignmentPackageInspector.Inspection original)
-			throws IOException, SQLException {
+	private Result installNew(Path source, WorkAssignmentPackageInspector.Inspection original,
+			ManagedAssetPublicationLock lock) throws IOException, SQLException {
 		StagedAssignment staged = stager.stage(source);
 		UUID packageId = original.manifest().packageId();
 		UUID assignmentId = original.manifest().assignmentId();
@@ -226,7 +197,7 @@ public final class WorkAssignmentInstallationCoordinator {
 			}
 			boolean cleanupPending = false;
 			try {
-				journal.recover(packageId);
+				journal.recover(packageId, lock);
 			} catch (SQLException | IOException cleanupFailure) {
 
 				// The database and installed session already committed.
@@ -239,7 +210,7 @@ public final class WorkAssignmentInstallationCoordinator {
 				try {
 					Path journalPath = staged.directory().resolve("publication.properties");
 					if (prepared || Files.exists(journalPath, LinkOption.NOFOLLOW_LINKS)) {
-						journal.recover(packageId);
+						journal.recover(packageId, lock);
 					} else {
 						stager.discard(staged);
 					}
@@ -265,36 +236,6 @@ public final class WorkAssignmentInstallationCoordinator {
 		return new LocalIds(requiredLocalId(installed, EntityType.SUBJECT, subject),
 				requiredLocalId(installed, EntityType.EXAM, exam),
 				requiredLocalId(installed, EntityType.SYLLABUS_VERSION, currentSyllabus), legacySyllabus);
-	}
-
-	private void recoverPending(Path root) throws IOException, SQLException {
-		try (Stream<Path> entries = Files.list(root)) {
-			for (Path entry : entries.sorted().toList()) {
-				if (entry.getFileName().toString().equals(LOCK_FILE)) {
-					if (!Files.isRegularFile(entry, LinkOption.NOFOLLOW_LINKS)) {
-						throw new IOException("Unsafe assignment installation lock");
-					}
-					continue;
-				}
-				if (!Files.isDirectory(entry, LinkOption.NOFOLLOW_LINKS)) {
-					throw new IOException("Unexpected assignment staging entry: " + entry);
-				}
-				UUID packageId;
-				try {
-					packageId = UUID.fromString(entry.getFileName().toString());
-					if (!packageId.toString().equals(entry.getFileName().toString())) {
-						throw new IllegalArgumentException("Noncanonical package UUID");
-					}
-				} catch (IllegalArgumentException exception) {
-					throw new IOException("Unknown assignment staging directory", exception);
-				}
-				if (Files.exists(entry.resolve("publication.properties"), LinkOption.NOFOLLOW_LINKS)) {
-					journal.recover(packageId);
-				} else {
-					discardUnjournalled(entry);
-				}
-			}
-		}
 	}
 
 	private long requiredLocalId(Map<Key, Long> installed, EntityType type, UUID portableId) throws SQLException {

@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.service.workpackage;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -10,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
@@ -19,6 +21,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ManagedDataLayout;
+import au.edu.eq.questionbank.ManagedAssetPublicationLock;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.repository.sqlite.SqliteSubjectImportLedger;
 import au.edu.eq.questionbank.repository.sqlite.SqliteSubjectImportLedger.PackageEntry;
@@ -35,6 +38,90 @@ class SubjectImportPublicationJournalTest {
 
 	@TempDir
 	Path directory;
+
+	@Test
+	void authoritativeSourceReferenceRetainsAnUncommittedPublication() throws Exception {
+		Fixture fixture = fixture();
+		fixture.journal().prepare(fixture.staged(), fixture.backup());
+		fixture.journal().publishFiles(fixture.staged().packageId());
+		SqliteDatabase database = new SqliteDatabase(fixture.config().databasePath());
+		try (var connection = database.openConnection();
+				var statement = connection
+						.prepareStatement("INSERT INTO source_documents (relative_path) VALUES (?)")) {
+			statement.setString(1, fixture.staged().assets().getFirst().managedPath().replace("exams/", "exams/./"));
+			statement.executeUpdate();
+		}
+		assertFalse(fixture.journal().recover(fixture.staged().packageId()));
+		assertArrayEquals(fixture.bytes(), Files.readAllBytes(fixture.destination()));
+		assertFalse(Files.exists(fixture.staged().directory()));
+	}
+
+	@Test
+	void unsafeAuthoritativeReferenceStopsRecoveryBeforeDeletingAnything() throws Exception {
+		Fixture fixture = fixture();
+		fixture.journal().prepare(fixture.staged(), fixture.backup());
+		fixture.journal().publishFiles(fixture.staged().packageId());
+		SqliteDatabase database = new SqliteDatabase(fixture.config().databasePath());
+		try (var connection = database.openConnection(); var statement = connection.createStatement()) {
+			statement.executeUpdate("INSERT INTO source_documents (relative_path) VALUES ('../unknown.pdf')");
+		}
+		assertThrows(java.io.IOException.class, () -> fixture.journal().recover(fixture.staged().packageId()));
+		assertArrayEquals(fixture.bytes(), Files.readAllBytes(fixture.destination()));
+		assertTrue(Files.isRegularFile(fixture.staged().directory().resolve("publication.properties")));
+	}
+
+	@Test
+	void missingAuthoritativeDatabaseCannotBeMistakenForNoReferences() throws Exception {
+		Fixture fixture = fixture();
+		fixture.journal().prepare(fixture.staged(), fixture.backup());
+		fixture.journal().publishFiles(fixture.staged().packageId());
+		Files.move(fixture.config().databasePath(), directory.resolve("unavailable.db"));
+		assertThrows(java.io.IOException.class, () -> fixture.journal().recover(fixture.staged().packageId()));
+		assertFalse(Files.exists(fixture.config().databasePath()));
+		assertArrayEquals(fixture.bytes(), Files.readAllBytes(fixture.destination()));
+		assertTrue(Files.exists(fixture.staged().directory()));
+	}
+
+	@Test
+	void recoveryResumesAfterAnOwnedFileWasDeletedBeforeStageCleanup() throws Exception {
+		Fixture fixture = fixture();
+		fixture.journal().prepare(fixture.staged(), fixture.backup());
+		fixture.journal().publishFiles(fixture.staged().packageId());
+
+		// Simulate termination after managed unlink but before durable evidence
+		// cleanup.
+		Files.delete(fixture.destination());
+		assertFalse(fixture.journal().recover(fixture.staged().packageId()));
+		assertFalse(Files.exists(fixture.staged().directory()));
+		new SubjectImportCoordinator(fixture.config())
+				.recoverPending(fixture.config().dataRoot().resolve(".subject-import-staging"));
+		assertFalse(Files.exists(fixture.destination()));
+	}
+
+	@Test
+	void referenceSnapshotBlocksConcurrentDatabaseAdoptionUntilRecoveryEnds() throws Exception {
+		Fixture fixture = fixture();
+		SqliteDatabase database = new SqliteDatabase(fixture.config().databasePath());
+		try (var lock = ManagedAssetPublicationLock.acquire(fixture.config().dataRoot());
+				var references = new ManagedAssetRecoveryReferences(fixture.config(), lock);
+				var other = database.openConnection();
+				var statement = other.createStatement()) {
+			statement.execute("PRAGMA busy_timeout = 1");
+			assertFalse(references.contains(fixture.destination()));
+			SQLException busy = assertThrows(SQLException.class,
+					() -> statement.executeUpdate("INSERT INTO source_documents (relative_path) "
+							+ "VALUES ('subjects/Biology/exams/QCAA/2025/External Assessment/new.pdf')"));
+			assertEquals(5, busy.getErrorCode());
+		}
+		try (var connection = database.openConnection(); var statement = connection.createStatement()) {
+			statement.executeUpdate("INSERT INTO source_documents (relative_path) "
+					+ "VALUES ('subjects/Biology/exams/QCAA/2025/External Assessment/new.pdf')");
+			try (var rows = statement.executeQuery("SELECT COUNT(*) FROM source_documents")) {
+				assertTrue(rows.next());
+				assertEquals(1, rows.getInt(1));
+			}
+		}
+	}
 
 	/** A destination independently replaced after publication is never deleted. */
 	@Test
@@ -133,7 +220,7 @@ class SubjectImportPublicationJournalTest {
 		String digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
 		Path stageFile = assetDirectory.resolve("00000.bin");
 		Files.write(stageFile, bytes);
-		String managedPath = "subjects/Biology/exams/new-file.pdf";
+		String managedPath = "subjects/Biology/exams/QCAA/2025/External Assessment/new-file.pdf";
 		StagedAsset asset = new StagedAsset(managedPath,
 				"assets/sha256/" + digest.substring(0, 2) + "/" + digest + ".pdf", stageFile, digest, bytes.length,
 				AssetKind.MANAGED_FILE);

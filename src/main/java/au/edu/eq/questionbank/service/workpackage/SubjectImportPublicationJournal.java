@@ -22,6 +22,7 @@ import java.util.UUID;
 import java.util.stream.Stream;
 
 import au.edu.eq.questionbank.ApplicationConfig;
+import au.edu.eq.questionbank.ManagedAssetPublicationLock;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.repository.sqlite.SqliteSubjectImportLedger;
@@ -37,13 +38,15 @@ import au.edu.eq.questionbank.service.workpackage.SubjectImportBackupGate.Certif
  * <p>
  * The journal is made durable before any managed destination is created. Files
  * are published as hard links to verified staged files, atomically and without
- * a replace option. A committed package ledger is the sole indicator that a
- * published file belongs to a successful import.
+ * a replace option. The package ledger identifies completed imports;
+ * authoritative database references also protect files adopted by later
+ * operations.
  *
  * <p>
- * All operations require the caller to hold the exclusive import lock and close
- * or roll back any failed SQLite transaction before recovery. Recovery is
- * deliberately fail-closed if staged evidence or published bytes differ.
+ * Publication requires the shared data-root lock. Recovery acquires that lock
+ * and a SQLite writer reservation; close or roll back failed transactions
+ * first. It is deliberately fail-closed if staged evidence or published bytes
+ * differ.
  */
 public final class SubjectImportPublicationJournal {
 
@@ -156,9 +159,11 @@ public final class SubjectImportPublicationJournal {
 	 *
 	 * <p>
 	 * If the SQLite ledger says APPLIED, published bytes must be intact and the
-	 * staging tree is removed. Otherwise, each published file must be a hard link
-	 * to the original verified staging file before it is removed. Existing or
-	 * independently replaced files are never deleted.
+	 * staging tree is removed. Otherwise, only verified original hard links without
+	 * committed authoritative references may be removed. Files adopted by another
+	 * operation are retained. The common publication lock and a SQLite writer
+	 * reservation protect the reference check through deletion; unknown ownership
+	 * stops recovery without discarding its evidence.
 	 *
 	 * @param packageId staged package UUID
 	 * @return whether the master ledger confirms a committed import
@@ -166,6 +171,19 @@ public final class SubjectImportPublicationJournal {
 	 * @throws SQLException if the import ledger cannot be read
 	 */
 	public boolean recover(UUID packageId) throws IOException, SQLException {
+		try (var lock = ManagedAssetPublicationLock.acquire(config.dataRoot())) {
+			return recover(packageId, lock);
+		}
+	}
+
+	boolean recover(UUID packageId, ManagedAssetPublicationLock lock) throws IOException, SQLException {
+		try (var references = new ManagedAssetRecoveryReferences(config, lock)) {
+			return recoverOwnedFiles(packageId, references);
+		}
+	}
+
+	private boolean recoverOwnedFiles(UUID packageId, ManagedAssetRecoveryReferences references)
+			throws IOException, SQLException {
 		Intent intent = read(packageId);
 		var packageEntry = ledger.find(packageId);
 		if (packageEntry.isPresent()
@@ -174,11 +192,15 @@ public final class SubjectImportPublicationJournal {
 			throw new IOException("Ledger and staged incoming package disagree");
 		}
 		boolean applied = packageEntry.isPresent() && packageEntry.get().outcome() == PackageOutcome.APPLIED;
+		List<FileIntent> removable = new ArrayList<>();
+
+		// Validate the complete inventory before deleting anything. References remain
+		// stable until recovery ends, including references committed by other imports.
 		for (FileIntent file : intent.files()) {
 			Path source = requireStagedFile(intent.directory(), file);
 			Path destination = requireDestination(file.path());
 			if (!Files.exists(destination, LinkOption.NOFOLLOW_LINKS)) {
-				if (applied) {
+				if (applied || references.contains(destination)) {
 					throw new IOException("Committed import file is missing: " + file.path());
 				}
 				continue;
@@ -187,9 +209,17 @@ public final class SubjectImportPublicationJournal {
 					|| !sha256(destination).equals(file.sha256())) {
 				throw new IOException("Unsafe published asset state; manual recovery required: " + file.path());
 			}
-			if (!applied) {
-				Files.delete(destination);
+			if (!applied && !references.contains(destination)) {
+				removable.add(file);
 			}
+		}
+		for (FileIntent file : removable) {
+			Path source = requireStagedFile(intent.directory(), file);
+			Path destination = requireDestination(file.path());
+			if (!Files.isSameFile(source, destination) || !sha256(destination).equals(file.sha256())) {
+				throw new IOException("Subject publication changed during rollback");
+			}
+			Files.delete(destination);
 		}
 		deleteTree(intent.directory());
 		return applied;
