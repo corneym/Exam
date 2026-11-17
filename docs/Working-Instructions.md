@@ -248,6 +248,8 @@ When work is associated with a GitHub Issue, keep that Issue’s lifecycle in vi
 
 After a meaningful slice is completed and verified, record the result in the Issue when it will remain useful, and tell me any manual Project-field change that is now appropriate before continuing.
 
+If I report that a batch of code has passed all its tests, that is enough of a prompt for you to start the next batch without waiting to be told anything extra.
+
 ### TestFX and CI determinism
 
 Write workflow and behaviour tests so the same logical test is reliable both on a local desktop and under the GitHub Actions virtual-display harness.
