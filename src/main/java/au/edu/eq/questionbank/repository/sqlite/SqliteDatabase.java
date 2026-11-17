@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 34;
+	private static final int LATEST_SCHEMA_VERSION = 35;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -825,6 +825,12 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v33-to-v34.sql", 34);
 			return 34;
 		}
+		if (version == 34) {
+
+			// Version 35 installs append-only master intake and proposal evidence.
+			executeMigration(connection, "/db/migration-v34-to-v35.sql", 35);
+			return 35;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -1172,6 +1178,9 @@ public final class SqliteDatabase {
 			// Verify the return-history table and its immutable
 			// database-level protection triggers.
 			verifyVersion34ContributorReturnSchema(connection);
+		}
+		if (version >= 35) {
+			verifyVersion35ContributionIntakeSchema(connection);
 		}
 	}
 
@@ -1890,6 +1899,24 @@ public final class SqliteDatabase {
 						foreignKey("previous_package_id", "contributor_return_packages", "package_id")),
 				List.of(List.of("assignment_id", "return_number")));
 		SqliteContributorReturnLedgerTriggers.verify(connection);
+	}
+
+	private void verifyVersion35ContributionIntakeSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "contribution_intake_packages",
+				List.of(column("package_id", true, 1), column("assignment_id", true, 0),
+						column("return_number", true, 0), column("previous_package_id", false, 0),
+						column("baseline_snapshot_id", true, 0), column("master_installation_id", true, 0),
+						column("contributor_id", true, 0), column("origin_installation_id", true, 0),
+						column("archive_sha256", true, 0), column("intake_status", true, 0),
+						column("received_at", true, 0)),
+				List.of(foreignKey("assignment_id", "exam_work_assignments", "assignment_id")), List.of());
+		verifyTableSchema(connection, "contribution_intake_proposals",
+				List.of(column("package_id", true, 1), column("record_type", true, 2), column("record_id", true, 3),
+						column("proposed_revision_id", true, 0), column("baseline_revision_id", false, 0),
+						column("record_jsonl", true, 0)),
+				List.of(foreignKey("package_id", "contribution_intake_packages", "package_id")), List.of());
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_contribution_intake_", "contribution intake",
+				"/db/migration-v34-to-v35.sql");
 	}
 
 	private record ForeignKeyColumn(int sequence, String fromColumn, String targetColumn) {

@@ -273,7 +273,8 @@ public final class HistoricalSchemaFixture {
 	 * migration test database.
 	 *
 	 * <p>
-	 * This method must never be used against production data.
+	 * Newer schema structures are removed first. This method must never be used
+	 * against production data.
 	 *
 	 * @param statement statement for the disposable test database
 	 * @throws SQLException if cleanup fails
@@ -283,10 +284,40 @@ public final class HistoricalSchemaFixture {
 			throw new NullPointerException("statement");
 		}
 
-		// Remove immutability guards before dropping their table.
+		// Remove version 35 before reconstructing an older schema.
+		removeVersion35Objects(statement);
+
+		// Remove version 34 immutability guards and their table.
 		statement.execute("DROP TRIGGER IF EXISTS trg_contributor_returns_no_delete");
 		statement.execute("DROP TRIGGER IF EXISTS trg_contributor_returns_no_update");
 		statement.execute("DROP TABLE IF EXISTS contributor_return_packages");
+	}
+
+	/**
+	 * Removes version 35 coordinator contribution-intake structures from a
+	 * disposable historical migration test database.
+	 *
+	 * <p>
+	 * Child proposals are removed before their parent packages. This method must
+	 * never be used against production data.
+	 *
+	 * @param statement statement for the disposable test database
+	 * @throws SQLException if cleanup fails
+	 */
+	public static void removeVersion35Objects(Statement statement) throws SQLException {
+		if (statement == null) {
+			throw new NullPointerException("statement");
+		}
+
+		// Remove the child proposals and their protection triggers first.
+		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_intake_proposals_no_delete");
+		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_intake_proposals_no_update");
+		statement.execute("DROP TABLE IF EXISTS contribution_intake_proposals");
+
+		// Remove the parent intake packages and their protection triggers.
+		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_intake_packages_no_delete");
+		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_intake_packages_no_update");
+		statement.execute("DROP TABLE IF EXISTS contribution_intake_packages");
 	}
 
 	private static void dropAssignmentTriggers(Statement statement, String pattern) throws SQLException {

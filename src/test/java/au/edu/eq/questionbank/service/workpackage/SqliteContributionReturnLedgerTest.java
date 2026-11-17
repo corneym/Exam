@@ -152,7 +152,7 @@ class SqliteContributionReturnLedgerTest {
 	private Fixture fixture() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("returns.db"));
 		database.initialiseSchema();
-		assertEquals(34, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		execute(database, """
 				INSERT INTO subjects (id, subject_name)
 				VALUES (1, 'Chemistry')

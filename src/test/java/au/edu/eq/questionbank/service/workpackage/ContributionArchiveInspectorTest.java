@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.service.workpackage;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -16,6 +17,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
@@ -37,6 +40,7 @@ import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.repository.sqlite.HistoricalSchemaFixture;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkArchiveWriter.EntrySource;
@@ -72,6 +76,128 @@ class ContributionArchiveInspectorTest {
 				readEntry(secondArchive, "baseline/initial-records.jsonl"));
 		fixture.master().verifySchema();
 		fixture.master().verifyIntegrity();
+	}
+
+	@Test
+	void masterIntakeEvidenceCannotBeUpdatedOrDeleted() throws Exception {
+		Fixture fixture = fixture();
+		Path archive = publish(fixture, "Immutable contribution", "immutable-return.examwork");
+		var receipt = new MasterContributionIntake(fixture.master()).receive(archive);
+		String packageId = receipt.received().packageId().toString();
+		try (Connection connection = fixture.master().openConnection();
+				PreparedStatement update = connection.prepareStatement("""
+						UPDATE contribution_intake_packages
+						SET intake_status = 'HELD_LINEAGE'
+						WHERE package_id = ?
+						""");
+				PreparedStatement remove = connection.prepareStatement("""
+						DELETE FROM contribution_intake_proposals WHERE package_id = ?
+						""")) {
+			update.setString(1, packageId);
+			remove.setString(1, packageId);
+			assertThrows(SQLException.class, update::executeUpdate);
+			assertThrows(SQLException.class, remove::executeUpdate);
+		}
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
+	void masterIntakeHoldsOutOfOrderReturnsWithoutLaterAutoPromotion() throws Exception {
+		Fixture fixture = fixture();
+		Path firstArchive = publish(fixture, "Contributor first return", "first-return.examwork");
+		Path secondArchive = publish(fixture, "Contributor second return", "second-return.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		var second = intake.receive(secondArchive);
+		assertFalse(second.duplicate());
+		assertEquals(MasterContributionIntake.IntakeStatus.HELD_LINEAGE, second.received().status());
+		var first = intake.receive(firstArchive);
+		assertEquals(MasterContributionIntake.IntakeStatus.READY_FOR_REVIEW, first.received().status());
+		assertEquals(first.received().packageId(), second.received().previousPackageId());
+
+		// Replaying a previously held package must not silently change its state.
+		var repeated = intake.receive(secondArchive);
+		assertTrue(repeated.duplicate());
+		assertEquals(MasterContributionIntake.IntakeStatus.HELD_LINEAGE, repeated.received().status());
+		Path thirdArchive = publish(fixture, "Contributor third return", "third-return.examwork");
+		var third = intake.receive(thirdArchive);
+		assertEquals(MasterContributionIntake.IntakeStatus.HELD_LINEAGE, third.received().status());
+		assertEquals(second.received().packageId(), third.received().previousPackageId());
+	}
+
+	@Test
+	void masterIntakeRejectsPackageIdReusedForDifferentValidArchiveBytes() throws Exception {
+		Fixture fixture = fixture();
+		Path original = publish(fixture, "First submitted text", "submitted.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		var recorded = intake.receive(original);
+		List<ExchangeRecord> changes = new ExamWorkJsonlCodec()
+				.readRecords(new ByteArrayInputStream(readEntry(original, "records/contribution-changes.jsonl")));
+		ExchangeRecord question = changes.getFirst();
+		ObjectNode values = (ObjectNode) question.values();
+		values.put("question_text", "Different submitted text");
+		Path reused = repackage(original, "records/contribution-changes.jsonl",
+				encode(List.of(withValues(question, values))));
+		assertArchiveWellFormed(reused, fixture.master());
+		assertThrows(PackageFormatException.class, () -> intake.receive(reused));
+		assertEquals(recorded.received(), intake.find(recorded.received().packageId()).orElseThrow());
+		assertEquals(1, intake.proposedChanges(recorded.received().packageId()).size());
+	}
+
+	@Test
+	void masterIntakeRetainsProposalsAndDoesNotOverwriteCoordinatorEdits() throws Exception {
+		Fixture fixture = fixture();
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		Path firstArchive = publish(fixture, "Contributor version one", "return-1.examwork");
+		var first = intake.receive(firstArchive);
+		assertFalse(first.duplicate());
+		assertEquals(MasterContributionIntake.IntakeStatus.READY_FOR_REVIEW, first.received().status());
+		assertEquals(1, first.received().returnNumber());
+		assertEquals(1, intake.proposedChanges(first.received().packageId()).size());
+
+		// An intervening master correction must never be overwritten by intake.
+		execute(fixture.master(), "UPDATE questions SET question_text = 'Coordinator correction' WHERE id = 81");
+		Path secondArchive = publish(fixture, "Contributor version two", "return-2.examwork");
+		var second = intake.receive(secondArchive);
+		assertFalse(second.duplicate());
+		assertEquals(MasterContributionIntake.IntakeStatus.READY_FOR_REVIEW, second.received().status());
+		assertEquals(first.received().packageId(), second.received().previousPackageId());
+		assertEquals(2, second.received().returnNumber());
+		assertEquals(1, intake.proposedChanges(second.received().packageId()).size());
+		assertEquals(second.received(), intake.find(second.received().packageId()).orElseThrow());
+		var replay = intake.receive(firstArchive);
+		assertTrue(replay.duplicate());
+		assertEquals(first.received(), replay.received());
+		try (Connection connection = fixture.master().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("SELECT question_text FROM questions WHERE id = 81")) {
+			assertTrue(result.next());
+			assertEquals("Coordinator correction", result.getString(1));
+		}
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
+	void migrationToVersion35InstallsProtectedIntakeTables() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(directory.resolve("v35-migration.db"));
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try (Statement statement = connection.createStatement()) {
+				HistoricalSchemaFixture.removeVersion35Objects(statement);
+				statement.execute("UPDATE schema_version SET version = 34 WHERE version = 35");
+				connection.commit();
+			} catch (SQLException failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
+		assertEquals(34, database.schemaVersion());
+		database.verifySchema();
+		database.initialiseSchema();
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
+		database.verifySchema();
+		database.verifyIntegrity();
 	}
 
 	@Test
@@ -302,7 +428,8 @@ class ContributionArchiveInspectorTest {
 	}
 
 	private Path repackage(Path original, String modifiedPath, byte[] replacement) throws Exception {
-		ExamWorkManifest manifest = new ExamWorkArchiveValidator().validate(original, ApplicationVersion.current(), 34);
+		ExamWorkManifest manifest = new ExamWorkArchiveValidator().validate(original, ApplicationVersion.current(),
+				SqliteDatabase.latestSchemaVersion());
 		Map<String, byte[]> contents = new HashMap<>();
 		try (ZipFile zip = ZipFile.builder().setPath(original).get()) {
 			for (Entry entry : manifest.entries()) {
