@@ -56,18 +56,26 @@ final class WorkAssignmentArchiveFixture {
 		Instant issued = Instant.parse("2026-11-16T00:00:00Z");
 		ObjectNode current = fields("subject_id", id(1).toString(), "syllabus_name", "Biology 2025");
 		current.put("is_current", 1);
+		current.put("curriculum_status", "IN_PROGRESS");
+		ObjectNode unit = fields("syllabus_version_id", id(2).toString(), "curriculum_level", "UNIT",
+				"curriculum_code", "U1", "curriculum_name", "Biology Unit");
+		unit.put("display_order", 0);
+		ObjectNode exam = fields("subject_id", id(1).toString(), "provider_id", id(4).toString(),
+				"exam_name", "External Assessment");
+		exam.put("exam_year", 2025);
 		List<ExchangeRecord> records = List.of(record("SUBJECT", 1, fields("subject_name", "Biology")),
 				record("SYLLABUS_VERSION", 2, current),
-				record("CURRICULUM_NODE", 13, fields("syllabus_version_id", id(2).toString())),
+				record("CURRICULUM_NODE", 13, unit),
 				record("EXAM_PROVIDER", 4, fields("provider_name", "QCAA")),
-				record("EXAM", 3, fields("subject_id", id(1).toString(), "provider_id", id(4).toString())),
+				record("EXAM", 3, exam),
 				record("EXAM_BOOKLET", 5,
 						fields("exam_id", id(3).toString(), "source_document_id", id(8).toString(), "answer_file_id",
-								id(7).toString())),
+								id(7).toString(), "booklet_name", "Paper 1")),
 				record("EXAM_BOOKLET", 6,
 						fields("exam_id", id(3).toString(), "source_document_id", id(8).toString(), "answer_file_id",
-								id(7).toString())),
-				record("ANSWER_FILE", 7, fields("exam_id", id(3).toString(), "source_document_id", id(9).toString())),
+								id(7).toString(), "booklet_name", "Paper 2")),
+				record("ANSWER_FILE", 7, fields("exam_id", id(3).toString(), "source_document_id", id(9).toString(),
+						"answer_file_name", "Marking guide")),
 				record("SOURCE_DOCUMENT", 8,
 						fields("relative_path", QUESTION_PATH, "content_sha256", hash(QUESTION_BYTES))),
 				record("SOURCE_DOCUMENT", 9,

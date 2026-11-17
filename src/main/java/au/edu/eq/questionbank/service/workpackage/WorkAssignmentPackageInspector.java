@@ -21,7 +21,7 @@ import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest.Entry;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest.EntryRole;
 
 /**
- * Performs read-only package and scope validation before a contributor
+ * Performs read-only package, domain-semantic and scope validation before a contributor
  * installation may import a WORK_ASSIGNMENT.
  */
 public final class WorkAssignmentPackageInspector {
@@ -81,6 +81,7 @@ public final class WorkAssignmentPackageInspector {
 		}
 		assets.requireMatchingManifest(manifest);
 		new WorkAssignmentScopeValidator().validate(manifest, records, context, assets);
+		PortableDomainRecordValidator.validate(manifest.subjectId(), records);
 
 		// Detect replacement of the archive between validation and
 		// inspection. The importer must still stage its own immutable
