@@ -64,17 +64,17 @@ class SqliteAssignmentScopeTriggersTest {
 			connection.setAutoCommit(false);
 			try (Statement statement = connection.createStatement()) {
 
-				// Reconstruct an actual v30 trigger configuration rather
-				// than retaining the v32 Booklet UPDATE protection.
+				// Reconstruct version 30 without retaining the later
+				// version-32 Booklet UPDATE protection.
 				HistoricalSchemaFixture.removeAssignmentGuardObjects(statement);
-				SqliteAssignmentStructureTriggers.install(connection);
+				SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v29-to-v30.sql"));
 				statement.execute("""
 						UPDATE schema_version
 						SET version = 30
 						WHERE version = %d
 						""".formatted(SqliteDatabase.latestSchemaVersion()));
 				connection.commit();
-			} catch (SQLException failure) {
+			} catch (Exception failure) {
 				connection.rollback();
 				throw failure;
 			}
@@ -98,16 +98,17 @@ class SqliteAssignmentScopeTriggersTest {
 			connection.setAutoCommit(false);
 			try (Statement statement = connection.createStatement()) {
 
-				// Reconstruct the scope trigger configuration used by v32.
+				// Reconstruct the original version-31 scope guards,
+				// which remain authoritative through version 32.
 				HistoricalSchemaFixture.removeAssignmentScopeObjects(statement);
-				SqliteAssignmentScopeTriggers.install(connection);
+				SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v30-to-v31.sql"));
 				statement.execute("""
 						UPDATE schema_version
 						SET version = 32
 						WHERE version = 33
 						""");
 				connection.commit();
-			} catch (SQLException failure) {
+			} catch (Exception failure) {
 				connection.rollback();
 				throw failure;
 			}

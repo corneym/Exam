@@ -77,16 +77,20 @@ class SqliteAssignmentStructureTriggersTest {
 			try (Statement statement = connection.createStatement()) {
 				HistoricalSchemaFixture.removeAssignmentGuardObjects(statement);
 
-				// Reconstruct the version-31 triggers.
-				SqliteAssignmentStructureTriggers.install(connection);
-				SqliteAssignmentScopeTriggers.install(connection);
+				// Reconstruct the original version-31 guards using the
+				// same migration resources as production.
+				SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v29-to-v30.sql"));
+				SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v30-to-v31.sql"));
+
+				// The test starts from a version-33 fixture. Restore the
+				// historical version after installing its trigger definitions.
 				statement.execute("""
 						UPDATE schema_version
 						SET version = 31
 						WHERE version = %d
 						""".formatted(SqliteDatabase.latestSchemaVersion()));
 				connection.commit();
-			} catch (SQLException failure) {
+			} catch (Exception failure) {
 				connection.rollback();
 				throw failure;
 			}
