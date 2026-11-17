@@ -286,6 +286,56 @@ class SqliteAssignmentStructureTriggersTest {
 		database.verifyIntegrity();
 	}
 
+	@Test
+	void version30MigrationResourceInstallsAllStructuralTriggers() throws Exception {
+		SqliteDatabase database = fixture();
+
+		// Exercise the migration resource directly, without using
+		// the Java structural-trigger installation method.
+		String migration = SqlResourceLoader.load("/db/migration-v29-to-v30.sql");
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try (Statement statement = connection.createStatement()) {
+				HistoricalSchemaFixture.removeAssignmentGuardObjects(statement);
+				statement.execute("""
+						UPDATE schema_version
+						SET version = 29
+						WHERE version = 33
+						""");
+				SqlScriptExecutor.execute(connection, migration);
+
+				// All original v30 definitions must match exactly.
+				SqliteAssignmentStructureTriggers.verifyLegacy(connection);
+				connection.commit();
+			} catch (SQLException failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
+		assertEquals(30, database.schemaVersion());
+		database.verifySchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			try (var result = statement.executeQuery("""
+					SELECT COUNT(*)
+					FROM sqlite_master
+					WHERE type = 'trigger'
+					  AND name GLOB 'trg_contributor_structure_*'
+					""")) {
+				assertTrue(result.next());
+				assertEquals(30, result.getInt(1));
+			}
+
+			// The migrated triggers must enforce the original
+			// contributor assignment restrictions.
+			assertBlocked(statement, """
+					UPDATE exams
+					SET exam_name = 'Not permitted'
+					WHERE id = 31
+					""");
+		}
+		database.verifyIntegrity();
+	}
+
 	private void assertBlocked(Statement statement, String sql) {
 		SQLException failure = assertThrows(SQLException.class, () -> statement.execute(sql));
 		assertTrue(failure.getMessage().contains("Coordinator-owned structure is read-only"), failure.getMessage());

@@ -804,10 +804,9 @@ public final class SqliteDatabase {
 		}
 		if (version == 29) {
 
-			// Version 30 prevents contributor assignment mode from
-			// changing authoritative Subject, Exam or asset metadata.
-			executeMigration(connection, "/db/migration-v29-to-v30.sql", 30,
-					SqliteAssignmentStructureTriggers::install);
+			// Version 30 installs the original contributor structural
+			// restrictions directly from its versioned SQL migration.
+			executeMigration(connection, "/db/migration-v29-to-v30.sql", 30);
 			return 30;
 		}
 		if (version == 30) {
