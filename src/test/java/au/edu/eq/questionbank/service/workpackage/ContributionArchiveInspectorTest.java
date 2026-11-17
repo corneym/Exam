@@ -1,0 +1,343 @@
+package au.edu.eq.questionbank.service.workpackage;
+
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+import org.apache.commons.compress.archivers.zip.ZipFile;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+import au.edu.eq.questionbank.ApplicationConfig;
+import au.edu.eq.questionbank.ApplicationVersion;
+import au.edu.eq.questionbank.ManagedDataLayout;
+import au.edu.eq.questionbank.model.Exam;
+import au.edu.eq.questionbank.model.ExamProvider;
+import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
+import au.edu.eq.questionbank.service.workpackage.ExamWorkArchiveWriter.EntrySource;
+import au.edu.eq.questionbank.service.workpackage.ExamWorkAssetIndex.Reference;
+import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest.Entry;
+
+class ContributionArchiveInspectorTest {
+
+	@TempDir
+	Path directory;
+
+	@Test
+	void acceptsCumulativeReturnsWithoutCoordinatorAcknowledgement() throws Exception {
+		Fixture fixture = fixture();
+		Path firstArchive = publish(fixture, "First contributor edit", "first.examwork");
+		ContributionArchiveInspector inspector = new ContributionArchiveInspector(fixture.master());
+		var first = inspector.inspect(firstArchive);
+		assertEquals(1, first.returnNumber());
+		assertNull(first.previousPackageId());
+		assertEquals(1, first.changes().size());
+		assertTrue(first.proposedRecords().size() > first.changes().size());
+		assertEquals(fixture.assignmentId(), first.assignment().assignmentId());
+		assertTrue(first.archiveSha256().matches("[0-9a-f]{64}"));
+
+		// The coordinator has neither accepted nor acknowledged return 1.
+		Path secondArchive = publish(fixture, "Second contributor edit", "second.examwork");
+		var second = inspector.inspect(secondArchive);
+		assertEquals(2, second.returnNumber());
+		assertEquals(first.manifest().packageId(), second.previousPackageId());
+		assertEquals(1, second.changes().size());
+		assertEquals(first.assignment(), second.assignment());
+		assertArrayEquals(new WorkAssignmentLedger(fixture.master()).readBaseline(fixture.assignmentId()).records(),
+				readEntry(secondArchive, "baseline/initial-records.jsonl"));
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
+	void rejectsBaselineChangedInsideOtherwiseValidArchive() throws Exception {
+		Fixture fixture = fixture();
+		Path issued = publish(fixture, "Modified question", "valid.examwork");
+		var codec = new ExamWorkJsonlCodec();
+		List<ExchangeRecord> records = codec
+				.readRecords(new ByteArrayInputStream(readEntry(issued, "baseline/initial-records.jsonl")));
+		List<ExchangeRecord> forged = new ArrayList<>();
+		for (ExchangeRecord record : records) {
+			if ("QUESTION".equals(record.recordType())) {
+				ObjectNode values = (ObjectNode) record.values();
+				values.put("question_text", "Altered issued baseline");
+				forged.add(withValues(record, values));
+			} else {
+				forged.add(record);
+			}
+		}
+		Path changed = repackage(issued, "baseline/initial-records.jsonl", encode(forged));
+		assertArchiveWellFormed(changed, fixture.master());
+		assertThrows(PackageFormatException.class,
+				() -> new ContributionArchiveInspector(fixture.master()).inspect(changed));
+	}
+
+	@Test
+	void rejectsForeignBookletReferenceInAValidContributionArchive() throws Exception {
+		Fixture fixture = fixture();
+		Path issued = publish(fixture, "Modified question", "valid.examwork");
+		var codec = new ExamWorkJsonlCodec();
+		List<ExchangeRecord> records = codec
+				.readRecords(new ByteArrayInputStream(readEntry(issued, "records/contribution-changes.jsonl")));
+		ExchangeRecord original = records.getFirst();
+		assertEquals("QUESTION", original.recordType());
+		ObjectNode values = (ObjectNode) original.values();
+		values.put("booklet_id", UUID.randomUUID().toString());
+		Path changed = repackage(issued, "records/contribution-changes.jsonl",
+				encode(List.of(withValues(original, values))));
+		assertArchiveWellFormed(changed, fixture.master());
+		PackageFormatException failure = assertThrows(PackageFormatException.class,
+				() -> new ContributionArchiveInspector(fixture.master()).inspect(changed));
+		assertTrue(failure.getMessage().contains("out-of-scope"), failure.getMessage());
+	}
+
+	@Test
+	void rejectsInconsistentContributorIdentityAndReturnLineage() throws Exception {
+		Fixture fixture = fixture();
+		Path issued = publish(fixture, "Modified question", "valid.examwork");
+		var codec = new ExamWorkJsonlCodec();
+		ExchangeRecord context = codec
+				.readRecords(new ByteArrayInputStream(readEntry(issued, "records/contribution-context.jsonl")))
+				.getFirst();
+		ObjectNode wrongContributor = (ObjectNode) context.values();
+		wrongContributor.put("contributor_id", UUID.randomUUID().toString());
+		Path foreign = repackage(issued, "records/contribution-context.jsonl",
+				encode(List.of(withValues(context, wrongContributor))));
+		assertArchiveWellFormed(foreign, fixture.master());
+		assertThrows(PackageFormatException.class,
+				() -> new ContributionArchiveInspector(fixture.master()).inspect(foreign));
+		ObjectNode wrongOrder = (ObjectNode) context.values();
+		wrongOrder.put("return_number", 2);
+		wrongOrder.putNull("previous_return_package_id");
+		Path missingParent = repackage(issued, "records/contribution-context.jsonl",
+				encode(List.of(withValues(context, wrongOrder))));
+		assertArchiveWellFormed(missingParent, fixture.master());
+		assertThrows(PackageFormatException.class,
+				() -> new ContributionArchiveInspector(fixture.master()).inspect(missingParent));
+	}
+
+	@Test
+	void rejectsOutOfScopeAssetOwner() throws Exception {
+		Fixture fixture = fixture();
+		Path issued = publish(fixture, "Modified question", "valid.examwork");
+		var codec = new ExamWorkJsonlCodec();
+		ExamWorkAssetIndex index = codec
+				.readAssetIndex(new ByteArrayInputStream(readEntry(issued, ExamWorkAssetIndex.INDEX_PATH)));
+		List<Reference> altered = new ArrayList<>();
+		boolean changedOwner = false;
+		for (Reference reference : index.references()) {
+			if (!changedOwner && "SOURCE_PDF".equals(reference.usage())) {
+				altered.add(new Reference(reference.archivePath(), reference.sha256(), reference.size(),
+						reference.mediaType(), reference.managedPath(), reference.ownerType(), UUID.randomUUID(),
+						reference.usage()));
+				changedOwner = true;
+			} else {
+				altered.add(reference);
+			}
+		}
+		assertTrue(changedOwner);
+		ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+		codec.writeAssetIndex(new ExamWorkAssetIndex(altered), bytes);
+		Path changed = repackage(issued, ExamWorkAssetIndex.INDEX_PATH, bytes.toByteArray());
+		assertArchiveWellFormed(changed, fixture.master());
+		PackageFormatException failure = assertThrows(PackageFormatException.class,
+				() -> new ContributionArchiveInspector(fixture.master()).inspect(changed));
+		assertTrue(failure.getMessage().contains("out-of-scope"), failure.getMessage());
+	}
+
+	@Test
+	void rejectsUnknownMasterAssignmentWithoutWritingMasterData() throws Exception {
+		Fixture fixture = fixture();
+		Path issued = publish(fixture, "Modified question", "valid.examwork");
+		SqliteDatabase otherMaster = new SqliteDatabase(directory.resolve("unrelated.db"));
+		otherMaster.initialiseSchema();
+		assertThrows(PackageFormatException.class, () -> new ContributionArchiveInspector(otherMaster).inspect(issued));
+		otherMaster.verifyIntegrity();
+	}
+
+	private void assertArchiveWellFormed(Path archive, SqliteDatabase database) throws Exception {
+		assertNotNull(new ExamWorkArchiveValidator().validate(archive, ApplicationVersion.current(),
+				database.schemaVersion()));
+	}
+
+	private byte[] digest(byte[] bytes) {
+		try {
+			return MessageDigest.getInstance("SHA-256").digest(bytes);
+		} catch (java.security.NoSuchAlgorithmException exception) {
+			throw new IllegalStateException(exception);
+		}
+	}
+
+	private byte[] encode(List<ExchangeRecord> records) throws IOException {
+		ByteArrayOutputStream output = new ByteArrayOutputStream();
+		new ExamWorkJsonlCodec().writeRecords(records, output);
+		return output.toByteArray();
+	}
+
+	private void execute(SqliteDatabase database, String sql) throws SQLException {
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute(sql);
+		}
+	}
+
+	private Fixture fixture() throws Exception {
+		ApplicationConfig coordinator = ApplicationConfig.fromDataRoot(directory.resolve("coordinator"));
+		ApplicationConfig contributor = ApplicationConfig.fromDataRoot(directory.resolve("contributor"));
+		Files.createDirectories(coordinator.dataRoot());
+		Files.createDirectories(contributor.dataRoot());
+		SqliteDatabase master = new SqliteDatabase(coordinator.databasePath());
+		SqliteDatabase local = new SqliteDatabase(contributor.databasePath());
+		master.initialiseSchema();
+		local.initialiseSchema();
+		Path questionPdf = coordinator.dataRoot().resolve("subjects/Biology/exams/questions.pdf");
+		Path answerPdf = coordinator.dataRoot().resolve("subjects/Biology/exams/answers.pdf");
+		Files.createDirectories(questionPdf.getParent());
+		Files.writeString(questionPdf, "Question PDF content");
+		Files.writeString(answerPdf, "Answer PDF content");
+		execute(master, """
+				INSERT INTO subjects (id, subject_name) VALUES (1, 'Biology')
+				""");
+		execute(master, """
+				INSERT INTO syllabus_versions (id, subject_id, syllabus_name, is_current)
+				VALUES (11, 1, 'Biology 2025', 1)
+				""");
+		execute(master, """
+				INSERT INTO curriculum_nodes (id, syllabus_version_id, parent_id,
+				    curriculum_code, curriculum_name, curriculum_level, display_order)
+				VALUES
+				    (101, 11, NULL, 'B25U1', 'Biology Unit', 'UNIT', 0),
+				    (102, 11, 101, 'B25U1T1', 'Biology Topic', 'TOPIC', 0),
+				    (103, 11, 102, 'B25U1T1D1', 'Biology Descriptor', 'DESCRIPTOR', 0)
+				""");
+		execute(master, """
+				INSERT INTO exam_providers (id, provider_name) VALUES (21, 'QCAA')
+				""");
+		execute(master, """
+				INSERT INTO source_documents (id, relative_path) VALUES
+				    (51, 'subjects/Biology/exams/questions.pdf'),
+				    (52, 'subjects/Biology/exams/answers.pdf')
+				""");
+		execute(master, """
+				INSERT INTO exams (id, subject_id, provider_id, exam_year, exam_name,
+				    expected_question_booklet_count, expected_answer_file_count)
+				VALUES (31, 1, 21, 2025, 'External Assessment', 2, 1)
+				""");
+		execute(master, """
+				INSERT INTO answer_files (id, exam_id, source_document_id, answer_file_name)
+				VALUES (71, 31, 52, 'Marking Guide')
+				""");
+		execute(master, """
+				INSERT INTO exam_booklets (id, exam_id, source_document_id, answer_file_id, booklet_name)
+				VALUES (61, 31, 51, 71, 'Paper 1'), (62, 31, 51, 71, 'Paper 2')
+				""");
+		execute(master, """
+				INSERT INTO questions (id, booklet_id, classification_node_id,
+				    question_code, question_text, marks, shared_context_capture_required)
+				VALUES (81, 61, 103, '1', 'Biology question', 2, 0)
+				""");
+		execute(master, """
+				INSERT INTO answers (id, question_id, answer_text)
+				VALUES (91, 81, 'Biology answer')
+				""");
+		UUID assignmentId = UUID.randomUUID();
+		Exam exam = new Exam(31, new Subject(1, "Biology"), new ExamProvider(21, "QCAA"), 2025, "External Assessment");
+		Path assignment = directory.resolve("issued.examwork");
+		new WorkAssignmentExporter(master, new ManagedDataLayout(coordinator.dataRoot()))
+				.export(new WorkAssignmentExporter.Request(exam, assignmentId, UUID.randomUUID(),
+						"Integration Contributor", false, assignment));
+		new WorkAssignmentLedger(master).register(assignment);
+		new WorkAssignmentInstallationCoordinator(contributor).install(assignment);
+		return new Fixture(master, local, contributor.dataRoot(), assignmentId);
+	}
+
+	private Path publish(Fixture fixture, String text, String name) throws Exception {
+		try (Connection connection = fixture.contributor().openConnection();
+				Statement statement = connection.createStatement()) {
+
+			// Count only directly updated Questions, excluding changes
+			// made by the portable revision triggers.
+			int affected = SqliteDirectChanges.executeUpdate(statement, """
+					UPDATE questions
+					SET question_text = '%s'
+					WHERE question_code = '1'
+					""".formatted(text));
+			assertEquals(1, affected);
+		}
+		Path target = directory.resolve(name);
+		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
+				.export(fixture.assignmentId(), target);
+		return target;
+	}
+
+	private byte[] readEntry(Path archive, String name) throws IOException {
+		try (ZipFile zip = ZipFile.builder().setPath(archive).get();
+				InputStream input = zip.getInputStream(zip.getEntry(name))) {
+			return input.readAllBytes();
+		}
+	}
+
+	private Path repackage(Path original, String modifiedPath, byte[] replacement) throws Exception {
+		ExamWorkManifest manifest = new ExamWorkArchiveValidator().validate(original, ApplicationVersion.current(), 34);
+		Map<String, byte[]> contents = new HashMap<>();
+		try (ZipFile zip = ZipFile.builder().setPath(original).get()) {
+			for (Entry entry : manifest.entries()) {
+				try (InputStream input = zip.getInputStream(zip.getEntry(entry.path()))) {
+					contents.put(entry.path(), input.readAllBytes());
+				}
+			}
+		}
+		assertNotNull(contents.put(modifiedPath, replacement));
+		List<Entry> entries = manifest.entries().stream().map(entry -> new Entry(entry.path(), entry.role(),
+				contents.get(entry.path()).length, HexFormat.of().formatHex(digest(contents.get(entry.path())))))
+				.toList();
+		ExamWorkManifest altered = new ExamWorkManifest(manifest.formatVersion(), manifest.packageId(),
+				manifest.packageType(), manifest.createdAt(), manifest.originInstallationId(),
+				manifest.intendedMasterInstallationId(), manifest.subjectId(), manifest.subjectName(),
+				manifest.assignmentId(), manifest.baselineSnapshotId(), manifest.producerApplicationVersion(),
+				manifest.minimumReaderApplicationVersion(), manifest.producerSchemaVersion(),
+				manifest.minimumReaderSchemaVersion(), manifest.scope(), entries);
+		Map<String, EntrySource> sources = new HashMap<>();
+		for (Map.Entry<String, byte[]> entry : contents.entrySet()) {
+			byte[] bytes = entry.getValue();
+			sources.put(entry.getKey(), () -> new ByteArrayInputStream(bytes));
+		}
+		Path destination = directory.resolve("forged-" + UUID.randomUUID() + ".examwork");
+		try (OutputStream output = Files.newOutputStream(destination)) {
+			new ExamWorkArchiveWriter().write(altered, sources, output);
+		}
+		return destination;
+	}
+
+	private ExchangeRecord withValues(ExchangeRecord original, ObjectNode values) {
+		return new ExchangeRecord(original.recordVersion(), original.recordType(), original.recordId(),
+				original.revisionId(), original.baselineRevisionId(), values);
+	}
+
+	private record Fixture(SqliteDatabase master, SqliteDatabase contributor, Path contributorRoot, UUID assignmentId) {
+	}
+}
