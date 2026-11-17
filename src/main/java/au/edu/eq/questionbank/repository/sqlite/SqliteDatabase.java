@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 32;
+	private static final int LATEST_SCHEMA_VERSION = 33;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -825,6 +825,22 @@ public final class SqliteDatabase {
 					SqliteAssignmentStructureTriggers::enablePendingMcqContinuation);
 			return 32;
 		}
+		if (version == 31) {
+
+			// Version 32 permits MCQ continuation metadata updates only
+			// within the selected assignment's Booklets.
+			executeMigration(connection, "/db/migration-v31-to-v32.sql", 32,
+					SqliteAssignmentStructureTriggers::enablePendingMcqContinuation);
+			return 32;
+		}
+		if (version == 32) {
+
+			// Version 33 restricts contributor Question classifications
+			// to Subtopics and Descriptors.
+			executeMigration(connection, "/db/migration-v32-to-v33.sql", 33,
+					SqliteAssignmentScopeTriggers::enableClassificationLevels);
+			return 33;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -1155,9 +1171,6 @@ public final class SqliteDatabase {
 			verifyVersion29ContributorAssignmentSchema(connection);
 		}
 		if (version >= 30) {
-
-			// Schema versions 30 and 31 use the original structural guards.
-			// Version 32 introduces the narrowly scoped MCQ continuation update.
 			if (version >= 32) {
 				SqliteAssignmentStructureTriggers.verify(connection);
 			} else {
@@ -1165,19 +1178,10 @@ public final class SqliteDatabase {
 			}
 		}
 		if (version >= 31) {
-
-			// Every capture table must retain its assignment-scope
-			// INSERT, UPDATE and DELETE barriers.
-			SqliteAssignmentScopeTriggers.verify(connection);
-		}
-		if (version >= 30) {
-
-			// Versions 30 and 31 retain the original blanket Booklet UPDATE
-			// protection. Version 32 introduces the narrowly scoped exception.
-			if (version >= 32) {
-				SqliteAssignmentStructureTriggers.verify(connection);
+			if (version >= 33) {
+				SqliteAssignmentScopeTriggers.verify(connection);
 			} else {
-				SqliteAssignmentStructureTriggers.verifyLegacy(connection);
+				SqliteAssignmentScopeTriggers.verifyLegacy(connection);
 			}
 		}
 	}

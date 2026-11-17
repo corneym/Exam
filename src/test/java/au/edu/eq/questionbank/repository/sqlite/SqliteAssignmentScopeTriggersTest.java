@@ -23,7 +23,7 @@ class SqliteAssignmentScopeTriggersTest {
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.execute("""
 					UPDATE questions
-					SET classification_node_id = 102
+					SET classification_node_id = 106
 					WHERE id = 1
 					""");
 			assertBlocked(statement, """
@@ -124,7 +124,7 @@ class SqliteAssignmentScopeTriggersTest {
 					    source_question_id, shared_context_id
 					)
 					VALUES (
-					    4, 61, 101, '2', 'New Question', 3, 0,
+					    4, 61, 104, '2', 'New Question', 3, 0,
 					    403, 303
 					)
 					""");
@@ -201,6 +201,83 @@ class SqliteAssignmentScopeTriggersTest {
 					)
 					VALUES (61)
 					""");
+		}
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void rejectsNonClassifiableQuestionNodes() throws Exception {
+		SqliteDatabase database = fixture(false);
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+
+			// A Unit belongs to the permitted syllabus but is not a
+			// valid Question classification.
+			assertBlocked(statement, """
+					INSERT INTO questions (
+					    id, booklet_id, classification_node_id,
+					    question_code, question_text, marks,
+					    shared_context_capture_required
+					)
+					VALUES (
+					    9, 61, 101,
+					    '9', 'Invalid Unit classification', 2, 0
+					)
+					""");
+
+			// The same restriction applies to Topics.
+			assertBlocked(statement, """
+					INSERT INTO questions (
+					    id, booklet_id, classification_node_id,
+					    question_code, question_text, marks,
+					    shared_context_capture_required
+					)
+					VALUES (
+					    9, 61, 103,
+					    '9', 'Invalid Topic classification', 2, 0
+					)
+					""");
+
+			// A Subtopic under that same Unit is permitted.
+			statement.execute("""
+					INSERT INTO questions (
+					    id, booklet_id, classification_node_id,
+					    question_code, question_text, marks,
+					    shared_context_capture_required
+					)
+					VALUES (
+					    9, 61, 104,
+					    '9', 'Valid Subtopic classification', 2, 0
+					)
+					""");
+
+			// Reclassifying that Question back to a Unit or Topic
+			// must also be rejected.
+			assertBlocked(statement, """
+					UPDATE questions
+					SET classification_node_id = 101
+					WHERE id = 9
+					""");
+			assertBlocked(statement, """
+					UPDATE questions
+					SET classification_node_id = 103
+					WHERE id = 9
+					""");
+
+			// Historical records remain editable without silently
+			// changing their original classification.
+			statement.execute("""
+					UPDATE questions
+					SET question_text = 'Historical question edited'
+					WHERE id = 1
+					""");
+			try (var result = statement.executeQuery("""
+					SELECT classification_node_id
+					FROM questions
+					WHERE id = 9
+					""")) {
+				assertTrue(result.next());
+				assertEquals(104, result.getLong(1));
+			}
 		}
 		database.verifyIntegrity();
 	}

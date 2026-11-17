@@ -48,7 +48,7 @@ class SqliteAssignmentStructureTriggersTest {
 	}
 
 	@Test
-	void migratesVersion31ToVersion32WithoutChangingAssignmentData() throws Exception {
+	void migratesVersion31ThroughLatestWithoutChangingAssignmentData() throws Exception {
 		SqliteDatabase database = fixture();
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
@@ -79,7 +79,7 @@ class SqliteAssignmentStructureTriggersTest {
 					""");
 		}
 		database.initialiseSchema();
-		assertEquals(32, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		database.verifySchema();
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.execute("""
