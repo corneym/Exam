@@ -41,7 +41,6 @@ final class SqliteAssignmentStructureTriggers {
 			statement.execute(definition("exam_booklets", "update", true));
 			statement.execute(pendingMcqDefinition());
 		}
-
 		verify(connection);
 	}
 
@@ -57,7 +56,6 @@ final class SqliteAssignmentStructureTriggers {
 				}
 			}
 		}
-
 		verifyLegacy(connection);
 	}
 
@@ -94,7 +92,6 @@ final class SqliteAssignmentStructureTriggers {
 					END
 					""".formatted(name(table, operation)).strip();
 		}
-
 		return """
 				CREATE TRIGGER %s
 				BEFORE %s ON %s
@@ -160,14 +157,12 @@ final class SqliteAssignmentStructureTriggers {
 
 	private static void verify(Connection connection, boolean pendingMcqEnabled) throws SQLException {
 		Objects.requireNonNull(connection, "connection");
-
 		for (String table : TABLES) {
 			for (String operation : OPERATIONS) {
 				verifyTrigger(connection, table, name(table, operation),
 						definition(table, operation, pendingMcqEnabled));
 			}
 		}
-
 		if (pendingMcqEnabled) {
 			verifyTrigger(connection, "exam_booklets", "trg_contributor_structure_exam_booklets_pending_mcq_update",
 					pendingMcqDefinition());
@@ -176,26 +171,21 @@ final class SqliteAssignmentStructureTriggers {
 
 	private static void verifyTrigger(Connection connection, String table, String triggerName, String expected)
 			throws SQLException {
-
 		try (PreparedStatement statement = connection.prepareStatement("""
 				SELECT tbl_name, sql
 				FROM sqlite_master
 				WHERE type = 'trigger'
 				  AND name = ?
 				""")) {
-
 			statement.setString(1, triggerName);
-
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
 					throw new SQLException("Missing contributor structure trigger: " + triggerName);
 				}
-
 				if (!table.equals(result.getString("tbl_name"))
 						|| !normalise(expected).equals(normalise(result.getString("sql")))) {
 					throw new SQLException("Altered contributor structure trigger: " + triggerName);
 				}
-
 				if (result.next()) {
 					throw new SQLException("Duplicate contributor structure trigger: " + triggerName);
 				}

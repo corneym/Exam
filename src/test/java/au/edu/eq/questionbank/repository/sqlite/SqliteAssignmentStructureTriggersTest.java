@@ -50,33 +50,27 @@ class SqliteAssignmentStructureTriggersTest {
 	@Test
 	void migratesVersion31ToVersion32WithoutChangingAssignmentData() throws Exception {
 		SqliteDatabase database = fixture();
-
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-
 			try (Statement statement = connection.createStatement()) {
 				HistoricalSchemaFixture.removeAssignmentGuardObjects(statement);
 
 				// Reconstruct the version-31 triggers.
 				SqliteAssignmentStructureTriggers.install(connection);
 				SqliteAssignmentScopeTriggers.install(connection);
-
 				statement.execute("""
 						UPDATE schema_version
 						SET version = 31
 						WHERE version = %d
 						""".formatted(SqliteDatabase.latestSchemaVersion()));
-
 				connection.commit();
 			} catch (SQLException failure) {
 				connection.rollback();
 				throw failure;
 			}
 		}
-
 		assertEquals(31, database.schemaVersion());
 		database.verifySchema();
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			assertBlocked(statement, """
 					UPDATE exam_booklets
@@ -84,12 +78,9 @@ class SqliteAssignmentStructureTriggersTest {
 					WHERE id = 61
 					""");
 		}
-
 		database.initialiseSchema();
-
 		assertEquals(32, database.schemaVersion());
 		database.verifySchema();
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.execute("""
 					UPDATE exam_booklets
@@ -99,24 +90,19 @@ class SqliteAssignmentStructureTriggersTest {
 			SqliteAssignmentStructureTriggers.verify(connection);
 			SqliteAssignmentScopeTriggers.verify(connection);
 		}
-
 		database.verifyIntegrity();
 	}
 
 	@Test
 	void missingPendingMcqTriggerFailsSchemaVerification() throws Exception {
 		SqliteDatabase database = fixture();
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
-
 			statement.execute("""
 					DROP TRIGGER
 					trg_contributor_structure_exam_booklets_pending_mcq_update
 					""");
 		}
-
 		SQLException failure = assertThrows(SQLException.class, database::verifySchema);
-
 		assertTrue(failure.getMessage().contains("Missing contributor structure trigger"));
 	}
 
@@ -154,35 +140,29 @@ class SqliteAssignmentStructureTriggersTest {
 	@Test
 	void normalModeAllowsPendingMcqUpdates() throws Exception {
 		SqliteDatabase database = fixture();
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
-
 			statement.execute("""
 					UPDATE contributor_assignment_selection
 					SET assignment_id = NULL
 					WHERE singleton_id = 1
 					""");
-
 			statement.execute("""
 					UPDATE exam_booklets
 					SET pending_mcq_shared_context_id = 301
 					WHERE id = 61
 					""");
-
 			statement.execute("""
 					UPDATE exam_booklets
 					SET pending_mcq_shared_context_id = NULL
 					WHERE id = 61
 					""");
 		}
-
 		database.verifyIntegrity();
 	}
 
 	@Test
 	void permitsOnlyAssignedBookletContinuationAndBlocksStructuralEdits() throws Exception {
 		SqliteDatabase database = fixture();
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 
 			// Context 301 belongs to Booklet 61 in the assigned Exam.
@@ -236,20 +216,17 @@ class SqliteAssignmentStructureTriggersTest {
 					SET pending_mcq_shared_context_id = NULL
 					WHERE id = 61
 					""");
-
 			try (var result = statement.executeQuery("""
 					SELECT pending_mcq_shared_context_id, booklet_name
 					FROM exam_booklets
 					WHERE id = 61
 					""")) {
-
 				assertTrue(result.next());
 				result.getLong("pending_mcq_shared_context_id");
 				assertTrue(result.wasNull());
 				assertEquals("Assigned Booklet", result.getString("booklet_name"));
 			}
 		}
-
 		database.verifyIntegrity();
 	}
 

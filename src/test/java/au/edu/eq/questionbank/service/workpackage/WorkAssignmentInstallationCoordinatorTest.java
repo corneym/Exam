@@ -24,8 +24,17 @@ import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ManagedAssetPublicationLock;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.model.Exam;
+import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
+import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.QuestionResponseType;
+import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
+import au.edu.eq.questionbank.repository.assessment.SqliteQuestionCaptureService;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
 import au.edu.eq.questionbank.service.workpackage.SubjectImportAssetStager.AssetKind;
@@ -118,6 +127,64 @@ class WorkAssignmentInstallationCoordinatorTest {
 		assertTrue(installer.install(fixture.archive()).replay());
 		recoverAll(fixture);
 		assertAllCommittedFilesVerified(fixture);
+	}
+
+	@Test
+	void contributorMcqContinuationSurvivesRestartAndIsConsumed() throws Exception {
+		Fixture fixture = fixture();
+		new WorkAssignmentInstallationCoordinator(fixture.contributor()).install(fixture.archive());
+		SqliteDatabase database = fixture.contributorDatabase();
+		var sessions = new SqliteContributorAssignmentSessionRepository(database);
+		assertTrue(sessions.active().isPresent());
+
+		// Use the actual installed syllabus and Exam, rather than assuming
+		// contributor-local database identities match coordinator identities.
+		var curriculum = new SqliteCurriculumRepository(database);
+		Subject subject = curriculum.findAllSubjects().getFirst();
+		var currentSyllabus = curriculum.findVersionsForSubject(subject).stream().filter(SyllabusVersion::isCurrent)
+				.findFirst().orElseThrow();
+		var classification = curriculum.findReviewNodes(currentSyllabus).getFirst();
+		var exams = new SqliteExamWriter(database);
+		Exam exam = exams.findExamsForSubject(subject).getFirst();
+		ExamBooklet booklet = exams.findExamBooklets(exam).stream()
+				.filter(candidate -> candidate.getName().equals("Paper 1")).findFirst().orElseThrow();
+		var firstService = new SqliteQuestionCaptureService(database);
+		Question questionFive = firstService
+				.save(new SqliteQuestionCaptureService.Request(SqliteQuestionCaptureService.Operation.NEW, booklet,
+						null, "Q5", 1, List.of(new QuestionRegion(booklet, 1, 0.10, 0.30, 0.70, 0.12)), classification,
+						QuestionResponseType.MULTIPLE_CHOICE, null,
+						new SqliteQuestionCaptureService.PendingSharedContext("MCQ stimulus",
+								List.of(new SharedQuestionContextRegion(1, 0.10, 0.10, 0.80, 0.15))),
+						true));
+		assertTrue(questionFive.hasSharedContext());
+		long contextId = questionFive.getSharedContext().getId();
+
+		// Recreate the capture service to prove continuation is persisted.
+		var reopenedService = new SqliteQuestionCaptureService(database);
+		assertEquals(contextId, reopenedService.findPendingMcqSharedContext(booklet).orElseThrow().getId());
+		Question questionSix = reopenedService
+				.save(new SqliteQuestionCaptureService.Request(SqliteQuestionCaptureService.Operation.NEW, booklet,
+						null, "Q6", 1, List.of(new QuestionRegion(booklet, 1, 0.10, 0.48, 0.70, 0.12)), classification,
+						QuestionResponseType.MULTIPLE_CHOICE, null, null, true));
+		assertTrue(questionSix.hasSharedContext());
+		assertEquals(contextId, questionSix.getSharedContext().getId());
+		assertEquals(contextId, reopenedService.findPendingMcqSharedContext(booklet).orElseThrow().getId());
+
+		// The next MCQ consumes continuation when it is not renewed.
+		var finalService = new SqliteQuestionCaptureService(database);
+		Question questionSeven = finalService
+				.save(new SqliteQuestionCaptureService.Request(SqliteQuestionCaptureService.Operation.NEW, booklet,
+						null, "Q7", 1, List.of(new QuestionRegion(booklet, 1, 0.10, 0.66, 0.70, 0.12)), classification,
+						QuestionResponseType.MULTIPLE_CHOICE, null, null, false));
+		assertTrue(questionSeven.hasSharedContext());
+		assertEquals(contextId, questionSeven.getSharedContext().getId());
+		assertTrue(finalService.findPendingMcqSharedContext(booklet).isEmpty());
+
+		// Contributor capture must not change authoritative Booklet structure.
+		assertEquals(2, count(database, "SELECT COUNT(*) FROM exam_booklets"));
+		assertEquals(1, count(database, "SELECT COUNT(*) FROM exam_booklets WHERE booklet_name = 'Paper 1'"));
+		assertEquals(4, count(database, "SELECT COUNT(*) FROM questions"));
+		database.verifyIntegrity();
 	}
 
 	@Test

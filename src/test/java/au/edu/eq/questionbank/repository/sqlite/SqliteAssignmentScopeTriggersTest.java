@@ -38,43 +38,34 @@ class SqliteAssignmentScopeTriggersTest {
 	@Test
 	void migratesVersion30ThroughLatestWithScopeGuards() throws Exception {
 		SqliteDatabase database = fixture(false);
-
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-
 			try (Statement statement = connection.createStatement()) {
 
 				// Reconstruct an actual v30 trigger configuration rather
 				// than retaining the v32 Booklet UPDATE protection.
 				HistoricalSchemaFixture.removeAssignmentGuardObjects(statement);
 				SqliteAssignmentStructureTriggers.install(connection);
-
 				statement.execute("""
 						UPDATE schema_version
 						SET version = 30
 						WHERE version = %d
 						""".formatted(SqliteDatabase.latestSchemaVersion()));
-
 				connection.commit();
 			} catch (SQLException failure) {
 				connection.rollback();
 				throw failure;
 			}
 		}
-
 		assertEquals(30, database.schemaVersion());
 		database.verifySchema();
-
 		database.initialiseSchema();
-
 		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		database.verifySchema();
-
 		try (Connection connection = database.openConnection()) {
 			SqliteAssignmentStructureTriggers.verify(connection);
 			SqliteAssignmentScopeTriggers.verify(connection);
 		}
-
 		database.verifyIntegrity();
 	}
 
