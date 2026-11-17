@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 33;
+	private static final int LATEST_SCHEMA_VERSION = 34;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -841,6 +841,14 @@ public final class SqliteDatabase {
 					SqliteAssignmentScopeTriggers::enableClassificationLevels);
 			return 33;
 		}
+		if (version == 33) {
+
+			// Version 34 introduces immutable contributor return
+			// publication history and ordered package lineage.
+			executeMigration(connection, "/db/migration-v33-to-v34.sql", 34,
+					SqliteContributorReturnLedgerTriggers::install);
+			return 34;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -1183,6 +1191,12 @@ public final class SqliteDatabase {
 			} else {
 				SqliteAssignmentScopeTriggers.verifyLegacy(connection);
 			}
+		}
+		if (version >= 34) {
+
+			// Verify the return-history table and its immutable
+			// database-level protection triggers.
+			verifyVersion34ContributorReturnSchema(connection);
 		}
 	}
 
@@ -1888,6 +1902,19 @@ public final class SqliteDatabase {
 				throw new SQLException("Multiple contributor assignment selection rows");
 			}
 		}
+	}
+
+	private void verifyVersion34ContributorReturnSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "contributor_return_packages",
+				List.of(column("package_id", true, 1), column("assignment_id", true, 0),
+						column("return_number", true, 0), column("previous_package_id", false, 0),
+						column("baseline_snapshot_id", true, 0), column("master_installation_id", true, 0),
+						column("contributor_id", true, 0), column("origin_installation_id", true, 0),
+						column("archive_sha256", true, 0), column("recorded_at", true, 0)),
+				List.of(foreignKey("assignment_id", "contributor_assignment_sessions", "assignment_id"),
+						foreignKey("previous_package_id", "contributor_return_packages", "package_id")),
+				List.of(List.of("assignment_id", "return_number")));
+		SqliteContributorReturnLedgerTriggers.verify(connection);
 	}
 
 	private record ForeignKeyColumn(int sequence, String fromColumn, String targetColumn) {

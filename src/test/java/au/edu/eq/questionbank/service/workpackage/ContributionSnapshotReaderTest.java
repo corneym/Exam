@@ -207,13 +207,14 @@ public class ContributionSnapshotReaderTest {
 				""");
 		execute(coordinatorDatabase, """
 				INSERT INTO curriculum_nodes (
-				    id, syllabus_version_id, curriculum_code,
-				    curriculum_name, curriculum_level, display_order
+				    id, syllabus_version_id, parent_id,
+				    curriculum_code, curriculum_name,
+				    curriculum_level, display_order
 				)
-				VALUES (
-				    101, 11, 'B25U1',
-				    'Biology Unit', 'UNIT', 0
-				)
+				VALUES
+				    (101, 11, NULL, 'B25U1', 'Biology Unit', 'UNIT', 0),
+				    (102, 11, 101, 'B25U1T1', 'Biology Topic', 'TOPIC', 0),
+				    (103, 11, 102, 'B25U1T1D1', 'Biology Descriptor', 'DESCRIPTOR', 0)
 				""");
 		execute(coordinatorDatabase, """
 				INSERT INTO exam_providers (id, provider_name)
@@ -259,7 +260,7 @@ public class ContributionSnapshotReaderTest {
 				    shared_context_capture_required
 				)
 				VALUES (
-				    81, 61, 101,
+				    81, 61, 103,
 				    '1', 'Biology question', 2, 0
 				)
 				""");
