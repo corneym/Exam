@@ -4,8 +4,10 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -31,6 +33,96 @@ public class ContributionSnapshotReaderTest {
 
 	@TempDir
 	Path directory;
+
+	@Test
+	void exportsFourPartialPackagesWithOriginalBaselineAndLineage() throws Exception {
+		Fixture fixture = fixture();
+		SqliteDatabase contributorDatabase = fixture.contributorDatabase();
+		var sessions = new SqliteContributorAssignmentSessionRepository(contributorDatabase);
+		var ledger = new SqliteContributionReturnLedger(contributorDatabase);
+		ContributionExporter exporter = new ContributionExporter(contributorDatabase,
+				new ManagedDataLayout(directory.resolve("contributor")));
+		var initial = snapshot(fixture, "export-initial-snapshot.db");
+		ExchangeRecord question = findRecord(initial.baselineRecords(), "QUESTION");
+		ExchangeRecord answer = findRecord(initial.baselineRecords(), "ANSWER");
+		long questionLocalId = localId(contributorDatabase, "QUESTION", question.recordId());
+		long answerLocalId = localId(contributorDatabase, "ANSWER", answer.recordId());
+		long bookletLocalId = localId(contributorDatabase, "EXAM_BOOKLET",
+				UUID.fromString(question.values().path("booklet_id").asText()));
+		long classificationLocalId = localId(contributorDatabase, "CURRICULUM_NODE",
+				UUID.fromString(question.values().path("classification_node_id").asText()));
+		byte[] originalBaseline = sessions.readBaseline(fixture.assignmentId()).records();
+		UUID previousPackageId = null;
+		List<Integer> expectedCandidateCounts = List.of(1, 2, 3, 3);
+		for (int round = 1; round <= 4; round++) {
+			switch (round) {
+			case 1 -> executeOne(contributorDatabase, """
+					UPDATE questions
+					SET question_text = 'First contribution'
+					WHERE id = ?
+					""", questionLocalId);
+			case 2 -> executeOne(contributorDatabase, """
+					UPDATE answers
+					SET answer_text = 'Second contribution answer'
+					WHERE id = ?
+					""", answerLocalId);
+			case 3 -> executeOne(contributorDatabase, """
+					INSERT INTO questions (
+					    booklet_id,
+					    classification_node_id,
+					    question_code,
+					    question_text,
+					    marks,
+					    shared_context_capture_required
+					)
+					VALUES (
+					    ?, ?, '2',
+					    'Third contribution question', 3, 0
+					)
+					""", bookletLocalId, classificationLocalId);
+			case 4 -> executeOne(contributorDatabase, """
+					UPDATE questions
+					SET question_text = 'Fourth contribution revision'
+					WHERE id = ?
+					""", questionLocalId);
+			default -> throw new AssertionError(round);
+			}
+			Path archive = directory.resolve("contribution-" + round + ".examwork");
+			ExamWorkManifest manifest = exporter.export(fixture.assignmentId(), archive);
+			assertEquals(ExamWorkPackageType.CONTRIBUTION, manifest.packageType());
+			assertEquals(fixture.assignmentId(), manifest.assignmentId());
+			assertTrue(Files.isRegularFile(archive));
+			new ExamWorkArchiveValidator().validate(archive, manifest.producerApplicationVersion(),
+					manifest.producerSchemaVersion());
+			assertArrayEquals(originalBaseline, archiveEntryBytes(archive, "baseline/initial-records.jsonl"));
+			var codec = new ExamWorkJsonlCodec();
+			List<ExchangeRecord> changes = codec.readRecords(
+					new java.io.ByteArrayInputStream(archiveEntryBytes(archive, "records/contribution-changes.jsonl")));
+			assertEquals(expectedCandidateCounts.get(round - 1).intValue(), changes.size());
+			List<ExchangeRecord> contexts = codec.readRecords(
+					new java.io.ByteArrayInputStream(archiveEntryBytes(archive, "records/contribution-context.jsonl")));
+			assertEquals(1, contexts.size());
+			ExchangeRecord context = contexts.getFirst();
+			assertEquals("CONTRIBUTION_CONTEXT", context.recordType());
+			assertEquals(manifest.packageId(), context.recordId());
+			assertEquals(fixture.assignmentId().toString(), context.values().path("assignment_id").asText());
+			assertEquals(round, context.values().path("return_number").asInt());
+			assertEquals(changes.size(), context.values().path("candidate_count").asInt());
+			if (previousPackageId == null) {
+				assertTrue(context.values().path("previous_return_package_id").isNull());
+			} else {
+				assertEquals(previousPackageId.toString(),
+						context.values().path("previous_return_package_id").asText());
+			}
+			var recorded = ledger.find(manifest.packageId()).orElseThrow();
+			assertEquals(round, recorded.returnNumber());
+			assertEquals(previousPackageId, recorded.previousPackageId());
+			previousPackageId = manifest.packageId();
+		}
+		assertEquals(4, ledger.findLatest(fixture.assignmentId()).orElseThrow().returnNumber());
+		assertArrayEquals(originalBaseline, sessions.readBaseline(fixture.assignmentId()).records());
+		assertEquals(fixture.assignmentId(), sessions.active().orElseThrow().assignmentId());
+	}
 
 	@Test
 	void keepsTheOriginalBaselineAcrossFourSnapshots() throws Exception {
@@ -121,6 +213,31 @@ public class ContributionSnapshotReaderTest {
 	}
 
 	@Test
+	void rejectsEmptyAndOverwritingContributionExports() throws Exception {
+		Fixture fixture = fixture();
+		ContributionExporter exporter = new ContributionExporter(fixture.contributorDatabase(),
+				new ManagedDataLayout(directory.resolve("contributor")));
+		var ledger = new SqliteContributionReturnLedger(fixture.contributorDatabase());
+		Path destination = directory.resolve("single-contribution.examwork");
+		assertThrows(IOException.class, () -> exporter.export(fixture.assignmentId(), destination));
+		assertFalse(Files.exists(destination));
+		assertTrue(ledger.findLatest(fixture.assignmentId()).isEmpty());
+		var original = snapshot(fixture, "export-empty-check.db");
+		ExchangeRecord question = findRecord(original.baselineRecords(), "QUESTION");
+		long questionId = localId(fixture.contributorDatabase(), "QUESTION", question.recordId());
+		executeOne(fixture.contributorDatabase(), """
+				UPDATE questions
+				SET question_text = 'Exportable question'
+				WHERE id = ?
+				""", questionId);
+		ExamWorkManifest first = exporter.export(fixture.assignmentId(), destination);
+		assertTrue(Files.isRegularFile(destination));
+		assertThrows(IOException.class, () -> exporter.export(fixture.assignmentId(), destination));
+		assertEquals(first.packageId(), ledger.findLatest(fixture.assignmentId()).orElseThrow().packageId());
+		assertEquals(1, ledger.findLatest(fixture.assignmentId()).orElseThrow().returnNumber());
+	}
+
+	@Test
 	void snapshotDoesNotObserveLaterLiveDatabaseChanges() throws Exception {
 		Fixture fixture = fixture();
 		Path originalPath = directory.resolve("stable-before-edit.db");
@@ -153,6 +270,18 @@ public class ContributionSnapshotReaderTest {
 		assertEquals("Edited after SQLite snapshot", changedQuestion.values().path("question_text").asText());
 		assertEquals(originalQuestion.revisionId(), changedQuestion.baselineRevisionId());
 		assertEquals(original.baselineRecords(), updated.baselineRecords());
+	}
+
+	private byte[] archiveEntryBytes(Path archive, String entryName) throws IOException {
+		try (java.util.zip.ZipFile zip = new java.util.zip.ZipFile(archive.toFile())) {
+			var entry = zip.getEntry(entryName);
+			if (entry == null) {
+				throw new IOException("Missing contribution entry: " + entryName);
+			}
+			try (var input = zip.getInputStream(entry)) {
+				return input.readAllBytes();
+			}
+		}
 	}
 
 	private void execute(SqliteDatabase database, String sql) throws SQLException {
