@@ -1,8 +1,6 @@
 package au.edu.eq.questionbank.repository.sqlite;
 
 import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
@@ -76,11 +74,13 @@ final class SqliteAssignmentScopeTriggers {
 	}
 
 	static void verify(Connection connection) throws SQLException {
-		verify(connection, true);
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_contributor_scope_", "contributor scope",
+				"/db/migration-v30-to-v31.sql", "/db/migration-v32-to-v33.sql");
 	}
 
 	static void verifyLegacy(Connection connection) throws SQLException {
-		verify(connection, false);
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_contributor_scope_", "contributor scope",
+				"/db/migration-v30-to-v31.sql");
 	}
 
 	private static String answer(String answerId) {
@@ -231,10 +231,6 @@ final class SqliteAssignmentScopeTriggers {
 		return "trg_contributor_scope_" + table + "_" + operation;
 	}
 
-	private static String normalise(String definition) {
-		return Objects.requireNonNull(definition, "definition").replaceAll("\\s+", " ").strip();
-	}
-
 	private static String originalPredicate(String table, String row) {
 		if (table.equals("questions")) {
 
@@ -314,35 +310,5 @@ final class SqliteAssignmentScopeTriggers {
 				      AND booklet.exam_id IN (%s)
 				)
 				""".formatted(questionId, EXAM_QUERY);
-	}
-
-	private static void verify(Connection connection, boolean enforceClassificationLevels) throws SQLException {
-		Objects.requireNonNull(connection, "connection");
-		for (String table : TABLES) {
-			for (String operation : OPERATIONS) {
-				String triggerName = name(table, operation);
-				String expected = definition(table, operation, enforceClassificationLevels);
-				try (PreparedStatement statement = connection.prepareStatement("""
-						SELECT tbl_name, sql
-						FROM sqlite_master
-						WHERE type = 'trigger'
-						  AND name = ?
-						""")) {
-					statement.setString(1, triggerName);
-					try (ResultSet result = statement.executeQuery()) {
-						if (!result.next()) {
-							throw new SQLException("Missing contributor scope trigger: " + triggerName);
-						}
-						if (!table.equals(result.getString("tbl_name"))
-								|| !normalise(expected).equals(normalise(result.getString("sql")))) {
-							throw new SQLException("Altered contributor scope trigger: " + triggerName);
-						}
-						if (result.next()) {
-							throw new SQLException("Duplicate contributor scope trigger: " + triggerName);
-						}
-					}
-				}
-			}
-		}
 	}
 }

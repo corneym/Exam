@@ -18,6 +18,28 @@ class SqliteAssignmentScopeTriggersTest {
 	Path directory;
 
 	@Test
+	void alteredScopeTriggerFailsSchemaVerification() throws Exception {
+		SqliteDatabase database = fixture(false);
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					DROP TRIGGER trg_contributor_scope_questions_update
+					""");
+
+			// A present but weakened trigger must fail verification.
+			statement.execute("""
+					CREATE TRIGGER trg_contributor_scope_questions_update
+					BEFORE UPDATE ON questions
+					BEGIN
+					    SELECT 1;
+					END
+					""");
+		}
+		SQLException failure = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(failure.getMessage()
+				.contains("Altered contributor scope trigger: " + "trg_contributor_scope_questions_update"));
+	}
+
+	@Test
 	void explicitlyPermittedLegacySyllabusCanClassify() throws Exception {
 		SqliteDatabase database = fixture(true);
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
@@ -551,6 +573,23 @@ class SqliteAssignmentScopeTriggersTest {
 			}
 		}
 		database.verifyIntegrity();
+	}
+
+	@Test
+	void unexpectedScopeTriggerFailsSchemaVerification() throws Exception {
+		SqliteDatabase database = fixture(false);
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					CREATE TRIGGER trg_contributor_scope_unexpected_guard
+					BEFORE UPDATE ON questions
+					BEGIN
+					    SELECT 1;
+					END
+					""");
+		}
+		SQLException failure = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(failure.getMessage()
+				.contains("Unexpected contributor scope trigger: " + "trg_contributor_scope_unexpected_guard"));
 	}
 
 	@Test
