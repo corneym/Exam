@@ -258,11 +258,35 @@ public final class HistoricalSchemaFixture {
 			throw new NullPointerException("statement");
 		}
 
-		// Later schema versions install guards on earlier tables.
-		// Remove those guards before reconstructing version 28.
+		// Remove v34 dependencies before removing the
+		// contributor assignment-session tables.
+		removeVersion34Objects(statement);
+
+		// Remove the newer assignment protection triggers.
 		removeAssignmentGuardObjects(statement);
 		statement.execute("DROP TABLE IF EXISTS contributor_assignment_selection");
 		statement.execute("DROP TABLE IF EXISTS contributor_assignment_sessions");
+	}
+
+	/**
+	 * Removes version 34 contributor-return structures from a disposable historical
+	 * migration test database.
+	 *
+	 * <p>
+	 * This method must never be used against production data.
+	 *
+	 * @param statement statement for the disposable test database
+	 * @throws SQLException if cleanup fails
+	 */
+	public static void removeVersion34Objects(Statement statement) throws SQLException {
+		if (statement == null) {
+			throw new NullPointerException("statement");
+		}
+
+		// Remove immutability guards before dropping their table.
+		statement.execute("DROP TRIGGER IF EXISTS trg_contributor_returns_no_delete");
+		statement.execute("DROP TRIGGER IF EXISTS trg_contributor_returns_no_update");
+		statement.execute("DROP TABLE IF EXISTS contributor_return_packages");
 	}
 
 	private static void dropAssignmentTriggers(Statement statement, String pattern) throws SQLException {

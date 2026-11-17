@@ -760,7 +760,6 @@ class SqliteDatabaseInspectionTest {
 					    );
 					END;
 					""");
-
 			statement.execute("""
 					UPDATE schema_version
 					SET version = 21
