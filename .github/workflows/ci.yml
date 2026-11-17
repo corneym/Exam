@@ -16,6 +16,7 @@ on:
       - 'refactor/**'
       - 'chore/**'
       - 'revision/**'
+      - 'codex/**'
 
   pull_request:
     branches:
