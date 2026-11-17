@@ -306,6 +306,87 @@ class SqliteAssignmentScopeTriggersTest {
 		database.verifyIntegrity();
 	}
 
+	@Test
+	void replaceCannotDeleteRowsOutsideSelectedAssignment() throws Exception {
+		SqliteDatabase database = fixture(false);
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+
+			// The protection is configured per connection, not per database.
+			try (var result = statement.executeQuery("PRAGMA recursive_triggers")) {
+				assertTrue(result.next());
+				assertEquals(1, result.getInt(1));
+			}
+
+			// Question 2 belongs to Booklet 62, outside the assignment.
+			// The incoming replacement belongs to assigned Booklet 61.
+			// Its INSERT is permitted, but deleting Question 2 is not.
+			assertBlocked(statement, """
+					INSERT OR REPLACE INTO questions (
+					    id, booklet_id, classification_node_id,
+					    question_code, question_text, marks,
+					    shared_context_capture_required
+					)
+					VALUES (
+					    2, 61, 101,
+					    '99', 'Unauthorised replacement', 2, 0
+					)
+					""");
+
+			// Answer 502 belongs to the unassigned Question 2.
+			// A replacement pointing to assigned Question 1 must not
+			// delete the original Answer.
+			assertBlocked(statement, """
+					REPLACE INTO answers (
+					    id, question_id, answer_text
+					)
+					VALUES (
+					    502, 1, 'Unauthorised replacement'
+					)
+					""");
+
+			// Shared Context 302 belongs to unassigned Booklet 62.
+			// A replacement belonging to Booklet 61 must not delete it.
+			assertBlocked(statement, """
+					INSERT OR REPLACE INTO shared_question_contexts (
+					    id, booklet_id, context_label
+					)
+					VALUES (
+					    302, 61, 'Unauthorised replacement'
+					)
+					""");
+
+			// All three original records must remain unchanged.
+			try (var result = statement.executeQuery("""
+					SELECT booklet_id, question_text
+					FROM questions
+					WHERE id = 2
+					""")) {
+				assertTrue(result.next());
+				assertEquals(62, result.getLong("booklet_id"));
+				assertEquals("Other Question", result.getString("question_text"));
+			}
+			try (var result = statement.executeQuery("""
+					SELECT question_id, answer_text
+					FROM answers
+					WHERE id = 502
+					""")) {
+				assertTrue(result.next());
+				assertEquals(2, result.getLong("question_id"));
+				assertEquals("Other response", result.getString("answer_text"));
+			}
+			try (var result = statement.executeQuery("""
+					SELECT booklet_id, context_label
+					FROM shared_question_contexts
+					WHERE id = 302
+					""")) {
+				assertTrue(result.next());
+				assertEquals(62, result.getLong("booklet_id"));
+				assertEquals("Other context", result.getString("context_label"));
+			}
+		}
+		database.verifyIntegrity();
+	}
+
 	private void assertBlocked(Statement statement, String sql) {
 		SQLException failure = assertThrows(SQLException.class, () -> statement.execute(sql));
 		assertTrue(failure.getMessage().contains("Capture or classification is outside selected assignment"),

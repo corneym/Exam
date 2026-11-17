@@ -198,11 +198,19 @@ public final class SqliteDatabase {
 	/**
 	 * Opens a SQLite connection with the configured access mode.
 	 *
+	 * <p>
+	 * Foreign-key enforcement and recursive triggers are enabled on every
+	 * connection. Recursive triggers ensure that implicit DELETE operations
+	 * performed by SQLite REPLACE statements execute the existing assignment scope
+	 * and structural DELETE guards.
+	 *
+	 * <p>
 	 * When a diagnostic probe is active, the returned connection also records JDBC
 	 * operations. Ordinary application connections remain unchanged.
 	 *
 	 * @return an open database connection
-	 * @throws SQLException if the database cannot be opened or configured
+	 * @throws SQLException if the database cannot be opened or configured, or
+	 *                      recursive trigger enforcement is unavailable
 	 */
 	public Connection openConnection() throws SQLException {
 		SqliteReadProbe probe = SqliteReadProbe.active();
@@ -233,6 +241,20 @@ public final class SqliteDatabase {
 				}
 				statement.execute("PRAGMA busy_timeout = 5000");
 				statement.execute("PRAGMA foreign_keys = ON");
+
+				// REPLACE may implicitly delete a conflicting row.
+				// Its DELETE triggers must execute so contributor scope
+				// enforcement cannot be bypassed by replacement.
+				statement.execute("PRAGMA recursive_triggers = ON");
+
+				// Fail closed if the SQLite connection did not accept the
+				// required trigger configuration.
+				try (ResultSet result = statement.executeQuery("PRAGMA recursive_triggers")) {
+					if (!result.next() || result.getInt(1) != 1) {
+						throw new SQLException(
+								"SQLite recursive triggers are required " + "for contributor assignment protection");
+					}
+				}
 			}
 			if (probe == null) {
 				return connection;
