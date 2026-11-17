@@ -258,9 +258,11 @@ class ContributorAssignmentDashboardWorkflowTest {
 				subjects.getSelectionModel().select(otherSubject);
 				invoke("changeContributorAssignment", new Class<?>[] { UUID.class }, assignmentId);
 				invoke("showCorpusDashboardQuestionCorrection", new Class<?>[] { Question.class }, question);
-				invoke("startDashboardAnswerCapture", new Class<?>[] { Question.class, Runnable.class },
-						question, (Runnable) () -> { });
-				assertFalse(field("answerCapturePane", AnswerCapturePane.class).editAnswer(answeredQuestion, () -> { }));
+				invoke("startDashboardAnswerCapture", new Class<?>[] { Question.class, Runnable.class }, question,
+						(Runnable) () -> {
+						});
+				assertFalse(field("answerCapturePane", AnswerCapturePane.class).editAnswer(answeredQuestion, () -> {
+				}));
 				invoke("hideWorkspaceBusy", new Class<?>[0]);
 				assertTrue(busyOverlay().isBusy());
 				assertEquals(originalSubject, field("workingSubject", Subject.class));
@@ -275,7 +277,6 @@ class ContributorAssignmentDashboardWorkflowTest {
 			});
 			startInstallation(robot, duplicate);
 			robot.interact(() -> assertEquals(Worker.State.READY, duplicate.getState()));
-
 			releaseInstaller.countDown();
 			assertTrue(captureEntered.await(10, TimeUnit.SECONDS));
 			robot.interact(() -> assertTrue(busyOverlay().isBusy()));
@@ -362,14 +363,14 @@ class ContributorAssignmentDashboardWorkflowTest {
 	void failedDashboardRefreshReleasesInstallationOwnership(FxRobot robot) throws Exception {
 		awaitAssignedDashboard(robot);
 		QuestionRepository repository = field("questionRepository", QuestionRepository.class);
-		robot.interact(() -> setField("questionRepository", Proxy.newProxyInstance(
-				QuestionRepository.class.getClassLoader(), new Class<?>[] { QuestionRepository.class },
-				(_, method, arguments) -> {
-					if (method.getName().equals("findAll")) {
-						throw new IllegalStateException("Controlled Dashboard refresh failure");
-					}
-					return method.invoke(repository, arguments);
-				})));
+		robot.interact(
+				() -> setField("questionRepository", Proxy.newProxyInstance(QuestionRepository.class.getClassLoader(),
+						new Class<?>[] { QuestionRepository.class }, (_, method, arguments) -> {
+							if (method.getName().equals("findAll")) {
+								throw new IllegalStateException("Controlled Dashboard refresh failure");
+							}
+							return method.invoke(repository, arguments);
+						})));
 		startInstallation(robot, realInstaller());
 		acknowledgeDialog(robot, "Contributor Assignment Installed", "The assignment was installed, but");
 		assertControlsReleased(robot);
@@ -381,7 +382,8 @@ class ContributorAssignmentDashboardWorkflowTest {
 	void installationActivatesAssignmentFromDifferentSubject(FxRobot robot) throws Exception {
 		awaitAssignedDashboard(robot);
 		robot.interact(robot.lookup("#corpus-dashboard-exit-assignment").queryButton()::fire);
-		Subject physics = new SqliteCurriculumWriter(new SqliteDatabase(contributor.databasePath())).insertSubject("Physics");
+		Subject physics = new SqliteCurriculumWriter(new SqliteDatabase(contributor.databasePath()))
+				.insertSubject("Physics");
 		robot.interact(() -> {
 			CurriculumSelectorPane selector = field("curriculumSelectorPane", CurriculumSelectorPane.class);
 			selector.refreshSubjects();
@@ -389,7 +391,8 @@ class ContributorAssignmentDashboardWorkflowTest {
 		});
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
 			AtomicBoolean ready = new AtomicBoolean();
-			robot.interact(() -> ready.set(primaryStage.getScene().getRoot().lookup("#corpus-dashboard-no-exams") != null));
+			robot.interact(
+					() -> ready.set(primaryStage.getScene().getRoot().lookup("#corpus-dashboard-no-exams") != null));
 			return ready.get();
 		});
 		assertEquals(physics, field("workingSubject", Subject.class));
@@ -416,7 +419,8 @@ class ContributorAssignmentDashboardWorkflowTest {
 		acknowledgeDialog(robot, "Working Subject", "Capture work is in progress");
 		robot.interact(() -> {
 			assertEquals(Worker.State.READY, installer.getState());
-			assertTrue(field("captureSelectionState", CaptureSelectionState.class).isOwnedBy(CaptureSelectionOwner.QUESTION));
+			assertTrue(field("captureSelectionState", CaptureSelectionState.class)
+					.isOwnedBy(CaptureSelectionOwner.QUESTION));
 			field("captureSelectionState", CaptureSelectionState.class).clearAll();
 		});
 		assertControlsReleased(robot);
@@ -425,8 +429,8 @@ class ContributorAssignmentDashboardWorkflowTest {
 	@Test
 	void synchronousActivationFailureReleasesInstallationOwnership(FxRobot robot) throws Exception {
 		awaitAssignedDashboard(robot);
-		startInstallation(robot, new ApplicationBackgroundTask<>(() ->
-				new WorkAssignmentInstallationCoordinator.Result(UUID.randomUUID(), UUID.randomUUID(), false, false)));
+		startInstallation(robot, new ApplicationBackgroundTask<>(() -> new WorkAssignmentInstallationCoordinator.Result(
+				UUID.randomUUID(), UUID.randomUUID(), false, false)));
 		acknowledgeDialog(robot, "Contributor Assignment Installed", "The assignment was installed, but");
 		assertControlsReleased(robot);
 		robot.interact(() -> assertTrue(primaryStage.getScene().getRoot().lookup("#corpus-dashboard-exams") == null));

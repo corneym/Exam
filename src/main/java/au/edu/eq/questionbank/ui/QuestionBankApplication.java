@@ -893,8 +893,7 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void applyInstalledContributorAssignment(WorkAssignmentInstallationCoordinator.Result result,
-			Consumer<Throwable> completionHandler)
-			throws SQLException {
+			Consumer<Throwable> completionHandler) throws SQLException {
 		Objects.requireNonNull(result, "result");
 		var installed = contributorAssignmentResolver.active()
 				.orElseThrow(() -> new IllegalStateException("The installer did not activate the assignment."));
@@ -3463,8 +3462,10 @@ public class QuestionBankApplication extends Application {
 		task.setOnFailed(_ -> {
 			refreshOperation.failed();
 			try {
-				completionHandler.accept(isCurrentCorpusDashboardRefresh(dashboardSubject, generation, dashboardGeneration)
-						? task.getException() : new CancellationException("Dashboard refresh was superseded."));
+				completionHandler
+						.accept(isCurrentCorpusDashboardRefresh(dashboardSubject, generation, dashboardGeneration)
+								? task.getException()
+								: new CancellationException("Dashboard refresh was superseded."));
 			} finally {
 				refreshOperation.close();
 			}
@@ -6040,8 +6041,8 @@ public class QuestionBankApplication extends Application {
 			task.setOnFailed(_ -> {
 				finishContributorAssignmentInstallation(request);
 				progress.close();
-				showAlert(Alert.AlertType.ERROR, "Import Contributor Assignment", "The assignment could not be installed.",
-						failureMessage(task.getException()));
+				showAlert(Alert.AlertType.ERROR, "Import Contributor Assignment",
+						"The assignment could not be installed.", failureMessage(task.getException()));
 			});
 			task.setOnCancelled(_ -> {
 				finishContributorAssignmentInstallation(request);
@@ -6069,7 +6070,8 @@ public class QuestionBankApplication extends Application {
 			corpusDashboardHost.getChildren().setAll(new Label(
 					"The installed assignment could not be displayed. Restart the application to refresh it."));
 
-			// Persistence succeeded; distinguish a presentation failure from a failed import.
+			// Persistence succeeded; distinguish a presentation failure from a failed
+			// import.
 			showAlert(Alert.AlertType.ERROR, "Contributor Assignment Installed",
 					"The assignment was installed, but the Dashboard could not be refreshed.",
 					failureMessage(failure) + "\n\nRestart the application to restore the active assignment.");
@@ -6081,9 +6083,8 @@ public class QuestionBankApplication extends Application {
 		if (result.cleanupPending()) {
 			message += "\n\nTemporary installation cleanup is pending. It will be retried by the installer.";
 		}
-		showAlert(Alert.AlertType.INFORMATION, "Contributor Assignment Installed", message,
-				"Assignment ID: " + result.assignmentId()
-						+ "\n\nThe Corpus Dashboard is now scoped to the assigned Subject and Exam.");
+		showAlert(Alert.AlertType.INFORMATION, "Contributor Assignment Installed", message, "Assignment ID: "
+				+ result.assignmentId() + "\n\nThe Corpus Dashboard is now scoped to the assigned Subject and Exam.");
 	}
 
 	private void finishContributorAssignmentInstallation(long request) {
