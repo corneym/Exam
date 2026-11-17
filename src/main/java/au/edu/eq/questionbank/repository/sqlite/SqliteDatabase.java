@@ -427,12 +427,6 @@ public final class SqliteDatabase {
 	}
 
 	private void executeMigration(Connection connection, String resourcePath, int expectedVersion) throws SQLException {
-		executeMigration(connection, resourcePath, expectedVersion, _ -> {
-		});
-	}
-
-	private void executeMigration(Connection connection, String resourcePath, int expectedVersion,
-			MigrationPostProcessor postProcessor) throws SQLException {
 		String sql;
 		try {
 			sql = SqlResourceLoader.load(resourcePath);
@@ -440,11 +434,9 @@ public final class SqliteDatabase {
 			throw new SQLException("Unable to load migration resource: " + resourcePath, exception);
 		}
 
-		// The caller owns the migration transaction. SQL installation,
-		// supplementary Java installation and verification must either
-		// succeed together or all roll back.
+		// Installation and schema verification share the caller's
+		// transaction so migration failures roll back atomically.
 		SqlScriptExecutor.execute(connection, sql);
-		postProcessor.apply(connection);
 		int actualVersion = readSchemaVersion(connection);
 		if (actualVersion != expectedVersion) {
 			throw new SQLException(
@@ -1881,11 +1873,5 @@ public final class SqliteDatabase {
 	}
 
 	private record ForeignKeyRequirement(String fromColumn, String targetTable, String targetColumn) {
-	}
-
-	@FunctionalInterface
-	private interface MigrationPostProcessor {
-
-		void apply(Connection connection) throws SQLException;
 	}
 }
