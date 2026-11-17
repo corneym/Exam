@@ -143,6 +143,7 @@ public final class SubjectImportGraphWriter {
 		Objects.requireNonNull(plan, "plan");
 		Objects.requireNonNull(staged, "staged");
 		Objects.requireNonNull(decoded, "decoded");
+		PortableDomainRecordValidator.validate(decoded.manifest().subjectId(), decoded.records());
 		Objects.requireNonNull(approvalNote, "approvalNote");
 		if (approvalNote.isBlank()) {
 			throw new IllegalArgumentException("Subject import requires a coordinator approval note");
@@ -260,7 +261,10 @@ public final class SubjectImportGraphWriter {
 	}
 
 	/**
-	 * Loads one staged package and validates plan coverage before any mutation.
+	 * Loads one staged package and validates domain semantics and plan coverage
+	 * before any mutation. Integrity-valid records that violate domain ownership,
+	 * classification or content invariants are rejected with a package validation
+	 * error.
 	 *
 	 * @param staged immutable staged incoming archive and assets
 	 * @param plan   approved non-destructive import plan
@@ -305,6 +309,7 @@ public final class SubjectImportGraphWriter {
 				throw new IOException("Duplicate approved plan key: " + action.key());
 			}
 		}
+		PortableDomainRecordValidator.validate(manifest.subjectId(), records);
 		Set<Key> recordsSeen = new HashSet<>();
 		for (ExchangeRecord record : records) {
 			EntityType type;
