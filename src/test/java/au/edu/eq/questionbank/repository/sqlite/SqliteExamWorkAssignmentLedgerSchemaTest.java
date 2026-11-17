@@ -208,8 +208,8 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 					statement.execute("""
 							UPDATE schema_version
 							SET version = 27
-							WHERE version = 33
-							""");
+							WHERE version = %d
+							""".formatted(SqliteDatabase.latestSchemaVersion()));
 				}
 
 				// Install the schema and protection triggers exclusively

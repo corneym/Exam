@@ -66,6 +66,7 @@ class SqliteAssignmentScopeTriggersTest {
 
 				// Reconstruct version 30 without retaining the later
 				// version-32 Booklet UPDATE protection.
+				HistoricalSchemaFixture.removeVersion34Objects(statement);
 				HistoricalSchemaFixture.removeAssignmentGuardObjects(statement);
 				SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v29-to-v30.sql"));
 				statement.execute("""
@@ -100,13 +101,14 @@ class SqliteAssignmentScopeTriggersTest {
 
 				// Reconstruct the original version-31 scope guards,
 				// which remain authoritative through version 32.
+				HistoricalSchemaFixture.removeVersion34Objects(statement);
 				HistoricalSchemaFixture.removeAssignmentScopeObjects(statement);
 				SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v30-to-v31.sql"));
 				statement.execute("""
 						UPDATE schema_version
 						SET version = 32
-						WHERE version = 33
-						""");
+						WHERE version = %d
+						""".formatted(SqliteDatabase.latestSchemaVersion()));
 				connection.commit();
 			} catch (Exception failure) {
 				connection.rollback();
@@ -131,7 +133,7 @@ class SqliteAssignmentScopeTriggersTest {
 					""");
 		}
 		database.initialiseSchema();
-		assertEquals(33, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		database.verifySchema();
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			SqliteAssignmentScopeTriggers.verify(connection);
@@ -604,12 +606,13 @@ class SqliteAssignmentScopeTriggersTest {
 				// Both version 30 and 31 must then be installed
 				// exclusively from their SQL migration resources.
 				try (Statement statement = connection.createStatement()) {
+					HistoricalSchemaFixture.removeVersion34Objects(statement);
 					HistoricalSchemaFixture.removeAssignmentGuardObjects(statement);
 					statement.execute("""
 							UPDATE schema_version
 							SET version = 29
-							WHERE version = 33
-							""");
+							WHERE version = %d
+							""".formatted(SqliteDatabase.latestSchemaVersion()));
 				}
 				SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v29-to-v30.sql"));
 				SqliteAssignmentStructureTriggers.verifyLegacy(connection);

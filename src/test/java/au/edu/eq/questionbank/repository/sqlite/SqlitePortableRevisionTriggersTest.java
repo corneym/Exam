@@ -309,8 +309,8 @@ class SqlitePortableRevisionTriggersTest {
 					statement.execute("""
 							UPDATE schema_version
 							SET version = 25
-							WHERE version = 33
-							""");
+							WHERE version = %d
+							""".formatted(SqliteDatabase.latestSchemaVersion()));
 				}
 
 				// The schema-version change is not committed yet.
