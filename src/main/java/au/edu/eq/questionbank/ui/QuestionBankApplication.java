@@ -18,6 +18,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CancellationException;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -383,7 +384,7 @@ public class QuestionBankApplication extends Application {
 	private final Button assignmentSwitchButton = new Button("Switch assignment");
 	private final HBox assignmentToolbar = new HBox(SECTION_SPACING);
 	private boolean contributorAssignmentIssuanceRunning;
-	private boolean contributorAssignmentInstallationRunning;
+	private long contributorAssignmentInstallationRequest;
 
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
@@ -685,6 +686,9 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private boolean allowAnswerCaptureTransition() {
+		if (applicationBusyOverlay != null && applicationBusyOverlay.isBusy()) {
+			return false;
+		}
 		if (captureSelectionState.isOwnedBy(CaptureSelectionOwner.ANSWER)) {
 			showAlert(Alert.AlertType.WARNING, "Answer capture", "Answer selection pending",
 					"Add or clear the current answer selection before changing the answer target or PDF.");
@@ -812,6 +816,9 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private boolean allowWorkingSubjectChange() {
+		if (applicationBusyOverlay != null && applicationBusyOverlay.isBusy()) {
+			return false;
+		}
 		boolean captureWorkInProgress = captureSelectionState.hasPendingSelection()
 				|| questionCapturePane.hasAcceptedRegions() || answerCapturePane.hasAcceptedRegions()
 				|| questionCapturePane.isCapturingSharedContext() || questionCapturePane.isSaveInProgress()
@@ -885,7 +892,8 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
-	private void applyInstalledContributorAssignment(WorkAssignmentInstallationCoordinator.Result result)
+	private void applyInstalledContributorAssignment(WorkAssignmentInstallationCoordinator.Result result,
+			Consumer<Throwable> completionHandler)
 			throws SQLException {
 		Objects.requireNonNull(result, "result");
 		var installed = contributorAssignmentResolver.active()
@@ -895,7 +903,7 @@ public class QuestionBankApplication extends Application {
 					"The installed assignment identity does not match " + "the active contributor session.");
 		}
 		activeAssignmentContext = installed;
-		assignmentSelectionInProgress = true;
+		restoringWorkingSubject = true;
 		try {
 
 			// Any previous PDF or Booklet capture context belongs to
@@ -907,21 +915,33 @@ public class QuestionBankApplication extends Application {
 			// The installer may have introduced an entirely new Subject.
 			// Rebuild the selector from the committed database first.
 			curriculumSelectorPane.refreshSubjects();
-			boolean sameSubject = workingSubject != null && workingSubject.getId() == installed.subject().getId();
 			curriculumSelectorPane.selectSubject(installed.subject());
-			if (sameSubject) {
-
-				// Selecting the same Subject does not publish a new
-				// value-property change, but the installed Exam and
-				// Questions still require a new snapshot generation.
-				startWorkingSubjectRefresh(workingSubject);
-			}
+			workingSubject = installed.subject();
+			examMetadataPane.invalidateForSubjectChange(workingSubject);
+			resetLegacyQuestionImportState();
 			showCorpusDashboardHome();
 			refreshActiveExamContext();
 			refreshContributorAssignmentToolbar();
 		} finally {
-			assignmentSelectionInProgress = false;
+			restoringWorkingSubject = false;
 		}
+
+		// Keep the installation's busy token through both asynchronous publications.
+		// Capture queues must finish before the Dashboard can expose new capture work.
+		long generation = ++workingSubjectRefreshGeneration;
+		Subject subject = workingSubject;
+		showCorpusDashboardLoading(subject);
+		startWorkingSubjectCaptureRefresh(subject, generation, failure -> {
+			if (failure != null) {
+				completionHandler.accept(failure);
+				return;
+			}
+			try {
+				loadCorpusDashboardHome(subject, generation, -1L, completionHandler);
+			} catch (RuntimeException | Error exception) {
+				completionHandler.accept(exception);
+			}
+		});
 	}
 
 	private void backupNow(Stage primaryStage, ApplicationConfig config) {
@@ -2897,7 +2917,7 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 		boolean subjectValueChanged = !Objects.equals(workingSubject, newSubject);
-		boolean guardedSubjectChange = workingSubject != null && subjectValueChanged && !assignmentSelectionInProgress;
+		boolean guardedSubjectChange = subjectValueChanged && !assignmentSelectionInProgress;
 		if (guardedSubjectChange && !allowWorkingSubjectChange()) {
 
 			// The application-managed Subject handler has not cleared curriculum,
@@ -2957,6 +2977,11 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void hideWorkspaceBusy() {
+		if (contributorAssignmentInstallationRequest != 0) {
+
+			// Workspace invalidation does not own the installation lifecycle.
+			return;
+		}
 		if (applicationBusyOverlay != null) {
 			applicationBusyOverlay.cancel();
 		}
@@ -3364,6 +3389,21 @@ public class QuestionBankApplication extends Application {
 	private void loadCorpusDashboardHome(Subject dashboardSubject, long generation, long preferredQuestionId,
 			Runnable completionHandler) {
 		Objects.requireNonNull(completionHandler, "completionHandler");
+		loadCorpusDashboardHome(dashboardSubject, generation, preferredQuestionId, failure -> {
+			try {
+				if (failure != null && !(failure instanceof CancellationException)) {
+					showAlert(Alert.AlertType.ERROR, "Corpus Dashboard", "The Corpus Dashboard could not be refreshed.",
+							failureMessage(failure));
+				}
+			} finally {
+				completionHandler.run();
+			}
+		});
+	}
+
+	private void loadCorpusDashboardHome(Subject dashboardSubject, long generation, long preferredQuestionId,
+			Consumer<Throwable> completionHandler) {
+		Objects.requireNonNull(completionHandler, "completionHandler");
 
 		// Only the newest Dashboard refresh may publish its results.
 		long dashboardGeneration = ++corpusDashboardRefreshGeneration;
@@ -3383,6 +3423,7 @@ public class QuestionBankApplication extends Application {
 			}
 		});
 		task.setOnSucceeded(_ -> {
+			Throwable publicationFailure = null;
 			try {
 				if (!isCurrentCorpusDashboardRefresh(dashboardSubject, generation, dashboardGeneration)) {
 
@@ -3390,6 +3431,7 @@ public class QuestionBankApplication extends Application {
 					// Record it as unsuccessful rather than a completed
 					// user-visible Dashboard refresh.
 					refreshOperation.failed();
+					publicationFailure = new CancellationException("Dashboard refresh was superseded.");
 					return;
 				}
 				CorpusDashboardSnapshot snapshot = task.getValue();
@@ -3406,10 +3448,10 @@ public class QuestionBankApplication extends Application {
 						snapshot.mappingCoverages(), snapshot.curriculumAvailable(), preferredQuestionId);
 			} catch (RuntimeException | Error failure) {
 				refreshOperation.failed();
-				throw failure;
+				publicationFailure = failure;
 			} finally {
 				try {
-					completionHandler.run();
+					completionHandler.accept(publicationFailure);
 				} catch (RuntimeException | Error failure) {
 					refreshOperation.failed();
 					throw failure;
@@ -3421,23 +3463,16 @@ public class QuestionBankApplication extends Application {
 		task.setOnFailed(_ -> {
 			refreshOperation.failed();
 			try {
-				if (!isCurrentCorpusDashboardRefresh(dashboardSubject, generation, dashboardGeneration)) {
-					return;
-				}
-				showAlert(Alert.AlertType.ERROR, "Corpus Dashboard", "The Corpus Dashboard could not be refreshed.",
-						failureMessage(task.getException()));
+				completionHandler.accept(isCurrentCorpusDashboardRefresh(dashboardSubject, generation, dashboardGeneration)
+						? task.getException() : new CancellationException("Dashboard refresh was superseded."));
 			} finally {
-				try {
-					completionHandler.run();
-				} finally {
-					refreshOperation.close();
-				}
+				refreshOperation.close();
 			}
 		});
 		task.setOnCancelled(_ -> {
 			refreshOperation.failed();
 			try {
-				completionHandler.run();
+				completionHandler.accept(new CancellationException("Dashboard refresh was cancelled."));
 			} finally {
 				refreshOperation.close();
 			}
@@ -4662,6 +4697,15 @@ public class QuestionBankApplication extends Application {
 		corpusDashboardHost.getChildren().setAll(message);
 	}
 
+	private void showCorpusDashboardLoading(Subject subject) {
+
+		// Never expose the previous Subject's rows if replacement loading fails.
+		corpusDashboardPane = null;
+		Label loading = new Label("Loading " + subject.getName() + " corpus...");
+		loading.setId("corpus-dashboard-loading");
+		corpusDashboardHost.getChildren().setAll(loading);
+	}
+
 	private void showCorpusDashboardQuestionCorrection(Question question) {
 
 		// An explicitly selected Question is a general correction
@@ -4671,6 +4715,9 @@ public class QuestionBankApplication extends Application {
 
 	private void showCorpusDashboardQuestionCorrection(Question question, boolean bookletScoped) {
 		Objects.requireNonNull(question, "question");
+		if (applicationBusyOverlay.isBusy()) {
+			return;
+		}
 		clearCorpusDashboardCaptureReturn();
 		showDashboardQuestionCaptureWorkspace();
 
@@ -4907,6 +4954,9 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private boolean showDashboardMcqExplanationCapture(Question question, Runnable returnHandler) {
+		if (applicationBusyOverlay.isBusy()) {
+			return false;
+		}
 		if (question == null) {
 			throw new NullPointerException("question");
 		}
@@ -4934,6 +4984,9 @@ public class QuestionBankApplication extends Application {
 
 	private boolean showDashboardNewQuestionCapture(ExamBooklet booklet, ApplicationConfig config,
 			Runnable returnHandler) {
+		if (applicationBusyOverlay.isBusy()) {
+			return false;
+		}
 		if (booklet == null) {
 			throw new NullPointerException("booklet");
 		}
@@ -5233,7 +5286,7 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void showImportContributorAssignment(Stage primaryStage, ApplicationConfig config) {
-		if (contributorAssignmentInstallationRunning || contributorAssignmentIssuanceRunning
+		if (contributorAssignmentInstallationRequest != 0 || contributorAssignmentIssuanceRunning
 				|| applicationBusyOverlay.isBusy()) {
 			return;
 		}
@@ -5948,69 +6001,96 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void startContributorAssignmentInstallation(Stage primaryStage, ApplicationConfig config, Path archive) {
-		if (contributorAssignmentInstallationRunning) {
+		Task<WorkAssignmentInstallationCoordinator.Result> task = new ApplicationBackgroundTask<>(
+				() -> new WorkAssignmentInstallationCoordinator(config).install(archive));
+		startContributorAssignmentInstallation(primaryStage, task);
+	}
+
+	private void startContributorAssignmentInstallation(Stage primaryStage,
+			Task<WorkAssignmentInstallationCoordinator.Result> task) {
+		if (contributorAssignmentIssuanceRunning || !allowWorkingSubjectChange()) {
 			return;
 		}
-		contributorAssignmentInstallationRunning = true;
-		Task<WorkAssignmentInstallationCoordinator.Result> task = new ApplicationBackgroundTask<>(() -> {
-
-			// Inspection, replay detection, graph installation,
-			// asset publication and session activation belong to
-			// the existing transactional installation service.
-			return new WorkAssignmentInstallationCoordinator(config).install(archive);
-		});
+		long request = applicationBusyOverlay.begin("Installing contributor assignment...");
+		if (request == 0) {
+			return;
+		}
+		contributorAssignmentInstallationRequest = request;
 		Alert progress = new Alert(Alert.AlertType.INFORMATION);
-		progress.initOwner(primaryStage);
-		progress.setTitle("Import Contributor Assignment");
-		progress.setHeaderText("Installing the validated whole-Exam assignment");
-		progress.setContentText(
-				"The application will activate the assignment " + "after all records and assets have been committed.");
-		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
+		try {
+			progress.initOwner(primaryStage);
+			progress.setTitle("Import Contributor Assignment");
+			progress.setHeaderText("Installing the validated whole-Exam assignment");
+			progress.setContentText("The application will activate the assignment "
+					+ "after all records and assets have been committed.");
+			progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
 
-		// Hide dismisses only the progress presentation.
-		// It does not cancel or interrupt the installation.
-		// The task always reports its final success or failure.
-		ButtonType hideButton = new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE);
-		progress.getButtonTypes().setAll(hideButton);
-		task.setOnSucceeded(_ -> {
-			contributorAssignmentInstallationRunning = false;
+			// Hide affects presentation only. The operation owns the application until
+			// installation and the subsequent capture/Dashboard refresh have finished.
+			progress.getButtonTypes().setAll(new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE));
+			task.setOnSucceeded(_ -> {
+				progress.close();
+				try {
+					applyInstalledContributorAssignment(task.getValue(),
+							failure -> completeContributorAssignmentInstallation(request, task.getValue(), failure));
+				} catch (SQLException | RuntimeException | Error failure) {
+					completeContributorAssignmentInstallation(request, task.getValue(), failure);
+				}
+			});
+			task.setOnFailed(_ -> {
+				finishContributorAssignmentInstallation(request);
+				progress.close();
+				showAlert(Alert.AlertType.ERROR, "Import Contributor Assignment", "The assignment could not be installed.",
+						failureMessage(task.getException()));
+			});
+			task.setOnCancelled(_ -> {
+				finishContributorAssignmentInstallation(request);
+				progress.close();
+			});
+			Thread worker = new Thread(task, "contributor-assignment-installation");
+			worker.setDaemon(true);
+			progress.show();
+			worker.start();
+		} catch (RuntimeException | Error failure) {
+			finishContributorAssignmentInstallation(request);
 			progress.close();
-			var result = task.getValue();
-			try {
-				applyInstalledContributorAssignment(result);
-			} catch (SQLException | RuntimeException failure) {
+			throw failure;
+		}
+	}
 
-				// The installer has already committed successfully.
-				// Report a presentation failure, not a failed import.
-				showAlert(Alert.AlertType.ERROR, "Contributor Assignment Installed",
-						"The assignment was installed, " + "but the Dashboard could not be refreshed.",
-						failureMessage(failure) + "\n\nRestart the application to restore " + "the active assignment.");
-				return;
-			}
-			String message = result.replay()
-					? "The previously installed assignment " + "was selected without replacing captured work."
-					: "The assignment and its source assets " + "were installed successfully.";
-			if (result.cleanupPending()) {
-				message += "\n\nTemporary installation cleanup " + "is pending. It will be retried by the installer.";
-			}
-			showAlert(Alert.AlertType.INFORMATION, "Contributor Assignment Installed", message,
-					"Assignment ID: " + result.assignmentId() + "\n\nThe Corpus Dashboard is now scoped "
-							+ "to the assigned Subject and Exam.");
-		});
-		task.setOnFailed(_ -> {
-			contributorAssignmentInstallationRunning = false;
-			progress.close();
-			showAlert(Alert.AlertType.ERROR, "Import Contributor Assignment", "The assignment could not be installed.",
-					failureMessage(task.getException()));
-		});
-		task.setOnCancelled(_ -> {
-			contributorAssignmentInstallationRunning = false;
-			progress.close();
-		});
-		Thread worker = new Thread(task, "contributor-assignment-installation");
-		worker.setDaemon(true);
-		progress.show();
-		worker.start();
+	private void completeContributorAssignmentInstallation(long request,
+			WorkAssignmentInstallationCoordinator.Result result, Throwable failure) {
+		if (!applicationBusyOverlay.owns(request)) {
+			return;
+		}
+		finishContributorAssignmentInstallation(request);
+		if (failure != null) {
+			corpusDashboardPane = null;
+			corpusDashboardHost.getChildren().setAll(new Label(
+					"The installed assignment could not be displayed. Restart the application to refresh it."));
+
+			// Persistence succeeded; distinguish a presentation failure from a failed import.
+			showAlert(Alert.AlertType.ERROR, "Contributor Assignment Installed",
+					"The assignment was installed, but the Dashboard could not be refreshed.",
+					failureMessage(failure) + "\n\nRestart the application to restore the active assignment.");
+			return;
+		}
+		String message = result.replay()
+				? "The previously installed assignment was selected without replacing captured work."
+				: "The assignment and its source assets were installed successfully.";
+		if (result.cleanupPending()) {
+			message += "\n\nTemporary installation cleanup is pending. It will be retried by the installer.";
+		}
+		showAlert(Alert.AlertType.INFORMATION, "Contributor Assignment Installed", message,
+				"Assignment ID: " + result.assignmentId()
+						+ "\n\nThe Corpus Dashboard is now scoped to the assigned Subject and Exam.");
+	}
+
+	private void finishContributorAssignmentInstallation(long request) {
+		if (contributorAssignmentInstallationRequest == request) {
+			contributorAssignmentInstallationRequest = 0;
+		}
+		applicationBusyOverlay.finish(request);
 	}
 
 	private void startContributorAssignmentIssuance(Stage primaryStage, ApplicationConfig config,
@@ -6410,6 +6490,15 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void startWorkingSubjectCaptureRefresh(Subject subject, long generation) {
+		startWorkingSubjectCaptureRefresh(subject, generation, failure -> {
+			if (failure != null && !(failure instanceof CancellationException)) {
+				failWorkingSubjectCaptureRefresh(subject, generation, failure);
+			}
+		});
+	}
+
+	private void startWorkingSubjectCaptureRefresh(Subject subject, long generation,
+			Consumer<Throwable> completionHandler) {
 		PerformanceOperation refresh = performanceRecorder.start("workingSubject.refresh");
 		try {
 
@@ -6429,6 +6518,7 @@ public class QuestionBankApplication extends Application {
 				// Clearing the Subject requires no replacement snapshot.
 				refresh.resultCount(0);
 				refresh.close();
+				completionHandler.accept(null);
 				return;
 			}
 			Task<WorkingSubjectCaptureSnapshot> task = new ApplicationBackgroundTask<>(() -> {
@@ -6470,8 +6560,10 @@ public class QuestionBankApplication extends Application {
 					// but must not publish over a newer selection.
 					refresh.failed();
 					refresh.close();
+					completionHandler.accept(new CancellationException("Subject refresh was superseded."));
 					return;
 				}
+				Throwable publicationFailure = null;
 				try {
 					WorkingSubjectCaptureSnapshot snapshot = task.getValue();
 					try (PerformanceOperation publish = performanceRecorder.start("workingSubject.publish",
@@ -6487,22 +6579,24 @@ public class QuestionBankApplication extends Application {
 					refresh.resultCount(snapshot.questions().size());
 				} catch (RuntimeException | Error failure) {
 					refresh.failed();
-					throw failure;
+					publicationFailure = failure;
 				} finally {
 
 					// Includes background retrieval and JavaFX
 					// publication, not merely Task completion.
 					refresh.close();
 				}
+				completionHandler.accept(publicationFailure);
 			});
 			task.setOnFailed(_ -> {
 				refresh.failed();
 				refresh.close();
-				failWorkingSubjectCaptureRefresh(subject, generation, task.getException());
+				completionHandler.accept(task.getException());
 			});
 			task.setOnCancelled(_ -> {
 				refresh.failed();
 				refresh.close();
+				completionHandler.accept(new CancellationException("Subject refresh was cancelled."));
 			});
 			Thread thread = new Thread(task, "working-subject-capture-refresh-" + generation);
 			thread.setDaemon(true);
@@ -6522,10 +6616,7 @@ public class QuestionBankApplication extends Application {
 
 		// A Subject transition discards all Dashboard-local filters belonging to the
 		// previous Subject rather than attempting to transfer them across corpora.
-		corpusDashboardPane = null;
-		Label loading = new Label("Loading " + subject.getName() + " corpus...");
-		loading.setId("corpus-dashboard-loading");
-		corpusDashboardHost.getChildren().setAll(loading);
+		showCorpusDashboardLoading(subject);
 		loadCorpusDashboardHome(subject, generation, -1L);
 	}
 
