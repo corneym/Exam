@@ -751,65 +751,77 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 				ExamBookletQuestionFormat.MIXED);
 		SqliteQuestionRepository repository = new SqliteQuestionRepository(new SqliteDatabase(databasePath));
 
-		// The structural fixture is persisted, but no Question
-		// capture has occurred.
+		// The Exam and Booklet exist before any Question is captured.
 		assertTrue(repository.findAll().isEmpty());
 		WaitForAsyncUtils.asyncFx(() -> {
 			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
 			return null;
 		}).get();
+		Node root = primaryStage.getScene().getRoot();
 
-		// Wait for the asynchronous persistence-backed snapshot,
-		// not merely the Dashboard container.
-		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
-				() -> robot.lookup("#corpus-dashboard-exams").tryQuery().filter(TableView.class::isInstance)
-						.map(TableView.class::cast).map(table -> table.getItems().size() == 1).orElse(false));
-		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
-		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		// Wait for both structural tables and their persisted data.
+		// TestFX's general lookup can miss controls during asynchronous
+		// scene publication or when a SplitPane clips its children.
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
+			Node examNode = root.lookup("#corpus-dashboard-exams");
+			Node bookletNode = root.lookup("#corpus-dashboard-booklets");
+			if (!(examNode instanceof TableView<?> examTable) || !(bookletNode instanceof TableView<?> bookletTable)) {
+				return false;
+			}
+			return examTable.getItems().size() == 1 && bookletTable.getItems().size() == 1
+					&& examTable.getSelectionModel().getSelectedItem() != null;
+		}));
+		TableView<ExamCorpusStatus> exams = lookupOnFx(robot, root, "#corpus-dashboard-exams", TableView.class);
+		TableView<BookletCorpusStatus> booklets = lookupOnFx(robot, root, "#corpus-dashboard-booklets",
+				TableView.class);
 		assertEquals(1, exams.getItems().size());
+		assertEquals(1, booklets.getItems().size());
 		ExamCorpusStatus initial = exams.getItems().getFirst();
 		assertEquals("External Assessment", initial.exam().getName());
 		assertEquals(0, initial.questionSummary().totalQuestions());
 		assertEquals(1, initial.bookletStatuses().size());
 		assertFalse(initial.isReadyForCompletion());
 
-		// The first Exam is automatically selected.
-		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> booklets.getItems().size() == 1);
+		// The first Exam must be selected automatically, and its
+		// Booklet must remain available despite zero captured Questions.
 		assertEquals(initial.exam().getId(), exams.getSelectionModel().getSelectedItem().exam().getId());
 		assertEquals(0, booklets.getItems().getFirst().encounteredTopLevelQuestionCount());
-
-		// The action may be outside the visible viewport of the new horizontal
-		// ScrollPane. Resolve it on the JavaFX thread instead of relying on
-		// TestFX's general scene-graph search.
-		Node dashboardRoot = primaryStage.getScene().getRoot();
-		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
-				() -> nodePresentOnFx(robot, dashboardRoot, "#corpus-dashboard-manage-exam-assets"));
-		Button manageAssets = lookupOnFx(robot, dashboardRoot, "#corpus-dashboard-manage-exam-assets", Button.class);
+		Button manageAssets = lookupOnFx(robot, root, "#corpus-dashboard-manage-exam-assets", Button.class);
+		assertNotNull(manageAssets);
 		assertFalse(manageAssets.isDisabled());
 
 		// Enter the real Exam/Assets workflow.
 		fireControl(robot, manageAssets);
 		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
-				() -> robot.lookup("#exam-assets-workspace").tryQuery().isPresent());
-		Button returnDashboard = lookup(robot, "#exam-assets-return-dashboard", Button.class);
+				() -> nodePresentOnFx(robot, root, "#exam-assets-workspace"));
+		Button returnDashboard = lookupOnFx(robot, root, "#exam-assets-return-dashboard", Button.class);
+		assertNotNull(returnDashboard);
 		assertTrue(returnDashboard.isVisible());
 		assertFalse(returnDashboard.isDisabled());
 
-		// This is the production navigation boundary
-		// associated with the reported defect.
+		// Returning must reconstruct the same Exam and Booklet
+		// without requiring any Question to have been captured.
 		fireControl(robot, returnDashboard);
-		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
-				() -> robot.lookup("#corpus-dashboard-exams").tryQuery().filter(TableView.class::isInstance)
-						.map(TableView.class::cast).map(table -> table.getItems().size() == 1).orElse(false));
-		TableView<ExamCorpusStatus> refreshedExams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
-		TableView<BookletCorpusStatus> refreshedBooklets = robot.lookup("#corpus-dashboard-booklets")
-				.queryAs(TableView.class);
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
+			Node examNode = root.lookup("#corpus-dashboard-exams");
+			Node bookletNode = root.lookup("#corpus-dashboard-booklets");
+			if (!(examNode instanceof TableView<?> examTable) || !(bookletNode instanceof TableView<?> bookletTable)) {
+				return false;
+			}
+			return examTable.getItems().size() == 1 && bookletTable.getItems().size() == 1
+					&& examTable.getSelectionModel().getSelectedItem() != null;
+		}));
+		TableView<ExamCorpusStatus> refreshedExams = lookupOnFx(robot, root, "#corpus-dashboard-exams",
+				TableView.class);
+		TableView<BookletCorpusStatus> refreshedBooklets = lookupOnFx(robot, root, "#corpus-dashboard-booklets",
+				TableView.class);
 		ExamCorpusStatus refreshed = refreshedExams.getItems().getFirst();
 
-		// Structural identity must survive Dashboard refresh.
+		// Structural identity and zero-Question state survive navigation.
 		assertEquals(initial.exam().getId(), refreshed.exam().getId());
 		assertEquals(1, refreshedExams.getItems().size());
 		assertEquals(1, refreshedBooklets.getItems().size());
+		assertEquals(initial.exam().getId(), refreshedExams.getSelectionModel().getSelectedItem().exam().getId());
 		assertEquals(0, refreshed.questionSummary().totalQuestions());
 		assertEquals(0, refreshedBooklets.getItems().getFirst().encounteredTopLevelQuestionCount());
 		assertTrue(repository.findAll().isEmpty());
