@@ -1727,6 +1727,22 @@ class SqliteConnectionTest {
 					ALTER TABLE exam_booklets
 					DROP COLUMN legacy_paper_code
 					""");
+
+			// Restore the original v21 broad invalidation trigger.
+			// A v21 fixture must not retain the selective v23 definition.
+			statement.execute("DROP TRIGGER app_review_exam_booklets_update");
+			statement.execute("""
+					CREATE TRIGGER app_review_exam_booklets_update
+					AFTER UPDATE ON exam_booklets
+					BEGIN
+					    DELETE FROM booklet_applicability_reviews
+					    WHERE booklet_id IN (
+					        SELECT OLD.id
+					        UNION
+					        SELECT NEW.id
+					    );
+					END;
+					""");
 			statement.execute("""
 					UPDATE schema_version SET version = 21
 					""");
@@ -2253,6 +2269,22 @@ class SqliteConnectionTest {
 			HistoricalSchemaFixture.removeVersion24Objects(statement);
 			statement.execute("DROP INDEX ux_exam_booklets_legacy_paper_code");
 			statement.execute("ALTER TABLE exam_booklets DROP COLUMN legacy_paper_code");
+
+			// Restore the broad booklet UPDATE trigger required by schema v21.
+			// The selective v23 definition must not survive in a historical fixture.
+			statement.execute("DROP TRIGGER app_review_exam_booklets_update");
+			statement.execute("""
+					CREATE TRIGGER app_review_exam_booklets_update
+					AFTER UPDATE ON exam_booklets
+					BEGIN
+					    DELETE FROM booklet_applicability_reviews
+					    WHERE booklet_id IN (
+					        SELECT OLD.id
+					        UNION
+					        SELECT NEW.id
+					    );
+					END;
+					""");
 			statement.execute("UPDATE schema_version SET version = 21");
 		}
 		assertEquals(21, database.schemaVersion());
