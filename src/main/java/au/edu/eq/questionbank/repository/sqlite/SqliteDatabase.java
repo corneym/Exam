@@ -427,12 +427,6 @@ public final class SqliteDatabase {
 	}
 
 	private void executeMigration(Connection connection, String resourcePath, int expectedVersion) throws SQLException {
-		executeMigration(connection, resourcePath, expectedVersion, _ -> {
-		});
-	}
-
-	private void executeMigration(Connection connection, String resourcePath, int expectedVersion,
-			MigrationPostProcessor postProcessor) throws SQLException {
 		String sql;
 		try {
 			sql = SqlResourceLoader.load(resourcePath);
@@ -440,11 +434,9 @@ public final class SqliteDatabase {
 			throw new SQLException("Unable to load migration resource: " + resourcePath, exception);
 		}
 
-		// The caller owns the migration transaction. SQL installation,
-		// supplementary Java installation and verification must either
-		// succeed together or all roll back.
+		// Installation and schema verification share the caller's
+		// transaction so migration failures roll back atomically.
 		SqlScriptExecutor.execute(connection, sql);
-		postProcessor.apply(connection);
 		int actualVersion = readSchemaVersion(connection);
 		if (actualVersion != expectedVersion) {
 			throw new SQLException(
@@ -734,9 +726,8 @@ public final class SqliteDatabase {
 		}
 		if (version == 20) {
 
-			// Install invalidation triggers in the existing migration transaction.
-			// The version update follows only after all triggers are installed.
-			BookletApplicabilityReviewInvalidationTriggers.install(connection);
+			// Version 21 installs the complete applicability-review
+			// invalidation trigger set from its SQL migration.
 			executeMigration(connection, "/db/migration-v20-to-v21.sql", 21);
 			return 21;
 		}
@@ -749,10 +740,8 @@ public final class SqliteDatabase {
 		}
 		if (version == 22) {
 
-			// Administrative legacy Paper-link changes must not revoke a human
-			// applicability review. Leave the other material invalidation triggers
-			// intact, replacing this one within the same migration transaction.
-			BookletApplicabilityReviewInvalidationTriggers.installVersion23BookletUpdateTrigger(connection);
+			// Version 23 replaces only the broad booklet UPDATE
+			// invalidation trigger. Existing review records are preserved.
 			executeMigration(connection, "/db/migration-v22-to-v23.sql", 23);
 			return 23;
 		}
@@ -773,9 +762,9 @@ public final class SqliteDatabase {
 		}
 		if (version == 25) {
 
-			// Install mutation tracking within the same migration transaction.
-			// A failed trigger installation must leave the v25 database intact.
-			SqlitePortableRevisionTriggers.install(connection);
+			// Schema v26 installs all 44 material-change revision triggers
+			// from the frozen SQL definitions. Trigger installation and the
+			// version update share the existing migration transaction.
 			executeMigration(connection, "/db/migration-v25-to-v26.sql", 26);
 			return 26;
 		}
@@ -788,57 +777,45 @@ public final class SqliteDatabase {
 		}
 		if (version == 27) {
 
-			// The schema tables and protection triggers are installed in
-			// one transaction. Verification occurs after both steps.
-			executeMigration(connection, "/db/migration-v27-to-v28.sql", 28,
-					SqliteExamWorkAssignmentLedgerTriggers::install);
+			// Schema v28 installs the coordinator assignment ledger and
+			// its five protection triggers in the same SQL transaction.
+			executeMigration(connection, "/db/migration-v27-to-v28.sql", 28);
 			return 28;
 		}
 		if (version == 28) {
 
-			// Contributor installation records and active selection are
-			// separate from coordinator issuance and lifecycle state.
-			executeMigration(connection, "/db/migration-v28-to-v29.sql", 29,
-					SqliteContributorAssignmentSessionTriggers::install);
+			// Schema v29 installs contributor assignment-session structures
+			// and their four protection triggers in one migration transaction.
+			executeMigration(connection, "/db/migration-v28-to-v29.sql", 29);
 			return 29;
 		}
 		if (version == 29) {
 
-			// Version 30 prevents contributor assignment mode from
-			// changing authoritative Subject, Exam or asset metadata.
-			executeMigration(connection, "/db/migration-v29-to-v30.sql", 30,
-					SqliteAssignmentStructureTriggers::install);
+			// Version 30 installs the original contributor structural
+			// restrictions directly from its versioned SQL migration.
+			executeMigration(connection, "/db/migration-v29-to-v30.sql", 30);
 			return 30;
 		}
 		if (version == 30) {
 
-			// Version 31 restricts contributor capture and classification
-			// to the selected Exam and permitted syllabus versions.
-			executeMigration(connection, "/db/migration-v30-to-v31.sql", 31, SqliteAssignmentScopeTriggers::install);
+			// Version 31 installs contributor capture and classification
+			// scope guards directly from the versioned SQL migration.
+			executeMigration(connection, "/db/migration-v30-to-v31.sql", 31);
 			return 31;
 		}
 		if (version == 31) {
 
-			// Version 32 permits MCQ continuation metadata updates only
-			// within the selected assignment's Booklets.
-			executeMigration(connection, "/db/migration-v31-to-v32.sql", 32,
-					SqliteAssignmentStructureTriggers::enablePendingMcqContinuation);
-			return 32;
-		}
-		if (version == 31) {
-
-			// Version 32 permits MCQ continuation metadata updates only
-			// within the selected assignment's Booklets.
-			executeMigration(connection, "/db/migration-v31-to-v32.sql", 32,
-					SqliteAssignmentStructureTriggers::enablePendingMcqContinuation);
+			// Version 32 permits pending MCQ Shared Context updates within
+			// assigned Booklets. SQL installs the complete trigger changes.
+			executeMigration(connection, "/db/migration-v31-to-v32.sql", 32);
 			return 32;
 		}
 		if (version == 32) {
 
 			// Version 33 restricts contributor Question classifications
-			// to Subtopics and Descriptors.
-			executeMigration(connection, "/db/migration-v32-to-v33.sql", 33,
-					SqliteAssignmentScopeTriggers::enableClassificationLevels);
+			// to Subtopics and Descriptors. The migration resource
+			// installs the updated triggers transactionally.
+			executeMigration(connection, "/db/migration-v32-to-v33.sql", 33);
 			return 33;
 		}
 		if (version == 33) {
@@ -1126,21 +1103,20 @@ public final class SqliteDatabase {
 		}
 		if (version >= 21) {
 
-			// A version-21 database must retain every invalidation trigger.
-			// Missing triggers could silently preserve obsolete reviews.
-			BookletApplicabilityReviewInvalidationTriggers.verify(connection);
+			// Historical v21/v22 databases retain the original trigger
+			// definitions. From v23, the selective booklet UPDATE rule
+			// replaces the earlier broad invalidation rule.
+			if (version >= 23) {
+				BookletApplicabilityReviewInvalidationTriggers.verify(connection);
+			} else {
+				BookletApplicabilityReviewInvalidationTriggers.verifyLegacy(connection);
+			}
 		}
 		if (version >= 22) {
 
-			// Legacy Paper identity is optional but must be structurally unique
-			// within each authoritative Exam.
+			// Legacy Paper identity is optional but must be structurally
+			// unique within each authoritative Exam.
 			verifyVersion22LegacyPaperSchema(connection);
-		}
-		if (version >= 23) {
-
-			// The v21 name-presence check alone cannot detect an accidentally
-			// retained broad UPDATE trigger on an otherwise version-23 database.
-			BookletApplicabilityReviewInvalidationTriggers.verifyVersion23BookletUpdateTrigger(connection);
 		}
 		if (version >= 24) {
 
@@ -1924,11 +1900,5 @@ public final class SqliteDatabase {
 	}
 
 	private record ForeignKeyRequirement(String fromColumn, String targetTable, String targetColumn) {
-	}
-
-	@FunctionalInterface
-	private interface MigrationPostProcessor {
-
-		void apply(Connection connection) throws SQLException;
 	}
 }

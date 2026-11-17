@@ -18,6 +18,28 @@ class SqliteAssignmentStructureTriggersTest {
 	Path directory;
 
 	@Test
+	void alteredStructureTriggerFailsSchemaVerification() throws Exception {
+		SqliteDatabase database = fixture();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					DROP TRIGGER trg_contributor_structure_exams_update
+					""");
+
+			// A present but weakened trigger must fail integrity verification.
+			statement.execute("""
+					CREATE TRIGGER trg_contributor_structure_exams_update
+					BEFORE UPDATE ON exams
+					BEGIN
+					    SELECT 1;
+					END
+					""");
+		}
+		SQLException failure = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(failure.getMessage()
+				.contains("Altered contributor structure trigger: " + "trg_contributor_structure_exams_update"));
+	}
+
+	@Test
 	void migratesVersion29AndRestoresStructuralGuards() throws Exception {
 		SqliteDatabase database = fixture();
 		try (Connection connection = database.openConnection()) {
@@ -55,16 +77,20 @@ class SqliteAssignmentStructureTriggersTest {
 			try (Statement statement = connection.createStatement()) {
 				HistoricalSchemaFixture.removeAssignmentGuardObjects(statement);
 
-				// Reconstruct the version-31 triggers.
-				SqliteAssignmentStructureTriggers.install(connection);
-				SqliteAssignmentScopeTriggers.install(connection);
+				// Reconstruct the original version-31 guards using the
+				// same migration resources as production.
+				SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v29-to-v30.sql"));
+				SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v30-to-v31.sql"));
+
+				// The test starts from a version-33 fixture. Restore the
+				// historical version after installing its trigger definitions.
 				statement.execute("""
 						UPDATE schema_version
 						SET version = 31
 						WHERE version = %d
 						""".formatted(SqliteDatabase.latestSchemaVersion()));
 				connection.commit();
-			} catch (SQLException failure) {
+			} catch (Exception failure) {
 				connection.rollback();
 				throw failure;
 			}
@@ -281,6 +307,73 @@ class SqliteAssignmentStructureTriggersTest {
 			assertBlocked(statement, """
 					DELETE FROM exams
 					WHERE id = 32
+					""");
+		}
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void unexpectedStructureTriggerFailsSchemaVerification() throws Exception {
+		SqliteDatabase database = fixture();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					CREATE TRIGGER trg_contributor_structure_unexpected_guard
+					BEFORE UPDATE ON subjects
+					BEGIN
+					    SELECT 1;
+					END
+					""");
+		}
+		SQLException failure = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(failure.getMessage()
+				.contains("Unexpected contributor structure trigger: " + "trg_contributor_structure_unexpected_guard"));
+	}
+
+	@Test
+	void version30MigrationResourceInstallsAllStructuralTriggers() throws Exception {
+		SqliteDatabase database = fixture();
+
+		// Exercise the migration resource directly, without using
+		// the Java structural-trigger installation method.
+		String migration = SqlResourceLoader.load("/db/migration-v29-to-v30.sql");
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try (Statement statement = connection.createStatement()) {
+				HistoricalSchemaFixture.removeAssignmentGuardObjects(statement);
+				statement.execute("""
+						UPDATE schema_version
+						SET version = 29
+						WHERE version = 33
+						""");
+				SqlScriptExecutor.execute(connection, migration);
+
+				// All original v30 definitions must match exactly.
+				SqliteAssignmentStructureTriggers.verifyLegacy(connection);
+				connection.commit();
+			} catch (SQLException failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
+		assertEquals(30, database.schemaVersion());
+		database.verifySchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			try (var result = statement.executeQuery("""
+					SELECT COUNT(*)
+					FROM sqlite_master
+					WHERE type = 'trigger'
+					  AND name GLOB 'trg_contributor_structure_*'
+					""")) {
+				assertTrue(result.next());
+				assertEquals(30, result.getInt(1));
+			}
+
+			// The migrated triggers must enforce the original
+			// contributor assignment restrictions.
+			assertBlocked(statement, """
+					UPDATE exams
+					SET exam_name = 'Not permitted'
+					WHERE id = 31
 					""");
 		}
 		database.verifyIntegrity();

@@ -18,6 +18,30 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 	Path directory;
 
 	@Test
+	void alteredLedgerProtectionTriggerFailsSchemaVerification() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(directory.resolve("altered-ledger-trigger.db"));
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					DROP TRIGGER trg_exam_work_assignments_no_update
+					""");
+
+			// The name and owning table remain correct, but the
+			// replacement no longer protects immutable baseline data.
+			statement.execute("""
+					CREATE TRIGGER trg_exam_work_assignments_no_update
+					BEFORE UPDATE ON exam_work_assignments
+					BEGIN
+					    SELECT 1;
+					END
+					""");
+		}
+		SQLException failure = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(failure.getMessage()
+				.contains("Altered assignment protection trigger: " + "trg_exam_work_assignments_no_update"));
+	}
+
+	@Test
 	void createsLatestSchemaWithProtectedCoordinatorLedger() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("ledger-schema.db"));
 		database.initialiseSchema();
@@ -146,5 +170,78 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 					    '11111111-1111-4111-8111-111111111111'
 					"""));
 		}
+	}
+
+	@Test
+	void unexpectedLedgerProtectionTriggerFailsSchemaVerification() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(directory.resolve("unexpected-ledger-trigger.db"));
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+
+			// Additional triggers in the protected namespace must be
+			// rejected rather than silently accepted.
+			statement.execute("""
+					CREATE TRIGGER trg_exam_work_assignment_unexpected_guard
+					BEFORE UPDATE ON exam_work_assignment_states
+					BEGIN
+					    SELECT 1;
+					END
+					""");
+		}
+		SQLException failure = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(failure.getMessage()
+				.contains("Unexpected assignment protection trigger: " + "trg_exam_work_assignment_unexpected_guard"));
+	}
+
+	@Test
+	void version28SqlResourceInstallsExactLedgerProtectionTriggers() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(directory.resolve("v28-resource.db"));
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				try (Statement statement = connection.createStatement()) {
+
+					// Reconstruct the original version-27 state
+					// in a disposable test database.
+					HistoricalSchemaFixture.removeVersion28Objects(statement);
+					statement.execute("""
+							UPDATE schema_version
+							SET version = 27
+							WHERE version = 33
+							""");
+				}
+
+				// Install the schema and protection triggers exclusively
+				// through the versioned SQL migration resource.
+				SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v27-to-v28.sql"));
+
+				// Check the SQL-installed definitions against the
+				// original Java definitions, without using install().
+				SqliteExamWorkAssignmentLedgerTriggers.verify(connection);
+				try (Statement statement = connection.createStatement(); var result = statement.executeQuery("""
+						SELECT COUNT(*)
+						FROM sqlite_master
+						WHERE type = 'trigger'
+						  AND name GLOB 'trg_exam_work_assignment*'
+						""")) {
+					assertTrue(result.next());
+					assertEquals(5, result.getInt(1));
+				}
+				connection.commit();
+			} catch (Exception failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
+		assertEquals(28, database.schemaVersion());
+		database.verifySchema();
+
+		// Continue the historical database through every remaining
+		// migration to the unchanged latest schema version.
+		database.initialiseSchema();
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
+		database.verifySchema();
+		database.verifyIntegrity();
 	}
 }

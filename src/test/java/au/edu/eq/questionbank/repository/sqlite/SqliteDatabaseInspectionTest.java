@@ -744,6 +744,22 @@ class SqliteDatabaseInspectionTest {
 					ALTER TABLE exam_booklets
 					DROP COLUMN legacy_paper_code
 					""");
+
+			// Restore the original v21 trigger definition before recording
+			// the historical schema version.
+			statement.execute("DROP TRIGGER app_review_exam_booklets_update");
+			statement.execute("""
+					CREATE TRIGGER app_review_exam_booklets_update
+					AFTER UPDATE ON exam_booklets
+					BEGIN
+					    DELETE FROM booklet_applicability_reviews
+					    WHERE booklet_id IN (
+					        SELECT OLD.id
+					        UNION
+					        SELECT NEW.id
+					    );
+					END;
+					""");
 			statement.execute("""
 					UPDATE schema_version
 					SET version = 21
