@@ -48,6 +48,27 @@ ON contributor_return_packages (
     return_number
 );
 
+-- Protect published contribution evidence.
+-- Both triggers are installed in the version 34 migration transaction.
+
+CREATE TRIGGER trg_contributor_returns_no_delete
+BEFORE DELETE ON contributor_return_packages
+BEGIN
+    SELECT RAISE(
+        ABORT,
+        'Contributor return evidence cannot be deleted'
+    );
+END;
+
+CREATE TRIGGER trg_contributor_returns_no_update
+BEFORE UPDATE ON contributor_return_packages
+BEGIN
+    SELECT RAISE(
+        ABORT,
+        'Contributor return evidence cannot be modified'
+    );
+END;
+
 UPDATE schema_version
 SET version = 34
 WHERE version = 33;

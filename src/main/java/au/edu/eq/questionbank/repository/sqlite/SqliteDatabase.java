@@ -820,10 +820,9 @@ public final class SqliteDatabase {
 		}
 		if (version == 33) {
 
-			// Version 34 introduces immutable contributor return
-			// publication history and ordered package lineage.
-			executeMigration(connection, "/db/migration-v33-to-v34.sql", 34,
-					SqliteContributorReturnLedgerTriggers::install);
+			// Version 34 creates the append-only contributor return
+			// ledger and installs its protection triggers from SQL.
+			executeMigration(connection, "/db/migration-v33-to-v34.sql", 34);
 			return 34;
 		}
 		throw new SQLException("No migration available from schema version " + version);
