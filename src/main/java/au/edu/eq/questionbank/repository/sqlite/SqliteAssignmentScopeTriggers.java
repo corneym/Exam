@@ -60,20 +60,6 @@ final class SqliteAssignmentScopeTriggers {
 	private SqliteAssignmentScopeTriggers() {
 	}
 
-	static void enableClassificationLevels(Connection connection) throws SQLException {
-		Objects.requireNonNull(connection, "connection");
-
-		// Replace only the Question INSERT and UPDATE guards.
-		// All other assignment scope triggers retain their definitions.
-		try (Statement statement = connection.createStatement()) {
-			for (String operation : List.of("insert", "update")) {
-				statement.execute("DROP TRIGGER " + name("questions", operation));
-				statement.execute(definition("questions", operation, true));
-			}
-		}
-		verify(connection);
-	}
-
 	static void install(Connection connection) throws SQLException {
 		Objects.requireNonNull(connection, "connection");
 

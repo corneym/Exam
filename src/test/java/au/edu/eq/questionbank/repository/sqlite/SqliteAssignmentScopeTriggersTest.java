@@ -70,6 +70,95 @@ class SqliteAssignmentScopeTriggersTest {
 	}
 
 	@Test
+	void migratesVersion32To33AndPreservesClassificationRestrictions() throws Exception {
+		SqliteDatabase database = fixture(false);
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try (Statement statement = connection.createStatement()) {
+
+				// Reconstruct the scope trigger configuration used by v32.
+				HistoricalSchemaFixture.removeAssignmentScopeObjects(statement);
+				SqliteAssignmentScopeTriggers.install(connection);
+				statement.execute("""
+						UPDATE schema_version
+						SET version = 32
+						WHERE version = 33
+						""");
+				connection.commit();
+			} catch (SQLException failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
+		assertEquals(32, database.schemaVersion());
+		database.verifySchema();
+
+		// Version 32 still permitted Unit-classified Question insertion.
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					INSERT INTO questions (
+					    id, booklet_id, classification_node_id,
+					    question_code, question_text, marks,
+					    shared_context_capture_required
+					)
+					VALUES (
+					    9, 61, 101,
+					    '9', 'Historical Unit classification', 2, 0
+					)
+					""");
+		}
+		database.initialiseSchema();
+		assertEquals(33, database.schemaVersion());
+		database.verifySchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			SqliteAssignmentScopeTriggers.verify(connection);
+
+			// A newly captured Question cannot use a Unit.
+			assertBlocked(statement, """
+					INSERT INTO questions (
+					    id, booklet_id, classification_node_id,
+					    question_code, question_text, marks,
+					    shared_context_capture_required
+					)
+					VALUES (
+					    10, 61, 101,
+					    '10', 'Invalid classification', 2, 0
+					)
+					""");
+
+			// A valid Subtopic remains permitted.
+			statement.execute("""
+					INSERT INTO questions (
+					    id, booklet_id, classification_node_id,
+					    question_code, question_text, marks,
+					    shared_context_capture_required
+					)
+					VALUES (
+					    10, 61, 104,
+					    '10', 'Valid classification', 2, 0
+					)
+					""");
+
+			// Historical Questions can retain their classification
+			// while their other captured content is edited.
+			statement.execute("""
+					UPDATE questions
+					SET question_text = 'Historical content corrected'
+					WHERE id = 9
+					""");
+
+			// Changing that historical classification to a Topic
+			// is not permitted.
+			assertBlocked(statement, """
+					UPDATE questions
+					SET classification_node_id = 103
+					WHERE id = 9
+					""");
+		}
+		database.verifyIntegrity();
+	}
+
+	@Test
 	void missingScopeTriggerFailsSchemaVerification() throws Exception {
 		SqliteDatabase database = fixture(false);
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {

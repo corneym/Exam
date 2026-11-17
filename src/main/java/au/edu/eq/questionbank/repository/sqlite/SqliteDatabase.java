@@ -827,9 +827,9 @@ public final class SqliteDatabase {
 		if (version == 32) {
 
 			// Version 33 restricts contributor Question classifications
-			// to Subtopics and Descriptors.
-			executeMigration(connection, "/db/migration-v32-to-v33.sql", 33,
-					SqliteAssignmentScopeTriggers::enableClassificationLevels);
+			// to Subtopics and Descriptors. The migration resource
+			// installs the updated triggers transactionally.
+			executeMigration(connection, "/db/migration-v32-to-v33.sql", 33);
 			return 33;
 		}
 		throw new SQLException("No migration available from schema version " + version);
