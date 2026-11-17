@@ -819,18 +819,9 @@ public final class SqliteDatabase {
 		}
 		if (version == 31) {
 
-			// Version 32 permits MCQ continuation metadata updates only
-			// within the selected assignment's Booklets.
-			executeMigration(connection, "/db/migration-v31-to-v32.sql", 32,
-					SqliteAssignmentStructureTriggers::enablePendingMcqContinuation);
-			return 32;
-		}
-		if (version == 31) {
-
-			// Version 32 permits MCQ continuation metadata updates only
-			// within the selected assignment's Booklets.
-			executeMigration(connection, "/db/migration-v31-to-v32.sql", 32,
-					SqliteAssignmentStructureTriggers::enablePendingMcqContinuation);
+			// Version 32 permits pending MCQ Shared Context updates within
+			// assigned Booklets. SQL installs the complete trigger changes.
+			executeMigration(connection, "/db/migration-v31-to-v32.sql", 32);
 			return 32;
 		}
 		if (version == 32) {

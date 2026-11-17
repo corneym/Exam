@@ -31,19 +31,6 @@ final class SqliteAssignmentStructureTriggers {
 	private SqliteAssignmentStructureTriggers() {
 	}
 
-	static void enablePendingMcqContinuation(Connection connection) throws SQLException {
-		Objects.requireNonNull(connection, "connection");
-
-		// Called inside the schema migration transaction. Replace only the
-		// Booklet UPDATE guard; all other structural guards remain installed.
-		try (Statement statement = connection.createStatement()) {
-			statement.execute("DROP TRIGGER " + name("exam_booklets", "update"));
-			statement.execute(definition("exam_booklets", "update", true));
-			statement.execute(pendingMcqDefinition());
-		}
-		verify(connection);
-	}
-
 	static void install(Connection connection) throws SQLException {
 		Objects.requireNonNull(connection, "connection");
 
