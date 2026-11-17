@@ -734,9 +734,8 @@ public final class SqliteDatabase {
 		}
 		if (version == 20) {
 
-			// Install invalidation triggers in the existing migration transaction.
-			// The version update follows only after all triggers are installed.
-			BookletApplicabilityReviewInvalidationTriggers.install(connection);
+			// Version 21 installs the complete applicability-review
+			// invalidation trigger set from its SQL migration.
 			executeMigration(connection, "/db/migration-v20-to-v21.sql", 21);
 			return 21;
 		}
@@ -749,10 +748,8 @@ public final class SqliteDatabase {
 		}
 		if (version == 22) {
 
-			// Administrative legacy Paper-link changes must not revoke a human
-			// applicability review. Leave the other material invalidation triggers
-			// intact, replacing this one within the same migration transaction.
-			BookletApplicabilityReviewInvalidationTriggers.installVersion23BookletUpdateTrigger(connection);
+			// Version 23 replaces only the broad booklet UPDATE
+			// invalidation trigger. Existing review records are preserved.
 			executeMigration(connection, "/db/migration-v22-to-v23.sql", 23);
 			return 23;
 		}
@@ -1106,21 +1103,20 @@ public final class SqliteDatabase {
 		}
 		if (version >= 21) {
 
-			// A version-21 database must retain every invalidation trigger.
-			// Missing triggers could silently preserve obsolete reviews.
-			BookletApplicabilityReviewInvalidationTriggers.verify(connection);
+			// Historical v21/v22 databases retain the original trigger
+			// definitions. From v23, the selective booklet UPDATE rule
+			// replaces the earlier broad invalidation rule.
+			if (version >= 23) {
+				BookletApplicabilityReviewInvalidationTriggers.verify(connection);
+			} else {
+				BookletApplicabilityReviewInvalidationTriggers.verifyLegacy(connection);
+			}
 		}
 		if (version >= 22) {
 
-			// Legacy Paper identity is optional but must be structurally unique
-			// within each authoritative Exam.
+			// Legacy Paper identity is optional but must be structurally
+			// unique within each authoritative Exam.
 			verifyVersion22LegacyPaperSchema(connection);
-		}
-		if (version >= 23) {
-
-			// The v21 name-presence check alone cannot detect an accidentally
-			// retained broad UPDATE trigger on an otherwise version-23 database.
-			BookletApplicabilityReviewInvalidationTriggers.verifyVersion23BookletUpdateTrigger(connection);
 		}
 		if (version >= 24) {
 
