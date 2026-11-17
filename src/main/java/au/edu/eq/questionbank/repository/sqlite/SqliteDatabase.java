@@ -788,10 +788,9 @@ public final class SqliteDatabase {
 		}
 		if (version == 27) {
 
-			// The schema tables and protection triggers are installed in
-			// one transaction. Verification occurs after both steps.
-			executeMigration(connection, "/db/migration-v27-to-v28.sql", 28,
-					SqliteExamWorkAssignmentLedgerTriggers::install);
+			// Schema v28 installs the coordinator assignment ledger and
+			// its five protection triggers in the same SQL transaction.
+			executeMigration(connection, "/db/migration-v27-to-v28.sql", 28);
 			return 28;
 		}
 		if (version == 28) {

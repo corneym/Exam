@@ -147,4 +147,56 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 					"""));
 		}
 	}
+
+	@Test
+	void version28SqlResourceInstallsExactLedgerProtectionTriggers() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(directory.resolve("v28-resource.db"));
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				try (Statement statement = connection.createStatement()) {
+
+					// Reconstruct the original version-27 state
+					// in a disposable test database.
+					HistoricalSchemaFixture.removeVersion28Objects(statement);
+					statement.execute("""
+							UPDATE schema_version
+							SET version = 27
+							WHERE version = 33
+							""");
+				}
+
+				// Install the schema and protection triggers exclusively
+				// through the versioned SQL migration resource.
+				SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v27-to-v28.sql"));
+
+				// Check the SQL-installed definitions against the
+				// original Java definitions, without using install().
+				SqliteExamWorkAssignmentLedgerTriggers.verify(connection);
+				try (Statement statement = connection.createStatement(); var result = statement.executeQuery("""
+						SELECT COUNT(*)
+						FROM sqlite_master
+						WHERE type = 'trigger'
+						  AND name GLOB 'trg_exam_work_assignment*'
+						""")) {
+					assertTrue(result.next());
+					assertEquals(5, result.getInt(1));
+				}
+				connection.commit();
+			} catch (Exception failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
+		assertEquals(28, database.schemaVersion());
+		database.verifySchema();
+
+		// Continue the historical database through every remaining
+		// migration to the unchanged latest schema version.
+		database.initialiseSchema();
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
+		database.verifySchema();
+		database.verifyIntegrity();
+	}
 }
