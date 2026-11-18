@@ -102,28 +102,74 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 
 	@Test
 	void migratesVersion37ToAuditedAssignmentLifecycle() throws Exception {
+
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("version-38-upgrade.db"));
+
 		database.initialiseSchema();
-		assertEquals(38, database.schemaVersion());
+		assertEquals(39, database.schemaVersion());
+
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
+
 			try (Statement statement = connection.createStatement()) {
 				HistoricalSchemaFixture.removeVersion38Objects(statement);
+
 				statement.execute("""
 						UPDATE schema_version
 						SET version = 37
-						WHERE version = 38
+						WHERE version = 39
 						""");
+
 				connection.commit();
 			} catch (SQLException | RuntimeException failure) {
 				connection.rollback();
 				throw failure;
 			}
 		}
+
 		assertEquals(37, database.schemaVersion());
 		database.verifySchema();
+
 		database.initialiseSchema();
+
+		assertEquals(39, database.schemaVersion());
+		database.verifySchema();
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void migratesVersion38ToMasterStructureGuards() throws Exception {
+
+		SqliteDatabase database = new SqliteDatabase(directory.resolve("version-39-upgrade.db"));
+
+		database.initialiseSchema();
+		assertEquals(39, database.schemaVersion());
+
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+
+			try (Statement statement = connection.createStatement()) {
+				HistoricalSchemaFixture.removeVersion39Objects(statement);
+
+				statement.execute("""
+						UPDATE schema_version
+						SET version = 38
+						WHERE version = 39
+						""");
+
+				connection.commit();
+			} catch (SQLException | RuntimeException failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
+
 		assertEquals(38, database.schemaVersion());
+		database.verifySchema();
+
+		database.initialiseSchema();
+
+		assertEquals(39, database.schemaVersion());
 		database.verifySchema();
 		database.verifyIntegrity();
 	}

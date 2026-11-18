@@ -1686,14 +1686,15 @@ public final class SqliteExamWriter {
 					throw new IllegalArgumentException("Exam does not exist: " + examId);
 				}
 				ExamCaptureState captureState = ExamCaptureState.valueOf(result.getString("capture_state"));
-
-				// COMPLETE records a deliberate human decision. Structural writers must not
-				// silently override that decision.
 				if (captureState == ExamCaptureState.COMPLETE) {
-					throw new IllegalStateException("Exam is complete; reactivate it before changing Exam structure");
+					throw new IllegalStateException(
+							"Exam is complete; reactivate it before " + "changing Exam structure");
 				}
 			}
 		}
+
+		// Use the same connection as the structural operation.
+		new SqliteMasterExamLockGuard(database).requireUnlocked(connection, examId);
 	}
 
 	ExamBooklet updateExamBookletMetadata(Connection connection, ExamBooklet booklet, String name,

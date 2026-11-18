@@ -376,6 +376,7 @@ public final class HistoricalSchemaFixture {
 	 */
 	public static void removeVersion38Objects(Statement statement) throws SQLException {
 		Objects.requireNonNull(statement, "statement");
+		removeVersion39Objects(statement);
 		List<String> triggerNames = new ArrayList<>();
 		try (PreparedStatement lookup = statement.getConnection().prepareStatement("""
 				SELECT name
@@ -397,6 +398,47 @@ public final class HistoricalSchemaFixture {
 		}
 		statement.execute("DROP TABLE IF EXISTS exam_work_assignment_closures");
 		statement.execute("DROP TABLE IF EXISTS exam_work_assignment_exam_locks");
+	}
+
+	/**
+	 * Removes v39 master Exam structural guards from a disposable historical
+	 * migration test database.
+	 *
+	 * <p>
+	 * This method must never be applied to production data.
+	 *
+	 * @param statement statement for the disposable test database
+	 * @throws SQLException         if trigger removal fails
+	 * @throws NullPointerException if statement is null
+	 */
+	public static void removeVersion39Objects(Statement statement) throws SQLException {
+
+		Objects.requireNonNull(statement, "statement");
+
+		List<String> triggerNames = new ArrayList<>();
+
+		try (PreparedStatement lookup = statement.getConnection().prepareStatement("""
+				SELECT name
+				FROM sqlite_master
+				WHERE type = 'trigger'
+				  AND name GLOB 'trg_master_exam_structure_*'
+				ORDER BY name
+				"""); ResultSet result = lookup.executeQuery()) {
+
+			while (result.next()) {
+				String name = result.getString(1);
+
+				if (!name.matches("trg_master_exam_structure_[a-z_]+")) {
+					throw new SQLException("Unexpected master Exam structure trigger: " + name);
+				}
+
+				triggerNames.add(name);
+			}
+		}
+
+		for (String name : triggerNames) {
+			statement.execute("DROP TRIGGER \"" + name + "\"");
+		}
 	}
 
 	private static void dropAssignmentTriggers(Statement statement, String pattern) throws SQLException {

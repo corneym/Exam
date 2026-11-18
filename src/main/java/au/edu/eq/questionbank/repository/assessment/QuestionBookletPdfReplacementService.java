@@ -8,7 +8,9 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.Objects;
 
+import au.edu.eq.questionbank.ManagedAssetPublicationLock;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamCaptureState;
@@ -33,28 +35,25 @@ public final class QuestionBookletPdfReplacementService {
 	private final SqliteDatabase database;
 	private final SourceDocumentHashService hashService;
 	private final PdfStore pdfStore;
+	private final ManagedDataLayout managedDataLayout;
 
 	/**
 	 * Creates a Question-booklet PDF replacement service supporting both
-	 * Subject-first and legacy persisted paths during migration.
+	 * Subject-first and legacy persisted paths.
 	 *
 	 * @param database          question-bank database
-	 * @param managedDataLayout canonical application managed-data layout
+	 * @param managedDataLayout canonical managed data layout
 	 * @param legacyPdfDataRoot former dedicated Exam PDF root
-	 * @throws NullPointerException if any argument is {@code null}
+	 * @throws NullPointerException if any argument is null
 	 */
 	public QuestionBookletPdfReplacementService(SqliteDatabase database, ManagedDataLayout managedDataLayout,
 			Path legacyPdfDataRoot) {
-		if (database == null) {
-			throw new NullPointerException("database");
-		}
-		if (managedDataLayout == null) {
-			throw new NullPointerException("managedDataLayout");
-		}
-		if (legacyPdfDataRoot == null) {
-			throw new NullPointerException("legacyPdfDataRoot");
-		}
-		this.database = database;
+
+		this.database = Objects.requireNonNull(database, "database");
+		this.managedDataLayout = Objects.requireNonNull(managedDataLayout, "managedDataLayout");
+
+		Objects.requireNonNull(legacyPdfDataRoot, "legacyPdfDataRoot");
+
 		hashService = new SourceDocumentHashService();
 		pdfStore = new PdfStore(managedDataLayout, legacyPdfDataRoot);
 	}
@@ -65,16 +64,14 @@ public final class QuestionBookletPdfReplacementService {
 	 *
 	 * @param database    question-bank database
 	 * @param pdfDataRoot legacy managed Exam PDF root
-	 * @throws NullPointerException if either argument is {@code null}
+	 * @throws NullPointerException if either argument is null
 	 */
 	public QuestionBookletPdfReplacementService(SqliteDatabase database, Path pdfDataRoot) {
-		if (database == null) {
-			throw new NullPointerException("database");
-		}
-		if (pdfDataRoot == null) {
-			throw new NullPointerException("pdfDataRoot");
-		}
-		this.database = database;
+
+		this.database = Objects.requireNonNull(database, "database");
+		Objects.requireNonNull(pdfDataRoot, "pdfDataRoot");
+
+		managedDataLayout = null;
 		hashService = new SourceDocumentHashService();
 		pdfStore = new PdfStore(pdfDataRoot);
 	}
@@ -99,161 +96,43 @@ public final class QuestionBookletPdfReplacementService {
 	}
 
 	/**
-	 * Replaces the PDF backing one active Exam booklet.
-	 * <p>
-	 * The managed path and SourceDocument identity remain stable. This operation
-	 * changes the bytes occupying that managed asset slot and updates its SHA-256
-	 * identity.
+	 * Replaces an active, unassigned Exam booklet PDF.
 	 *
-	 * @param booklet        persisted booklet whose PDF is being corrected
-	 * @param replacementPdf existing replacement PDF
-	 * @return replacement result and invalidation impact
-	 * @throws IOException              if managed or replacement bytes cannot be
-	 *                                  read, copied or restored
-	 * @throws SQLException             if persistence fails
-	 * @throws NullPointerException     if either argument is {@code null}
-	 * @throws IllegalArgumentException if the replacement is invalid, duplicates a
-	 *                                  different managed document, or the
-	 *                                  SourceDocument is shared
-	 * @throws IllegalStateException    if the Exam is complete or the current
-	 *                                  managed bytes conflict with their persisted
-	 *                                  hash
+	 * <p>
+	 * The managed-data variant holds the publication lock from the initial
+	 * assignment-state check through the complete replacement operation. This
+	 * prevents an assignment from being issued between the check and the
+	 * source-file mutation by cooperating publication services.
+	 *
+	 * @param booklet        persisted booklet being corrected
+	 * @param replacementPdf replacement source PDF
+	 * @return replacement result
+	 * @throws IOException           if source publication or file handling fails
+	 * @throws SQLException          if persistence fails
+	 * @throws NullPointerException  if either argument is null
+	 * @throws IllegalStateException if the Exam is assigned, complete or otherwise
+	 *                               ineligible for modification
 	 */
 	public Result replace(ExamBooklet booklet, Path replacementPdf) throws IOException, SQLException {
-		if (booklet == null) {
-			throw new NullPointerException("booklet");
-		}
-		if (replacementPdf == null) {
-			throw new NullPointerException("replacementPdf");
-		}
 
-		// Reject contributor-mode replacement before inspecting or changing
-		// the managed PDF. The SQLite triggers remain the final safeguard.
+		Objects.requireNonNull(booklet, "booklet");
+		Objects.requireNonNull(replacementPdf, "replacementPdf");
+
 		new SqliteExamWriter(database).requireCoordinatorStructureEdit();
-		Path replacement = replacementPdf.toAbsolutePath().normalize();
-		if (!Files.isRegularFile(replacement)) {
-			throw new IOException("Replacement Question PDF is not a regular file: " + replacement);
+
+		if (managedDataLayout == null) {
+			new SqliteMasterExamLockGuard(database).requireUnlocked(booklet.getExam().getId());
+
+			return replaceManagedPdf(booklet, replacementPdf);
 		}
-		SourceDocument currentSourceDocument = booklet.getSourceDocument();
-		Path managedPdf = pdfStore.resolve(currentSourceDocument.getRelativePath());
-		if (!Files.isRegularFile(managedPdf)) {
-			throw new IOException("Managed Question PDF is missing or is not a regular file: " + managedPdf);
-		}
-		String currentManagedHash = hashService.sha256(managedPdf);
-		String replacementHash = hashService.sha256(replacement);
 
-		// A persisted hash describes the authoritative managed bytes. Refuse to
-		// overwrite unexpected filesystem changes without an explicit repair path.
-		if (currentSourceDocument.getContentSha256() != null
-				&& !currentSourceDocument.getContentSha256().equals(currentManagedHash)) {
-			throw new IllegalStateException("Managed Question PDF does not match its persisted SHA-256 identity");
-		}
-		Impact impact;
-		try (Connection connection = database.openConnection()) {
-			connection.setAutoCommit(false);
-			try {
-				verifyPersistedBooklet(connection, booklet);
-				impact = readImpact(connection, booklet.getId());
+		try (var publicationLock = ManagedAssetPublicationLock.acquire(managedDataLayout.dataRoot())) {
 
-				// Selecting the same bytes is not a destructive replacement. It may
-				// legitimately back-fill a migrated SourceDocument whose hash was NULL.
-				if (currentManagedHash.equals(replacementHash)) {
-					updateSourceDocumentHash(connection, currentSourceDocument.getId(), replacementHash);
-					connection.commit();
-					ExamBooklet unchanged = rebuildBooklet(booklet, replacementHash);
-					return new Result(unchanged, impact, false);
-				}
-				verifyExamActive(connection, booklet);
-				verifySourceDocumentExclusiveToBooklet(connection, booklet);
-				verifyReplacementHashIsNotAnotherManagedDocument(connection, currentSourceDocument.getId(),
-						replacementHash);
-				connection.rollback();
-			} catch (SQLException | RuntimeException exception) {
-				try {
-					connection.rollback();
-				} catch (SQLException rollbackFailure) {
-					exception.addSuppressed(rollbackFailure);
-				}
-				throw exception;
-			}
-		}
-		Path backup = null;
-		boolean managedBytesChanged = false;
-		try {
-			if (!Files.isSameFile(replacement, managedPdf)) {
+			publicationLock.requireNoPendingPublications();
 
-				// Keep a private copy of the old authoritative bytes so a later SQLite
-				// failure can restore the filesystem state.
-				backup = Files.createTempFile(managedPdf.getParent(), ".question-booklet-backup-", ".pdf");
-				Files.copy(managedPdf, backup, StandardCopyOption.REPLACE_EXISTING);
+			new SqliteMasterExamLockGuard(database).requireUnlocked(booklet.getExam().getId());
 
-				// The booklet keeps the same managed path. Only the authoritative bytes
-				// occupying that asset slot are replaced.
-				Files.copy(replacement, managedPdf, StandardCopyOption.REPLACE_EXISTING);
-				managedBytesChanged = true;
-
-				// Detect a source file that changed concurrently while it was being copied.
-				if (!replacementHash.equals(hashService.sha256(managedPdf))) {
-					throw new IOException("Replacement Question PDF changed while it was being copied");
-				}
-			}
-			try (Connection connection = database.openConnection()) {
-				connection.setAutoCommit(false);
-				try {
-					verifyPersistedBooklet(connection, booklet);
-					verifyExamActive(connection, booklet);
-					verifySourceDocumentExclusiveToBooklet(connection, booklet);
-					verifyReplacementHashIsNotAnotherManagedDocument(connection, currentSourceDocument.getId(),
-							replacementHash);
-					Impact committedImpact = readImpact(connection, booklet.getId());
-
-					// Only Questions that actually owned old booklet PDF regions require
-					// Question-source recapture. Preserved image-only content is not enough
-					// to resolve that requirement.
-					markQuestionSourceCaptureRequired(connection, booklet.getId());
-
-					// Any Question previously linked to Shared Context still requires that
-					// material after its obsolete coordinates are discarded.
-					markSharedContextQuestionsForRecapture(connection, booklet.getId());
-
-					// Pending continuation points at old PDF coordinates and cannot survive
-					// replacement of the underlying booklet.
-					clearPendingSharedContext(connection, booklet.getId());
-
-					// Unlink Questions before deleting their now-invalid Shared Context.
-					clearQuestionSharedContexts(connection, booklet.getId());
-					deleteSharedContexts(connection, booklet.getId());
-
-					// Deleting Question regions cascades only their PDF composition rows.
-					// Stored image rows and IMAGE content parts remain intact.
-					deleteQuestionPdfRegions(connection, booklet.getId());
-					updateSourceDocumentHash(connection, currentSourceDocument.getId(), replacementHash);
-					connection.commit();
-					ExamBooklet replaced = rebuildBooklet(booklet, replacementHash);
-					cleanupBackup(backup);
-					return new Result(replaced, committedImpact, true);
-				} catch (SQLException | RuntimeException exception) {
-					try {
-						connection.rollback();
-					} catch (SQLException rollbackFailure) {
-						exception.addSuppressed(rollbackFailure);
-					}
-					throw exception;
-				}
-			}
-		} catch (SQLException | IOException | RuntimeException failure) {
-			if (managedBytesChanged && backup != null) {
-				try {
-
-					// SQLite did not commit, so restore the old authoritative managed
-					// document before exposing the failure to the caller.
-					Files.copy(backup, managedPdf, StandardCopyOption.REPLACE_EXISTING);
-				} catch (IOException rollbackFailure) {
-					failure.addSuppressed(rollbackFailure);
-				}
-			}
-			cleanupBackupAfterFailure(backup, failure);
-			throw failure;
+			return replaceManagedPdf(booklet, replacementPdf);
 		}
 	}
 
@@ -450,6 +329,165 @@ public final class QuestionBookletPdfReplacementService {
 		// structural planning metadata remain unchanged.
 		return new ExamBooklet(booklet.getId(), booklet.getExam(), booklet.getName(), sourceDocument,
 				booklet.getQuestionFormat(), booklet.getExpectedQuestionCount());
+	}
+
+	/**
+	 * Replaces the PDF backing one active Exam booklet.
+	 * <p>
+	 * The managed path and SourceDocument identity remain stable. This operation
+	 * changes the bytes occupying that managed asset slot and updates its SHA-256
+	 * identity.
+	 *
+	 * @param booklet        persisted booklet whose PDF is being corrected
+	 * @param replacementPdf existing replacement PDF
+	 * @return replacement result and invalidation impact
+	 * @throws IOException              if managed or replacement bytes cannot be
+	 *                                  read, copied or restored
+	 * @throws SQLException             if persistence fails
+	 * @throws NullPointerException     if either argument is {@code null}
+	 * @throws IllegalArgumentException if the replacement is invalid, duplicates a
+	 *                                  different managed document, or the
+	 *                                  SourceDocument is shared
+	 * @throws IllegalStateException    if the Exam is complete or the current
+	 *                                  managed bytes conflict with their persisted
+	 *                                  hash
+	 */
+	private Result replaceManagedPdf(ExamBooklet booklet, Path replacementPdf) throws IOException, SQLException {
+		if (booklet == null) {
+			throw new NullPointerException("booklet");
+		}
+		if (replacementPdf == null) {
+			throw new NullPointerException("replacementPdf");
+		}
+
+		// Reject contributor-mode replacement before inspecting or changing
+		// the managed PDF. The SQLite triggers remain the final safeguard.
+		new SqliteExamWriter(database).requireCoordinatorStructureEdit();
+		Path replacement = replacementPdf.toAbsolutePath().normalize();
+		if (!Files.isRegularFile(replacement)) {
+			throw new IOException("Replacement Question PDF is not a regular file: " + replacement);
+		}
+		SourceDocument currentSourceDocument = booklet.getSourceDocument();
+		Path managedPdf = pdfStore.resolve(currentSourceDocument.getRelativePath());
+		if (!Files.isRegularFile(managedPdf)) {
+			throw new IOException("Managed Question PDF is missing or is not a regular file: " + managedPdf);
+		}
+		String currentManagedHash = hashService.sha256(managedPdf);
+		String replacementHash = hashService.sha256(replacement);
+
+		// A persisted hash describes the authoritative managed bytes. Refuse to
+		// overwrite unexpected filesystem changes without an explicit repair path.
+		if (currentSourceDocument.getContentSha256() != null
+				&& !currentSourceDocument.getContentSha256().equals(currentManagedHash)) {
+			throw new IllegalStateException("Managed Question PDF does not match its persisted SHA-256 identity");
+		}
+		Impact impact;
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				verifyPersistedBooklet(connection, booklet);
+				impact = readImpact(connection, booklet.getId());
+
+				// Selecting the same bytes is not a destructive replacement. It may
+				// legitimately back-fill a migrated SourceDocument whose hash was NULL.
+				if (currentManagedHash.equals(replacementHash)) {
+					updateSourceDocumentHash(connection, currentSourceDocument.getId(), replacementHash);
+					connection.commit();
+					ExamBooklet unchanged = rebuildBooklet(booklet, replacementHash);
+					return new Result(unchanged, impact, false);
+				}
+				verifyExamActive(connection, booklet);
+				verifySourceDocumentExclusiveToBooklet(connection, booklet);
+				verifyReplacementHashIsNotAnotherManagedDocument(connection, currentSourceDocument.getId(),
+						replacementHash);
+				connection.rollback();
+			} catch (SQLException | RuntimeException exception) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					exception.addSuppressed(rollbackFailure);
+				}
+				throw exception;
+			}
+		}
+		Path backup = null;
+		boolean managedBytesChanged = false;
+		try {
+			if (!Files.isSameFile(replacement, managedPdf)) {
+
+				// Keep a private copy of the old authoritative bytes so a later SQLite
+				// failure can restore the filesystem state.
+				backup = Files.createTempFile(managedPdf.getParent(), ".question-booklet-backup-", ".pdf");
+				Files.copy(managedPdf, backup, StandardCopyOption.REPLACE_EXISTING);
+
+				// The booklet keeps the same managed path. Only the authoritative bytes
+				// occupying that asset slot are replaced.
+				Files.copy(replacement, managedPdf, StandardCopyOption.REPLACE_EXISTING);
+				managedBytesChanged = true;
+
+				// Detect a source file that changed concurrently while it was being copied.
+				if (!replacementHash.equals(hashService.sha256(managedPdf))) {
+					throw new IOException("Replacement Question PDF changed while it was being copied");
+				}
+			}
+			try (Connection connection = database.openConnection()) {
+				connection.setAutoCommit(false);
+				try {
+					verifyPersistedBooklet(connection, booklet);
+					verifyExamActive(connection, booklet);
+					verifySourceDocumentExclusiveToBooklet(connection, booklet);
+					verifyReplacementHashIsNotAnotherManagedDocument(connection, currentSourceDocument.getId(),
+							replacementHash);
+					Impact committedImpact = readImpact(connection, booklet.getId());
+
+					// Only Questions that actually owned old booklet PDF regions require
+					// Question-source recapture. Preserved image-only content is not enough
+					// to resolve that requirement.
+					markQuestionSourceCaptureRequired(connection, booklet.getId());
+
+					// Any Question previously linked to Shared Context still requires that
+					// material after its obsolete coordinates are discarded.
+					markSharedContextQuestionsForRecapture(connection, booklet.getId());
+
+					// Pending continuation points at old PDF coordinates and cannot survive
+					// replacement of the underlying booklet.
+					clearPendingSharedContext(connection, booklet.getId());
+
+					// Unlink Questions before deleting their now-invalid Shared Context.
+					clearQuestionSharedContexts(connection, booklet.getId());
+					deleteSharedContexts(connection, booklet.getId());
+
+					// Deleting Question regions cascades only their PDF composition rows.
+					// Stored image rows and IMAGE content parts remain intact.
+					deleteQuestionPdfRegions(connection, booklet.getId());
+					updateSourceDocumentHash(connection, currentSourceDocument.getId(), replacementHash);
+					connection.commit();
+					ExamBooklet replaced = rebuildBooklet(booklet, replacementHash);
+					cleanupBackup(backup);
+					return new Result(replaced, committedImpact, true);
+				} catch (SQLException | RuntimeException exception) {
+					try {
+						connection.rollback();
+					} catch (SQLException rollbackFailure) {
+						exception.addSuppressed(rollbackFailure);
+					}
+					throw exception;
+				}
+			}
+		} catch (SQLException | IOException | RuntimeException failure) {
+			if (managedBytesChanged && backup != null) {
+				try {
+
+					// SQLite did not commit, so restore the old authoritative managed
+					// document before exposing the failure to the caller.
+					Files.copy(backup, managedPdf, StandardCopyOption.REPLACE_EXISTING);
+				} catch (IOException rollbackFailure) {
+					failure.addSuppressed(rollbackFailure);
+				}
+			}
+			cleanupBackupAfterFailure(backup, failure);
+			throw failure;
+		}
 	}
 
 	private void updateSourceDocumentHash(Connection connection, long sourceDocumentId, String contentSha256)

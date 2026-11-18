@@ -6,10 +6,11 @@ import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
-import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.ManagedAssetPublicationLock;
+import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
@@ -39,53 +40,49 @@ public final class AnswerPdfReplacementService {
 	private final ManagedDataLayout managedDataLayout;
 	private final PdfStore pdfStore;
 	private final AnswerFileReassignmentService reassignmentService;
+	private final SqliteMasterExamLockGuard masterGuard;
 
 	/**
 	 * Creates an Answer-PDF replacement service supporting Subject-first and legacy
-	 * persisted paths during migration.
+	 * managed paths.
 	 *
 	 * @param database          question-bank database
-	 * @param managedDataLayout canonical application managed-data layout
-	 * @param legacyPdfRoot     former dedicated Exam PDF root
-	 * @throws NullPointerException if any argument is {@code null}
+	 * @param managedDataLayout canonical managed-data layout
+	 * @param legacyPdfRoot     former Exam PDF root
+	 * @throws NullPointerException if any argument is null
 	 */
 	public AnswerPdfReplacementService(SqliteDatabase database, ManagedDataLayout managedDataLayout,
 			Path legacyPdfRoot) {
-		if (database == null) {
-			throw new NullPointerException("database");
-		}
-		if (managedDataLayout == null) {
-			throw new NullPointerException("managedDataLayout");
-		}
-		if (legacyPdfRoot == null) {
-			throw new NullPointerException("legacyPdfRoot");
-		}
+
+		Objects.requireNonNull(database, "database");
+		Objects.requireNonNull(managedDataLayout, "managedDataLayout");
+		Objects.requireNonNull(legacyPdfRoot, "legacyPdfRoot");
+
 		examWriter = new SqliteExamWriter(database);
 		answerWriter = new SqliteAnswerWriter(database, examWriter);
 		hashService = new SourceDocumentHashService();
+		masterGuard = new SqliteMasterExamLockGuard(database);
 		this.managedDataLayout = managedDataLayout;
 		pdfStore = new PdfStore(managedDataLayout, legacyPdfRoot);
 		reassignmentService = new AnswerFileReassignmentService(database);
 	}
 
 	/**
-	 * Creates an Answer-PDF replacement service using the legacy PDF-root-relative
-	 * storage contract.
+	 * Creates an Answer-PDF replacement service using legacy PDF storage.
 	 *
 	 * @param database question-bank database
 	 * @param pdfRoot  legacy managed Exam PDF root
-	 * @throws NullPointerException if either argument is {@code null}
+	 * @throws NullPointerException if either argument is null
 	 */
 	public AnswerPdfReplacementService(SqliteDatabase database, Path pdfRoot) {
-		if (database == null) {
-			throw new NullPointerException("database");
-		}
-		if (pdfRoot == null) {
-			throw new NullPointerException("pdfRoot");
-		}
+
+		Objects.requireNonNull(database, "database");
+		Objects.requireNonNull(pdfRoot, "pdfRoot");
+
 		examWriter = new SqliteExamWriter(database);
 		answerWriter = new SqliteAnswerWriter(database, examWriter);
 		hashService = new SourceDocumentHashService();
+		masterGuard = new SqliteMasterExamLockGuard(database);
 		managedDataLayout = null;
 		pdfStore = new PdfStore(pdfRoot);
 		reassignmentService = new AnswerFileReassignmentService(database);
@@ -106,124 +103,41 @@ public final class AnswerPdfReplacementService {
 	}
 
 	/**
-	 * Registers or reuses the selected PDF and reassigns the booklet to it.
+	 * Replaces an Answer PDF only when the master Exam is available for structural
+	 * modification.
 	 *
 	 * @param booklet        booklet whose Answer PDF is being corrected
 	 * @param replacementPdf selected replacement PDF
 	 * @return committed replacement result
-	 * @throws IOException              if managed document bytes cannot be read or
-	 *                                  copied, or package publication/recovery is
-	 *                                  pending
+	 * @throws IOException              if asset publication or file handling fails
 	 * @throws SQLException             if persistence fails
-	 * @throws NullPointerException     if either argument is {@code null}
-	 * @throws IllegalArgumentException if duplicate managed content cannot be
-	 *                                  resolved safely
-	 * @throws IllegalStateException    if the current managed document identity is
-	 *                                  inconsistent or the Exam cannot be changed
+	 * @throws NullPointerException     if either argument is null
+	 * @throws IllegalArgumentException if managed content is ambiguous
+	 * @throws IllegalStateException    if the Exam is assigned or otherwise
+	 *                                  unavailable for modification
 	 */
 	public Result replace(ExamBooklet booklet, Path replacementPdf) throws IOException, SQLException {
-		if (booklet == null) {
-			throw new NullPointerException("booklet");
-		}
-		if (replacementPdf == null) {
-			throw new NullPointerException("replacementPdf");
-		}
 
-		// AnswerFile replacement is coordinator-only, including any
-		// byte-identical operation that could backfill asset metadata.
+		Objects.requireNonNull(booklet, "booklet");
+		Objects.requireNonNull(replacementPdf, "replacementPdf");
+
 		examWriter.requireCoordinatorStructureEdit();
+
 		if (managedDataLayout == null) {
+			masterGuard.requireUnlocked(booklet.getExam().getId());
 			return replaceManagedPdf(booklet, replacementPdf);
 		}
-		try (var lock = ManagedAssetPublicationLock.acquire(managedDataLayout.dataRoot())) {
-			lock.requireNoPendingPublications();
 
-			// Keep adoption, registration and failed-copy cleanup in one publication
-			// boundary: another importer must not adopt a copy we can still roll back.
+		try (var publicationLock = ManagedAssetPublicationLock.acquire(managedDataLayout.dataRoot())) {
+
+			publicationLock.requireNoPendingPublications();
+
+			// Refuse even a byte-identical replacement while assigned,
+			// because the operation can back-fill source metadata.
+			masterGuard.requireUnlocked(booklet.getExam().getId());
+
 			return replaceManagedPdf(booklet, replacementPdf);
 		}
-	}
-
-	private Result replaceManagedPdf(ExamBooklet booklet, Path replacementPdf) throws IOException, SQLException {
-		Path replacement = replacementPdf.toAbsolutePath().normalize();
-		if (!Files.isRegularFile(replacement)) {
-			throw new IOException("Replacement Answer PDF is not a regular file: " + replacement);
-		}
-
-		// This also rejects COMPLETE Exams before any new managed asset is created.
-		AnswerFileReassignmentService.Impact impact = reassignmentService.assess(booklet);
-		AnswerFile current = answerWriter.findAnswerFile(booklet);
-		if (current == null) {
-			throw new IllegalStateException("Exam booklet has no assigned AnswerFile");
-		}
-		Path currentManagedPath = pdfStore.resolve(current.getSourceDocument().getRelativePath());
-		if (!Files.isRegularFile(currentManagedPath)) {
-			throw new IOException("Managed Answer PDF is missing or is not a regular file: " + currentManagedPath);
-		}
-		String currentManagedHash = hashService.sha256(currentManagedPath);
-		String persistedCurrentHash = current.getSourceDocument().getContentSha256();
-		if (persistedCurrentHash != null && !persistedCurrentHash.equals(currentManagedHash)) {
-
-			// Never make structural decisions from a SourceDocument whose persisted
-			// identity no longer describes its managed bytes.
-			throw new IllegalStateException("Managed Answer PDF does not match its persisted SHA-256 identity");
-		}
-		if (persistedCurrentHash == null) {
-
-			// Reading the current bytes gives enough evidence to safely back-fill an
-			// older migrated SourceDocument before continuing.
-			current = answerWriter.findOrCreateAnswerFile(booklet.getExam(), current.getName(),
-					current.getSourceDocument().getRelativePath(), currentManagedHash);
-		}
-		String replacementHash = hashService.sha256(replacement);
-		if (currentManagedHash.equals(replacementHash)) {
-
-			// Selecting byte-identical content is recognition, not destructive
-			// replacement. Existing Answer regions remain valid.
-			return new Result(current, impact, false, currentManagedPath);
-		}
-		AnswerFile existingMatch = findExistingManagedAnswerFile(booklet.getExam(), replacementHash);
-		if (existingMatch != null) {
-			AnswerFileReassignmentService.Result reassigned = reassignmentService.reassign(booklet, existingMatch);
-
-			// Database retirement proves whether the previous SourceDocument has become
-			// completely unreferenced. Only then may its managed bytes be removed.
-			cleanupRetiredManagedSource(reassigned.retiredSourceDocument());
-			Path managedPath = pdfStore.resolve(existingMatch.getSourceDocument().getRelativePath());
-			return new Result(reassigned.answerFile(), reassigned.impact(), reassigned.changed(), managedPath);
-		}
-		ManagedCopy managedCopy = copyIntoManagedStore(booklet.getExam(), replacement, replacementHash);
-		String finalManagedHash;
-		try {
-			finalManagedHash = hashService.sha256(managedCopy.path());
-			if (!replacementHash.equals(finalManagedHash)) {
-				throw new IOException("Replacement Answer PDF changed while it was being copied");
-			}
-		} catch (IOException failure) {
-			cleanupUnregisteredCopy(managedCopy, failure);
-			throw failure;
-		}
-		String relativePath = pdfStore.relativePath(managedCopy.path());
-		AnswerFile replacementFile;
-		try {
-
-			// Use the actual managed filename as the asset label. Collision-safe copies
-			// therefore also acquire a distinct AnswerFile natural key.
-			replacementFile = answerWriter.findOrCreateAnswerFile(booklet.getExam(),
-					managedCopy.path().getFileName().toString(), relativePath, finalManagedHash);
-		} catch (SQLException | RuntimeException failure) {
-			cleanupUnregisteredCopy(managedCopy, failure);
-			throw failure;
-		}
-
-		// From this point the managed PDF is a legitimate registered Exam asset even if
-		// a later reassignment fails, so it must not be deleted as an orphan file.
-		AnswerFileReassignmentService.Result reassigned = reassignmentService.reassign(booklet, replacementFile);
-
-		// Once the replacement relationship has committed, remove obsolete managed
-		// bytes only when persistence has proved that their SourceDocument was retired.
-		cleanupRetiredManagedSource(reassigned.retiredSourceDocument());
-		return new Result(reassigned.answerFile(), reassigned.impact(), reassigned.changed(), managedCopy.path());
 	}
 
 	private void cleanupRetiredManagedSource(SourceDocument retiredSourceDocument) {
@@ -347,6 +261,88 @@ public final class AnswerPdfReplacementService {
 		String stem = extensionIndex > 0 ? filename.substring(0, extensionIndex) : filename;
 		String extension = extensionIndex > 0 ? filename.substring(extensionIndex) : "";
 		return standardDestination.getParent().resolve(stem + "-" + hashText + extension);
+	}
+
+	private Result replaceManagedPdf(ExamBooklet booklet, Path replacementPdf) throws IOException, SQLException {
+		Path replacement = replacementPdf.toAbsolutePath().normalize();
+		if (!Files.isRegularFile(replacement)) {
+			throw new IOException("Replacement Answer PDF is not a regular file: " + replacement);
+		}
+
+		// This also rejects COMPLETE Exams before any new managed asset is created.
+		AnswerFileReassignmentService.Impact impact = reassignmentService.assess(booklet);
+		AnswerFile current = answerWriter.findAnswerFile(booklet);
+		if (current == null) {
+			throw new IllegalStateException("Exam booklet has no assigned AnswerFile");
+		}
+		Path currentManagedPath = pdfStore.resolve(current.getSourceDocument().getRelativePath());
+		if (!Files.isRegularFile(currentManagedPath)) {
+			throw new IOException("Managed Answer PDF is missing or is not a regular file: " + currentManagedPath);
+		}
+		String currentManagedHash = hashService.sha256(currentManagedPath);
+		String persistedCurrentHash = current.getSourceDocument().getContentSha256();
+		if (persistedCurrentHash != null && !persistedCurrentHash.equals(currentManagedHash)) {
+
+			// Never make structural decisions from a SourceDocument whose persisted
+			// identity no longer describes its managed bytes.
+			throw new IllegalStateException("Managed Answer PDF does not match its persisted SHA-256 identity");
+		}
+		if (persistedCurrentHash == null) {
+
+			// Reading the current bytes gives enough evidence to safely back-fill an
+			// older migrated SourceDocument before continuing.
+			current = answerWriter.findOrCreateAnswerFile(booklet.getExam(), current.getName(),
+					current.getSourceDocument().getRelativePath(), currentManagedHash);
+		}
+		String replacementHash = hashService.sha256(replacement);
+		if (currentManagedHash.equals(replacementHash)) {
+
+			// Selecting byte-identical content is recognition, not destructive
+			// replacement. Existing Answer regions remain valid.
+			return new Result(current, impact, false, currentManagedPath);
+		}
+		AnswerFile existingMatch = findExistingManagedAnswerFile(booklet.getExam(), replacementHash);
+		if (existingMatch != null) {
+			AnswerFileReassignmentService.Result reassigned = reassignmentService.reassign(booklet, existingMatch);
+
+			// Database retirement proves whether the previous SourceDocument has become
+			// completely unreferenced. Only then may its managed bytes be removed.
+			cleanupRetiredManagedSource(reassigned.retiredSourceDocument());
+			Path managedPath = pdfStore.resolve(existingMatch.getSourceDocument().getRelativePath());
+			return new Result(reassigned.answerFile(), reassigned.impact(), reassigned.changed(), managedPath);
+		}
+		ManagedCopy managedCopy = copyIntoManagedStore(booklet.getExam(), replacement, replacementHash);
+		String finalManagedHash;
+		try {
+			finalManagedHash = hashService.sha256(managedCopy.path());
+			if (!replacementHash.equals(finalManagedHash)) {
+				throw new IOException("Replacement Answer PDF changed while it was being copied");
+			}
+		} catch (IOException failure) {
+			cleanupUnregisteredCopy(managedCopy, failure);
+			throw failure;
+		}
+		String relativePath = pdfStore.relativePath(managedCopy.path());
+		AnswerFile replacementFile;
+		try {
+
+			// Use the actual managed filename as the asset label. Collision-safe copies
+			// therefore also acquire a distinct AnswerFile natural key.
+			replacementFile = answerWriter.findOrCreateAnswerFile(booklet.getExam(),
+					managedCopy.path().getFileName().toString(), relativePath, finalManagedHash);
+		} catch (SQLException | RuntimeException failure) {
+			cleanupUnregisteredCopy(managedCopy, failure);
+			throw failure;
+		}
+
+		// From this point the managed PDF is a legitimate registered Exam asset even if
+		// a later reassignment fails, so it must not be deleted as an orphan file.
+		AnswerFileReassignmentService.Result reassigned = reassignmentService.reassign(booklet, replacementFile);
+
+		// Once the replacement relationship has committed, remove obsolete managed
+		// bytes only when persistence has proved that their SourceDocument was retired.
+		cleanupRetiredManagedSource(reassigned.retiredSourceDocument());
+		return new Result(reassigned.answerFile(), reassigned.impact(), reassigned.changed(), managedCopy.path());
 	}
 
 	/**

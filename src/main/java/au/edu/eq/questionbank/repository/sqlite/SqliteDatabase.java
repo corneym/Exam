@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 38;
+	private static final int LATEST_SCHEMA_VERSION = 39;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -852,6 +852,13 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v37-to-v38.sql", 38);
 			return 38;
 		}
+		if (version == 38) {
+
+			// Version 39 protects master Exam structure and source
+			// document relationships during active assignments.
+			executeMigration(connection, "/db/migration-v38-to-v39.sql", 39);
+			return 39;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -1211,6 +1218,9 @@ public final class SqliteDatabase {
 		}
 		if (version >= 38) {
 			verifyVersion38AssignmentLifecycleSchema(connection);
+		}
+		if (version >= 39) {
+			verifyVersion39MasterExamStructureSchema(connection);
 		}
 	}
 
@@ -2068,6 +2078,11 @@ public final class SqliteDatabase {
 				throw new SQLException("Assignment lifecycle has inconsistent closure evidence");
 			}
 		}
+	}
+
+	private void verifyVersion39MasterExamStructureSchema(Connection connection) throws SQLException {
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_master_exam_structure_", "master Exam structure",
+				"/db/migration-v38-to-v39.sql");
 	}
 
 	private record ForeignKeyColumn(int sequence, String fromColumn, String targetColumn) {

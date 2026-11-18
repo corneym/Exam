@@ -6,6 +6,7 @@ import java.sql.SQLException;
 import java.util.Objects;
 import java.util.UUID;
 
+import au.edu.eq.questionbank.ManagedAssetPublicationLock;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
@@ -29,6 +30,7 @@ public class WorkAssignmentIssuanceService {
 	private final WorkAssignmentExporter exporter;
 	private final WorkAssignmentLedger ledger;
 	private final SqliteDatabase database;
+	private final ManagedDataLayout layout;
 
 	/**
 	 * Creates the coordinator-side issuance service.
@@ -39,55 +41,49 @@ public class WorkAssignmentIssuanceService {
 	 */
 	public WorkAssignmentIssuanceService(SqliteDatabase database, ManagedDataLayout layout) {
 		this.database = Objects.requireNonNull(database, "database");
-		Objects.requireNonNull(layout, "layout");
+		this.layout = Objects.requireNonNull(layout, "layout");
 		exporter = new WorkAssignmentExporter(database, layout);
 		ledger = new WorkAssignmentLedger(database);
 	}
 
 	/**
-	 * Exports, validates and registers a complete Exam assignment.
+	 * Exports, validates and registers a whole-Exam offline assignment.
 	 *
 	 * <p>
-	 * An Exam with an outstanding assignment cannot be issued again. The early
-	 * check avoids unnecessary archive creation. The SQLite assignment claim
-	 * remains authoritative and also rejects races between concurrent issuance
-	 * attempts.
+	 * The shared managed-asset publication lock prevents cooperating PDF
+	 * replacement operations from interleaving with the assignment's source-file
+	 * snapshot and registration. The database ledger remains the authority for
+	 * rejecting a second active assignment.
 	 *
-	 * <p>
-	 * If registration fails after export, the new archive is removed.
-	 *
-	 * @param request whole-Exam assignment request
-	 * @return durable ACTIVE assignment
-	 * @throws SQLException         if identity or ledger persistence fails
-	 * @throws IOException          if another assignment is active or package
-	 *                              creation, verification or registration fails
+	 * @param request validated whole-Exam assignment request
+	 * @return newly registered ACTIVE assignment
+	 * @throws SQLException         if persistence or portable identity lookup fails
+	 * @throws IOException          if a publication is pending, another assignment
+	 *                              is active, or export/registration fails
 	 * @throws NullPointerException if request is null
 	 */
 	public WorkAssignmentLedger.Assignment issue(WorkAssignmentExporter.Request request)
 			throws SQLException, IOException {
 		Objects.requireNonNull(request, "request");
-		UUID examPortableId = new SqlitePortableIdentityRepository(database)
-				.requireByLocalId(EntityType.EXAM, request.exam().getId()).portableId();
-		if (ledger.findActiveForExam(examPortableId).isPresent()) {
-			throw new IOException("The selected Exam already has an active work assignment. "
-					+ "Close or reconcile that assignment before " + "creating another work package.");
-		}
-
-		// Export performs the existing prerequisite checks,
-		// snapshot selection, asset staging and archive validation.
-		exporter.export(request);
-		try {
-
-			// Registration claims the Exam in SQLite. This is the
-			// authoritative second check against concurrent issuance.
-			return ledger.register(request.destination());
-		} catch (SQLException | IOException | RuntimeException failure) {
-			try {
-				Files.deleteIfExists(request.destination().toAbsolutePath().normalize());
-			} catch (IOException cleanupFailure) {
-				failure.addSuppressed(cleanupFailure);
+		try (var publicationLock = ManagedAssetPublicationLock.acquire(layout.dataRoot())) {
+			publicationLock.requireNoPendingPublications();
+			UUID examPortableId = new SqlitePortableIdentityRepository(database)
+					.requireByLocalId(EntityType.EXAM, request.exam().getId()).portableId();
+			if (ledger.findActiveForExam(examPortableId).isPresent()) {
+				throw new IOException("The selected Exam already has an active work assignment. "
+						+ "Close or reconcile that assignment before " + "creating another work package.");
 			}
-			throw failure;
+			exporter.export(request);
+			try {
+				return ledger.register(request.destination());
+			} catch (SQLException | IOException | RuntimeException failure) {
+				try {
+					Files.deleteIfExists(request.destination().toAbsolutePath().normalize());
+				} catch (IOException cleanupFailure) {
+					failure.addSuppressed(cleanupFailure);
+				}
+				throw failure;
+			}
 		}
 	}
 }
