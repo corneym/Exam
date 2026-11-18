@@ -81,6 +81,176 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
+	void contributorRebaseAssessmentPreservesLaterLocalRevision() throws Exception {
+		Fixture fixture = fixture();
+		Path receipt = exportAppliedReceipt(fixture, "First submitted revision", "rebase-later-local-edit.examwork");
+		var sessions = new SqliteContributorAssignmentSessionRepository(fixture.contributor());
+		byte[] originalBaseline = sessions.readBaseline(fixture.assignmentId()).records();
+
+		// This edit occurred after the contributor published the
+		// return now being acknowledged.
+		execute(fixture.contributor(), """
+				UPDATE questions
+				SET question_text = 'Unreturned later revision'
+				WHERE question_code = '1'
+				""");
+		var plan = new ContributorReceiptRebasePlanner(fixture.contributor()).plan(receipt);
+		assertEquals(1, plan.assessments().size());
+		var assessment = plan.assessments().getFirst();
+		assertEquals(ContributorReceiptRebasePlanner.Disposition.PRESERVE_LATER_LOCAL_REVISION,
+				assessment.disposition());
+		assertNotNull(assessment.localRevisionId());
+		assertFalse(assessment.localRevisionId().equals(assessment.proposedRevisionId()));
+
+		// The later local work must remain intact.
+		assertEquals("Unreturned later revision", masterQuestionText(fixture.contributor()));
+		assertArrayEquals(originalBaseline, sessions.readBaseline(fixture.assignmentId()).records());
+		fixture.contributor().verifyIntegrity();
+	}
+
+	@Test
+	void contributorRebaseAssessmentPreservesRejectedContribution() throws Exception {
+		Fixture fixture = fixture();
+		Path contribution = publish(fixture, "Contributor text rejected by master", "rebase-rejected-source.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(contribution).received().packageId();
+		ExchangeRecord proposed = intake.proposedChanges(packageId).getFirst();
+		var key = new MasterContributionDecisionLedger.RecordKey(proposed.recordType(), proposed.recordId());
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
+				Map.of(key, MasterContributionDecisionLedger.Choice.REJECT),
+				"Reject contributor proposal for rebase test");
+		new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId());
+		Path receipt = directory.resolve("rebase-rejected-receipt.examwork");
+		new MasterContributionReceiptExporter(fixture.master()).export(review.reviewId(), receipt);
+		var plan = new ContributorReceiptRebasePlanner(fixture.contributor()).plan(receipt);
+		assertEquals(1, plan.assessments().size());
+		var assessment = plan.assessments().getFirst();
+		assertEquals(MasterContributionApplicationCoordinator.Outcome.REJECTED, assessment.outcome());
+		assertEquals(ContributorReceiptRebasePlanner.Disposition.PRESERVE_REJECTED, assessment.disposition());
+		assertNull(assessment.canonicalMasterId());
+		assertNull(assessment.resultingMasterRevisionId());
+
+		// The master rejection cannot delete contributor work.
+		assertEquals("Contributor text rejected by master", masterQuestionText(fixture.contributor()));
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+		fixture.contributor().verifyIntegrity();
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
+	void contributorRebaseAssessmentRequiresTrustedMasterState() throws Exception {
+		Fixture fixture = fixture();
+		Path receipt = exportAppliedReceipt(fixture, "Accepted contributor text", "rebase-unchanged-local.examwork");
+		var sessions = new SqliteContributorAssignmentSessionRepository(fixture.contributor());
+		byte[] originalBaseline = sessions.readBaseline(fixture.assignmentId()).records();
+		var plan = new ContributorReceiptRebasePlanner(fixture.contributor()).plan(receipt);
+		assertEquals(1, plan.assessments().size());
+		var assessment = plan.assessments().getFirst();
+		assertEquals(MasterContributionApplicationCoordinator.Outcome.APPLIED, assessment.outcome());
+		assertEquals(ContributorReceiptRebasePlanner.Disposition.AWAIT_TRUSTED_MASTER_STATE, assessment.disposition());
+		assertEquals(assessment.proposedRevisionId(), assessment.localRevisionId());
+		assertNotNull(assessment.canonicalMasterId());
+		assertNotNull(assessment.resultingMasterRevisionId());
+
+		// The planner cannot modify the contributor's accepted
+		// local content or advance the immutable issued baseline.
+		assertEquals("Accepted contributor text", masterQuestionText(fixture.contributor()));
+		assertArrayEquals(originalBaseline, sessions.readBaseline(fixture.assignmentId()).records());
+		fixture.contributor().verifyIntegrity();
+	}
+
+	@Test
+	void contributorReceiptInspectionPreservesOutstandingLocalEdits() throws Exception {
+		Fixture fixture = fixture();
+		Path receipt = exportAppliedReceipt(fixture, "Accepted contributor work", "inspect-valid-receipt.examwork");
+
+		// This work was performed locally after the returned package
+		// was published. Inspecting the receipt must not overwrite it.
+		execute(fixture.contributor(), """
+				UPDATE questions
+				SET question_text = 'Outstanding later edit'
+				WHERE question_code = '1'
+				""");
+		ContributorReceiptInspector.Inspection inspected = new ContributorReceiptInspector(fixture.contributor())
+				.inspect(receipt);
+		assertEquals(ExamWorkPackageType.IMPORT_RECEIPT, inspected.manifest().packageType());
+		assertEquals(fixture.assignmentId(), inspected.manifest().assignmentId());
+		assertEquals(new SqliteContributionReturnLedger(fixture.contributor()).findLatest(fixture.assignmentId())
+				.orElseThrow().packageId(), inspected.returnPackageId());
+		assertEquals(1, inspected.outcomes().size());
+		assertEquals("APPLIED", inspected.outcomes().getFirst().values().path("outcome").asText());
+		try (Connection connection = fixture.contributor().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("""
+						SELECT question_text
+						FROM questions
+						WHERE question_code = '1'
+						""")) {
+			assertTrue(result.next());
+			assertEquals("Outstanding later edit", result.getString(1));
+			assertFalse(result.next());
+		}
+		assertEquals(WorkAssignmentLedger.State.COMPLETE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		fixture.contributor().verifyIntegrity();
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
+	void contributorReceiptInspectionRejectsInconsistentOutcome() throws Exception {
+		Fixture fixture = fixture();
+		Path receipt = exportAppliedReceipt(fixture, "Accepted source contribution",
+				"inspect-invalid-outcome.examwork");
+		List<ExchangeRecord> records = new ExamWorkJsonlCodec()
+				.readRecords(new ByteArrayInputStream(readEntry(receipt, "receipts/import-results.jsonl")));
+		List<ExchangeRecord> changed = new ArrayList<>();
+		for (ExchangeRecord record : records) {
+			if ("IMPORT_RECEIPT_QUESTION".equals(record.recordType())) {
+				ObjectNode values = (ObjectNode) record.values();
+
+				// This contradicts the accepted APPLIED outcome.
+				values.put("decision", "REJECT");
+				changed.add(withValues(record, values));
+			} else {
+				changed.add(record);
+			}
+		}
+		Path altered = repackage(receipt, "receipts/import-results.jsonl", encode(changed));
+		assertArchiveWellFormed(altered, fixture.contributor());
+		PackageFormatException failure = assertThrows(PackageFormatException.class,
+				() -> new ContributorReceiptInspector(fixture.contributor()).inspect(altered));
+		assertTrue(failure.getMessage().contains("decision and terminal outcome disagree"), failure.getMessage());
+		fixture.contributor().verifyIntegrity();
+	}
+
+	@Test
+	void contributorReceiptInspectionRejectsUnpublishedReturn() throws Exception {
+		Fixture fixture = fixture();
+		Path receipt = exportAppliedReceipt(fixture, "Receipt source contribution", "inspect-foreign-return.examwork");
+		List<ExchangeRecord> records = new ExamWorkJsonlCodec()
+				.readRecords(new ByteArrayInputStream(readEntry(receipt, "receipts/import-results.jsonl")));
+		List<ExchangeRecord> changed = new ArrayList<>();
+		for (ExchangeRecord record : records) {
+			if ("IMPORT_RECEIPT_CONTEXT".equals(record.recordType())) {
+				ObjectNode values = (ObjectNode) record.values();
+				values.put("contribution_package_id", UUID.randomUUID().toString());
+				changed.add(withValues(record, values));
+			} else {
+				changed.add(record);
+			}
+		}
+		Path foreign = repackage(receipt, "receipts/import-results.jsonl", encode(changed));
+
+		// The forged archive is checksum-valid, but its return
+		// identity has no corresponding local publication evidence.
+		assertArchiveWellFormed(foreign, fixture.contributor());
+		SQLException failure = assertThrows(SQLException.class,
+				() -> new ContributorReceiptInspector(fixture.contributor()).inspect(foreign));
+		assertTrue(failure.getMessage().contains("unpublished local return"), failure.getMessage());
+		fixture.contributor().verifyIntegrity();
+	}
+
+	@Test
 	void lateReturnIsHeldAfterReconciledAssignmentClosure() throws Exception {
 		Fixture fixture = fixture();
 		Path firstArchive = publish(fixture, "Accepted contributor revision", "accepted-return.examwork");
@@ -1685,6 +1855,21 @@ class ContributionArchiveInspectorTest {
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.execute(sql);
 		}
+	}
+
+	private Path exportAppliedReceipt(Fixture fixture, String questionText, String filename) throws Exception {
+		Path contribution = publish(fixture, questionText, "receipt-source-" + UUID.randomUUID() + ".examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(contribution).received().packageId();
+		ExchangeRecord proposed = intake.proposedChanges(packageId).getFirst();
+		var key = new MasterContributionDecisionLedger.RecordKey(proposed.recordType(), proposed.recordId());
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
+				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY),
+				"Accept return for contributor receipt inspection");
+		new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId());
+		Path destination = directory.resolve(filename);
+		new MasterContributionReceiptExporter(fixture.master()).export(review.reviewId(), destination);
+		return destination;
 	}
 
 	private Fixture fixture() throws Exception {
