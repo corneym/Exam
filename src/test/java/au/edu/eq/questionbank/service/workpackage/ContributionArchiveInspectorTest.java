@@ -680,18 +680,17 @@ class ContributionArchiveInspectorTest {
 	void migrationToVersion35InstallsProtectedIntakeTables() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("v35-migration.db"));
 		database.initialiseSchema();
-		assertEquals(37, database.schemaVersion());
+		assertEquals(38, database.schemaVersion());
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try (Statement statement = connection.createStatement()) {
 
-				// Reconstruct schema v34 from a disposable v37 database.
-				// This also removes v36 and v37 dependent structures.
+				// Remove versions 35 through 38 in the disposable fixture.
 				HistoricalSchemaFixture.removeVersion35Objects(statement);
 				assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
 						UPDATE schema_version
 						SET version = 34
-						WHERE version = 37
+						WHERE version = 38
 						"""));
 				connection.commit();
 			} catch (SQLException | RuntimeException failure) {
@@ -702,7 +701,7 @@ class ContributionArchiveInspectorTest {
 		assertEquals(34, database.schemaVersion());
 		database.verifySchema();
 		database.initialiseSchema();
-		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
+		assertEquals(38, database.schemaVersion());
 		database.verifySchema();
 		database.verifyIntegrity();
 	}
@@ -711,17 +710,15 @@ class ContributionArchiveInspectorTest {
 	void migrationToVersion36InstallsProtectedReviewTables() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("v36-migration.db"));
 		database.initialiseSchema();
-		assertEquals(37, database.schemaVersion());
+		assertEquals(38, database.schemaVersion());
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try (Statement statement = connection.createStatement()) {
-
-				// Reconstruct v35 while retaining its intake structures.
 				HistoricalSchemaFixture.removeVersion36Objects(statement);
 				assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
 						UPDATE schema_version
 						SET version = 35
-						WHERE version = 37
+						WHERE version = 38
 						"""));
 				connection.commit();
 			} catch (SQLException | RuntimeException failure) {
@@ -732,7 +729,7 @@ class ContributionArchiveInspectorTest {
 		assertEquals(35, database.schemaVersion());
 		database.verifySchema();
 		database.initialiseSchema();
-		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
+		assertEquals(38, database.schemaVersion());
 		database.verifySchema();
 		database.verifyIntegrity();
 	}
@@ -741,7 +738,7 @@ class ContributionArchiveInspectorTest {
 	void migrationToVersion37InstallsProtectedApplicationTables() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("v37-migration.db"));
 		database.initialiseSchema();
-		assertEquals(37, database.schemaVersion());
+		assertEquals(38, database.schemaVersion());
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try (Statement statement = connection.createStatement()) {
@@ -749,7 +746,7 @@ class ContributionArchiveInspectorTest {
 				assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
 						UPDATE schema_version
 						SET version = 36
-						WHERE version = 37
+						WHERE version = 38
 						"""));
 				connection.commit();
 			} catch (SQLException | RuntimeException failure) {
@@ -760,7 +757,7 @@ class ContributionArchiveInspectorTest {
 		assertEquals(36, database.schemaVersion());
 		database.verifySchema();
 		database.initialiseSchema();
-		assertEquals(37, database.schemaVersion());
+		assertEquals(38, database.schemaVersion());
 		database.verifySchema();
 		database.verifyIntegrity();
 	}

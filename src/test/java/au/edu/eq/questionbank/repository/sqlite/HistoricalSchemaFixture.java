@@ -7,6 +7,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Removes newer schema objects when constructing historical SQLite databases
@@ -341,12 +342,8 @@ public final class HistoricalSchemaFixture {
 	}
 
 	/**
-	 * Removes schema v37 application evidence from a disposable historical
-	 * migration test database.
-	 *
-	 * <p>
-	 * Child results are removed before their parent application batches. Production
-	 * data must never be passed to this fixture helper.
+	 * Removes schema v37 application evidence and all newer structures from a
+	 * disposable historical migration test database.
 	 *
 	 * @param statement statement for the disposable test database
 	 * @throws SQLException if cleanup fails
@@ -355,12 +352,51 @@ public final class HistoricalSchemaFixture {
 		if (statement == null) {
 			throw new NullPointerException("statement");
 		}
+		removeVersion38Objects(statement);
 		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_application_results_no_delete");
 		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_application_results_no_update");
 		statement.execute("DROP TABLE IF EXISTS contribution_application_results");
 		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_application_batches_no_delete");
 		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_application_batches_no_update");
 		statement.execute("DROP TABLE IF EXISTS contribution_application_batches");
+	}
+
+	/**
+	 * Removes schema v38 assignment lifecycle structures from an isolated,
+	 * disposable historical migration fixture.
+	 *
+	 * <p>
+	 * This method must never be applied to production data. It removes the v38
+	 * triggers before dropping closure evidence and assignment claims, so older
+	 * migrations can be replayed.
+	 *
+	 * @param statement statement for the disposable test database
+	 * @throws SQLException         if lifecycle structures cannot be removed
+	 * @throws NullPointerException if statement is null
+	 */
+	public static void removeVersion38Objects(Statement statement) throws SQLException {
+		Objects.requireNonNull(statement, "statement");
+		List<String> triggerNames = new ArrayList<>();
+		try (PreparedStatement lookup = statement.getConnection().prepareStatement("""
+				SELECT name
+				FROM sqlite_master
+				WHERE type = 'trigger'
+				  AND name GLOB 'trg_master_assignment_*'
+				ORDER BY name
+				"""); ResultSet result = lookup.executeQuery()) {
+			while (result.next()) {
+				String name = result.getString(1);
+				if (!name.matches("trg_master_assignment_[a-z_]+")) {
+					throw new SQLException("Unexpected master assignment trigger: " + name);
+				}
+				triggerNames.add(name);
+			}
+		}
+		for (String name : triggerNames) {
+			statement.execute("DROP TRIGGER \"" + name + "\"");
+		}
+		statement.execute("DROP TABLE IF EXISTS exam_work_assignment_closures");
+		statement.execute("DROP TABLE IF EXISTS exam_work_assignment_exam_locks");
 	}
 
 	private static void dropAssignmentTriggers(Statement statement, String pattern) throws SQLException {

@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 37;
+	private static final int LATEST_SCHEMA_VERSION = 38;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -845,6 +845,13 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v36-to-v37.sql", 37);
 			return 37;
 		}
+		if (version == 37) {
+
+			// Version 38 enforces one active assignment per Exam and
+			// introduces immutable, audited closure evidence.
+			executeMigration(connection, "/db/migration-v37-to-v38.sql", 38);
+			return 38;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -1201,6 +1208,9 @@ public final class SqliteDatabase {
 		}
 		if (version >= 37) {
 			verifyVersion37ContributionApplicationSchema(connection);
+		}
+		if (version >= 38) {
+			verifyVersion38AssignmentLifecycleSchema(connection);
 		}
 	}
 
@@ -1986,6 +1996,78 @@ public final class SqliteDatabase {
 		}
 		SqliteMigrationTriggerVerifier.verify(connection, "trg_contribution_application_", "contribution application",
 				"/db/migration-v36-to-v37.sql");
+	}
+
+	private void verifyVersion38AssignmentLifecycleSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "exam_work_assignment_exam_locks",
+				List.of(column("exam_portable_id", true, 1), column("assignment_id", true, 0)),
+				List.of(foreignKey("assignment_id", "exam_work_assignment_states", "assignment_id")),
+				List.of(List.of("assignment_id")));
+		verifyTableSchema(connection, "exam_work_assignment_closures",
+				List.of(column("assignment_id", true, 1), column("closed_state", true, 0),
+						column("closure_kind", true, 0), column("reason", true, 0), column("closed_at", true, 0),
+						column("return_package_id", false, 0)),
+				List.of(foreignKey("assignment_id", "exam_work_assignments", "assignment_id"),
+						foreignKey("return_package_id", "contribution_intake_packages", "package_id")),
+				List.of());
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_master_assignment_", "master assignment lifecycle",
+				"/db/migration-v37-to-v38.sql");
+
+		// An active state must have exactly its own Exam lock.
+		// Terminal states must not retain an Exam lock.
+		try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery("""
+				SELECT 1
+				FROM exam_work_assignment_states states
+				JOIN exam_work_assignments assignments
+				    ON assignments.assignment_id =
+				       states.assignment_id
+				LEFT JOIN exam_work_assignment_exam_locks locks
+				    ON locks.assignment_id =
+				       states.assignment_id
+				WHERE (
+				    states.state = 'ACTIVE'
+				    AND (
+				        locks.assignment_id IS NULL
+				        OR locks.exam_portable_id <>
+				           assignments.exam_portable_id
+				    )
+				)
+				OR (
+				    states.state <> 'ACTIVE'
+				    AND locks.assignment_id IS NOT NULL
+				)
+				LIMIT 1
+				""")) {
+			if (result.next()) {
+				throw new SQLException("Assignment lifecycle has inconsistent Exam locks");
+			}
+		}
+
+		// Each terminal transition must have matching closure evidence.
+		// No active assignment may already have a closure record.
+		try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery("""
+				SELECT 1
+				FROM exam_work_assignment_states states
+				LEFT JOIN exam_work_assignment_closures closures
+				    ON closures.assignment_id =
+				       states.assignment_id
+				WHERE (
+				    states.state = 'ACTIVE'
+				    AND closures.assignment_id IS NOT NULL
+				)
+				OR (
+				    states.state <> 'ACTIVE'
+				    AND (
+				        closures.assignment_id IS NULL
+				        OR closures.closed_state <> states.state
+				    )
+				)
+				LIMIT 1
+				""")) {
+			if (result.next()) {
+				throw new SQLException("Assignment lifecycle has inconsistent closure evidence");
+			}
+		}
 	}
 
 	private record ForeignKeyColumn(int sequence, String fromColumn, String targetColumn) {

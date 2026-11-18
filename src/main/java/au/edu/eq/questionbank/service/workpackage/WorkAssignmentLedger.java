@@ -51,6 +51,97 @@ public final class WorkAssignmentLedger {
 	}
 
 	/**
+	 * Closes an active coordinator assignment without importing a return package.
+	 *
+	 * <p>
+	 * The operation is permitted only while the assignment is ACTIVE and no
+	 * contribution package has been received for it. The reason is retained as
+	 * immutable closure evidence. Inserting the closure atomically changes the
+	 * assignment to CANCELLED and releases the Exam's assignment claim.
+	 *
+	 * <p>
+	 * Accepted work from any previous assignment is unaffected.
+	 *
+	 * @param assignmentId assignment to close
+	 * @param reason       coordinator's explanation, between 1 and 1024
+	 *                     non-whitespace-trimmed characters after stripping
+	 * @return the persisted terminal assignment
+	 * @throws SQLException             if persistence fails
+	 * @throws IllegalArgumentException if the reason is blank or too long
+	 * @throws IllegalStateException    if the assignment is not active or already
+	 *                                  has received contribution evidence
+	 * @throws NullPointerException     if either argument is null
+	 */
+	public Assignment closeWithoutReturn(UUID assignmentId, String reason) throws SQLException {
+		Objects.requireNonNull(assignmentId, "assignmentId");
+		Objects.requireNonNull(reason, "reason");
+		String explanation = reason.strip();
+		if (explanation.isEmpty() || explanation.length() > 1024) {
+			throw new IllegalArgumentException("Assignment closure reason must contain 1 to 1024 characters");
+		}
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				try (PreparedStatement statement = connection.prepareStatement("""
+						SELECT state
+						FROM exam_work_assignment_states
+						WHERE assignment_id = ?
+						""")) {
+					statement.setString(1, assignmentId.toString());
+					try (ResultSet result = statement.executeQuery()) {
+						if (!result.next() || !"ACTIVE".equals(result.getString("state"))) {
+							throw new IllegalStateException(
+									"Assignment is unknown or no longer active: " + assignmentId);
+						}
+					}
+				}
+				try (PreparedStatement statement = connection.prepareStatement("""
+						SELECT 1
+						FROM contribution_intake_packages
+						WHERE assignment_id = ?
+						LIMIT 1
+						""")) {
+					statement.setString(1, assignmentId.toString());
+					try (ResultSet result = statement.executeQuery()) {
+						if (result.next()) {
+							throw new IllegalStateException("Assignment has received contributions "
+									+ "which must be reconciled first: " + assignmentId);
+						}
+					}
+				}
+
+				// The database trigger performs the lifecycle transition
+				// and releases the Exam lock atomically with this insert.
+				try (PreparedStatement statement = connection.prepareStatement("""
+						INSERT INTO exam_work_assignment_closures (
+						    assignment_id,
+						    closed_state,
+						    closure_kind,
+						    reason,
+						    closed_at
+						)
+						VALUES (?, 'CANCELLED', 'WITHOUT_RETURN', ?, ?)
+						""")) {
+					statement.setString(1, assignmentId.toString());
+					statement.setString(2, explanation);
+					statement.setString(3, Instant.now().toString());
+					statement.executeUpdate();
+				}
+				connection.commit();
+			} catch (SQLException | RuntimeException failure) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					failure.addSuppressed(rollbackFailure);
+				}
+				throw failure;
+			}
+		}
+		return find(assignmentId)
+				.orElseThrow(() -> new SQLException("Closed assignment could not be read: " + assignmentId));
+	}
+
+	/**
 	 * Finds an issued assignment and its current lifecycle state.
 	 *
 	 * @param assignmentId durable assignment identity
@@ -94,6 +185,34 @@ public final class WorkAssignmentLedger {
 	}
 
 	/**
+	 * Finds the one active coordinator assignment for an Exam.
+	 *
+	 * <p>
+	 * Terminal assignments remain in the ledger but do not count as active. A
+	 * duplicate active assignment is treated as corrupt lifecycle evidence rather
+	 * than resolved arbitrarily.
+	 *
+	 * @param examPortableId portable Exam identity
+	 * @return the active assignment, or empty when the Exam is available
+	 * @throws SQLException         if the ledger is invalid or cannot be read
+	 * @throws NullPointerException if examPortableId is null
+	 */
+	public Optional<Assignment> findActiveForExam(UUID examPortableId) throws SQLException {
+		Objects.requireNonNull(examPortableId, "examPortableId");
+		Assignment active = null;
+		for (Assignment assignment : findForExam(examPortableId)) {
+			if (assignment.state() != State.ACTIVE) {
+				continue;
+			}
+			if (active != null) {
+				throw new SQLException("More than one active assignment exists for Exam: " + examPortableId);
+			}
+			active = assignment;
+		}
+		return Optional.ofNullable(active);
+	}
+
+	/**
 	 * Finds all issued assignments for one portable Exam identity.
 	 *
 	 * @param examPortableId assigned Exam identity
@@ -133,39 +252,6 @@ public final class WorkAssignmentLedger {
 			}
 		}
 		return List.copyOf(assignments);
-	}
-
-	/**
-	 * Completes or cancels an active assignment without modifying its issuance
-	 * baseline.
-	 *
-	 * @param assignmentId issued assignment identity
-	 * @param nextState    COMPLETE or CANCELLED
-	 * @throws SQLException          if persistence fails
-	 * @throws IllegalStateException if the assignment is unknown or already
-	 *                               terminal
-	 */
-	public void finish(UUID assignmentId, State nextState) throws SQLException {
-		Objects.requireNonNull(assignmentId, "assignmentId");
-		Objects.requireNonNull(nextState, "nextState");
-		if (nextState == State.ACTIVE) {
-			throw new IllegalArgumentException("An assignment cannot be reopened through finish()");
-		}
-		try (Connection connection = database.openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
-						UPDATE exam_work_assignment_states
-						SET state = ?,
-						    updated_at = ?
-						WHERE assignment_id = ?
-						  AND state = 'ACTIVE'
-						""")) {
-			statement.setString(1, nextState.name());
-			statement.setString(2, Instant.now().toString());
-			statement.setString(3, assignmentId.toString());
-			if (statement.executeUpdate() != 1) {
-				throw new IllegalStateException("Assignment is unknown or no longer active: " + assignmentId);
-			}
-		}
 	}
 
 	/**
