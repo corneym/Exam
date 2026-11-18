@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Set;
 
 import au.edu.eq.questionbank.ManagedDataLayout;
+import au.edu.eq.questionbank.ManagedAssetPublicationLock;
 import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
@@ -111,7 +112,8 @@ public final class AnswerPdfReplacementService {
 	 * @param replacementPdf selected replacement PDF
 	 * @return committed replacement result
 	 * @throws IOException              if managed document bytes cannot be read or
-	 *                                  copied
+	 *                                  copied, or package publication/recovery is
+	 *                                  pending
 	 * @throws SQLException             if persistence fails
 	 * @throws NullPointerException     if either argument is {@code null}
 	 * @throws IllegalArgumentException if duplicate managed content cannot be
@@ -130,6 +132,19 @@ public final class AnswerPdfReplacementService {
 		// AnswerFile replacement is coordinator-only, including any
 		// byte-identical operation that could backfill asset metadata.
 		examWriter.requireCoordinatorStructureEdit();
+		if (managedDataLayout == null) {
+			return replaceManagedPdf(booklet, replacementPdf);
+		}
+		try (var lock = ManagedAssetPublicationLock.acquire(managedDataLayout.dataRoot())) {
+			lock.requireNoPendingPublications();
+
+			// Keep adoption, registration and failed-copy cleanup in one publication
+			// boundary: another importer must not adopt a copy we can still roll back.
+			return replaceManagedPdf(booklet, replacementPdf);
+		}
+	}
+
+	private Result replaceManagedPdf(ExamBooklet booklet, Path replacementPdf) throws IOException, SQLException {
 		Path replacement = replacementPdf.toAbsolutePath().normalize();
 		if (!Files.isRegularFile(replacement)) {
 			throw new IOException("Replacement Answer PDF is not a regular file: " + replacement);

@@ -65,6 +65,57 @@ ON exam_work_assignments (
     issued_at
 );
 
+-- Original version 28 immutable issuance and lifecycle guards.
+-- Definitions are frozen here so their installation is transactional.
+
+CREATE TRIGGER trg_exam_work_assignments_no_delete
+BEFORE DELETE ON exam_work_assignments
+BEGIN
+    SELECT RAISE(
+        ABORT,
+        'Issued assignment evidence cannot be deleted'
+    );
+END;
+
+CREATE TRIGGER trg_exam_work_assignments_no_update
+BEFORE UPDATE ON exam_work_assignments
+BEGIN
+    SELECT RAISE(
+        ABORT,
+        'Issued assignment evidence cannot be modified'
+    );
+END;
+
+CREATE TRIGGER trg_exam_work_assignment_initial_state
+BEFORE INSERT ON exam_work_assignment_states
+WHEN NEW.state <> 'ACTIVE'
+BEGIN
+    SELECT RAISE(
+        ABORT,
+        'New assignments must begin ACTIVE'
+    );
+END;
+
+CREATE TRIGGER trg_exam_work_assignment_state_no_delete
+BEFORE DELETE ON exam_work_assignment_states
+BEGIN
+    SELECT RAISE(
+        ABORT,
+        'Assignment lifecycle evidence cannot be deleted'
+    );
+END;
+
+CREATE TRIGGER trg_exam_work_assignment_state_transition
+BEFORE UPDATE ON exam_work_assignment_states
+WHEN OLD.state <> 'ACTIVE'
+     OR NEW.state NOT IN ('COMPLETE', 'CANCELLED')
+BEGIN
+    SELECT RAISE(
+        ABORT,
+        'Assignment lifecycle transition is not permitted'
+    );
+END;
+
 UPDATE schema_version
 SET version = 28
 WHERE version = 27;

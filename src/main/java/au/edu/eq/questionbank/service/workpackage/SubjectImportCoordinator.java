@@ -1,25 +1,22 @@
 package au.edu.eq.questionbank.service.workpackage;
 
 import java.io.IOException;
-import java.nio.channels.FileChannel;
-import java.nio.channels.FileLock;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Comparator;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Stream;
 
 import au.edu.eq.questionbank.ApplicationConfig;
+import au.edu.eq.questionbank.ManagedAssetPublicationLock;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
@@ -42,16 +39,17 @@ import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationReview.Ke
  * Coordinates an approved and recoverable Subject import into the master.
  *
  * <p>
- * All operations run under an exclusive import file lock. Before any
- * publication, the coordinator creates a validated full backup, copies and
+ * All operations run under the shared managed-asset publication lock. Before
+ * any publication, the coordinator creates a validated full backup, copies and
  * validates contributor bytes, acquires a SQLite write reservation and
  * re-exports the master Subject to reject a stale preview.
  *
  * <p>
  * Approved managed files are hard-linked from durable staging before the graph
  * and package ledger commit in one SQLite transaction. Restart recovery
- * consults that terminal ledger: committed files are retained; uncommitted
- * files are removed only when provably linked to the original staging files.
+ * consults that terminal ledger and authoritative file references: committed or
+ * adopted files are retained; unreferenced files are removed only when provably
+ * linked to the original staging files.
  */
 public final class SubjectImportCoordinator {
 
@@ -74,9 +72,10 @@ public final class SubjectImportCoordinator {
 	 * Executes an approved Subject import, or reports an idempotent repeat.
 	 *
 	 * <p>
-	 * The caller must ensure other application instances are not modifying managed
-	 * files outside the import protocol. This method only locks other Subject
-	 * import operations and SQLite writers.
+	 * Subject and assignment recovery runs before publication under their common
+	 * data-root lock. Ordinary managed-PDF adoption also honours this boundary.
+	 * Filesystem modifications outside the managed publication protocol must not
+	 * run concurrently.
 	 *
 	 * @param masterSubjectId existing master Subject local ID reviewed in preview
 	 * @param plan            complete coordinator-approved import plan
@@ -100,17 +99,8 @@ public final class SubjectImportCoordinator {
 			throw new IllegalArgumentException("Import approval needs 1–4000 characters of rationale");
 		}
 		UUID packageId = plan.reviewedIncoming().packageId();
-		Path lockRoot = config.dataRoot().resolve(".subject-import-staging");
-		Files.createDirectories(lockRoot);
-		if (!Files.isDirectory(lockRoot, LinkOption.NOFOLLOW_LINKS)) {
-			throw new IOException("Unsafe import staging root");
-		}
-		try (FileChannel lockChannel = FileChannel.open(lockRoot.resolve(".import.lock"), StandardOpenOption.CREATE,
-				StandardOpenOption.WRITE); FileLock lock = lockChannel.tryLock()) {
-			if (lock == null) {
-				throw new IOException("Another Subject import currently owns the publication lock");
-			}
-			recoverPending(lockRoot);
+		try (var lock = ManagedAssetPublicationLock.acquire(config.dataRoot())) {
+			ManagedAssetPublicationRecovery.recoverPending(config, lock);
 			var existing = ledger.find(packageId);
 			if (existing.isPresent()) {
 				PackageEntry previous = existing.get();
@@ -165,7 +155,7 @@ public final class SubjectImportCoordinator {
 				// A cleanup failure after commit is not an import rollback.
 				// The next invocation will recover the committed journal.
 				try {
-					journal.recover(packageId);
+					journal.recover(packageId, lock);
 				} catch (SQLException | IOException cleanupFailure) {
 					return new Result(packageId, true, false, backup.backupPath().toString());
 				}
@@ -174,7 +164,7 @@ public final class SubjectImportCoordinator {
 				if (!committed) {
 					try {
 						if (prepared) {
-							journal.recover(packageId);
+							journal.recover(packageId, lock);
 						} else {
 							discardUnpublishedStaging(staged.directory());
 						}
@@ -184,13 +174,13 @@ public final class SubjectImportCoordinator {
 				}
 				throw failure;
 			}
-		} catch (java.nio.channels.OverlappingFileLockException exception) {
-			throw new IOException("Another Subject import holds the publication lock", exception);
 		}
 	}
 
 	/**
-	 * Restores every previously interrupted import under the caller's lock.
+	 * Acquires the shared publication lock and restores both kinds of interrupted
+	 * package publication. The path argument must identify this root's Subject
+	 * stage.
 	 *
 	 * @param stagingRoot private Subject import staging directory
 	 * @throws IOException  if unresolved unsafe publication evidence remains
@@ -202,28 +192,8 @@ public final class SubjectImportCoordinator {
 		if (!stagingRoot.toAbsolutePath().normalize().equals(expected)) {
 			throw new IOException("Recovery cannot inspect another data root");
 		}
-		if (!Files.isDirectory(expected, LinkOption.NOFOLLOW_LINKS)) {
-			return;
-		}
-		List<Path> directories;
-		try (Stream<Path> stream = Files.list(expected)) {
-			directories = stream.filter(path -> Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)).sorted().toList();
-		}
-		SubjectImportPublicationJournal journal = new SubjectImportPublicationJournal(config);
-		for (Path directory : directories) {
-			UUID packageId;
-			try {
-				packageId = UUID.fromString(directory.getFileName().toString());
-			} catch (IllegalArgumentException exception) {
-				throw new IOException("Unexpected import staging directory: " + directory, exception);
-			}
-			if (!Files.exists(directory.resolve("publication.properties"), LinkOption.NOFOLLOW_LINKS)) {
-
-				// No journal exists, so no file publication was authorised.
-				discardUnpublishedStaging(directory);
-			} else {
-				journal.recover(packageId);
-			}
+		try (var lock = ManagedAssetPublicationLock.acquire(config.dataRoot())) {
+			ManagedAssetPublicationRecovery.recoverPending(config, lock);
 		}
 	}
 

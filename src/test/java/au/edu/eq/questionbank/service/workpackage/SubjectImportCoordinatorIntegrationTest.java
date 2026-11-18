@@ -255,6 +255,11 @@ class SubjectImportCoordinatorIntegrationTest {
 				INSERT INTO curriculum_nodes (id, syllabus_version_id, curriculum_code,
 				    curriculum_name, curriculum_level, display_order)
 				VALUES (101, 11, 'B25U1', 'Biology Unit', 'UNIT', 0)
+				""", """
+				INSERT INTO curriculum_nodes (id, syllabus_version_id, parent_id, curriculum_code,
+				    curriculum_name, curriculum_level, display_order)
+				VALUES (102, 11, 101, 'B25T1', 'Biology Topic', 'TOPIC', 0),
+				    (103, 11, 102, 'B25D1', 'Biology Descriptor', 'DESCRIPTOR', 0)
 				""", "INSERT INTO exam_providers (id, provider_name) VALUES (21, 'QCAA')", """
 				INSERT INTO source_documents (id, relative_path) VALUES
 				    (51, 'subjects/Biology/exams/questions.pdf'),
@@ -276,7 +281,7 @@ class SubjectImportCoordinatorIntegrationTest {
 						INSERT INTO questions (id, booklet_id, classification_node_id, question_code,
 						    question_text, marks, shared_context_capture_required,
 						    source_question_id, shared_context_id)
-						VALUES (81, 61, 101, '1', 'Imported Biology Question', 2, 0, 91, 121)
+						VALUES (81, 61, 103, '1', 'Imported Biology Question', 2, 0, 91, 121)
 						""", """
 						INSERT INTO question_regions (question_id, region_order, booklet_id,
 						    page_number, x, y, width, height)

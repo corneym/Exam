@@ -183,6 +183,43 @@ class BookletApplicabilityReviewSchemaTest {
 	}
 
 	@Test
+	void version21SqlResourceInstallsAllInvalidationTriggers() throws Exception {
+		SqliteDatabase database = version20ReviewedFixture("v21-sql-resource.db");
+		assertEquals(20, database.schemaVersion());
+		assertTrue(hasReview(database));
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v20-to-v21.sql"));
+				BookletApplicabilityReviewInvalidationTriggers.verifyLegacy(connection);
+				try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery("""
+						SELECT COUNT(*)
+						FROM sqlite_master
+						WHERE type = 'trigger'
+						  AND name GLOB 'app_review_*'
+						""")) {
+					assertTrue(result.next());
+					assertEquals(51, result.getInt(1));
+				}
+				connection.commit();
+			} catch (Exception failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
+		assertEquals(21, database.schemaVersion());
+		assertFalse(hasReview(database));
+		database.verifySchema();
+
+		// The historical SQL-installed definitions must remain
+		// compatible with every subsequent schema migration.
+		database.initialiseSchema();
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
+		database.verifySchema();
+		database.verifyIntegrity();
+	}
+
+	@Test
 	void version23InitialisationIsIdempotentAfterSuccessfulMigration() throws Exception {
 		SqliteDatabase database = version22ReviewedFixture("v23-repeat-initialise.db");
 		database.initialiseSchema();
@@ -197,6 +234,30 @@ class BookletApplicabilityReviewSchemaTest {
 	}
 
 	@Test
+	void version23RejectsAlteredOtherInvalidationTrigger() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("altered-review.db"));
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					DROP TRIGGER app_review_questions_update
+					""");
+
+			// Retaining the expected name must not conceal a
+			// trigger whose invalidation behaviour has been removed.
+			statement.execute("""
+					CREATE TRIGGER app_review_questions_update
+					AFTER UPDATE ON questions
+					BEGIN
+					    SELECT 1;
+					END
+					""");
+		}
+		SQLException failure = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(failure.getMessage()
+				.contains("Altered applicability-review invalidation trigger: " + "app_review_questions_update"));
+	}
+
+	@Test
 	void version23RejectsSilentlyRestoredBroadBookletUpdateTrigger() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDir.resolve("v23-verification.db"));
 		database.initialiseSchema();
@@ -205,9 +266,38 @@ class BookletApplicabilityReviewSchemaTest {
 			statement.execute(broadBookletUpdateTriggerSql());
 		}
 
-		// A name-only trigger check would incorrectly accept this corruption.
+		// The broad historical definition must not be accepted
+		// merely because its name and owning table are correct.
 		SQLException failure = assertThrows(SQLException.class, database::verifySchema);
-		assertTrue(failure.getMessage().contains("schema-v23 applicability-review trigger"));
+		assertTrue(failure.getMessage()
+				.contains("Altered applicability-review invalidation trigger: " + "app_review_exam_booklets_update"));
+	}
+
+	@Test
+	void version23SqlResourceReplacesBookletUpdateWithoutDeletingReviews() throws Exception {
+		SqliteDatabase database = version22ReviewedFixture("v23-sql-resource.db");
+		assertTrue(hasReview(database));
+		assertFalse(bookletUpdateTriggerSql(database).contains("WHEN OLD.exam_id"));
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v22-to-v23.sql"));
+				BookletApplicabilityReviewInvalidationTriggers.verify(connection);
+				connection.commit();
+			} catch (Exception failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
+		assertEquals(23, database.schemaVersion());
+		assertTrue(hasReview(database));
+		assertTrue(bookletUpdateTriggerSql(database).contains("WHEN OLD.exam_id"));
+		database.verifySchema();
+		database.initialiseSchema();
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
+		assertTrue(hasReview(database));
+		database.verifySchema();
+		database.verifyIntegrity();
 	}
 
 	private String bookletUpdateTriggerSql(SqliteDatabase database) throws SQLException {
@@ -251,6 +341,60 @@ class BookletApplicabilityReviewSchemaTest {
 						""")) {
 			return result.next() && result.getInt(1) == 1;
 		}
+	}
+
+	private SqliteDatabase version20ReviewedFixture(String filename) throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDir.resolve(filename));
+		database.initialiseSchema();
+
+		// Reconstruct a disposable historical fixture without
+		// retaining any later schema objects or review triggers.
+		HistoricalSchemaFixture.removePostVersion19Objects(database);
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try (Statement statement = connection.createStatement()) {
+				statement.execute("UPDATE schema_version SET version = 19");
+				SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v19-to-v20.sql"));
+				statement.execute("""
+						INSERT INTO subjects (id, subject_name)
+						VALUES (1, 'Chemistry')
+						""");
+				statement.execute("""
+						INSERT INTO exam_providers (id, provider_name)
+						VALUES (1, 'QCAA')
+						""");
+				statement.execute("""
+						INSERT INTO source_documents (id, relative_path)
+						VALUES (1, 'Chemistry/QCAA/2020/Paper1.pdf')
+						""");
+				statement.execute("""
+						INSERT INTO exams (
+						    id, subject_id, provider_id,
+						    exam_year, exam_name
+						)
+						VALUES (
+						    1, 1, 1, 2020, 'External Assessment'
+						)
+						""");
+				statement.execute("""
+						INSERT INTO exam_booklets (
+						    id, exam_id, source_document_id,
+						    booklet_name
+						)
+						VALUES (10, 1, 1, 'Paper 1')
+						""");
+				statement.execute("""
+						INSERT INTO booklet_applicability_reviews (booklet_id)
+						VALUES (10)
+						""");
+				connection.commit();
+			} catch (Exception failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
+		database.verifySchema();
+		return database;
 	}
 
 	private SqliteDatabase version22ReviewedFixture(String filename) throws Exception {

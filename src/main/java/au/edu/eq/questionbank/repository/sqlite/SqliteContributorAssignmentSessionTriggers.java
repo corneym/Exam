@@ -1,15 +1,11 @@
 package au.edu.eq.questionbank.repository.sqlite;
 
 import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
-import java.util.List;
-import java.util.Objects;
 
 /**
- * Installs and verifies contributor assignment-session protection.
+ * Verifies contributor assignment-session protection against the original
+ * version 29 SQL migration.
  *
  * <p>
  * Installed baselines and assignment identity are immutable. Only the separate
@@ -17,93 +13,11 @@ import java.util.Objects;
  */
 final class SqliteContributorAssignmentSessionTriggers {
 
-	private static final String SESSION_NO_DELETE = """
-			CREATE TRIGGER trg_contributor_assignment_session_no_delete
-			BEFORE DELETE ON contributor_assignment_sessions
-			BEGIN
-			    SELECT RAISE(
-			        ABORT,
-			        'Installed assignment evidence cannot be deleted'
-			    );
-			END
-			""";
-	private static final String SESSION_NO_UPDATE = """
-			CREATE TRIGGER trg_contributor_assignment_session_no_update
-			BEFORE UPDATE ON contributor_assignment_sessions
-			BEGIN
-			    SELECT RAISE(
-			        ABORT,
-			        'Installed assignment evidence cannot be modified'
-			    );
-			END
-			""";
-	private static final String SELECTION_NO_DELETE = """
-			CREATE TRIGGER trg_contributor_assignment_selection_no_delete
-			BEFORE DELETE ON contributor_assignment_selection
-			BEGIN
-			    SELECT RAISE(
-			        ABORT,
-			        'Contributor selection singleton cannot be deleted'
-			    );
-			END
-			""";
-	private static final String SELECTION_ID_IMMUTABLE = """
-			CREATE TRIGGER trg_contributor_assignment_selection_id_immutable
-			BEFORE UPDATE OF singleton_id
-			ON contributor_assignment_selection
-			WHEN NEW.singleton_id IS NOT OLD.singleton_id
-			BEGIN
-			    SELECT RAISE(
-			        ABORT,
-			        'Contributor selection identity is immutable'
-			    );
-			END
-			""";
-
 	private SqliteContributorAssignmentSessionTriggers() {
 	}
 
-	static void install(Connection connection) throws SQLException {
-		Objects.requireNonNull(connection, "connection");
-		try (Statement statement = connection.createStatement()) {
-			for (String definition : definitions()) {
-				statement.execute(definition);
-			}
-		}
-		verify(connection);
-	}
-
 	static void verify(Connection connection) throws SQLException {
-		Objects.requireNonNull(connection, "connection");
-		for (String definition : definitions()) {
-			String triggerName = definition.strip().split("\\s+")[2];
-			try (PreparedStatement statement = connection.prepareStatement("""
-					SELECT sql
-					FROM sqlite_master
-					WHERE type = 'trigger'
-					  AND name = ?
-					""")) {
-				statement.setString(1, triggerName);
-				try (ResultSet result = statement.executeQuery()) {
-					if (!result.next()) {
-						throw new SQLException("Missing contributor assignment trigger: " + triggerName);
-					}
-					String actual = result.getString("sql");
-
-					// A same-named weakened trigger is not acceptable.
-					if (actual == null || !normalise(actual).equals(normalise(definition))) {
-						throw new SQLException("Altered contributor assignment trigger: " + triggerName);
-					}
-				}
-			}
-		}
-	}
-
-	private static List<String> definitions() {
-		return List.of(SESSION_NO_DELETE, SESSION_NO_UPDATE, SELECTION_NO_DELETE, SELECTION_ID_IMMUTABLE);
-	}
-
-	private static String normalise(String sql) {
-		return sql.replaceAll("\\s+", " ").strip();
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_contributor_assignment_", "contributor assignment",
+				"/db/migration-v28-to-v29.sql");
 	}
 }

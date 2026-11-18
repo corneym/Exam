@@ -169,9 +169,12 @@ public final class ExamAssignmentPreflight {
 
 	private void requireUsableSyllabus(SqliteCurriculumRepository curriculum, SyllabusVersion version)
 			throws IOException {
-		if (curriculum.findRootNodes(version).isEmpty()) {
-			throw new IOException(
-					"Assignment blocked: syllabus has no usable " + "curriculum hierarchy: " + version.getName());
+
+		// Questions can only be classified against Subtopics or Descriptors.
+		// A hierarchy containing only Units and Topics is insufficient.
+		if (curriculum.findReviewNodes(version).isEmpty()) {
+			throw new IOException("Assignment blocked: syllabus has no usable Subtopic or Descriptor "
+					+ "for Question classification: " + version.getName());
 		}
 		String sourcePdfPath = version.getSourcePdfPath();
 		if (sourcePdfPath != null) {

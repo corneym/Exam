@@ -258,11 +258,109 @@ public final class HistoricalSchemaFixture {
 			throw new NullPointerException("statement");
 		}
 
-		// Later schema versions install guards on earlier tables.
-		// Remove those guards before reconstructing version 28.
+		// Remove v34 dependencies before removing the
+		// contributor assignment-session tables.
+		removeVersion34Objects(statement);
+
+		// Remove the newer assignment protection triggers.
 		removeAssignmentGuardObjects(statement);
 		statement.execute("DROP TABLE IF EXISTS contributor_assignment_selection");
 		statement.execute("DROP TABLE IF EXISTS contributor_assignment_sessions");
+	}
+
+	/**
+	 * Removes version 34 contributor-return structures from a disposable historical
+	 * migration test database.
+	 *
+	 * <p>
+	 * Newer schema structures are removed first. This method must never be used
+	 * against production data.
+	 *
+	 * @param statement statement for the disposable test database
+	 * @throws SQLException if cleanup fails
+	 */
+	public static void removeVersion34Objects(Statement statement) throws SQLException {
+		if (statement == null) {
+			throw new NullPointerException("statement");
+		}
+
+		// Remove version 35 before reconstructing an older schema.
+		removeVersion35Objects(statement);
+
+		// Remove version 34 immutability guards and their table.
+		statement.execute("DROP TRIGGER IF EXISTS trg_contributor_returns_no_delete");
+		statement.execute("DROP TRIGGER IF EXISTS trg_contributor_returns_no_update");
+		statement.execute("DROP TABLE IF EXISTS contributor_return_packages");
+	}
+
+	/**
+	 * Removes version 35 coordinator contribution-intake structures from a
+	 * disposable historical migration test database.
+	 *
+	 * <p>
+	 * Version 36 review evidence is removed first. This method must never be used
+	 * against production data.
+	 *
+	 * @param statement statement for the disposable test database
+	 * @throws SQLException if cleanup fails
+	 */
+	public static void removeVersion35Objects(Statement statement) throws SQLException {
+		if (statement == null) {
+			throw new NullPointerException("statement");
+		}
+		removeVersion36Objects(statement);
+		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_intake_proposals_no_delete");
+		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_intake_proposals_no_update");
+		statement.execute("DROP TABLE IF EXISTS contribution_intake_proposals");
+		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_intake_packages_no_delete");
+		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_intake_packages_no_update");
+		statement.execute("DROP TABLE IF EXISTS contribution_intake_packages");
+	}
+
+	/**
+	 * Removes schema v36 review evidence and all newer application evidence from a
+	 * disposable historical migration test database.
+	 *
+	 * <p>
+	 * This method must never be used against production data.
+	 *
+	 * @param statement statement for the disposable test database
+	 * @throws SQLException if cleanup fails
+	 */
+	public static void removeVersion36Objects(Statement statement) throws SQLException {
+		if (statement == null) {
+			throw new NullPointerException("statement");
+		}
+		removeVersion37Objects(statement);
+		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_review_decisions_no_delete");
+		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_review_decisions_no_update");
+		statement.execute("DROP TABLE IF EXISTS contribution_review_decisions");
+		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_review_batches_no_delete");
+		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_review_batches_no_update");
+		statement.execute("DROP TABLE IF EXISTS contribution_review_batches");
+	}
+
+	/**
+	 * Removes schema v37 application evidence from a disposable historical
+	 * migration test database.
+	 *
+	 * <p>
+	 * Child results are removed before their parent application batches. Production
+	 * data must never be passed to this fixture helper.
+	 *
+	 * @param statement statement for the disposable test database
+	 * @throws SQLException if cleanup fails
+	 */
+	public static void removeVersion37Objects(Statement statement) throws SQLException {
+		if (statement == null) {
+			throw new NullPointerException("statement");
+		}
+		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_application_results_no_delete");
+		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_application_results_no_update");
+		statement.execute("DROP TABLE IF EXISTS contribution_application_results");
+		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_application_batches_no_delete");
+		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_application_batches_no_update");
+		statement.execute("DROP TABLE IF EXISTS contribution_application_batches");
 	}
 
 	private static void dropAssignmentTriggers(Statement statement, String pattern) throws SQLException {

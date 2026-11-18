@@ -27,6 +27,30 @@ class SqliteContributorAssignmentSessionSchemaTest {
 	Path directory;
 
 	@Test
+	void alteredSessionProtectionTriggerFailsSchemaVerification() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(directory.resolve("altered-session-trigger.db"));
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					DROP TRIGGER trg_contributor_assignment_session_no_update
+					""");
+
+			// Keep the trigger name and table, but remove its
+			// protection. Verification must detect the change.
+			statement.execute("""
+					CREATE TRIGGER trg_contributor_assignment_session_no_update
+					BEFORE UPDATE ON contributor_assignment_sessions
+					BEGIN
+					    SELECT 1;
+					END
+					""");
+		}
+		SQLException failure = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(failure.getMessage()
+				.contains("Altered contributor assignment trigger: " + "trg_contributor_assignment_session_no_update"));
+	}
+
+	@Test
 	void detectsMissingSessionProtectionTrigger() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("missing-trigger.db"));
 		database.initialiseSchema();
@@ -38,6 +62,69 @@ class SqliteContributorAssignmentSessionSchemaTest {
 		}
 		SQLException failure = assertThrows(SQLException.class, database::initialiseSchema);
 		assertTrue(failure.getMessage().contains("Missing contributor assignment trigger"));
+	}
+
+	@Test
+	void failedVersion29MigrationRollsBackAndCanRetry() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(directory.resolve("version29-rollback.db"));
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			HistoricalSchemaFixture.removeVersion29Objects(statement);
+			statement.execute("""
+					UPDATE schema_version
+					SET version = 28
+					WHERE version = %d
+					""".formatted(SqliteDatabase.latestSchemaVersion()));
+
+			// Reject the final version update, after the migration
+			// has attempted to install its tables and triggers.
+			statement.execute("""
+					CREATE TRIGGER reject_version29
+					BEFORE UPDATE OF version ON schema_version
+					WHEN NEW.version = 29
+					BEGIN
+					    SELECT RAISE(
+					        ABORT,
+					        'simulated version 29 failure'
+					    );
+					END
+					""");
+		}
+		assertEquals(28, database.schemaVersion());
+		assertThrows(SQLException.class, database::initialiseSchema);
+
+		// The failed migration must leave version 28 intact.
+		assertEquals(28, database.schemaVersion());
+		database.verifySchema();
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("""
+						SELECT COUNT(*)
+						FROM sqlite_master
+						WHERE (
+						    type = 'trigger'
+						    AND name GLOB 'trg_contributor_assignment_*'
+						)
+						OR (
+						    type = 'table'
+						    AND name IN (
+						        'contributor_assignment_sessions',
+						        'contributor_assignment_selection'
+						    )
+						)
+						""")) {
+			assertTrue(result.next());
+			assertEquals(0, result.getInt(1));
+		}
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("DROP TRIGGER reject_version29");
+		}
+
+		// Retrying must succeed after the simulated fault is removed.
+		database.initialiseSchema();
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
+		database.verifySchema();
+		database.verifyIntegrity();
 	}
 
 	@Test
@@ -159,6 +246,88 @@ class SqliteContributorAssignmentSessionSchemaTest {
 			assertThrows(SQLException.class, statement::executeUpdate);
 			assertNull(activeAssignment(connection));
 		}
+	}
+
+	@Test
+	void unexpectedSessionProtectionTriggerFailsSchemaVerification() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(directory.resolve("unexpected-session-trigger.db"));
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+
+			// An additional trigger in the protected namespace
+			// must fail schema verification.
+			statement.execute("""
+					CREATE TRIGGER trg_contributor_assignment_unexpected_guard
+					BEFORE UPDATE ON contributor_assignment_sessions
+					BEGIN
+					    SELECT 1;
+					END
+					""");
+		}
+		SQLException failure = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(failure.getMessage().contains(
+				"Unexpected contributor assignment trigger: " + "trg_contributor_assignment_unexpected_guard"));
+	}
+
+	@Test
+	void version29SqlResourceInstallsExactSessionProtectionTriggers() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(directory.resolve("version29-resource.db"));
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				try (Statement statement = connection.createStatement()) {
+
+					// Reconstruct schema version 28 in a disposable
+					// database, removing the later assignment guards.
+					HistoricalSchemaFixture.removeVersion29Objects(statement);
+					statement.execute("""
+							UPDATE schema_version
+							SET version = 28
+							WHERE version = %d
+							""".formatted(SqliteDatabase.latestSchemaVersion()));
+				}
+
+				// Install version 29 exclusively from its SQL resource.
+				SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v28-to-v29.sql"));
+
+				// Compare every SQL-installed trigger against its
+				// original Java definition.
+				SqliteContributorAssignmentSessionTriggers.verify(connection);
+				try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery("""
+						SELECT COUNT(*)
+						FROM sqlite_master
+						WHERE type = 'trigger'
+						  AND name GLOB 'trg_contributor_assignment_*'
+						""")) {
+					assertTrue(result.next());
+					assertEquals(4, result.getInt(1));
+				}
+
+				// The SQL migration must initialise normal mode.
+				try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery("""
+						SELECT singleton_id, assignment_id
+						FROM contributor_assignment_selection
+						""")) {
+					assertTrue(result.next());
+					assertEquals(1, result.getInt("singleton_id"));
+					assertNull(result.getString("assignment_id"));
+					assertFalse(result.next());
+				}
+				connection.commit();
+			} catch (Exception failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
+		assertEquals(29, database.schemaVersion());
+		database.verifySchema();
+
+		// Continue upgrading to the unchanged latest schema.
+		database.initialiseSchema();
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
+		database.verifySchema();
+		database.verifyIntegrity();
 	}
 
 	private String activeAssignment(Connection connection) throws SQLException {

@@ -18,12 +18,34 @@ class SqliteAssignmentScopeTriggersTest {
 	Path directory;
 
 	@Test
+	void alteredScopeTriggerFailsSchemaVerification() throws Exception {
+		SqliteDatabase database = fixture(false);
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					DROP TRIGGER trg_contributor_scope_questions_update
+					""");
+
+			// A present but weakened trigger must fail verification.
+			statement.execute("""
+					CREATE TRIGGER trg_contributor_scope_questions_update
+					BEFORE UPDATE ON questions
+					BEGIN
+					    SELECT 1;
+					END
+					""");
+		}
+		SQLException failure = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(failure.getMessage()
+				.contains("Altered contributor scope trigger: " + "trg_contributor_scope_questions_update"));
+	}
+
+	@Test
 	void explicitlyPermittedLegacySyllabusCanClassify() throws Exception {
 		SqliteDatabase database = fixture(true);
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.execute("""
 					UPDATE questions
-					SET classification_node_id = 102
+					SET classification_node_id = 106
 					WHERE id = 1
 					""");
 			assertBlocked(statement, """
@@ -36,19 +58,24 @@ class SqliteAssignmentScopeTriggersTest {
 	}
 
 	@Test
-	void migratesVersion30ToVersion31() throws Exception {
+	void migratesVersion30ThroughLatestWithScopeGuards() throws Exception {
 		SqliteDatabase database = fixture(false);
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try (Statement statement = connection.createStatement()) {
-				HistoricalSchemaFixture.removeAssignmentScopeObjects(statement);
+
+				// Reconstruct version 30 without retaining the later
+				// version-32 Booklet UPDATE protection.
+				HistoricalSchemaFixture.removeVersion34Objects(statement);
+				HistoricalSchemaFixture.removeAssignmentGuardObjects(statement);
+				SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v29-to-v30.sql"));
 				statement.execute("""
 						UPDATE schema_version
 						SET version = 30
-						WHERE version = 31
-						""");
+						WHERE version = %d
+						""".formatted(SqliteDatabase.latestSchemaVersion()));
 				connection.commit();
-			} catch (SQLException failure) {
+			} catch (Exception failure) {
 				connection.rollback();
 				throw failure;
 			}
@@ -56,11 +83,102 @@ class SqliteAssignmentScopeTriggersTest {
 		assertEquals(30, database.schemaVersion());
 		database.verifySchema();
 		database.initialiseSchema();
-		assertEquals(31, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		database.verifySchema();
 		try (Connection connection = database.openConnection()) {
 			SqliteAssignmentStructureTriggers.verify(connection);
 			SqliteAssignmentScopeTriggers.verify(connection);
+		}
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void migratesVersion32To33AndPreservesClassificationRestrictions() throws Exception {
+		SqliteDatabase database = fixture(false);
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try (Statement statement = connection.createStatement()) {
+
+				// Reconstruct the original version-31 scope guards,
+				// which remain authoritative through version 32.
+				HistoricalSchemaFixture.removeVersion34Objects(statement);
+				HistoricalSchemaFixture.removeAssignmentScopeObjects(statement);
+				SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v30-to-v31.sql"));
+				statement.execute("""
+						UPDATE schema_version
+						SET version = 32
+						WHERE version = %d
+						""".formatted(SqliteDatabase.latestSchemaVersion()));
+				connection.commit();
+			} catch (Exception failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
+		assertEquals(32, database.schemaVersion());
+		database.verifySchema();
+
+		// Version 32 still permitted Unit-classified Question insertion.
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					INSERT INTO questions (
+					    id, booklet_id, classification_node_id,
+					    question_code, question_text, marks,
+					    shared_context_capture_required
+					)
+					VALUES (
+					    9, 61, 101,
+					    '9', 'Historical Unit classification', 2, 0
+					)
+					""");
+		}
+		database.initialiseSchema();
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
+		database.verifySchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			SqliteAssignmentScopeTriggers.verify(connection);
+
+			// A newly captured Question cannot use a Unit.
+			assertBlocked(statement, """
+					INSERT INTO questions (
+					    id, booklet_id, classification_node_id,
+					    question_code, question_text, marks,
+					    shared_context_capture_required
+					)
+					VALUES (
+					    10, 61, 101,
+					    '10', 'Invalid classification', 2, 0
+					)
+					""");
+
+			// A valid Subtopic remains permitted.
+			statement.execute("""
+					INSERT INTO questions (
+					    id, booklet_id, classification_node_id,
+					    question_code, question_text, marks,
+					    shared_context_capture_required
+					)
+					VALUES (
+					    10, 61, 104,
+					    '10', 'Valid classification', 2, 0
+					)
+					""");
+
+			// Historical Questions can retain their classification
+			// while their other captured content is edited.
+			statement.execute("""
+					UPDATE questions
+					SET question_text = 'Historical content corrected'
+					WHERE id = 9
+					""");
+
+			// Changing that historical classification to a Topic
+			// is not permitted.
+			assertBlocked(statement, """
+					UPDATE questions
+					SET classification_node_id = 103
+					WHERE id = 9
+					""");
 		}
 		database.verifyIntegrity();
 	}
@@ -120,7 +238,7 @@ class SqliteAssignmentScopeTriggersTest {
 					    source_question_id, shared_context_id
 					)
 					VALUES (
-					    4, 61, 101, '2', 'New Question', 3, 0,
+					    4, 61, 104, '2', 'New Question', 3, 0,
 					    403, 303
 					)
 					""");
@@ -197,6 +315,83 @@ class SqliteAssignmentScopeTriggersTest {
 					)
 					VALUES (61)
 					""");
+		}
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void rejectsNonClassifiableQuestionNodes() throws Exception {
+		SqliteDatabase database = fixture(false);
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+
+			// A Unit belongs to the permitted syllabus but is not a
+			// valid Question classification.
+			assertBlocked(statement, """
+					INSERT INTO questions (
+					    id, booklet_id, classification_node_id,
+					    question_code, question_text, marks,
+					    shared_context_capture_required
+					)
+					VALUES (
+					    9, 61, 101,
+					    '9', 'Invalid Unit classification', 2, 0
+					)
+					""");
+
+			// The same restriction applies to Topics.
+			assertBlocked(statement, """
+					INSERT INTO questions (
+					    id, booklet_id, classification_node_id,
+					    question_code, question_text, marks,
+					    shared_context_capture_required
+					)
+					VALUES (
+					    9, 61, 103,
+					    '9', 'Invalid Topic classification', 2, 0
+					)
+					""");
+
+			// A Subtopic under that same Unit is permitted.
+			statement.execute("""
+					INSERT INTO questions (
+					    id, booklet_id, classification_node_id,
+					    question_code, question_text, marks,
+					    shared_context_capture_required
+					)
+					VALUES (
+					    9, 61, 104,
+					    '9', 'Valid Subtopic classification', 2, 0
+					)
+					""");
+
+			// Reclassifying that Question back to a Unit or Topic
+			// must also be rejected.
+			assertBlocked(statement, """
+					UPDATE questions
+					SET classification_node_id = 101
+					WHERE id = 9
+					""");
+			assertBlocked(statement, """
+					UPDATE questions
+					SET classification_node_id = 103
+					WHERE id = 9
+					""");
+
+			// Historical records remain editable without silently
+			// changing their original classification.
+			statement.execute("""
+					UPDATE questions
+					SET question_text = 'Historical question edited'
+					WHERE id = 1
+					""");
+			try (var result = statement.executeQuery("""
+					SELECT classification_node_id
+					FROM questions
+					WHERE id = 9
+					""")) {
+				assertTrue(result.next());
+				assertEquals(104, result.getLong(1));
+			}
 		}
 		database.verifyIntegrity();
 	}
@@ -298,6 +493,169 @@ class SqliteAssignmentScopeTriggersTest {
 					)
 					VALUES (501, 0, 82, 1, 0.1, 0.1, 0.3, 0.3)
 					""");
+		}
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void replaceCannotDeleteRowsOutsideSelectedAssignment() throws Exception {
+		SqliteDatabase database = fixture(false);
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+
+			// The protection is configured per connection, not per database.
+			try (var result = statement.executeQuery("PRAGMA recursive_triggers")) {
+				assertTrue(result.next());
+				assertEquals(1, result.getInt(1));
+			}
+
+			// Question 2 belongs to Booklet 62, outside the assignment.
+			// The incoming replacement belongs to assigned Booklet 61.
+			// Its INSERT is permitted, but deleting Question 2 is not.
+			assertBlocked(statement, """
+					INSERT OR REPLACE INTO questions (
+					    id, booklet_id, classification_node_id,
+					    question_code, question_text, marks,
+					    shared_context_capture_required
+					)
+					VALUES (
+					    2, 61, 101,
+					    '99', 'Unauthorised replacement', 2, 0
+					)
+					""");
+
+			// Answer 502 belongs to the unassigned Question 2.
+			// A replacement pointing to assigned Question 1 must not
+			// delete the original Answer.
+			assertBlocked(statement, """
+					REPLACE INTO answers (
+					    id, question_id, answer_text
+					)
+					VALUES (
+					    502, 1, 'Unauthorised replacement'
+					)
+					""");
+
+			// Shared Context 302 belongs to unassigned Booklet 62.
+			// A replacement belonging to Booklet 61 must not delete it.
+			assertBlocked(statement, """
+					INSERT OR REPLACE INTO shared_question_contexts (
+					    id, booklet_id, context_label
+					)
+					VALUES (
+					    302, 61, 'Unauthorised replacement'
+					)
+					""");
+
+			// All three original records must remain unchanged.
+			try (var result = statement.executeQuery("""
+					SELECT booklet_id, question_text
+					FROM questions
+					WHERE id = 2
+					""")) {
+				assertTrue(result.next());
+				assertEquals(62, result.getLong("booklet_id"));
+				assertEquals("Other Question", result.getString("question_text"));
+			}
+			try (var result = statement.executeQuery("""
+					SELECT question_id, answer_text
+					FROM answers
+					WHERE id = 502
+					""")) {
+				assertTrue(result.next());
+				assertEquals(2, result.getLong("question_id"));
+				assertEquals("Other response", result.getString("answer_text"));
+			}
+			try (var result = statement.executeQuery("""
+					SELECT booklet_id, context_label
+					FROM shared_question_contexts
+					WHERE id = 302
+					""")) {
+				assertTrue(result.next());
+				assertEquals(62, result.getLong("booklet_id"));
+				assertEquals("Other context", result.getString("context_label"));
+			}
+		}
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void unexpectedScopeTriggerFailsSchemaVerification() throws Exception {
+		SqliteDatabase database = fixture(false);
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					CREATE TRIGGER trg_contributor_scope_unexpected_guard
+					BEFORE UPDATE ON questions
+					BEGIN
+					    SELECT 1;
+					END
+					""");
+		}
+		SQLException failure = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(failure.getMessage()
+				.contains("Unexpected contributor scope trigger: " + "trg_contributor_scope_unexpected_guard"));
+	}
+
+	@Test
+	void version31SqlResourceInstallsExactScopeTriggers() throws Exception {
+		SqliteDatabase database = fixture(false);
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+
+				// Reconstruct the database at schema version 29.
+				// Both version 30 and 31 must then be installed
+				// exclusively from their SQL migration resources.
+				try (Statement statement = connection.createStatement()) {
+					HistoricalSchemaFixture.removeVersion34Objects(statement);
+					HistoricalSchemaFixture.removeAssignmentGuardObjects(statement);
+					statement.execute("""
+							UPDATE schema_version
+							SET version = 29
+							WHERE version = %d
+							""".formatted(SqliteDatabase.latestSchemaVersion()));
+				}
+				SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v29-to-v30.sql"));
+				SqliteAssignmentStructureTriggers.verifyLegacy(connection);
+				SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v30-to-v31.sql"));
+
+				// Compare every SQL-installed scope trigger against
+				// the original Java-generated v31 definitions.
+				SqliteAssignmentScopeTriggers.verifyLegacy(connection);
+				try (Statement statement = connection.createStatement(); var result = statement.executeQuery("""
+						SELECT COUNT(*)
+						FROM sqlite_master
+						WHERE type = 'trigger'
+						  AND name GLOB 'trg_contributor_scope_*'
+						""")) {
+					assertTrue(result.next());
+					assertEquals(39, result.getInt(1));
+				}
+				connection.commit();
+			} catch (Exception failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
+		assertEquals(31, database.schemaVersion());
+		database.verifySchema();
+
+		// Confirm that the SQL-installed triggers enforce the
+		// original assignment boundary.
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			assertBlocked(statement, """
+					UPDATE questions
+					SET booklet_id = 62
+					WHERE id = 1
+					""");
+		}
+
+		// Continue through the existing version 32 and 33 migrations.
+		database.initialiseSchema();
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
+		database.verifySchema();
+		try (Connection connection = database.openConnection()) {
+			SqliteAssignmentStructureTriggers.verify(connection);
+			SqliteAssignmentScopeTriggers.verify(connection);
 		}
 		database.verifyIntegrity();
 	}

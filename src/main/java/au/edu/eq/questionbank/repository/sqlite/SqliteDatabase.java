@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 31;
+	private static final int LATEST_SCHEMA_VERSION = 37;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -198,11 +198,19 @@ public final class SqliteDatabase {
 	/**
 	 * Opens a SQLite connection with the configured access mode.
 	 *
+	 * <p>
+	 * Foreign-key enforcement and recursive triggers are enabled on every
+	 * connection. Recursive triggers ensure that implicit DELETE operations
+	 * performed by SQLite REPLACE statements execute the existing assignment scope
+	 * and structural DELETE guards.
+	 *
+	 * <p>
 	 * When a diagnostic probe is active, the returned connection also records JDBC
 	 * operations. Ordinary application connections remain unchanged.
 	 *
 	 * @return an open database connection
-	 * @throws SQLException if the database cannot be opened or configured
+	 * @throws SQLException if the database cannot be opened or configured, or
+	 *                      recursive trigger enforcement is unavailable
 	 */
 	public Connection openConnection() throws SQLException {
 		SqliteReadProbe probe = SqliteReadProbe.active();
@@ -233,6 +241,20 @@ public final class SqliteDatabase {
 				}
 				statement.execute("PRAGMA busy_timeout = 5000");
 				statement.execute("PRAGMA foreign_keys = ON");
+
+				// REPLACE may implicitly delete a conflicting row.
+				// Its DELETE triggers must execute so contributor scope
+				// enforcement cannot be bypassed by replacement.
+				statement.execute("PRAGMA recursive_triggers = ON");
+
+				// Fail closed if the SQLite connection did not accept the
+				// required trigger configuration.
+				try (ResultSet result = statement.executeQuery("PRAGMA recursive_triggers")) {
+					if (!result.next() || result.getInt(1) != 1) {
+						throw new SQLException(
+								"SQLite recursive triggers are required " + "for contributor assignment protection");
+					}
+				}
 			}
 			if (probe == null) {
 				return connection;
@@ -405,12 +427,6 @@ public final class SqliteDatabase {
 	}
 
 	private void executeMigration(Connection connection, String resourcePath, int expectedVersion) throws SQLException {
-		executeMigration(connection, resourcePath, expectedVersion, _ -> {
-		});
-	}
-
-	private void executeMigration(Connection connection, String resourcePath, int expectedVersion,
-			MigrationPostProcessor postProcessor) throws SQLException {
 		String sql;
 		try {
 			sql = SqlResourceLoader.load(resourcePath);
@@ -418,11 +434,9 @@ public final class SqliteDatabase {
 			throw new SQLException("Unable to load migration resource: " + resourcePath, exception);
 		}
 
-		// The caller owns the migration transaction. SQL installation,
-		// supplementary Java installation and verification must either
-		// succeed together or all roll back.
+		// Installation and schema verification share the caller's
+		// transaction so migration failures roll back atomically.
 		SqlScriptExecutor.execute(connection, sql);
-		postProcessor.apply(connection);
 		int actualVersion = readSchemaVersion(connection);
 		if (actualVersion != expectedVersion) {
 			throw new SQLException(
@@ -712,9 +726,8 @@ public final class SqliteDatabase {
 		}
 		if (version == 20) {
 
-			// Install invalidation triggers in the existing migration transaction.
-			// The version update follows only after all triggers are installed.
-			BookletApplicabilityReviewInvalidationTriggers.install(connection);
+			// Version 21 installs the complete applicability-review
+			// invalidation trigger set from its SQL migration.
 			executeMigration(connection, "/db/migration-v20-to-v21.sql", 21);
 			return 21;
 		}
@@ -727,10 +740,8 @@ public final class SqliteDatabase {
 		}
 		if (version == 22) {
 
-			// Administrative legacy Paper-link changes must not revoke a human
-			// applicability review. Leave the other material invalidation triggers
-			// intact, replacing this one within the same migration transaction.
-			BookletApplicabilityReviewInvalidationTriggers.installVersion23BookletUpdateTrigger(connection);
+			// Version 23 replaces only the broad booklet UPDATE
+			// invalidation trigger. Existing review records are preserved.
 			executeMigration(connection, "/db/migration-v22-to-v23.sql", 23);
 			return 23;
 		}
@@ -751,9 +762,9 @@ public final class SqliteDatabase {
 		}
 		if (version == 25) {
 
-			// Install mutation tracking within the same migration transaction.
-			// A failed trigger installation must leave the v25 database intact.
-			SqlitePortableRevisionTriggers.install(connection);
+			// Schema v26 installs all 44 material-change revision triggers
+			// from the frozen SQL definitions. Trigger installation and the
+			// version update share the existing migration transaction.
 			executeMigration(connection, "/db/migration-v25-to-v26.sql", 26);
 			return 26;
 		}
@@ -766,34 +777,73 @@ public final class SqliteDatabase {
 		}
 		if (version == 27) {
 
-			// The schema tables and protection triggers are installed in
-			// one transaction. Verification occurs after both steps.
-			executeMigration(connection, "/db/migration-v27-to-v28.sql", 28,
-					SqliteExamWorkAssignmentLedgerTriggers::install);
+			// Schema v28 installs the coordinator assignment ledger and
+			// its five protection triggers in the same SQL transaction.
+			executeMigration(connection, "/db/migration-v27-to-v28.sql", 28);
 			return 28;
 		}
 		if (version == 28) {
 
-			// Contributor installation records and active selection are
-			// separate from coordinator issuance and lifecycle state.
-			executeMigration(connection, "/db/migration-v28-to-v29.sql", 29,
-					SqliteContributorAssignmentSessionTriggers::install);
+			// Schema v29 installs contributor assignment-session structures
+			// and their four protection triggers in one migration transaction.
+			executeMigration(connection, "/db/migration-v28-to-v29.sql", 29);
 			return 29;
 		}
 		if (version == 29) {
 
-			// Version 30 prevents contributor assignment mode from
-			// changing authoritative Subject, Exam or asset metadata.
-			executeMigration(connection, "/db/migration-v29-to-v30.sql", 30,
-					SqliteAssignmentStructureTriggers::install);
+			// Version 30 installs the original contributor structural
+			// restrictions directly from its versioned SQL migration.
+			executeMigration(connection, "/db/migration-v29-to-v30.sql", 30);
 			return 30;
 		}
 		if (version == 30) {
 
-			// Version 31 restricts contributor capture and classification
-			// to the selected Exam and permitted syllabus versions.
-			executeMigration(connection, "/db/migration-v30-to-v31.sql", 31, SqliteAssignmentScopeTriggers::install);
+			// Version 31 installs contributor capture and classification
+			// scope guards directly from the versioned SQL migration.
+			executeMigration(connection, "/db/migration-v30-to-v31.sql", 31);
 			return 31;
+		}
+		if (version == 31) {
+
+			// Version 32 permits pending MCQ Shared Context updates within
+			// assigned Booklets. SQL installs the complete trigger changes.
+			executeMigration(connection, "/db/migration-v31-to-v32.sql", 32);
+			return 32;
+		}
+		if (version == 32) {
+
+			// Version 33 restricts contributor Question classifications
+			// to Subtopics and Descriptors. The migration resource
+			// installs the updated triggers transactionally.
+			executeMigration(connection, "/db/migration-v32-to-v33.sql", 33);
+			return 33;
+		}
+		if (version == 33) {
+
+			// Version 34 creates the append-only contributor return
+			// ledger and installs its protection triggers from SQL.
+			executeMigration(connection, "/db/migration-v33-to-v34.sql", 34);
+			return 34;
+		}
+		if (version == 34) {
+
+			// Version 35 installs append-only master intake and proposal evidence.
+			executeMigration(connection, "/db/migration-v34-to-v35.sql", 35);
+			return 35;
+		}
+		if (version == 35) {
+
+			// Version 36 introduces immutable coordinator review decisions.
+			// Receipt and master-domain records remain unchanged.
+			executeMigration(connection, "/db/migration-v35-to-v36.sql", 36);
+			return 36;
+		}
+		if (version == 36) {
+
+			// Version 37 records final coordinator application outcomes
+			// independently of immutable preliminary review decisions.
+			executeMigration(connection, "/db/migration-v36-to-v37.sql", 37);
+			return 37;
 		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
@@ -1072,21 +1122,20 @@ public final class SqliteDatabase {
 		}
 		if (version >= 21) {
 
-			// A version-21 database must retain every invalidation trigger.
-			// Missing triggers could silently preserve obsolete reviews.
-			BookletApplicabilityReviewInvalidationTriggers.verify(connection);
+			// Historical v21/v22 databases retain the original trigger
+			// definitions. From v23, the selective booklet UPDATE rule
+			// replaces the earlier broad invalidation rule.
+			if (version >= 23) {
+				BookletApplicabilityReviewInvalidationTriggers.verify(connection);
+			} else {
+				BookletApplicabilityReviewInvalidationTriggers.verifyLegacy(connection);
+			}
 		}
 		if (version >= 22) {
 
-			// Legacy Paper identity is optional but must be structurally unique
-			// within each authoritative Exam.
+			// Legacy Paper identity is optional but must be structurally
+			// unique within each authoritative Exam.
 			verifyVersion22LegacyPaperSchema(connection);
-		}
-		if (version >= 23) {
-
-			// The v21 name-presence check alone cannot detect an accidentally
-			// retained broad UPDATE trigger on an otherwise version-23 database.
-			BookletApplicabilityReviewInvalidationTriggers.verifyVersion23BookletUpdateTrigger(connection);
 		}
 		if (version >= 24) {
 
@@ -1125,16 +1174,33 @@ public final class SqliteDatabase {
 			verifyVersion29ContributorAssignmentSchema(connection);
 		}
 		if (version >= 30) {
-
-			// Verify exact trigger definitions, not merely their names.
-			// A missing or weakened write barrier is a schema failure.
-			SqliteAssignmentStructureTriggers.verify(connection);
+			if (version >= 32) {
+				SqliteAssignmentStructureTriggers.verify(connection);
+			} else {
+				SqliteAssignmentStructureTriggers.verifyLegacy(connection);
+			}
 		}
 		if (version >= 31) {
+			if (version >= 33) {
+				SqliteAssignmentScopeTriggers.verify(connection);
+			} else {
+				SqliteAssignmentScopeTriggers.verifyLegacy(connection);
+			}
+		}
+		if (version >= 34) {
 
-			// Every capture table must retain its assignment-scope
-			// INSERT, UPDATE and DELETE barriers.
-			SqliteAssignmentScopeTriggers.verify(connection);
+			// Verify the return-history table and its immutable
+			// database-level protection triggers.
+			verifyVersion34ContributorReturnSchema(connection);
+		}
+		if (version >= 35) {
+			verifyVersion35ContributionIntakeSchema(connection);
+		}
+		if (version >= 36) {
+			verifyVersion36ContributionReviewSchema(connection);
+		}
+		if (version >= 37) {
+			verifyVersion37ContributionApplicationSchema(connection);
 		}
 	}
 
@@ -1842,6 +1908,86 @@ public final class SqliteDatabase {
 		}
 	}
 
+	private void verifyVersion34ContributorReturnSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "contributor_return_packages",
+				List.of(column("package_id", true, 1), column("assignment_id", true, 0),
+						column("return_number", true, 0), column("previous_package_id", false, 0),
+						column("baseline_snapshot_id", true, 0), column("master_installation_id", true, 0),
+						column("contributor_id", true, 0), column("origin_installation_id", true, 0),
+						column("archive_sha256", true, 0), column("recorded_at", true, 0)),
+				List.of(foreignKey("assignment_id", "contributor_assignment_sessions", "assignment_id"),
+						foreignKey("previous_package_id", "contributor_return_packages", "package_id")),
+				List.of(List.of("assignment_id", "return_number")));
+		SqliteContributorReturnLedgerTriggers.verify(connection);
+	}
+
+	private void verifyVersion35ContributionIntakeSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "contribution_intake_packages",
+				List.of(column("package_id", true, 1), column("assignment_id", true, 0),
+						column("return_number", true, 0), column("previous_package_id", false, 0),
+						column("baseline_snapshot_id", true, 0), column("master_installation_id", true, 0),
+						column("contributor_id", true, 0), column("origin_installation_id", true, 0),
+						column("archive_sha256", true, 0), column("intake_status", true, 0),
+						column("received_at", true, 0)),
+				List.of(foreignKey("assignment_id", "exam_work_assignments", "assignment_id")), List.of());
+		verifyTableSchema(connection, "contribution_intake_proposals",
+				List.of(column("package_id", true, 1), column("record_type", true, 2), column("record_id", true, 3),
+						column("proposed_revision_id", true, 0), column("baseline_revision_id", false, 0),
+						column("record_jsonl", true, 0)),
+				List.of(foreignKey("package_id", "contribution_intake_packages", "package_id")), List.of());
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_contribution_intake_", "contribution intake",
+				"/db/migration-v34-to-v35.sql");
+	}
+
+	private void verifyVersion36ContributionReviewSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "contribution_review_batches",
+				List.of(column("review_id", true, 1), column("package_id", true, 0), column("observed_at", true, 0),
+						column("recorded_at", true, 0), column("review_note", true, 0)),
+				List.of(foreignKey("package_id", "contribution_intake_packages", "package_id")),
+				List.of(List.of("review_id", "package_id")));
+		verifyTableSchema(connection, "contribution_review_decisions",
+				List.of(column("review_id", true, 1), column("package_id", true, 0), column("record_type", true, 2),
+						column("record_id", true, 3), column("baseline_revision_id", false, 0),
+						column("proposed_revision_id", true, 0), column("master_revision_id", false, 0),
+						column("master_sha256", false, 0), column("preliminary_status", true, 0),
+						column("choice", true, 0), column("result_revision_id", false, 0)),
+				List.of(), List.of());
+		if (!hasExactCompositeForeignKey(connection, "contribution_review_decisions",
+				List.of("review_id", "package_id"), "contribution_review_batches",
+				List.of("review_id", "package_id"))) {
+			throw new SQLException("Missing review batch foreign key");
+		}
+		if (!hasExactCompositeForeignKey(connection, "contribution_review_decisions",
+				List.of("package_id", "record_type", "record_id"), "contribution_intake_proposals",
+				List.of("package_id", "record_type", "record_id"))) {
+			throw new SQLException("Missing received proposal foreign key");
+		}
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_contribution_review_", "contribution review",
+				"/db/migration-v35-to-v36.sql");
+	}
+
+	private void verifyVersion37ContributionApplicationSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "contribution_application_batches",
+				List.of(column("review_id", true, 1), column("package_id", true, 0), column("completed_at", true, 0)),
+				List.of(), List.of(List.of("package_id")));
+		verifyTableSchema(connection, "contribution_application_results",
+				List.of(column("review_id", true, 1), column("record_type", true, 2), column("record_id", true, 3),
+						column("outcome", true, 0), column("resulting_revision_id", false, 0)),
+				List.of(foreignKey("review_id", "contribution_application_batches", "review_id")), List.of());
+		if (!hasExactCompositeForeignKey(connection, "contribution_application_batches",
+				List.of("review_id", "package_id"), "contribution_review_batches",
+				List.of("review_id", "package_id"))) {
+			throw new SQLException("Missing application-to-review foreign key");
+		}
+		if (!hasExactCompositeForeignKey(connection, "contribution_application_results",
+				List.of("review_id", "record_type", "record_id"), "contribution_review_decisions",
+				List.of("review_id", "record_type", "record_id"))) {
+			throw new SQLException("Missing application-to-decision foreign key");
+		}
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_contribution_application_", "contribution application",
+				"/db/migration-v36-to-v37.sql");
+	}
+
 	private record ForeignKeyColumn(int sequence, String fromColumn, String targetColumn) {
 	}
 
@@ -1849,11 +1995,5 @@ public final class SqliteDatabase {
 	}
 
 	private record ForeignKeyRequirement(String fromColumn, String targetTable, String targetColumn) {
-	}
-
-	@FunctionalInterface
-	private interface MigrationPostProcessor {
-
-		void apply(Connection connection) throws SQLException;
 	}
 }
