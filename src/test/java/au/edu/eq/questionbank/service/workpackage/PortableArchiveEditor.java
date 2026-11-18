@@ -17,7 +17,10 @@ import org.apache.commons.compress.archivers.zip.ZipFile;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkArchiveWriter.EntrySource;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest.Entry;
 
-/** Builds integrity-valid adversarial packages, including matching assignment baselines. */
+/**
+ * Builds integrity-valid adversarial packages, including matching assignment
+ * baselines.
+ */
 final class PortableArchiveEditor {
 
 	private PortableArchiveEditor() {
@@ -37,7 +40,8 @@ final class PortableArchiveEditor {
 			}
 		}
 		var codec = new ExamWorkJsonlCodec();
-		var records = new ArrayList<>(codec.readRecords(new ByteArrayInputStream(contents.get("records/subject-graph.jsonl"))));
+		var records = new ArrayList<>(
+				codec.readRecords(new ByteArrayInputStream(contents.get("records/subject-graph.jsonl"))));
 		edit.accept(records);
 		var output = new ByteArrayOutputStream();
 		codec.writeRecords(records, output);

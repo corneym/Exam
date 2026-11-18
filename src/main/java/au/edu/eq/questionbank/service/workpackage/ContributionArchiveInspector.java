@@ -113,6 +113,10 @@ public final class ContributionArchiveInspector {
 		// A valid delta is not enough: every relationship and packaged asset
 		// must resolve to a record within the assigned whole-Exam graph.
 		new WorkAssignmentScopeValidator().validateContribution(manifest, proposed, assets);
+
+		// The merged portable-domain validator checks semantic restrictions
+		// that structural reference and asset checks alone cannot establish.
+		PortableDomainRecordValidator.validate(manifest.subjectId(), proposed);
 		return new InspectedContribution(manifest, assignment, returnNumber, previousPackageId, changes, proposed,
 				assets, initialDigest);
 	}

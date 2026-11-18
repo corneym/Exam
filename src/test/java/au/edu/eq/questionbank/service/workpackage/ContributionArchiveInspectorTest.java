@@ -178,6 +178,186 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
+	void masterReviewHoldsDeletedBaselineQuestion() throws Exception {
+		Fixture fixture = fixture();
+		Path archive = publish(fixture, "Contributor revision", "review-missing-master.examwork");
+		var intake = new MasterContributionIntake(fixture.master());
+		var receipt = intake.receive(archive);
+
+		// Remove the master Answer before its parent Question to preserve
+		// foreign-key integrity. Its original baseline remains in the ledger.
+		try (Connection connection = fixture.master().openConnection();
+				Statement statement = connection.createStatement()) {
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, "DELETE FROM answers WHERE question_id = 81"));
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, "DELETE FROM questions WHERE id = 81"));
+		}
+		var plan = new MasterContributionReviewPlanner(fixture.master()).plan(receipt.received().packageId());
+		assertEquals(1, plan.assessments().size());
+		assertEquals(MasterContributionReviewPlanner.ReviewStatus.HELD_MISSING_MASTER,
+				plan.assessments().getFirst().status());
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
+	void masterReviewHoldsStaleMasterRevision() throws Exception {
+		Fixture fixture = fixture();
+		Path archive = publish(fixture, "Contributor revision", "review-stale.examwork");
+		var intake = new MasterContributionIntake(fixture.master());
+		var receipt = intake.receive(archive);
+
+		// The master changes independently after issuing the baseline.
+		try (Connection connection = fixture.master().openConnection();
+				Statement statement = connection.createStatement()) {
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
+					UPDATE questions
+					SET question_text = 'Master correction'
+					WHERE id = 81
+					"""));
+		}
+		var plan = new MasterContributionReviewPlanner(fixture.master()).plan(receipt.received().packageId());
+		var assessment = plan.assessments().getFirst();
+		assertEquals(MasterContributionReviewPlanner.ReviewStatus.HELD_STALE_MASTER, assessment.status());
+		assertNotNull(assessment.masterRevisionId());
+		assertNotNull(assessment.masterRecordSha256());
+		assertFalse(assessment.masterRevisionId().equals(assessment.baselineRevisionId()));
+		assertEquals("Master correction", masterQuestionText(fixture.master()));
+	}
+
+	@Test
+	void masterReviewKeepsOutOfOrderReturnHeld() throws Exception {
+		Fixture fixture = fixture();
+		Path firstArchive = publish(fixture, "First revision", "review-first.examwork");
+		Path secondArchive = publish(fixture, "Second revision", "review-second.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		var second = intake.receive(secondArchive);
+		assertEquals(MasterContributionIntake.IntakeStatus.HELD_LINEAGE, second.received().status());
+		MasterContributionReviewPlanner planner = new MasterContributionReviewPlanner(fixture.master());
+		var before = planner.plan(second.received().packageId());
+		assertEquals(MasterContributionReviewPlanner.ReviewStatus.HELD_LINEAGE,
+				before.assessments().getFirst().status());
+
+		// The delayed first return cannot automatically release return 2.
+		intake.receive(firstArchive);
+		var after = planner.plan(second.received().packageId());
+		assertEquals(MasterContributionReviewPlanner.ReviewStatus.HELD_LINEAGE,
+				after.assessments().getFirst().status());
+		assertEquals(MasterContributionIntake.IntakeStatus.HELD_LINEAGE,
+				intake.find(second.received().packageId()).orElseThrow().status());
+	}
+
+	@Test
+	void masterReviewRecognisesNewQuestionWithoutInsertingIt() throws Exception {
+		Fixture fixture = fixture();
+		var session = new SqliteContributorAssignmentSessionRepository(fixture.contributor())
+				.find(fixture.assignmentId()).orElseThrow();
+		try (Connection connection = fixture.contributor().openConnection();
+				PreparedStatement source = connection.prepareStatement("""
+						SELECT question.booklet_id,
+						       question.classification_node_id
+						FROM questions question
+						JOIN exam_booklets booklet
+						    ON booklet.id = question.booklet_id
+						WHERE booklet.exam_id = ?
+						  AND question.question_code = '1'
+						""");
+				PreparedStatement insert = connection.prepareStatement("""
+						INSERT INTO questions (
+						    booklet_id,
+						    classification_node_id,
+						    question_code,
+						    question_text,
+						    marks,
+						    shared_context_capture_required
+						)
+						VALUES (?, ?, '2', 'New contributor question', 3, 0)
+						""")) {
+			source.setLong(1, session.examLocalId());
+			long bookletId;
+			long classificationId;
+			try (ResultSet result = source.executeQuery()) {
+				assertTrue(result.next());
+				bookletId = result.getLong("booklet_id");
+				classificationId = result.getLong("classification_node_id");
+				assertFalse(result.next());
+			}
+
+			// Reuse valid contributor-local Booklet and classification
+			// identities from the installed assignment.
+			insert.setLong(1, bookletId);
+			insert.setLong(2, classificationId);
+			assertEquals(1, SqliteDirectChanges.executeUpdate(insert));
+		}
+		Path archive = directory.resolve("review-new-question.examwork");
+		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
+				.export(fixture.assignmentId(), archive);
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		var receipt = intake.receive(archive);
+		var plan = new MasterContributionReviewPlanner(fixture.master()).plan(receipt.received().packageId());
+		assertEquals(1, plan.assessments().size());
+		var assessment = plan.assessments().getFirst();
+		assertEquals("QUESTION", assessment.recordType());
+		assertEquals(MasterContributionReviewPlanner.ReviewStatus.READY_NEW, assessment.status());
+		assertNull(assessment.baselineRevisionId());
+		assertNull(assessment.masterRevisionId());
+
+		// Inspection and review must not insert the contributor's Question
+		// into the authoritative coordinator database.
+		try (Connection connection = fixture.master().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("""
+						SELECT COUNT(*)
+						FROM questions
+						WHERE question_code = '2'
+						""")) {
+			assertTrue(result.next());
+			assertEquals(0, result.getInt(1));
+		}
+	}
+
+	@Test
+	void masterReviewRecognisesSafeBaselineUpdate() throws Exception {
+		Fixture fixture = fixture();
+		Path archive = publish(fixture, "Contributor revision", "review-ready.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		var receipt = intake.receive(archive);
+		var plan = new MasterContributionReviewPlanner(fixture.master()).plan(receipt.received().packageId());
+		assertEquals(MasterContributionIntake.IntakeStatus.READY_FOR_REVIEW, plan.intakeStatus());
+		assertEquals(fixture.assignmentId(), plan.assignmentId());
+		assertEquals(1, plan.assessments().size());
+		var assessment = plan.assessments().getFirst();
+		assertEquals(MasterContributionReviewPlanner.ReviewStatus.READY_UPDATE, assessment.status());
+		assertEquals(assessment.baselineRevisionId(), assessment.masterRevisionId());
+		assertEquals(intake.proposedChanges(receipt.received().packageId()).getFirst().revisionId(),
+				assessment.proposedRevisionId());
+		assertNotNull(assessment.masterRecordSha256());
+
+		// A preliminary review must not modify the coordinator's record.
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+	}
+
+	@Test
+	void masterReviewSkipsAlreadyPresentContent() throws Exception {
+		Fixture fixture = fixture();
+		Path archive = publish(fixture, "Matching text", "review-identical.examwork");
+		var intake = new MasterContributionIntake(fixture.master());
+		var receipt = intake.receive(archive);
+		try (Connection connection = fixture.master().openConnection();
+				Statement statement = connection.createStatement()) {
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
+					UPDATE questions
+					SET question_text = 'Matching text'
+					WHERE id = 81
+					"""));
+		}
+		var plan = new MasterContributionReviewPlanner(fixture.master()).plan(receipt.received().packageId());
+		var assessment = plan.assessments().getFirst();
+		assertEquals(MasterContributionReviewPlanner.ReviewStatus.SKIP_IDENTICAL, assessment.status());
+		assertNotNull(assessment.masterRevisionId());
+		assertFalse(assessment.masterRevisionId().equals(assessment.baselineRevisionId()));
+		assertEquals("Matching text", masterQuestionText(fixture.master()));
+	}
+
+	@Test
 	void migrationToVersion35InstallsProtectedIntakeTables() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("v35-migration.db"));
 		database.initialiseSchema();
@@ -297,6 +477,29 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
+	void rejectsSemanticallyInvalidContributionAfterMerge() throws Exception {
+		Fixture fixture = fixture();
+		Path original = publish(fixture, "Modified question", "semantic-valid.examwork");
+		ExamWorkJsonlCodec codec = new ExamWorkJsonlCodec();
+		List<ExchangeRecord> changes = codec
+				.readRecords(new ByteArrayInputStream(readEntry(original, "records/contribution-changes.jsonl")));
+		assertEquals(1, changes.size());
+		ExchangeRecord question = changes.getFirst();
+		assertEquals("QUESTION", question.recordType());
+		ObjectNode invalidValues = (ObjectNode) question.values();
+
+		// A multiple-choice Question cannot carry two marks.
+		// This package remains checksum-valid and structurally in scope.
+		invalidValues.put("response_type", "MULTIPLE_CHOICE");
+		invalidValues.put("marks", 2);
+		Path invalid = repackage(original, "records/contribution-changes.jsonl",
+				encode(List.of(withValues(question, invalidValues))));
+		assertArchiveWellFormed(invalid, fixture.master());
+		assertThrows(PackageFormatException.class,
+				() -> new ContributionArchiveInspector(fixture.master()).inspect(invalid));
+	}
+
+	@Test
 	void rejectsUnknownMasterAssignmentWithoutWritingMasterData() throws Exception {
 		Fixture fixture = fixture();
 		Path issued = publish(fixture, "Modified question", "valid.examwork");
@@ -399,6 +602,21 @@ class ContributionArchiveInspectorTest {
 		new WorkAssignmentLedger(master).register(assignment);
 		new WorkAssignmentInstallationCoordinator(contributor).install(assignment);
 		return new Fixture(master, local, contributor.dataRoot(), assignmentId);
+	}
+
+	private String masterQuestionText(SqliteDatabase database) throws SQLException {
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("""
+						SELECT question_text
+						FROM questions
+						WHERE id = 81
+						""")) {
+			assertTrue(result.next());
+			String text = result.getString(1);
+			assertFalse(result.next());
+			return text;
+		}
 	}
 
 	private Path publish(Fixture fixture, String text, String name) throws Exception {
