@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 36;
+	private static final int LATEST_SCHEMA_VERSION = 37;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -838,6 +838,13 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v35-to-v36.sql", 36);
 			return 36;
 		}
+		if (version == 36) {
+
+			// Version 37 records final coordinator application outcomes
+			// independently of immutable preliminary review decisions.
+			executeMigration(connection, "/db/migration-v36-to-v37.sql", 37);
+			return 37;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -1191,6 +1198,9 @@ public final class SqliteDatabase {
 		}
 		if (version >= 36) {
 			verifyVersion36ContributionReviewSchema(connection);
+		}
+		if (version >= 37) {
+			verifyVersion37ContributionApplicationSchema(connection);
 		}
 	}
 
@@ -1954,6 +1964,28 @@ public final class SqliteDatabase {
 		}
 		SqliteMigrationTriggerVerifier.verify(connection, "trg_contribution_review_", "contribution review",
 				"/db/migration-v35-to-v36.sql");
+	}
+
+	private void verifyVersion37ContributionApplicationSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "contribution_application_batches",
+				List.of(column("review_id", true, 1), column("package_id", true, 0), column("completed_at", true, 0)),
+				List.of(), List.of(List.of("package_id")));
+		verifyTableSchema(connection, "contribution_application_results",
+				List.of(column("review_id", true, 1), column("record_type", true, 2), column("record_id", true, 3),
+						column("outcome", true, 0), column("resulting_revision_id", false, 0)),
+				List.of(foreignKey("review_id", "contribution_application_batches", "review_id")), List.of());
+		if (!hasExactCompositeForeignKey(connection, "contribution_application_batches",
+				List.of("review_id", "package_id"), "contribution_review_batches",
+				List.of("review_id", "package_id"))) {
+			throw new SQLException("Missing application-to-review foreign key");
+		}
+		if (!hasExactCompositeForeignKey(connection, "contribution_application_results",
+				List.of("review_id", "record_type", "record_id"), "contribution_review_decisions",
+				List.of("review_id", "record_type", "record_id"))) {
+			throw new SQLException("Missing application-to-decision foreign key");
+		}
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_contribution_application_", "contribution application",
+				"/db/migration-v36-to-v37.sql");
 	}
 
 	private record ForeignKeyColumn(int sequence, String fromColumn, String targetColumn) {

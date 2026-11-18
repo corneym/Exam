@@ -318,12 +318,11 @@ public final class HistoricalSchemaFixture {
 	}
 
 	/**
-	 * Removes version 36 review-history structures from a disposable historical
-	 * migration test database.
+	 * Removes schema v36 review evidence and all newer application evidence from a
+	 * disposable historical migration test database.
 	 *
 	 * <p>
-	 * Child decisions are removed before their parent review batches. Production
-	 * data must never be passed to this fixture helper.
+	 * This method must never be used against production data.
 	 *
 	 * @param statement statement for the disposable test database
 	 * @throws SQLException if cleanup fails
@@ -332,12 +331,36 @@ public final class HistoricalSchemaFixture {
 		if (statement == null) {
 			throw new NullPointerException("statement");
 		}
+		removeVersion37Objects(statement);
 		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_review_decisions_no_delete");
 		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_review_decisions_no_update");
 		statement.execute("DROP TABLE IF EXISTS contribution_review_decisions");
 		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_review_batches_no_delete");
 		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_review_batches_no_update");
 		statement.execute("DROP TABLE IF EXISTS contribution_review_batches");
+	}
+
+	/**
+	 * Removes schema v37 application evidence from a disposable historical
+	 * migration test database.
+	 *
+	 * <p>
+	 * Child results are removed before their parent application batches. Production
+	 * data must never be passed to this fixture helper.
+	 *
+	 * @param statement statement for the disposable test database
+	 * @throws SQLException if cleanup fails
+	 */
+	public static void removeVersion37Objects(Statement statement) throws SQLException {
+		if (statement == null) {
+			throw new NullPointerException("statement");
+		}
+		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_application_results_no_delete");
+		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_application_results_no_update");
+		statement.execute("DROP TABLE IF EXISTS contribution_application_results");
+		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_application_batches_no_delete");
+		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_application_batches_no_update");
+		statement.execute("DROP TABLE IF EXISTS contribution_application_batches");
 	}
 
 	private static void dropAssignmentTriggers(Statement statement, String pattern) throws SQLException {
