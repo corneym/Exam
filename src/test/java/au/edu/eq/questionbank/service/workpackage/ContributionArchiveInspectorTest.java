@@ -3,6 +3,7 @@ package au.edu.eq.questionbank.service.workpackage;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -42,6 +43,8 @@ import au.edu.eq.questionbank.TestPdf;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.HistoricalSchemaFixture;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
@@ -78,6 +81,26 @@ class ContributionArchiveInspectorTest {
 				readEntry(secondArchive, "baseline/initial-records.jsonl"));
 		fixture.master().verifySchema();
 		fixture.master().verifyIntegrity();
+	}
+
+	@Test
+	void contributorInstallationUsesPortableIdentityIndependentOfLocalPrimaryKey() throws Exception {
+		Fixture fixture = fixture();
+		var masterIdentities = new SqlitePortableIdentityRepository(fixture.master());
+		var contributorIdentities = new SqlitePortableIdentityRepository(fixture.contributor());
+		var masterQuestion = masterIdentities.findByLocalId(EntityType.QUESTION, 81L).orElseThrow();
+		var contributorQuestion = contributorIdentities
+				.findByPortableId(EntityType.QUESTION, masterQuestion.portableId()).orElseThrow();
+
+		// Portable identity survives installation, but the SQLite
+		// primary key belongs exclusively to its local database.
+		assertEquals(masterQuestion.portableId(), contributorQuestion.portableId());
+
+		// Deliberately preserve different fixture-local IDs so that
+		// future cross-database ID assumptions cannot pass unnoticed.
+		assertNotEquals(masterQuestion.localId(), contributorQuestion.localId());
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+		assertEquals("Biology question", masterQuestionText(fixture.contributor()));
 	}
 
 	@Test
@@ -1946,10 +1969,19 @@ class ContributionArchiveInspectorTest {
 		try (Connection connection = database.openConnection();
 				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("""
-						SELECT question_text
-						FROM questions
-						WHERE id = 81
+						SELECT q.question_text
+						FROM questions q
+						JOIN exam_booklets b
+						    ON b.id = q.booklet_id
+						JOIN exams e
+						    ON e.id = b.exam_id
+						WHERE e.exam_name = 'External Assessment'
+						  AND b.booklet_name = 'Paper 1'
+						  AND q.question_code = '1'
 						""")) {
+
+			// This fixture lookup uses stable business attributes.
+			// It must not assume master and contributor local IDs agree.
 			assertTrue(result.next());
 			String text = result.getString(1);
 			assertFalse(result.next());
