@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 39;
+	private static final int LATEST_SCHEMA_VERSION = 40;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -859,6 +859,13 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v38-to-v39.sql", 39);
 			return 39;
 		}
+		if (version == 39) {
+
+			// Version 40 protects the master capture graph and verifies
+			// reconciled-return closure evidence.
+			executeMigration(connection, "/db/migration-v39-to-v40.sql", 40);
+			return 40;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -1221,6 +1228,9 @@ public final class SqliteDatabase {
 		}
 		if (version >= 39) {
 			verifyVersion39MasterExamStructureSchema(connection);
+		}
+		if (version >= 40) {
+			verifyVersion40MasterCaptureSchema(connection);
 		}
 	}
 
@@ -2083,6 +2093,13 @@ public final class SqliteDatabase {
 	private void verifyVersion39MasterExamStructureSchema(Connection connection) throws SQLException {
 		SqliteMigrationTriggerVerifier.verify(connection, "trg_master_exam_structure_", "master Exam structure",
 				"/db/migration-v38-to-v39.sql");
+	}
+
+	private void verifyVersion40MasterCaptureSchema(Connection connection) throws SQLException {
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
+				"/db/migration-v39-to-v40.sql");
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_master_return_", "master return reconciliation",
+				"/db/migration-v39-to-v40.sql");
 	}
 
 	private record ForeignKeyColumn(int sequence, String fromColumn, String targetColumn) {

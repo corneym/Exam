@@ -92,19 +92,23 @@ public final class MasterContributionIntake {
 	}
 
 	/**
-	 * Validates and durably receives an offline return without applying it.
+	 * Validates and durably receives an offline contributor return.
 	 *
 	 * <p>
-	 * The same package and bytes return a replay result without another write.
-	 * Reusing a package UUID for different archive bytes is rejected. Returns with
-	 * missing, conflicting or previously held ancestry are recorded as
-	 * HELD_LINEAGE. Later arrival of a parent never silently promotes an earlier
-	 * held package; that decision requires explicit review.
+	 * Receipt never applies proposed records to the master. A duplicate package
+	 * with identical bytes is returned idempotently. Different bytes reusing the
+	 * same package UUID are rejected.
 	 *
-	 * @param archive existing .examwork contribution archive
-	 * @return persisted receipt and whether it was a duplicate
-	 * @throws IOException  if archive inspection or evidence validation fails
-	 * @throws SQLException if coordinator persistence fails
+	 * <p>
+	 * One assignment permits one ready first return. Additional returns,
+	 * out-of-order returns and returns received after assignment closure are
+	 * retained as HELD_LINEAGE evidence rather than silently applied.
+	 *
+	 * @param archive existing contribution archive
+	 * @return immutable receipt and duplicate indicator
+	 * @throws IOException          if inspection or archive validation fails
+	 * @throws SQLException         if persistence fails
+	 * @throws NullPointerException if archive is null
 	 */
 	public Receipt receive(Path archive) throws IOException, SQLException {
 		Objects.requireNonNull(archive, "archive");
@@ -146,35 +150,47 @@ public final class MasterContributionIntake {
 
 	private IntakeStatus classify(Connection connection, InspectedContribution contribution) throws SQLException {
 		UUID assignmentId = contribution.assignment().assignmentId();
-		try (PreparedStatement check = connection.prepareStatement("""
-				SELECT 1 FROM contribution_intake_packages
-				WHERE assignment_id = ? AND return_number = ? LIMIT 1
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT state
+				FROM exam_work_assignment_states
+				WHERE assignment_id = ?
 				""")) {
-			check.setString(1, assignmentId.toString());
-			check.setInt(2, contribution.returnNumber());
-			try (ResultSet result = check.executeQuery()) {
-				if (result.next()) {
+			statement.setString(1, assignmentId.toString());
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new SQLException("Received return has no issued assignment state");
+				}
 
-					// Two different package UUIDs claim the same return order.
+				// Closed assignments retain old returns as evidence.
+				// They must never accept another actionable submission.
+				if (!"ACTIVE".equals(result.getString("state"))) {
 					return IntakeStatus.HELD_LINEAGE;
 				}
 			}
 		}
-		if (contribution.returnNumber() == 1) {
-			return IntakeStatus.READY_FOR_REVIEW;
-		}
-		Optional<ReceivedPackage> parent = find(connection, contribution.previousPackageId());
-		if (parent.isEmpty()) {
+
+		// Each assignment now has one actionable return. Returning more
+		// work requires the coordinator to issue a fresh assignment.
+		if (contribution.returnNumber() != 1 || contribution.previousPackageId() != null) {
 			return IntakeStatus.HELD_LINEAGE;
 		}
-		ReceivedPackage prior = parent.orElseThrow();
-		boolean followsParent = prior.status() == IntakeStatus.READY_FOR_REVIEW
-				&& prior.assignmentId().equals(assignmentId) && prior.returnNumber() == contribution.returnNumber() - 1
-				&& prior.baselineSnapshotId().equals(contribution.assignment().baselineSnapshotId())
-				&& prior.masterInstallationId().equals(contribution.assignment().masterInstallationId())
-				&& prior.contributorId().equals(contribution.assignment().contributorId())
-				&& prior.originInstallationId().equals(contribution.manifest().originInstallationId());
-		return followsParent ? IntakeStatus.READY_FOR_REVIEW : IntakeStatus.HELD_LINEAGE;
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT 1
+				FROM contribution_intake_packages
+				WHERE assignment_id = ?
+				  AND intake_status = 'READY_FOR_REVIEW'
+				LIMIT 1
+				""")) {
+			statement.setString(1, assignmentId.toString());
+			try (ResultSet result = statement.executeQuery()) {
+				if (result.next()) {
+
+					// Competing first returns cannot both be actionable.
+					return IntakeStatus.HELD_LINEAGE;
+				}
+			}
+		}
+		return IntakeStatus.READY_FOR_REVIEW;
 	}
 
 	private Optional<ReceivedPackage> find(Connection connection, UUID packageId) throws SQLException {

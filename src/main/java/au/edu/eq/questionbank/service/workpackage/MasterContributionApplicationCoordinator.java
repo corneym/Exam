@@ -62,19 +62,28 @@ public final class MasterContributionApplicationCoordinator {
 	}
 
 	/**
-	 * Executes a complete recorded review or returns an idempotent replay.
+	 * Atomically applies a complete, approved contribution review and closes the
+	 * corresponding coordinator assignment.
 	 *
 	 * <p>
-	 * No partial terminal application is permitted. A HOLD choice or a queued
-	 * unsupported entity/change rejects the entire operation. Existing master
-	 * revisions must exactly match the recorded review's revision and content
-	 * digest. Every successful Question update produces a fresh master revision,
-	 * which is committed with the result evidence.
+	 * All supported domain changes, terminal result evidence, the audited
+	 * reconciled-return closure and release of the Exam lock commit in one SQLite
+	 * transaction. Any failure rolls all of them back.
 	 *
-	 * @param reviewId previously recorded coordinator review identity
-	 * @return terminal outcomes and whether this was a repeated execution
-	 * @throws SQLException         if review evidence, current master revisions or
-	 *                              database constraints prevent atomic application
+	 * <p>
+	 * An assignment must be ACTIVE and have exactly one READY_FOR_REVIEW first
+	 * return. Unsupported queued changes or held choices are rejected. Only
+	 * reviewed changes to existing Question text are currently supported.
+	 *
+	 * <p>
+	 * A replay of an already applied review returns the persisted outcomes only
+	 * when the corresponding reconciled closure exists.
+	 *
+	 * @param reviewId recorded coordinator review identity
+	 * @return committed application results and replay indicator
+	 * @throws SQLException         if review evidence, assignment state, revisions
+	 *                              or database constraints prevent atomic
+	 *                              application and closure
 	 * @throws IOException          if stored portable content cannot be processed
 	 * @throws NullPointerException if reviewId is null
 	 */
@@ -91,10 +100,10 @@ public final class MasterContributionApplicationCoordinator {
 			}
 		}
 		if (proposedByKey.size() != review.decisions().size()) {
-			throw new SQLException("Review no longer matches its complete received proposal set");
+			throw new SQLException("Review does not match its complete received proposal set");
 		}
 
-		// Reject unsupported work before taking the SQLite write reservation.
+		// Reject unsupported work before entering the write transaction.
 		for (RecordDecision decision : review.decisions()) {
 			ExchangeRecord proposed = proposedByKey.get(decision.key());
 			if (proposed == null || !proposed.revisionId().equals(decision.proposedRevisionId())
@@ -114,6 +123,10 @@ public final class MasterContributionApplicationCoordinator {
 			try {
 				Optional<ApplicationResult> existing = find(connection, reviewId);
 				if (existing.isPresent()) {
+
+					// A historical application without matching closure
+					// evidence is not silently treated as an unlocked Exam.
+					requireReconciledClosure(connection, review.packageId());
 					ApplicationResult previous = existing.orElseThrow();
 					connection.commit();
 					return new ApplicationResult(previous.reviewId(), previous.packageId(), previous.completedAt(),
@@ -121,16 +134,23 @@ public final class MasterContributionApplicationCoordinator {
 				}
 				Instant completedAt = Instant.now();
 
-				// This INSERT acquires the SQLite writer reservation.
-				// No concurrent writer can alter master records between
-				// the subsequent revision checks and the final COMMIT.
+				// The first INSERT obtains SQLite's write reservation.
+				// From here, assignment-state validation, domain changes
+				// and closure observe one controlled transaction.
 				insertBatch(connection, review, completedAt);
+				UUID assignmentId = requireOneActiveReturn(connection, review.packageId());
 				List<RecordOutcome> outcomes = new ArrayList<>();
 				for (RecordDecision decision : review.decisions()) {
 					RecordOutcome outcome = applyDecision(connection, decision, proposedByKey.get(decision.key()));
 					insertOutcome(connection, reviewId, outcome);
 					outcomes.add(outcome);
 				}
+
+				// Inserting closure evidence invokes the existing v38
+				// lifecycle triggers and releases the Exam lock.
+				// Version 40 additionally checks that the received
+				// return and every application outcome are resolved.
+				insertReconciledClosure(connection, assignmentId, review.packageId(), reviewId, completedAt);
 				connection.commit();
 				return new ApplicationResult(reviewId, review.packageId(), completedAt, outcomes, false);
 			} catch (SQLException | IOException | RuntimeException failure) {
@@ -271,6 +291,29 @@ public final class MasterContributionApplicationCoordinator {
 		}
 	}
 
+	private void insertReconciledClosure(Connection connection, UUID assignmentId, UUID packageId, UUID reviewId,
+			Instant completedAt) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				INSERT INTO exam_work_assignment_closures (
+				    assignment_id,
+				    closed_state,
+				    closure_kind,
+				    reason,
+				    closed_at,
+				    return_package_id
+				)
+				VALUES (?, 'COMPLETE', 'RECONCILED_RETURN', ?, ?, ?)
+				""")) {
+			statement.setString(1, assignmentId.toString());
+			statement.setString(2, "Reconciled reviewed return " + reviewId);
+			statement.setString(3, completedAt.toString());
+			statement.setString(4, packageId.toString());
+			if (statement.executeUpdate() != 1) {
+				throw new SQLException("Reconciled assignment closure was not recorded");
+			}
+		}
+	}
+
 	private String recordDigest(ExchangeRecord record) throws IOException {
 		ByteArrayOutputStream output = new ByteArrayOutputStream();
 		new ExamWorkJsonlCodec().writeRecords(List.of(record), output);
@@ -313,6 +356,69 @@ public final class MasterContributionApplicationCoordinator {
 		}
 		return new SqlitePortableIdentityRepository(database).findByPortableId(connection, entityType, key.recordId())
 				.orElseThrow(() -> new SQLException("Master portable entity is missing: " + key)).localId();
+	}
+
+	private UUID requireOneActiveReturn(Connection connection, UUID packageId) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT packet.assignment_id
+				FROM contribution_intake_packages packet
+				JOIN exam_work_assignment_states states
+				  ON states.assignment_id = packet.assignment_id
+				JOIN exam_work_assignments assignment
+				  ON assignment.assignment_id = packet.assignment_id
+				JOIN exam_work_assignment_exam_locks locks
+				  ON locks.assignment_id = packet.assignment_id
+				 AND locks.exam_portable_id =
+				     assignment.exam_portable_id
+				WHERE packet.package_id = ?
+				  AND packet.intake_status = 'READY_FOR_REVIEW'
+				  AND packet.return_number = 1
+				  AND packet.previous_package_id IS NULL
+				  AND states.state = 'ACTIVE'
+				  AND NOT EXISTS (
+				      SELECT 1
+				      FROM contribution_intake_packages competing
+				      WHERE competing.assignment_id = packet.assignment_id
+				        AND competing.package_id <> packet.package_id
+				  )
+				""")) {
+			statement.setString(1, packageId.toString());
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new SQLException("Return cannot be applied: the assignment is "
+							+ "closed, the return is held, or " + "another return remains unresolved");
+				}
+				UUID assignmentId = UUID.fromString(result.getString("assignment_id"));
+				if (result.next()) {
+					throw new SQLException("Duplicate active assignment reconciliation");
+				}
+				return assignmentId;
+			}
+		}
+	}
+
+	private void requireReconciledClosure(Connection connection, UUID packageId) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT 1
+				FROM contribution_intake_packages packet
+				JOIN exam_work_assignment_closures closure
+				  ON closure.assignment_id = packet.assignment_id
+				 AND closure.return_package_id = packet.package_id
+				JOIN exam_work_assignment_states states
+				  ON states.assignment_id = closure.assignment_id
+				WHERE packet.package_id = ?
+				  AND closure.closure_kind = 'RECONCILED_RETURN'
+				  AND closure.closed_state = 'COMPLETE'
+				  AND states.state = 'COMPLETE'
+				""")) {
+			statement.setString(1, packageId.toString());
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new SQLException(
+							"Previously applied review has no matching " + "reconciled assignment closure");
+				}
+			}
+		}
 	}
 
 	private void requireTextOnlyChange(ExchangeRecord current, ExchangeRecord proposed) throws SQLException {

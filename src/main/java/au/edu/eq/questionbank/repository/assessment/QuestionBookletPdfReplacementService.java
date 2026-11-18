@@ -48,12 +48,9 @@ public final class QuestionBookletPdfReplacementService {
 	 */
 	public QuestionBookletPdfReplacementService(SqliteDatabase database, ManagedDataLayout managedDataLayout,
 			Path legacyPdfDataRoot) {
-
 		this.database = Objects.requireNonNull(database, "database");
 		this.managedDataLayout = Objects.requireNonNull(managedDataLayout, "managedDataLayout");
-
 		Objects.requireNonNull(legacyPdfDataRoot, "legacyPdfDataRoot");
-
 		hashService = new SourceDocumentHashService();
 		pdfStore = new PdfStore(managedDataLayout, legacyPdfDataRoot);
 	}
@@ -67,10 +64,8 @@ public final class QuestionBookletPdfReplacementService {
 	 * @throws NullPointerException if either argument is null
 	 */
 	public QuestionBookletPdfReplacementService(SqliteDatabase database, Path pdfDataRoot) {
-
 		this.database = Objects.requireNonNull(database, "database");
 		Objects.requireNonNull(pdfDataRoot, "pdfDataRoot");
-
 		managedDataLayout = null;
 		hashService = new SourceDocumentHashService();
 		pdfStore = new PdfStore(pdfDataRoot);
@@ -114,24 +109,16 @@ public final class QuestionBookletPdfReplacementService {
 	 *                               ineligible for modification
 	 */
 	public Result replace(ExamBooklet booklet, Path replacementPdf) throws IOException, SQLException {
-
 		Objects.requireNonNull(booklet, "booklet");
 		Objects.requireNonNull(replacementPdf, "replacementPdf");
-
 		new SqliteExamWriter(database).requireCoordinatorStructureEdit();
-
 		if (managedDataLayout == null) {
 			new SqliteMasterExamLockGuard(database).requireUnlocked(booklet.getExam().getId());
-
 			return replaceManagedPdf(booklet, replacementPdf);
 		}
-
 		try (var publicationLock = ManagedAssetPublicationLock.acquire(managedDataLayout.dataRoot())) {
-
 			publicationLock.requireNoPendingPublications();
-
 			new SqliteMasterExamLockGuard(database).requireUnlocked(booklet.getExam().getId());
-
 			return replaceManagedPdf(booklet, replacementPdf);
 		}
 	}

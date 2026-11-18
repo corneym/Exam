@@ -13,6 +13,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -80,6 +81,87 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
+	void lateReturnIsHeldAfterReconciledAssignmentClosure() throws Exception {
+		Fixture fixture = fixture();
+		Path firstArchive = publish(fixture, "Accepted contributor revision", "accepted-return.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(firstArchive).received().packageId();
+		ExchangeRecord proposed = intake.proposedChanges(packageId).getFirst();
+		var key = new MasterContributionDecisionLedger.RecordKey(proposed.recordType(), proposed.recordId());
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
+				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY), "Accept completed first return");
+		new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId());
+		assertEquals(WorkAssignmentLedger.State.COMPLETE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+
+		// The contributor can still possess its old assignment data.
+		// Any later archive from it is recorded but not actionable.
+		Path lateArchive = publish(fixture, "Late contributor revision", "late-return.examwork");
+		var late = intake.receive(lateArchive);
+		assertEquals(MasterContributionIntake.IntakeStatus.HELD_LINEAGE, late.received().status());
+		assertEquals("Accepted contributor revision", masterQuestionText(fixture.master()));
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
+	void masterApplicationAllowsFreshAssignmentAfterReconciliation() throws Exception {
+		Fixture fixture = fixture();
+		Path archive = publish(fixture, "Accepted partial work", "partial-return.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		ExchangeRecord proposed = intake.proposedChanges(packageId).getFirst();
+		var key = new MasterContributionDecisionLedger.RecordKey(proposed.recordType(), proposed.recordId());
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
+				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY), "Accept partial work");
+		new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId());
+		WorkAssignmentLedger ledger = new WorkAssignmentLedger(fixture.master());
+		assertEquals(WorkAssignmentLedger.State.COMPLETE, ledger.find(fixture.assignmentId()).orElseThrow().state());
+		Exam exam = new Exam(31, new Subject(1, "Biology"), new ExamProvider(21, "QCAA"), 2025, "External Assessment");
+		UUID newAssignmentId = UUID.randomUUID();
+		Path newArchive = directory.resolve("fresh-assignment.examwork");
+		var request = new WorkAssignmentExporter.Request(exam, newAssignmentId, UUID.randomUUID(), "Next Contributor",
+				false, newArchive);
+		var newAssignment = new WorkAssignmentIssuanceService(fixture.master(),
+				new ManagedDataLayout(directory.resolve("coordinator"))).issue(request);
+		assertEquals(newAssignmentId, newAssignment.assignmentId());
+		assertEquals(WorkAssignmentLedger.State.ACTIVE, newAssignment.state());
+		assertFalse(newAssignment.assignmentId().equals(fixture.assignmentId()));
+
+		// The new baseline contains the accepted master content.
+		String baselineText = new String(ledger.readBaseline(newAssignmentId).records(), StandardCharsets.UTF_8);
+		assertTrue(baselineText.contains("Accepted partial work"));
+		assertEquals(newAssignmentId,
+				ledger.findActiveForExam(newAssignment.examPortableId()).orElseThrow().assignmentId());
+	}
+
+	@Test
+	void masterApplicationBlocksCompetingReturnUntilResolved() throws Exception {
+		Fixture fixture = fixture();
+		Path firstArchive = publish(fixture, "First contributor revision", "competing-first.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID firstPackageId = intake.receive(firstArchive).received().packageId();
+		ExchangeRecord proposed = intake.proposedChanges(firstPackageId).getFirst();
+		var key = new MasterContributionDecisionLedger.RecordKey(proposed.recordType(), proposed.recordId());
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(firstPackageId,
+				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY), "Accept first return");
+		Path secondArchive = publish(fixture, "Second contributor revision", "competing-second.examwork");
+		var second = intake.receive(secondArchive);
+		assertEquals(MasterContributionIntake.IntakeStatus.HELD_LINEAGE, second.received().status());
+		MasterContributionApplicationCoordinator coordinator = new MasterContributionApplicationCoordinator(
+				fixture.master());
+
+		// An outstanding competing return blocks reconciliation.
+		// No application evidence or unlock may be committed.
+		assertThrows(SQLException.class, () -> coordinator.execute(review.reviewId()));
+		assertTrue(coordinator.find(review.reviewId()).isEmpty());
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+		assertEquals(WorkAssignmentLedger.State.ACTIVE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
 	void masterApplicationCommitsQuestionTextAndRevision() throws Exception {
 		Fixture fixture = fixture();
 		Path archive = publish(fixture, "Applied contributor text", "apply-question.examwork");
@@ -101,13 +183,22 @@ class ContributionArchiveInspectorTest {
 		assertNotNull(outcome.resultingRevisionId());
 		assertFalse(outcome.resultingRevisionId().equals(review.decisions().getFirst().masterRevisionId()));
 		assertEquals("Applied contributor text", masterQuestionText(fixture.master()));
+		WorkAssignmentLedger ledger = new WorkAssignmentLedger(fixture.master());
+		var assignment = ledger.find(fixture.assignmentId()).orElseThrow();
+
+		// Application completion ends the assignment, not the Exam's
+		// independent capture-completeness status.
+		assertEquals(WorkAssignmentLedger.State.COMPLETE, assignment.state());
+		assertTrue(ledger.findActiveForExam(assignment.examPortableId()).isEmpty());
 		assertEquals(applied, coordinator.find(review.reviewId()).orElseThrow());
 
-		// A repeated execution must return existing evidence without writing.
+		// Replaying the same approved return cannot create another
+		// application, alter master data or close an assignment twice.
 		var replay = coordinator.execute(review.reviewId());
 		assertTrue(replay.duplicate());
 		assertEquals(applied.outcomes(), replay.outcomes());
 		assertEquals(applied.completedAt(), replay.completedAt());
+		fixture.master().verifySchema();
 		fixture.master().verifyIntegrity();
 	}
 
@@ -147,30 +238,33 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
-	void masterApplicationPreservesIdenticalSkipRevision() throws Exception {
+	void masterApplicationPreventsCoordinatorEditBetweenReviewAndApply() throws Exception {
 		Fixture fixture = fixture();
-		Path archive = publish(fixture, "Already accepted content", "apply-identical.examwork");
+		Path archive = publish(fixture, "Contributor proposal", "apply-stale.examwork");
 		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
 		UUID packageId = intake.receive(archive).received().packageId();
-		execute(fixture.master(), """
-				UPDATE questions
-				SET question_text = 'Already accepted content'
-				WHERE id = 81
-				""");
 		ExchangeRecord proposal = intake.proposedChanges(packageId).getFirst();
 		var key = new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId());
 		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
-				Map.of(key, MasterContributionDecisionLedger.Choice.SKIP_IDENTICAL),
-				"Content already present on master");
-		UUID retainedRevision = review.decisions().getFirst().masterRevisionId();
+				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY),
+				"Review before attempted coordinator edit");
+
+		// A later ordinary coordinator edit cannot invalidate the
+		// outstanding baseline or override the approved contribution.
+		assertThrows(SQLException.class, () -> execute(fixture.master(), """
+				UPDATE questions
+				SET question_text = 'Later coordinator correction'
+				WHERE id = 81
+				"""));
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
 		MasterContributionApplicationCoordinator coordinator = new MasterContributionApplicationCoordinator(
 				fixture.master());
 		var result = coordinator.execute(review.reviewId());
-		var outcome = result.outcomes().getFirst();
-		assertEquals(MasterContributionApplicationCoordinator.Outcome.SKIPPED, outcome.outcome());
-		assertEquals(retainedRevision, outcome.resultingRevisionId());
-		assertEquals("Already accepted content", masterQuestionText(fixture.master()));
-		assertEquals(result, coordinator.find(review.reviewId()).orElseThrow());
+		assertFalse(result.duplicate());
+		assertEquals("Contributor proposal", masterQuestionText(fixture.master()));
+		assertEquals(WorkAssignmentLedger.State.COMPLETE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		fixture.master().verifyIntegrity();
 	}
 
 	@Test
@@ -195,30 +289,26 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
-	void masterApplicationRejectsStaleReviewedRevision() throws Exception {
+	void masterApplicationRejectsUnjustifiedIdenticalSkip() throws Exception {
 		Fixture fixture = fixture();
-		Path archive = publish(fixture, "Contributor proposal", "apply-stale.examwork");
+		Path archive = publish(fixture, "Already accepted content", "apply-identical.examwork");
 		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
 		UUID packageId = intake.receive(archive).received().packageId();
+		assertThrows(SQLException.class, () -> execute(fixture.master(), """
+				UPDATE questions
+				SET question_text = 'Already accepted content'
+				WHERE id = 81
+				"""));
 		ExchangeRecord proposal = intake.proposedChanges(packageId).getFirst();
 		var key = new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId());
-		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
-				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY), "Review before coordinator edit");
 
-		// Independent master modification after the review.
-		execute(fixture.master(), """
-				UPDATE questions
-				SET question_text = 'Later coordinator correction'
-				WHERE id = 81
-				""");
-		MasterContributionApplicationCoordinator coordinator = new MasterContributionApplicationCoordinator(
-				fixture.master());
-		assertThrows(SQLException.class, () -> coordinator.execute(review.reviewId()));
-
-		// Both application evidence and proposed mutation must roll back.
-		assertTrue(coordinator.find(review.reviewId()).isEmpty());
-		assertEquals("Later coordinator correction", masterQuestionText(fixture.master()));
-		fixture.master().verifyIntegrity();
+		// A skip is valid only when the current master content
+		// genuinely matches the proposal. The locked baseline does not.
+		assertThrows(IllegalArgumentException.class,
+				() -> new MasterContributionDecisionLedger(fixture.master()).record(packageId,
+						Map.of(key, MasterContributionDecisionLedger.Choice.SKIP_IDENTICAL),
+						"Claiming content was already accepted"));
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
 	}
 
 	@Test
@@ -320,36 +410,6 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
-	void masterDecisionsRecordIdenticalSkipWithResultRevision() throws Exception {
-		Fixture fixture = fixture();
-		Path archive = publish(fixture, "Already present", "decision-identical.examwork");
-		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
-		UUID packageId = intake.receive(archive).received().packageId();
-		var proposal = intake.proposedChanges(packageId).getFirst();
-
-		// Simulate another master operation producing the same content.
-		try (Connection connection = fixture.master().openConnection();
-				Statement statement = connection.createStatement()) {
-			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
-					UPDATE questions
-					SET question_text = 'Already present'
-					WHERE id = 81
-					"""));
-		}
-		var key = new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId());
-		MasterContributionDecisionLedger ledger = new MasterContributionDecisionLedger(fixture.master());
-		var recorded = ledger.record(packageId, Map.of(key, MasterContributionDecisionLedger.Choice.SKIP_IDENTICAL),
-				"Master already contains identical content");
-		var decision = recorded.decisions().getFirst();
-		assertEquals(MasterContributionReviewPlanner.ReviewStatus.SKIP_IDENTICAL, decision.preliminaryStatus());
-		assertEquals(MasterContributionDecisionLedger.Choice.SKIP_IDENTICAL, decision.choice());
-		assertNotNull(decision.resultRevisionId());
-		assertEquals(decision.masterRevisionId(), decision.resultRevisionId());
-		assertEquals(recorded, ledger.find(recorded.reviewId()).orElseThrow());
-		assertEquals("Already present", masterQuestionText(fixture.master()));
-	}
-
-	@Test
 	void masterDecisionsRejectHeldLineageForApplication() throws Exception {
 		Fixture fixture = fixture();
 		publish(fixture, "First revision", "held-first.examwork");
@@ -373,6 +433,26 @@ class ContributionArchiveInspectorTest {
 				recorded.decisions().getFirst().preliminaryStatus());
 		assertNull(recorded.decisions().getFirst().resultRevisionId());
 		assertEquals(recorded, ledger.find(recorded.reviewId()).orElseThrow());
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+	}
+
+	@Test
+	void masterDecisionsRejectIdenticalSkipWithoutMatchingMasterContent() throws Exception {
+		Fixture fixture = fixture();
+		Path archive = publish(fixture, "Already present", "decision-identical.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		ExchangeRecord proposal = intake.proposedChanges(packageId).getFirst();
+		assertThrows(SQLException.class, () -> execute(fixture.master(), """
+				UPDATE questions
+				SET question_text = 'Already present'
+				WHERE id = 81
+				"""));
+		var key = new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId());
+		MasterContributionDecisionLedger ledger = new MasterContributionDecisionLedger(fixture.master());
+		assertThrows(IllegalArgumentException.class,
+				() -> ledger.record(packageId, Map.of(key, MasterContributionDecisionLedger.Choice.SKIP_IDENTICAL),
+						"Master already contains identical content"));
 		assertEquals("Biology question", masterQuestionText(fixture.master()));
 	}
 
@@ -464,7 +544,7 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
-	void masterIntakeRetainsProposalsAndDoesNotOverwriteCoordinatorEdits() throws Exception {
+	void masterIntakeRetainsSubsequentReturnAsHeldEvidence() throws Exception {
 		Fixture fixture = fixture();
 		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
 		Path firstArchive = publish(fixture, "Contributor version one", "return-1.examwork");
@@ -474,12 +554,12 @@ class ContributionArchiveInspectorTest {
 		assertEquals(1, first.received().returnNumber());
 		assertEquals(1, intake.proposedChanges(first.received().packageId()).size());
 
-		// An intervening master correction must never be overwritten by intake.
-		execute(fixture.master(), "UPDATE questions SET question_text = 'Coordinator correction' WHERE id = 81");
+		// A second return from the original assignment remains
+		// historical evidence; it is not another actionable package.
 		Path secondArchive = publish(fixture, "Contributor version two", "return-2.examwork");
 		var second = intake.receive(secondArchive);
 		assertFalse(second.duplicate());
-		assertEquals(MasterContributionIntake.IntakeStatus.READY_FOR_REVIEW, second.received().status());
+		assertEquals(MasterContributionIntake.IntakeStatus.HELD_LINEAGE, second.received().status());
 		assertEquals(first.received().packageId(), second.received().previousPackageId());
 		assertEquals(2, second.received().returnNumber());
 		assertEquals(1, intake.proposedChanges(second.received().packageId()).size());
@@ -487,60 +567,29 @@ class ContributionArchiveInspectorTest {
 		var replay = intake.receive(firstArchive);
 		assertTrue(replay.duplicate());
 		assertEquals(first.received(), replay.received());
-		try (Connection connection = fixture.master().openConnection();
-				Statement statement = connection.createStatement();
-				ResultSet result = statement.executeQuery("SELECT question_text FROM questions WHERE id = 81")) {
-			assertTrue(result.next());
-			assertEquals("Coordinator correction", result.getString(1));
-		}
+
+		// Neither receipt has modified the authoritative master.
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
 		fixture.master().verifySchema();
 		fixture.master().verifyIntegrity();
 	}
 
 	@Test
-	void masterReviewHoldsDeletedBaselineQuestion() throws Exception {
+	void masterReviewCannotClaimUnapprovedConcurrentContent() throws Exception {
 		Fixture fixture = fixture();
-		Path archive = publish(fixture, "Contributor revision", "review-missing-master.examwork");
-		var intake = new MasterContributionIntake(fixture.master());
-		var receipt = intake.receive(archive);
-
-		// Remove the master Answer before its parent Question to preserve
-		// foreign-key integrity. Its original baseline remains in the ledger.
-		try (Connection connection = fixture.master().openConnection();
-				Statement statement = connection.createStatement()) {
-			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, "DELETE FROM answers WHERE question_id = 81"));
-			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, "DELETE FROM questions WHERE id = 81"));
-		}
-		var plan = new MasterContributionReviewPlanner(fixture.master()).plan(receipt.received().packageId());
-		assertEquals(1, plan.assessments().size());
-		assertEquals(MasterContributionReviewPlanner.ReviewStatus.HELD_MISSING_MASTER,
-				plan.assessments().getFirst().status());
-		fixture.master().verifyIntegrity();
-	}
-
-	@Test
-	void masterReviewHoldsStaleMasterRevision() throws Exception {
-		Fixture fixture = fixture();
-		Path archive = publish(fixture, "Contributor revision", "review-stale.examwork");
-		var intake = new MasterContributionIntake(fixture.master());
-		var receipt = intake.receive(archive);
-
-		// The master changes independently after issuing the baseline.
-		try (Connection connection = fixture.master().openConnection();
-				Statement statement = connection.createStatement()) {
-			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
-					UPDATE questions
-					SET question_text = 'Master correction'
-					WHERE id = 81
-					"""));
-		}
-		var plan = new MasterContributionReviewPlanner(fixture.master()).plan(receipt.received().packageId());
+		Path archive = publish(fixture, "Matching text", "review-identical.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		assertThrows(SQLException.class, () -> execute(fixture.master(), """
+				UPDATE questions
+				SET question_text = 'Matching text'
+				WHERE id = 81
+				"""));
+		var plan = new MasterContributionReviewPlanner(fixture.master()).plan(packageId);
 		var assessment = plan.assessments().getFirst();
-		assertEquals(MasterContributionReviewPlanner.ReviewStatus.HELD_STALE_MASTER, assessment.status());
-		assertNotNull(assessment.masterRevisionId());
-		assertNotNull(assessment.masterRecordSha256());
-		assertFalse(assessment.masterRevisionId().equals(assessment.baselineRevisionId()));
-		assertEquals("Master correction", masterQuestionText(fixture.master()));
+		assertEquals(MasterContributionReviewPlanner.ReviewStatus.READY_UPDATE, assessment.status());
+		assertEquals(assessment.baselineRevisionId(), assessment.masterRevisionId());
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
 	}
 
 	@Test
@@ -563,6 +612,48 @@ class ContributionArchiveInspectorTest {
 				after.assessments().getFirst().status());
 		assertEquals(MasterContributionIntake.IntakeStatus.HELD_LINEAGE,
 				intake.find(second.received().packageId()).orElseThrow().status());
+	}
+
+	@Test
+	void masterReviewPreservesBaselineAgainstCoordinatorCorrection() throws Exception {
+		Fixture fixture = fixture();
+		Path archive = publish(fixture, "Contributor revision", "review-stale.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		assertThrows(SQLException.class, () -> execute(fixture.master(), """
+				UPDATE questions
+				SET question_text = 'Master correction'
+				WHERE id = 81
+				"""));
+		var plan = new MasterContributionReviewPlanner(fixture.master()).plan(packageId);
+		var assessment = plan.assessments().getFirst();
+		assertEquals(MasterContributionReviewPlanner.ReviewStatus.READY_UPDATE, assessment.status());
+		assertEquals(assessment.baselineRevisionId(), assessment.masterRevisionId());
+		assertNotNull(assessment.masterRecordSha256());
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+	}
+
+	@Test
+	void masterReviewProtectsBaselineQuestionAgainstDeletion() throws Exception {
+		Fixture fixture = fixture();
+		Path archive = publish(fixture, "Contributor revision", "review-missing-master.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+
+		// Neither the Answer nor its parent Question may be deleted
+		// from the master while a contributor holds this assignment.
+		assertThrows(SQLException.class, () -> execute(fixture.master(), """
+				DELETE FROM answers
+				WHERE question_id = 81
+				"""));
+		assertThrows(SQLException.class, () -> execute(fixture.master(), """
+				DELETE FROM questions
+				WHERE id = 81
+				"""));
+		var plan = new MasterContributionReviewPlanner(fixture.master()).plan(packageId);
+		assertEquals(1, plan.assessments().size());
+		assertEquals(MasterContributionReviewPlanner.ReviewStatus.READY_UPDATE, plan.assessments().getFirst().status());
+		fixture.master().verifyIntegrity();
 	}
 
 	@Test
@@ -656,136 +747,112 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
-	void masterReviewSkipsAlreadyPresentContent() throws Exception {
-		Fixture fixture = fixture();
-		Path archive = publish(fixture, "Matching text", "review-identical.examwork");
-		var intake = new MasterContributionIntake(fixture.master());
-		var receipt = intake.receive(archive);
-		try (Connection connection = fixture.master().openConnection();
-				Statement statement = connection.createStatement()) {
-			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
-					UPDATE questions
-					SET question_text = 'Matching text'
-					WHERE id = 81
-					"""));
-		}
-		var plan = new MasterContributionReviewPlanner(fixture.master()).plan(receipt.received().packageId());
-		var assessment = plan.assessments().getFirst();
-		assertEquals(MasterContributionReviewPlanner.ReviewStatus.SKIP_IDENTICAL, assessment.status());
-		assertNotNull(assessment.masterRevisionId());
-		assertFalse(assessment.masterRevisionId().equals(assessment.baselineRevisionId()));
-		assertEquals("Matching text", masterQuestionText(fixture.master()));
-	}
-
-	@Test
 	void migrationToVersion35InstallsProtectedIntakeTables() throws Exception {
-
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("v35-migration.db"));
-
 		database.initialiseSchema();
-		assertEquals(39, database.schemaVersion());
-
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-
 			try (Statement statement = connection.createStatement()) {
 				HistoricalSchemaFixture.removeVersion35Objects(statement);
-
 				assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
 						UPDATE schema_version
 						SET version = 34
-						WHERE version = 39
-						"""));
-
+						WHERE version = %d
+						""".formatted(SqliteDatabase.latestSchemaVersion())));
 				connection.commit();
 			} catch (SQLException | RuntimeException failure) {
 				connection.rollback();
 				throw failure;
 			}
 		}
-
 		assertEquals(34, database.schemaVersion());
 		database.verifySchema();
-
 		database.initialiseSchema();
-
-		assertEquals(39, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		database.verifySchema();
 		database.verifyIntegrity();
 	}
 
 	@Test
 	void migrationToVersion36InstallsProtectedReviewTables() throws Exception {
-
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("v36-migration.db"));
-
 		database.initialiseSchema();
-		assertEquals(39, database.schemaVersion());
-
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-
 			try (Statement statement = connection.createStatement()) {
 				HistoricalSchemaFixture.removeVersion36Objects(statement);
-
 				assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
 						UPDATE schema_version
 						SET version = 35
-						WHERE version = 39
-						"""));
-
+						WHERE version = %d
+						""".formatted(SqliteDatabase.latestSchemaVersion())));
 				connection.commit();
 			} catch (SQLException | RuntimeException failure) {
 				connection.rollback();
 				throw failure;
 			}
 		}
-
 		assertEquals(35, database.schemaVersion());
 		database.verifySchema();
-
 		database.initialiseSchema();
-
-		assertEquals(39, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		database.verifySchema();
 		database.verifyIntegrity();
 	}
 
 	@Test
 	void migrationToVersion37InstallsProtectedApplicationTables() throws Exception {
-
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("v37-migration.db"));
-
 		database.initialiseSchema();
-		assertEquals(39, database.schemaVersion());
-
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-
 			try (Statement statement = connection.createStatement()) {
 				HistoricalSchemaFixture.removeVersion37Objects(statement);
-
 				assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
 						UPDATE schema_version
 						SET version = 36
-						WHERE version = 39
-						"""));
-
+						WHERE version = %d
+						""".formatted(SqliteDatabase.latestSchemaVersion())));
 				connection.commit();
 			} catch (SQLException | RuntimeException failure) {
 				connection.rollback();
 				throw failure;
 			}
 		}
-
 		assertEquals(36, database.schemaVersion());
 		database.verifySchema();
-
 		database.initialiseSchema();
-
-		assertEquals(39, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		database.verifySchema();
 		database.verifyIntegrity();
+	}
+
+	@Test
+	void ordinaryMasterCaptureWritesAreBlockedWhileAssigned() throws Exception {
+		Fixture fixture = fixture();
+		SQLException questionFailure = assertThrows(SQLException.class, () -> execute(fixture.master(), """
+				UPDATE questions
+				SET question_text = 'Unauthorised master correction'
+				WHERE id = 81
+				"""));
+		assertTrue(questionFailure.getMessage().contains("Assigned Exam capture is read-only on the master"));
+		SQLException answerFailure = assertThrows(SQLException.class, () -> execute(fixture.master(), """
+				UPDATE answers
+				SET answer_text = 'Unauthorised master answer'
+				WHERE id = 91
+				"""));
+		assertTrue(answerFailure.getMessage().contains("Assigned Exam capture is read-only on the master"));
+		assertThrows(SQLException.class, () -> execute(fixture.master(), """
+				DELETE FROM answers
+				WHERE id = 91
+				"""));
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+		assertEquals(WorkAssignmentLedger.State.ACTIVE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		fixture.master().verifyIntegrity();
 	}
 
 	@Test

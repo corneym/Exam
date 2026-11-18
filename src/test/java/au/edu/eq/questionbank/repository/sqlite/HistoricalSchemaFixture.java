@@ -412,11 +412,9 @@ public final class HistoricalSchemaFixture {
 	 * @throws NullPointerException if statement is null
 	 */
 	public static void removeVersion39Objects(Statement statement) throws SQLException {
-
 		Objects.requireNonNull(statement, "statement");
-
+		removeVersion40Objects(statement);
 		List<String> triggerNames = new ArrayList<>();
-
 		try (PreparedStatement lookup = statement.getConnection().prepareStatement("""
 				SELECT name
 				FROM sqlite_master
@@ -424,18 +422,51 @@ public final class HistoricalSchemaFixture {
 				  AND name GLOB 'trg_master_exam_structure_*'
 				ORDER BY name
 				"""); ResultSet result = lookup.executeQuery()) {
-
 			while (result.next()) {
 				String name = result.getString(1);
-
 				if (!name.matches("trg_master_exam_structure_[a-z_]+")) {
 					throw new SQLException("Unexpected master Exam structure trigger: " + name);
 				}
-
 				triggerNames.add(name);
 			}
 		}
+		for (String name : triggerNames) {
+			statement.execute("DROP TRIGGER \"" + name + "\"");
+		}
+	}
 
+	/**
+	 * Removes version 40 master capture and return-validation triggers from a
+	 * disposable historical schema test database.
+	 *
+	 * <p>
+	 * This method must never be used against production data.
+	 *
+	 * @param statement statement for the disposable database
+	 * @throws SQLException         if trigger discovery or removal fails
+	 * @throws NullPointerException if statement is null
+	 */
+	public static void removeVersion40Objects(Statement statement) throws SQLException {
+		Objects.requireNonNull(statement, "statement");
+		List<String> triggerNames = new ArrayList<>();
+		try (PreparedStatement lookup = statement.getConnection().prepareStatement("""
+				SELECT name
+				FROM sqlite_master
+				WHERE type = 'trigger'
+				  AND (
+				      name GLOB 'trg_master_capture_*'
+				      OR name GLOB 'trg_master_return_*'
+				  )
+				ORDER BY name
+				"""); ResultSet result = lookup.executeQuery()) {
+			while (result.next()) {
+				String name = result.getString(1);
+				if (!name.matches("trg_master_(capture|return)_[a-z_]+")) {
+					throw new SQLException("Unexpected version 40 trigger: " + name);
+				}
+				triggerNames.add(name);
+			}
+		}
 		for (String name : triggerNames) {
 			statement.execute("DROP TRIGGER \"" + name + "\"");
 		}

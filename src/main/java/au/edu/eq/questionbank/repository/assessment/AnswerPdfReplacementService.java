@@ -53,11 +53,9 @@ public final class AnswerPdfReplacementService {
 	 */
 	public AnswerPdfReplacementService(SqliteDatabase database, ManagedDataLayout managedDataLayout,
 			Path legacyPdfRoot) {
-
 		Objects.requireNonNull(database, "database");
 		Objects.requireNonNull(managedDataLayout, "managedDataLayout");
 		Objects.requireNonNull(legacyPdfRoot, "legacyPdfRoot");
-
 		examWriter = new SqliteExamWriter(database);
 		answerWriter = new SqliteAnswerWriter(database, examWriter);
 		hashService = new SourceDocumentHashService();
@@ -75,10 +73,8 @@ public final class AnswerPdfReplacementService {
 	 * @throws NullPointerException if either argument is null
 	 */
 	public AnswerPdfReplacementService(SqliteDatabase database, Path pdfRoot) {
-
 		Objects.requireNonNull(database, "database");
 		Objects.requireNonNull(pdfRoot, "pdfRoot");
-
 		examWriter = new SqliteExamWriter(database);
 		answerWriter = new SqliteAnswerWriter(database, examWriter);
 		hashService = new SourceDocumentHashService();
@@ -117,25 +113,19 @@ public final class AnswerPdfReplacementService {
 	 *                                  unavailable for modification
 	 */
 	public Result replace(ExamBooklet booklet, Path replacementPdf) throws IOException, SQLException {
-
 		Objects.requireNonNull(booklet, "booklet");
 		Objects.requireNonNull(replacementPdf, "replacementPdf");
-
 		examWriter.requireCoordinatorStructureEdit();
-
 		if (managedDataLayout == null) {
 			masterGuard.requireUnlocked(booklet.getExam().getId());
 			return replaceManagedPdf(booklet, replacementPdf);
 		}
-
 		try (var publicationLock = ManagedAssetPublicationLock.acquire(managedDataLayout.dataRoot())) {
-
 			publicationLock.requireNoPendingPublications();
 
 			// Refuse even a byte-identical replacement while assigned,
 			// because the operation can back-fill source metadata.
 			masterGuard.requireUnlocked(booklet.getExam().getId());
-
 			return replaceManagedPdf(booklet, replacementPdf);
 		}
 	}

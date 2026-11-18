@@ -682,33 +682,24 @@ class SubjectSnapshotExporterTest {
 	void issueRegistersAnImmutableWholeExamBaseline() throws Exception {
 		Fixture fixture = createAssignmentFixture("registered-assignment");
 		Path archive = fixture.exportDirectory().resolve("registered.examwork");
-
 		WorkAssignmentExporter.Request request = assignmentRequest(archive, true);
-
 		WorkAssignmentLedger.Assignment issued = new WorkAssignmentIssuanceService(fixture.database(), fixture.layout())
 				.issue(request);
-
 		assertEquals(request.assignmentId(), issued.assignmentId());
 		assertEquals(WorkAssignmentLedger.State.ACTIVE, issued.state());
-
 		WorkAssignmentLedger ledger = new WorkAssignmentLedger(fixture.database());
-
 		WorkAssignmentLedger.Baseline baseline = ledger.readBaseline(issued.assignmentId());
 
 		// The published archive and the retained SQLite baseline
 		// must contain identical immutable records and asset references.
 		try (ZipFile zip = new ZipFile(archive.toFile())) {
 			ZipEntry recordsEntry = zip.getEntry("baseline/initial-records.jsonl");
-
 			ZipEntry assetsEntry = zip.getEntry(ExamWorkAssetIndex.INDEX_PATH);
-
 			assertNotNull(recordsEntry);
 			assertNotNull(assetsEntry);
-
 			try (var input = zip.getInputStream(recordsEntry)) {
 				assertArrayEquals(input.readAllBytes(), baseline.records());
 			}
-
 			try (var input = zip.getInputStream(assetsEntry)) {
 				assertArrayEquals(input.readAllBytes(), baseline.assets());
 			}
@@ -720,17 +711,13 @@ class SubjectSnapshotExporterTest {
 				SET exam_name = 'Changed by coordinator'
 				WHERE id = 31
 				"""));
-
 		assertTrue(blocked.getMessage().contains("Assigned Exam is read-only on the master"));
-
 		assertEquals(WorkAssignmentLedger.State.ACTIVE, ledger.find(issued.assignmentId()).orElseThrow().state());
 
 		// The coordinator explicitly closes the assignment.
 		WorkAssignmentLedger.Assignment closed = ledger.closeWithoutReturn(issued.assignmentId(),
 				"Contributor unavailable");
-
 		assertEquals(WorkAssignmentLedger.State.CANCELLED, closed.state());
-
 		assertTrue(ledger.findActiveForExam(issued.examPortableId()).isEmpty());
 
 		// The master can now be changed. This must not rewrite
@@ -740,12 +727,9 @@ class SubjectSnapshotExporterTest {
 				SET question_text = 'Changed after assignment closure'
 				WHERE id = 81
 				""");
-
 		WorkAssignmentLedger.Baseline retained = ledger.readBaseline(issued.assignmentId());
-
 		assertArrayEquals(baseline.records(), retained.records());
 		assertArrayEquals(baseline.assets(), retained.assets());
-
 		assertEquals(WorkAssignmentLedger.State.CANCELLED, ledger.find(issued.assignmentId()).orElseThrow().state());
 	}
 
