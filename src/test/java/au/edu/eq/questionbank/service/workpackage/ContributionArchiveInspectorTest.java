@@ -983,211 +983,128 @@ class ContributionArchiveInspectorTest {
 
 	@Test
 	void masterReceiptExportsAcceptedCanonicalMapping() throws Exception {
-
 		Fixture fixture = fixture();
-
 		Path contribution = publish(fixture, "Accepted receipt contribution", "accepted-for-receipt.examwork");
-
 		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
-
 		UUID packageId = intake.receive(contribution).received().packageId();
-
 		ExchangeRecord proposed = intake.proposedChanges(packageId).getFirst();
-
 		var key = new MasterContributionDecisionLedger.RecordKey(proposed.recordType(), proposed.recordId());
-
 		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
 				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY),
 				"Accept contribution and issue receipt");
-
 		var application = new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId());
-
 		Path destination = directory.resolve("accepted-receipt.examwork");
-
 		ExamWorkManifest receipt = new MasterContributionReceiptExporter(fixture.master()).export(review.reviewId(),
 				destination);
-
 		assertEquals(ExamWorkPackageType.IMPORT_RECEIPT, receipt.packageType());
-
 		assertEquals(fixture.assignmentId(), receipt.assignmentId());
-
 		assertEquals(application.completedAt(), receipt.createdAt());
-
 		assertArchiveWellFormed(destination, fixture.master());
-
 		List<ExchangeRecord> records = new ExamWorkJsonlCodec()
 				.readRecords(new ByteArrayInputStream(readEntry(destination, "receipts/import-results.jsonl")));
-
 		assertEquals(2, records.size());
-
 		ExchangeRecord context = records.stream().filter(record -> record.recordType().equals("IMPORT_RECEIPT_CONTEXT"))
 				.findFirst().orElseThrow();
-
 		assertEquals(review.reviewId().toString(), context.values().path("review_id").asText());
-
 		assertEquals(packageId.toString(), context.values().path("contribution_package_id").asText());
-
 		assertEquals(receipt.packageId().toString(), context.values().path("receipt_package_id").asText());
-
 		ExchangeRecord outcome = records.stream()
 				.filter(record -> record.recordType().equals("IMPORT_RECEIPT_QUESTION")).findFirst().orElseThrow();
-
 		assertEquals(proposed.recordId(), outcome.recordId());
-
 		assertEquals("APPLIED", outcome.values().path("outcome").asText());
-
 		assertEquals("QUEUE_APPLY", outcome.values().path("decision").asText());
-
 		assertEquals(application.outcomes().getFirst().resultingRevisionId().toString(),
 				outcome.values().path("resulting_revision_id").asText());
-
 		assertFalse(outcome.values().path("canonical_record_id").asText().isBlank());
-
 		assertEquals(WorkAssignmentLedger.State.COMPLETE,
 				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
-
 		assertEquals("Accepted receipt contribution", masterQuestionText(fixture.master()));
-
 		fixture.master().verifySchema();
 		fixture.master().verifyIntegrity();
 	}
 
 	@Test
 	void masterReceiptPreservesRejectedReviewOutcome() throws Exception {
-
 		Fixture fixture = fixture();
-
 		Path contribution = publish(fixture, "Rejected contributor text", "rejected-for-receipt.examwork");
-
 		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
-
 		UUID packageId = intake.receive(contribution).received().packageId();
-
 		ExchangeRecord proposed = intake.proposedChanges(packageId).getFirst();
-
 		var key = new MasterContributionDecisionLedger.RecordKey(proposed.recordType(), proposed.recordId());
-
 		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
 				Map.of(key, MasterContributionDecisionLedger.Choice.REJECT),
 				"Preserve master; reject contributor proposal");
-
 		var result = new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId());
-
 		assertEquals(MasterContributionApplicationCoordinator.Outcome.REJECTED, result.outcomes().getFirst().outcome());
-
 		Path receiptPath = directory.resolve("rejection-receipt.examwork");
-
 		new MasterContributionReceiptExporter(fixture.master()).export(review.reviewId(), receiptPath);
-
 		List<ExchangeRecord> records = new ExamWorkJsonlCodec()
 				.readRecords(new ByteArrayInputStream(readEntry(receiptPath, "receipts/import-results.jsonl")));
-
 		ExchangeRecord rejected = records.stream()
 				.filter(record -> record.recordType().equals("IMPORT_RECEIPT_QUESTION")).findFirst().orElseThrow();
-
 		assertEquals("REJECTED", rejected.values().path("outcome").asText());
-
 		assertEquals("REJECT", rejected.values().path("decision").asText());
-
 		assertTrue(rejected.values().path("canonical_record_id").isNull());
-
 		assertTrue(rejected.values().path("resulting_revision_id").isNull());
 
 		// Rejected work must not overwrite the master Question.
 		assertEquals("Biology question", masterQuestionText(fixture.master()));
-
 		assertArchiveWellFormed(receiptPath, fixture.master());
 		fixture.master().verifyIntegrity();
 	}
 
 	@Test
 	void masterReceiptRejectsIncompleteApplication() throws Exception {
-
 		Fixture fixture = fixture();
-
 		Path contribution = publish(fixture, "Not yet reconciled", "pending-for-receipt.examwork");
-
 		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
-
 		UUID packageId = intake.receive(contribution).received().packageId();
-
 		ExchangeRecord proposed = intake.proposedChanges(packageId).getFirst();
-
 		var key = new MasterContributionDecisionLedger.RecordKey(proposed.recordType(), proposed.recordId());
-
 		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
 				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY),
 				"Review recorded but application pending");
-
 		Path destination = directory.resolve("premature-receipt.examwork");
-
 		SQLException failure = assertThrows(SQLException.class,
 				() -> new MasterContributionReceiptExporter(fixture.master()).export(review.reviewId(), destination));
-
 		assertTrue(failure.getMessage().contains("Receipt requires a completed application"));
-
 		assertFalse(Files.exists(destination));
-
 		assertEquals(WorkAssignmentLedger.State.ACTIVE,
 				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
-
 		assertEquals("Biology question", masterQuestionText(fixture.master()));
-
 		fixture.master().verifyIntegrity();
 	}
 
 	@Test
 	void masterReceiptRepeatedExportIsDeterministic() throws Exception {
-
 		Fixture fixture = fixture();
-
 		Path contribution = publish(fixture, "Receipt replay contribution", "replay-for-receipt.examwork");
-
 		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
-
 		UUID packageId = intake.receive(contribution).received().packageId();
-
 		ExchangeRecord proposed = intake.proposedChanges(packageId).getFirst();
-
 		var key = new MasterContributionDecisionLedger.RecordKey(proposed.recordType(), proposed.recordId());
-
 		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
 				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY),
 				"Accept once; export same receipt repeatedly");
-
 		MasterContributionApplicationCoordinator coordinator = new MasterContributionApplicationCoordinator(
 				fixture.master());
-
 		coordinator.execute(review.reviewId());
-
 		MasterContributionReceiptExporter exporter = new MasterContributionReceiptExporter(fixture.master());
-
 		Path first = directory.resolve("receipt-first.examwork");
-
 		Path second = directory.resolve("receipt-second.examwork");
-
 		ExamWorkManifest firstManifest = exporter.export(review.reviewId(), first);
-
 		ExamWorkManifest secondManifest = exporter.export(review.reviewId(), second);
-
 		assertEquals(firstManifest.packageId(), secondManifest.packageId());
-
 		assertEquals(firstManifest, secondManifest);
-
 		assertArrayEquals(Files.readAllBytes(first), Files.readAllBytes(second));
 
 		// Existing archives are never intentionally overwritten.
 		byte[] originalBytes = Files.readAllBytes(first);
-
 		assertThrows(IOException.class, () -> exporter.export(review.reviewId(), first));
-
 		assertArrayEquals(originalBytes, Files.readAllBytes(first));
-
 		assertTrue(coordinator.execute(review.reviewId()).duplicate());
-
 		assertEquals(WorkAssignmentLedger.State.COMPLETE,
 				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
-
 		fixture.master().verifyIntegrity();
 	}
 
