@@ -364,14 +364,28 @@ class WorkAssignmentInstallationCoordinatorTest {
 		assertArrayEquals(original.records(), contributorBaseline.records());
 		assertArrayEquals(original.assets(), contributorBaseline.assets());
 
-		// Subsequent coordinator edits do not rewrite the issued
-		// immutable baseline.
-		execute(fixture.sourceDatabase(), """
+		// An ACTIVE assignment makes the coordinator's Exam
+		// read-only. An attempted edit must be rejected.
+		SQLException blocked = assertThrows(SQLException.class, () -> execute(fixture.sourceDatabase(), """
 				UPDATE questions
 				SET question_text = 'Edited after assignment issuance'
 				WHERE id = 81
-				""");
+				"""));
+		assertTrue(blocked.getMessage().contains("Assigned Exam capture is read-only on the master"));
+
+		// The attempted mutation must not alter the master Question,
+		// the issued baseline, or the ACTIVE assignment state.
+		assertEquals(1, count(fixture.sourceDatabase(), """
+				SELECT COUNT(*)
+				FROM questions
+				WHERE id = 81
+				  AND question_text = 'Biology question'
+				"""));
 		assertArrayEquals(original.records(), ledger.readBaseline(assignmentId).records());
+		assertArrayEquals(original.assets(), ledger.readBaseline(assignmentId).assets());
+		assertEquals(WorkAssignmentLedger.State.ACTIVE, ledger.find(assignmentId).orElseThrow().state());
+
+		// Clear selection without deleting the installed assignment.
 		sessions.clearActive();
 		assertTrue(sessions.active().isEmpty());
 		assertTrue(sessions.find(assignmentId).isPresent());
@@ -383,11 +397,15 @@ class WorkAssignmentInstallationCoordinatorTest {
 		reopenedSessions.select(assignmentId);
 		assertEquals(assignmentId, reopenedSessions.active().orElseThrow().assignmentId());
 
-		// Re-importing the original package is idempotent.
+		// Re-importing the original package must be idempotent.
 		var replay = installer.install(issuedPath);
 		assertTrue(replay.replay());
-		assertEquals(1, count(reopened, "SELECT COUNT(*) FROM " + "contributor_assignment_sessions"));
+		assertEquals(1, count(reopened, """
+				SELECT COUNT(*)
+				FROM contributor_assignment_sessions
+				"""));
 		assertArrayEquals(original.records(), reopenedSessions.readBaseline(assignmentId).records());
+		assertArrayEquals(original.assets(), reopenedSessions.readBaseline(assignmentId).assets());
 		fixture.sourceDatabase().verifyIntegrity();
 		reopened.verifyIntegrity();
 	}
