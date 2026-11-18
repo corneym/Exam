@@ -57,7 +57,7 @@ class NonUiSuitePartitionCoverageTest {
 			assertFalse(discovered.isEmpty(), () -> "No tests discovered for " + batch.getSimpleName());
 			System.out.printf("%s: %d discovered identifiers%n", batch.getSimpleName(), discovered.size());
 			for (String identifier : discovered) {
-				assignments.computeIfAbsent(identifier, ignored -> new ArrayList<>()).add(batch.getSimpleName());
+				assignments.computeIfAbsent(identifier, _ -> new ArrayList<>()).add(batch.getSimpleName());
 			}
 		}
 		Set<String> missing = new TreeSet<>(expected);

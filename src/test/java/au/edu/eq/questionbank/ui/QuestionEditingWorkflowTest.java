@@ -470,19 +470,15 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 		Question question = captureQuestion(robot, "EDIT-HIGHLIGHT");
 		WaitForAsyncUtils.asyncFx(() -> {
 
-			// The regression occurs only when Search begins from the Dashboard home
-			// surface. Remove the Capture fixture's open PDF before mounting Dashboard.
+			// Search must begin from Dashboard Home without an open PDF.
 			pdfWorkspace().closeExamPdf();
 			invoke(application, "showCorpusDashboardHome", new Class<?>[0]);
 			return null;
 		}).get();
 		assertNull(pdfWorkspace().getExamPdfSession());
-		assertTrue(robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
+		assertTrue(evaluateOnFx(robot, () -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent()));
 		Platform.runLater(() -> {
 			try {
-
-				// Search is modal, so leave the test thread available to drive its real
-				// controls.
 				invoke(application, "showQuestionSearch", new Class<?>[] { Stage.class, ApplicationConfig.class },
 						primaryStage, applicationConfig);
 			} catch (Exception exception) {
@@ -490,52 +486,50 @@ class QuestionEditingWorkflowTest extends QuestionBankApplicationUiTestBase {
 			}
 		});
 
-		// Search inherits the application-level Working Subject and starts its search
-		// without requiring another Subject-selection action.
+		// The modal Search dialog changes the scene graph asynchronously.
+		// All scene-graph traversal must occur on the FX Application Thread.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#question-search-results").tryQuery().isPresent());
-		ListView<Object> results = listView(robot, "#question-search-results");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> results.getItems().stream()
-				.anyMatch(result -> searchResultQuestion(result).getId() == question.getId()));
-		Object selectedResult = results.getItems().stream()
-				.filter(result -> searchResultQuestion(result).getId() == question.getId()).findFirst().orElseThrow();
+				() -> evaluateOnFx(robot, () -> robot.lookup("#question-search-results").tryQuery().isPresent()));
+		ListView<Object> results = WaitForAsyncUtils.asyncFx(() -> listView(robot, "#question-search-results")).get();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> results.getItems().stream()
+				.anyMatch(result -> searchResultQuestion(result).getId() == question.getId())));
+		Object selectedResult = WaitForAsyncUtils.asyncFx(() -> results.getItems().stream()
+				.filter(result -> searchResultQuestion(result).getId() == question.getId()).findFirst().orElseThrow())
+				.get();
 		robot.interact(() -> results.getSelectionModel().select(selectedResult));
-		Button editQuestion = lookup(robot, "#question-search-edit-question", Button.class);
-		assertFalse(editQuestion.isDisabled());
+		Button editQuestion = WaitForAsyncUtils
+				.asyncFx(() -> lookup(robot, "#question-search-edit-question", Button.class)).get();
+		assertFalse(evaluateOnFx(robot, editQuestion::isDisabled));
 
-		// Edit Question closes Search and must replace Dashboard Home with the prepared
-		// Question/PDF workspace.
+		// Editing closes Search and opens the Question/PDF workspace.
 		fireControl(robot, editQuestion);
 		waitForDialogHidden(robot, "Search Questions");
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup("#cancel-question-edit").tryQuery().filter(node -> node.isVisible()).isPresent());
-		assertTrue(robot.lookup("#capture-workspace").tryQuery().isPresent());
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot,
+				() -> robot.lookup("#cancel-question-edit").tryQuery().filter(node -> node.isVisible()).isPresent()));
+		assertTrue(evaluateOnFx(robot, () -> robot.lookup("#capture-workspace").tryQuery().isPresent()));
 		assertNotNull(pdfWorkspace().getExamPdfSession());
 
-		// Editing an existing Question exposes its authoritative source context without
-		// offering a route to replace that context part-way through the edit.
-		Label activeExamBooklet = lookup(robot, "#active-exam-booklet", Label.class);
-		assertTrue(activeExamBooklet.getText().contains(question.getBooklet().getName()));
-		Button changeExam = lookup(robot, "#change-exam-assets", Button.class);
-		assertFalse(changeExam.isVisible());
-		assertFalse(changeExam.isManaged());
+		// The original Exam and Booklet remain authoritative during editing.
+		Label activeExamBooklet = WaitForAsyncUtils.asyncFx(() -> lookup(robot, "#active-exam-booklet", Label.class))
+				.get();
+		assertTrue(evaluateOnFx(robot, () -> activeExamBooklet.getText().contains(question.getBooklet().getName())));
+		Button changeExam = WaitForAsyncUtils.asyncFx(() -> lookup(robot, "#change-exam-assets", Button.class)).get();
+		assertFalse(evaluateOnFx(robot, changeExam::isVisible));
+		assertFalse(evaluateOnFx(robot, changeExam::isManaged));
 
-		// The persisted Question region must now be visible over the source PDF.
+		// The persisted Question region must appear over the source PDF.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> robot.lookup(".pdf-stored-region-highlight").tryQuery().isPresent());
-		Rectangle highlight = robot.lookup(".pdf-stored-region-highlight").queryAs(Rectangle.class);
-		assertTrue(highlight.isVisible());
+				() -> evaluateOnFx(robot, () -> robot.lookup(".pdf-stored-region-highlight").tryQuery().isPresent()));
+		Rectangle highlight = WaitForAsyncUtils
+				.asyncFx(() -> robot.lookup(".pdf-stored-region-highlight").queryAs(Rectangle.class)).get();
+		assertTrue(evaluateOnFx(robot, highlight::isVisible));
 
-		// Cancelling the editor invokes its completion callback, which restores
-		// Dashboard Home and reopens the modal Search dialog.
+		// Cancel restores Dashboard Home and reopens the modal Search dialog.
 		fireControlLater(robot, "#cancel-question-edit");
 		waitForDialogShowing(robot, "Search Questions");
-
-		// Cancel releases the temporary source document and informational overlay
-		// before Search resumes.
 		assertNull(pdfWorkspace().getExamPdfSession());
-		assertTrue(robot.lookup(".pdf-stored-region-highlight").tryQuery().isEmpty());
-		assertTrue(robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
+		assertTrue(evaluateOnFx(robot, () -> robot.lookup(".pdf-stored-region-highlight").tryQuery().isEmpty()));
+		assertTrue(evaluateOnFx(robot, () -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent()));
 		closeDialog(robot, "Search Questions");
 	}
 
