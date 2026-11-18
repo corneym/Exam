@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 42;
+	private static final int LATEST_SCHEMA_VERSION = 43;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -879,6 +879,14 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v41-to-v42.sql", 42);
 			return 42;
 		}
+		if (version == 42) {
+
+			// Version 43 retains authenticated contributor receipt
+			// acknowledgements and accepted master state separately
+			// from the immutable assignment baseline and local work.
+			executeMigration(connection, "/db/migration-v42-to-v43.sql", 43);
+			return 43;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -1250,6 +1258,9 @@ public final class SqliteDatabase {
 		}
 		if (version >= 42) {
 			verifyVersion42MasterRegionSchema(connection);
+		}
+		if (version >= 43) {
+			verifyVersion43ContributorReceiptSchema(connection);
 		}
 	}
 
@@ -2187,6 +2198,20 @@ public final class SqliteDatabase {
 				throw new SQLException("Unreleased master PDF-region permit");
 			}
 		}
+	}
+
+	private void verifyVersion43ContributorReceiptSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "contributor_receipt_acknowledgements",
+				List.of(column("receipt_package_id", true, 1), column("return_package_id", true, 0),
+						column("assignment_id", true, 0), column("review_id", true, 0),
+						column("master_installation_id", true, 0), column("archive_sha256", true, 0),
+						column("outcomes_jsonl", true, 0), column("master_records_jsonl", true, 0),
+						column("acknowledged_at", true, 0)),
+				List.of(foreignKey("return_package_id", "contributor_return_packages", "package_id"),
+						foreignKey("assignment_id", "contributor_assignment_sessions", "assignment_id")),
+				List.of(List.of("return_package_id")));
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_contributor_receipt_ack_",
+				"contributor receipt acknowledgement", "/db/migration-v42-to-v43.sql");
 	}
 
 	private record ForeignKeyColumn(int sequence, String fromColumn, String targetColumn) {

@@ -84,6 +84,124 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
+	void contributorAcknowledgementHistoryIsDatabaseProtected() throws Exception {
+		Fixture fixture = fixture();
+		Path receipt = exportAppliedReceipt(fixture, "Protected acknowledged revision",
+				"immutable-acknowledgement.examwork");
+		String trustedDigest = HexFormat.of().formatHex(digest(Files.readAllBytes(receipt)));
+		new ContributorReceiptAcknowledgementLedger(fixture.contributor()).acknowledge(receipt, trustedDigest);
+		assertThrows(SQLException.class, () -> execute(fixture.contributor(), """
+				UPDATE contributor_receipt_acknowledgements
+				SET archive_sha256 =
+				    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+				"""));
+		assertThrows(SQLException.class, () -> execute(fixture.contributor(), """
+				DELETE FROM contributor_receipt_acknowledgements
+				"""));
+		fixture.contributor().verifySchema();
+		fixture.contributor().verifyIntegrity();
+	}
+
+	@Test
+	void contributorAcknowledgementIsDurableIdempotentAndNonDestructive() throws Exception {
+		Fixture fixture = fixture();
+		Path receipt = exportAppliedReceipt(fixture, "Acknowledged contributor revision",
+				"durable-acknowledgement.examwork");
+		String trustedDigest = HexFormat.of().formatHex(digest(Files.readAllBytes(receipt)));
+		var sessions = new SqliteContributorAssignmentSessionRepository(fixture.contributor());
+		byte[] originalBaseline = sessions.readBaseline(fixture.assignmentId()).records();
+
+		// Preserve work performed after the returned package was published.
+		execute(fixture.contributor(), """
+				UPDATE questions
+				SET question_text = 'Unreturned local correction'
+				WHERE question_code = '1'
+				""");
+		var ledger = new ContributorReceiptAcknowledgementLedger(fixture.contributor());
+		var acknowledged = ledger.acknowledge(receipt, trustedDigest);
+		assertEquals(fixture.assignmentId(), acknowledged.assignmentId());
+		assertEquals(trustedDigest, acknowledged.archiveSha256());
+		assertEquals(1, acknowledged.outcomes().size());
+		assertEquals(1, acknowledged.acceptedMasterRecords().size());
+		assertEquals("Acknowledged contributor revision",
+				acknowledged.acceptedMasterRecords().getFirst().values().path("question_text").asText());
+		var replay = ledger.acknowledge(receipt, trustedDigest);
+		assertEquals(acknowledged, replay);
+
+		// A new service instance must retrieve the durable result
+		// without relying on any in-memory assessment.
+		var reopened = new ContributorReceiptAcknowledgementLedger(fixture.contributor())
+				.find(acknowledged.receiptPackageId()).orElseThrow();
+		assertEquals(acknowledged, reopened);
+		assertEquals("Unreturned local correction", masterQuestionText(fixture.contributor()));
+		assertArrayEquals(originalBaseline, sessions.readBaseline(fixture.assignmentId()).records());
+		try (Connection connection = fixture.contributor().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("""
+						SELECT COUNT(*)
+						FROM contributor_receipt_acknowledgements
+						""")) {
+			assertTrue(result.next());
+			assertEquals(1, result.getInt(1));
+		}
+		fixture.contributor().verifySchema();
+		fixture.contributor().verifyIntegrity();
+	}
+
+	@Test
+	void contributorAcknowledgementRejectsForgedArchiveWithoutWriting() throws Exception {
+		Fixture fixture = fixture();
+		Path receipt = exportAppliedReceipt(fixture, "Authentic master value", "acknowledgement-authentic.examwork");
+		String trustedDigest = HexFormat.of().formatHex(digest(Files.readAllBytes(receipt)));
+		List<ExchangeRecord> accepted = new ExamWorkJsonlCodec()
+				.readRecords(new ByteArrayInputStream(readEntry(receipt, "records/accepted-master-state.jsonl")));
+		ExchangeRecord original = accepted.getFirst();
+		ObjectNode altered = (ObjectNode) original.values();
+		altered.put("question_text", "Unauthorised replacement");
+		Path forged = repackage(receipt, "records/accepted-master-state.jsonl",
+				encode(List.of(withValues(original, altered))));
+		var ledger = new ContributorReceiptAcknowledgementLedger(fixture.contributor());
+		assertThrows(PackageFormatException.class, () -> ledger.acknowledge(forged, trustedDigest));
+		try (Connection connection = fixture.contributor().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("""
+						SELECT COUNT(*)
+						FROM contributor_receipt_acknowledgements
+						""")) {
+			assertTrue(result.next());
+			assertEquals(0, result.getInt(1));
+		}
+		assertEquals("Authentic master value", masterQuestionText(fixture.contributor()));
+		fixture.contributor().verifyIntegrity();
+	}
+
+	@Test
+	void contributorAcknowledgementRetainsRejectedWork() throws Exception {
+		Fixture fixture = fixture();
+		Path contribution = publish(fixture, "Contributor proposal to reject",
+				"acknowledgement-rejected-source.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(contribution).received().packageId();
+		ExchangeRecord proposal = intake.proposedChanges(packageId).getFirst();
+		var key = new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId());
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
+				Map.of(key, MasterContributionDecisionLedger.Choice.REJECT), "Explicitly reject proposal");
+		new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId());
+		Path receipt = directory.resolve("acknowledgement-rejected.examwork");
+		new MasterContributionReceiptExporter(fixture.master()).export(review.reviewId(), receipt);
+		String trustedDigest = HexFormat.of().formatHex(digest(Files.readAllBytes(receipt)));
+		var acknowledged = new ContributorReceiptAcknowledgementLedger(fixture.contributor()).acknowledge(receipt,
+				trustedDigest);
+		assertEquals(1, acknowledged.outcomes().size());
+		assertTrue(acknowledged.acceptedMasterRecords().isEmpty());
+		assertEquals("REJECTED", acknowledged.outcomes().getFirst().values().path("outcome").asText());
+		assertEquals("Contributor proposal to reject", masterQuestionText(fixture.contributor()));
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+		fixture.contributor().verifyIntegrity();
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
 	void contributorInstallationUsesPortableIdentityIndependentOfLocalPrimaryKey() throws Exception {
 		Fixture fixture = fixture();
 		var masterIdentities = new SqlitePortableIdentityRepository(fixture.master());
@@ -271,6 +389,74 @@ class ContributionArchiveInspectorTest {
 				() -> new ContributorReceiptInspector(fixture.contributor()).inspect(foreign));
 		assertTrue(failure.getMessage().contains("unpublished local return"), failure.getMessage());
 		fixture.contributor().verifyIntegrity();
+	}
+
+	@Test
+	void knownMasterViewPreservesPostReturnEditsAndWorksWithoutArchive() throws Exception {
+		Fixture fixture = fixture();
+		Path receipt = exportAppliedReceipt(fixture, "Accepted authoritative revision", "known-master-view.examwork");
+		String trustedDigest = HexFormat.of().formatHex(digest(Files.readAllBytes(receipt)));
+		var sessions = new SqliteContributorAssignmentSessionRepository(fixture.contributor());
+		byte[] baseline = sessions.readBaseline(fixture.assignmentId()).records();
+		var service = new ContributorKnownMasterRebaseService(fixture.contributor());
+		var initial = service.acknowledgeAndView(receipt, trustedDigest);
+		assertEquals(1, initial.entries().size());
+		assertFalse(initial.supersededByNewerAssignment());
+		assertEquals(ContributorKnownMasterRebaseService.Status.KNOWN_MASTER_RECORDED,
+				initial.entries().getFirst().status());
+
+		// The acknowledgement must survive an independent
+		// local edit and loss of the original receipt archive.
+		execute(fixture.contributor(), """
+				UPDATE questions
+				SET question_text = 'Unreturned work after acknowledgement'
+				WHERE question_code = '1'
+				""");
+		Files.delete(receipt);
+		var afterEdit = service.view(initial.acknowledgement().receiptPackageId());
+		assertEquals(ContributorKnownMasterRebaseService.Status.PRESERVE_LATER_LOCAL_REVISION,
+				afterEdit.entries().getFirst().status());
+		assertEquals("Accepted authoritative revision",
+				afterEdit.entries().getFirst().masterRecord().values().path("question_text").asText());
+		assertEquals("Unreturned work after acknowledgement", masterQuestionText(fixture.contributor()));
+		assertArrayEquals(baseline, sessions.readBaseline(fixture.assignmentId()).records());
+		fixture.contributor().verifyIntegrity();
+	}
+
+	@Test
+	void knownMasterViewRejectsUnacknowledgedReceiptIdentity() throws Exception {
+		Fixture fixture = fixture();
+		var service = new ContributorKnownMasterRebaseService(fixture.contributor());
+		SQLException failure = assertThrows(SQLException.class, () -> service.view(UUID.randomUUID()));
+		assertTrue(failure.getMessage().contains("Receipt has not been acknowledged"));
+		assertEquals("Biology question", masterQuestionText(fixture.contributor()));
+		fixture.contributor().verifyIntegrity();
+	}
+
+	@Test
+	void knownMasterViewRetainsRejectedContributorProposal() throws Exception {
+		Fixture fixture = fixture();
+		Path contribution = publish(fixture, "Contributor text not accepted by master",
+				"known-master-rejected-source.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(contribution).received().packageId();
+		ExchangeRecord proposed = intake.proposedChanges(packageId).getFirst();
+		var key = new MasterContributionDecisionLedger.RecordKey(proposed.recordType(), proposed.recordId());
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
+				Map.of(key, MasterContributionDecisionLedger.Choice.REJECT), "Reject and retain contributor work");
+		new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId());
+		Path receipt = directory.resolve("known-master-rejected.examwork");
+		new MasterContributionReceiptExporter(fixture.master()).export(review.reviewId(), receipt);
+		String trustedDigest = HexFormat.of().formatHex(digest(Files.readAllBytes(receipt)));
+		var view = new ContributorKnownMasterRebaseService(fixture.contributor()).acknowledgeAndView(receipt,
+				trustedDigest);
+		assertEquals(1, view.entries().size());
+		assertEquals(ContributorKnownMasterRebaseService.Status.PRESERVE_REJECTED, view.entries().getFirst().status());
+		assertNull(view.entries().getFirst().masterRecord());
+		assertEquals("Contributor text not accepted by master", masterQuestionText(fixture.contributor()));
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+		fixture.contributor().verifyIntegrity();
+		fixture.master().verifyIntegrity();
 	}
 
 	@Test
@@ -1661,6 +1847,34 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
+	void migrationToVersion43InstallsReceiptAcknowledgementLedger() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(directory.resolve("v43-migration.db"));
+		database.initialiseSchema();
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try (Statement statement = connection.createStatement()) {
+				HistoricalSchemaFixture.removeVersion43Objects(statement);
+				assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
+						UPDATE schema_version
+						SET version = 42
+						WHERE version = 43
+						"""));
+				connection.commit();
+			} catch (SQLException | RuntimeException failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
+		assertEquals(42, database.schemaVersion());
+		database.verifySchema();
+		database.initialiseSchema();
+		assertEquals(43, database.schemaVersion());
+		database.verifySchema();
+		database.verifyIntegrity();
+	}
+
+	@Test
 	void ordinaryMasterCaptureWritesAreBlockedWhileAssigned() throws Exception {
 		Fixture fixture = fixture();
 		SQLException questionFailure = assertThrows(SQLException.class, () -> execute(fixture.master(), """
@@ -1881,33 +2095,6 @@ class ContributionArchiveInspectorTest {
 		assertArrayEquals(baseline, sessions.readBaseline(fixture.assignmentId()).records());
 		fixture.contributor().verifyIntegrity();
 		fixture.master().verifyIntegrity();
-	}
-
-	@Test
-	void trustedReceiptRejectsWellFormedModifiedMasterState() throws Exception {
-		Fixture fixture = fixture();
-		Path original = exportAppliedReceipt(fixture, "Genuine accepted master value", "trusted-original.examwork");
-		String trustedDigest = HexFormat.of().formatHex(digest(Files.readAllBytes(original)));
-		List<ExchangeRecord> accepted = new ExamWorkJsonlCodec()
-				.readRecords(new ByteArrayInputStream(readEntry(original, "records/accepted-master-state.jsonl")));
-		assertEquals(1, accepted.size());
-		ExchangeRecord source = accepted.getFirst();
-		ObjectNode alteredValues = (ObjectNode) source.values();
-
-		// The attacker keeps the canonical UUID and revision but
-		// replaces accepted content and rebuilds a valid archive.
-		alteredValues.put("question_text", "Forged master acknowledgement value");
-		ExchangeRecord forged = withValues(source, alteredValues);
-		Path altered = repackage(original, "records/accepted-master-state.jsonl", encode(List.of(forged)));
-
-		// Internal archive integrity is valid, demonstrating why
-		// a separate coordinator-authenticated digest is required.
-		assertArchiveWellFormed(altered, fixture.contributor());
-		PackageFormatException failure = assertThrows(PackageFormatException.class,
-				() -> new ContributorReceiptInspector(fixture.contributor()).inspectTrusted(altered, trustedDigest));
-		assertTrue(failure.getMessage().contains("independently confirmed SHA-256"), failure.getMessage());
-		assertEquals("Genuine accepted master value", masterQuestionText(fixture.contributor()));
-		fixture.contributor().verifyIntegrity();
 	}
 
 	@Test

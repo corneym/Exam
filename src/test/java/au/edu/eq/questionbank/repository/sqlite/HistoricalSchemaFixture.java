@@ -531,6 +531,7 @@ public final class HistoricalSchemaFixture {
 	 */
 	public static void removeVersion42Objects(Statement statement) throws SQLException {
 		Objects.requireNonNull(statement, "statement");
+		removeVersion43Objects(statement);
 		List<String> triggerNames = new ArrayList<>();
 		try (PreparedStatement lookup = statement.getConnection().prepareStatement("""
 				SELECT name
@@ -552,6 +553,38 @@ public final class HistoricalSchemaFixture {
 		}
 		statement.execute("""
 				DROP TABLE IF EXISTS master_contribution_region_permits
+				""");
+	}
+
+	/**
+	 * Removes receipt acknowledgement structures from a disposable historical
+	 * migration fixture.
+	 *
+	 * <p>
+	 * Production databases must never use this method because receipt
+	 * acknowledgements are permanent audit evidence.
+	 *
+	 * @param statement statement for a disposable test database
+	 * @throws SQLException         if schema cleanup fails
+	 * @throws NullPointerException if statement is null
+	 */
+	public static void removeVersion43Objects(Statement statement) throws SQLException {
+		Objects.requireNonNull(statement, "statement");
+		statement.execute("""
+				DROP TRIGGER IF EXISTS
+				    trg_contributor_receipt_ack_validate
+				""");
+		statement.execute("""
+				DROP TRIGGER IF EXISTS
+				    trg_contributor_receipt_ack_no_update
+				""");
+		statement.execute("""
+				DROP TRIGGER IF EXISTS
+				    trg_contributor_receipt_ack_no_delete
+				""");
+		statement.execute("""
+				DROP TABLE IF EXISTS
+				    contributor_receipt_acknowledgements
 				""");
 	}
 
