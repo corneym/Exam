@@ -520,6 +520,115 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
+	void masterApplicationWithChangedPdfRollsBackAndStaysLocked() throws Exception {
+		Fixture fixture = fixture();
+		Path archive = publish(fixture, "Contributor PDF-dependent work", "pdf-conflict.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		ExchangeRecord proposal = intake.proposedChanges(packageId).getFirst();
+		var key = new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId());
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
+				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY), "Reviewed before PDF conflict");
+		Files.writeString(directory.resolve("coordinator").resolve("subjects/Biology/exams/answers.pdf"),
+				"Externally changed Answer source");
+		MasterContributionApplicationCoordinator coordinator = new MasterContributionApplicationCoordinator(
+				fixture.master());
+		assertThrows(IOException.class, () -> coordinator.execute(review.reviewId(), archive,
+				new ManagedDataLayout(directory.resolve("coordinator"))));
+		assertTrue(coordinator.find(review.reviewId()).isEmpty());
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+		assertEquals(WorkAssignmentLedger.State.ACTIVE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
+	void masterApplicationWithVerifiedArchiveCommitsAndUnlocks() throws Exception {
+		Fixture fixture = fixture();
+		Path archive = publish(fixture, "Verified contributor change", "verified-application.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		ExchangeRecord proposal = intake.proposedChanges(packageId).getFirst();
+		var key = new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId());
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
+				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY),
+				"Apply with verified original PDF dependencies");
+		MasterContributionApplicationCoordinator coordinator = new MasterContributionApplicationCoordinator(
+				fixture.master());
+		var result = coordinator.execute(review.reviewId(), archive,
+				new ManagedDataLayout(directory.resolve("coordinator")));
+		assertFalse(result.duplicate());
+		assertEquals(MasterContributionApplicationCoordinator.Outcome.APPLIED, result.outcomes().getFirst().outcome());
+		assertEquals("Verified contributor change", masterQuestionText(fixture.master()));
+		WorkAssignmentLedger ledger = new WorkAssignmentLedger(fixture.master());
+		var assignment = ledger.find(fixture.assignmentId()).orElseThrow();
+		assertEquals(WorkAssignmentLedger.State.COMPLETE, assignment.state());
+		assertTrue(ledger.findActiveForExam(assignment.examPortableId()).isEmpty());
+
+		// Replay does not require the received archive once a
+		// complete application and closure have been committed.
+		Files.delete(archive);
+		var replay = coordinator.execute(review.reviewId());
+		assertTrue(replay.duplicate());
+		assertEquals(result.outcomes(), replay.outcomes());
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
+	void masterAssetPreflightAcceptsUnchangedSources() throws Exception {
+		Fixture fixture = fixture();
+		Path archive = publish(fixture, "Contributor revision", "verified-assets.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		ManagedDataLayout layout = new ManagedDataLayout(directory.resolve("coordinator"));
+		MasterContributionAssetPreflight preflight = new MasterContributionAssetPreflight(fixture.master(), layout);
+		preflight.verify(packageId, archive);
+
+		// Asset verification is read-only and cannot unlock the Exam.
+		assertEquals(WorkAssignmentLedger.State.ACTIVE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
+	void masterAssetPreflightRejectsChangedMasterPdf() throws Exception {
+		Fixture fixture = fixture();
+		Path archive = publish(fixture, "Contributor revision", "changed-master-pdf.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		Path masterPdf = directory.resolve("coordinator").resolve("subjects/Biology/exams/questions.pdf");
+
+		// Simulate external filesystem tampering. Ordinary managed-PDF
+		// replacement services are already blocked by Batch 02.
+		Files.writeString(masterPdf, "Unexpected replacement of master source PDF");
+		MasterContributionAssetPreflight preflight = new MasterContributionAssetPreflight(fixture.master(),
+				new ManagedDataLayout(directory.resolve("coordinator")));
+		IOException failure = assertThrows(IOException.class, () -> preflight.verify(packageId, archive));
+		assertTrue(failure.getMessage().contains("Master PDF bytes differ from issued dependency"),
+				failure.getMessage());
+		assertEquals(WorkAssignmentLedger.State.ACTIVE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+	}
+
+	@Test
+	void masterAssetPreflightRejectsDifferentReturnArchive() throws Exception {
+		Fixture fixture = fixture();
+		Path firstArchive = publish(fixture, "First contributor revision", "verified-first.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(firstArchive).received().packageId();
+		Path otherArchive = publish(fixture, "Different contributor revision", "verified-second.examwork");
+		MasterContributionAssetPreflight preflight = new MasterContributionAssetPreflight(fixture.master(),
+				new ManagedDataLayout(directory.resolve("coordinator")));
+		IOException failure = assertThrows(IOException.class, () -> preflight.verify(packageId, otherArchive));
+		assertTrue(failure.getMessage().contains("Contribution archive differs from durable intake evidence"));
+		assertEquals(WorkAssignmentLedger.State.ACTIVE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+	}
+
+	@Test
 	void masterDecisionHistoryIsImmutable() throws Exception {
 		Fixture fixture = fixture();
 		Path archive = publish(fixture, "Immutable proposal", "decision-immutable.examwork");

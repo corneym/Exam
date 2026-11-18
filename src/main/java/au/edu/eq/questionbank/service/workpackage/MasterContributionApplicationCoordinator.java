@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.service.workpackage;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
@@ -19,6 +20,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
+import au.edu.eq.questionbank.ManagedAssetPublicationLock;
+import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableContentRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
@@ -181,6 +184,52 @@ public final class MasterContributionApplicationCoordinator {
 				}
 				throw failure;
 			}
+		}
+	}
+
+	/**
+	 * Applies a reviewed contribution after verifying its original archive and
+	 * existing master PDF dependencies.
+	 *
+	 * <p>
+	 * The shared publication lock is held from verification through application.
+	 * Existing terminal applications use the ordinary idempotent replay path
+	 * without requiring the old archive again.
+	 *
+	 * <p>
+	 * This overload does not yet publish new binary content or permit unsupported
+	 * region/image changes. Those operations remain rejected by the existing scalar
+	 * application boundary.
+	 *
+	 * @param reviewId immutable coordinator review identity
+	 * @param archive  original received contribution archive
+	 * @param layout   authoritative master managed-data layout
+	 * @return completed contribution application and replay indicator
+	 * @throws SQLException         if review or application persistence fails
+	 * @throws IOException          if archive, PDF dependencies, publication state
+	 *                              or contribution application is invalid
+	 * @throws NullPointerException if any argument is null
+	 */
+	public ApplicationResult execute(UUID reviewId, Path archive, ManagedDataLayout layout)
+			throws SQLException, IOException {
+		Objects.requireNonNull(reviewId, "reviewId");
+		Objects.requireNonNull(archive, "archive");
+		Objects.requireNonNull(layout, "layout");
+		RecordedReview review = new MasterContributionDecisionLedger(database).find(reviewId)
+				.orElseThrow(() -> new SQLException("Unknown contribution review: " + reviewId));
+
+		// Once an application has committed, replay must not depend
+		// on an old archive or on PDFs changed after assignment closure.
+		if (find(reviewId).isPresent()) {
+			return execute(reviewId);
+		}
+		try (var publicationLock = ManagedAssetPublicationLock.acquire(layout.dataRoot())) {
+			publicationLock.requireNoPendingPublications();
+			new MasterContributionAssetPreflight(database, layout).verify(review.packageId(), archive);
+
+			// The publication lock remains held throughout the
+			// existing atomic application and closure transaction.
+			return execute(reviewId);
 		}
 	}
 
