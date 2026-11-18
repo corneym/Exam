@@ -1,5 +1,6 @@
 package au.edu.eq.questionbank.service.workpackage;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -13,8 +14,8 @@ import java.util.Locale;
 import java.util.UUID;
 import java.util.stream.Stream;
 
-import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -26,6 +27,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ApplicationVersion;
 import au.edu.eq.questionbank.ManagedDataLayout;
+import au.edu.eq.questionbank.TestPdf;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Subject;
@@ -116,12 +118,12 @@ class PortableSemanticImportIntegrationTest {
 		install(fixture, fixture.archive(), null, true);
 		List<String> before = databaseContents(fixture.database());
 		Path source = fixture.config().dataRoot().resolve("subjects/Biology/exams/questions.pdf");
-		String sourceContents = Files.readString(source);
+		byte[] sourceContents = Files.readAllBytes(source);
 		Path crafted = PortableArchiveEditor.rewrite(fixture.archive(), directory.resolve("invalid-replay.examwork"),
 				records -> corrupt(records, "UNIT"));
 		assertThrows(PackageFormatException.class, () -> install(fixture, crafted, null, true));
 		assertEquals(before, databaseContents(fixture.database()));
-		assertEquals(sourceContents, Files.readString(source));
+		assertArrayEquals(sourceContents, Files.readAllBytes(source));
 	}
 
 	private String expectedMessage(String defect) {
@@ -298,7 +300,7 @@ class PortableSemanticImportIntegrationTest {
 		Files.writeString(unrelated, "unrelated");
 		Path pdf = source.dataRoot().resolve("subjects/Biology/exams/questions.pdf");
 		Files.createDirectories(pdf.getParent());
-		Files.writeString(pdf, "Disposable source asset");
+		Files.write(pdf, TestPdf.bytes("Disposable source asset"));
 		execute(sourceDb,
 				"INSERT INTO subjects(id, subject_name) VALUES (1, 'Biology')",
 				"INSERT INTO syllabus_versions(id, subject_id, syllabus_name, is_current) VALUES (1, 1, 'Biology 2025', 1), (2, 1, 'Biology 2019', 0)",

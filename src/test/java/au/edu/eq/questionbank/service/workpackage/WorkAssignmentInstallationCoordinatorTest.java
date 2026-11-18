@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -16,13 +17,20 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import au.edu.eq.questionbank.ApplicationConfig;
+import au.edu.eq.questionbank.ApplicationVersion;
 import au.edu.eq.questionbank.ManagedAssetPublicationLock;
 import au.edu.eq.questionbank.ManagedDataLayout;
+import au.edu.eq.questionbank.TestPdf;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
@@ -45,6 +53,64 @@ class WorkAssignmentInstallationCoordinatorTest {
 
 	@TempDir
 	Path directory;
+
+	@ParameterizedTest
+	@ValueSource(strings = {"assignment_id", "baseline_snapshot_id", "master_installation_id", "subject_id",
+			"exam_id", "current_syllabus_id", "issued_at"})
+	void rejectsInconsistentAssignmentContext(String field) throws Exception {
+		Fixture fixture = fixture();
+		Path archive = PortableArchiveEditor.rewriteRecords(fixture.archive(), directory.resolve("context.examwork"),
+				"records/assignment-context.jsonl", records -> change(records, "WORK_ASSIGNMENT_CONTEXT",
+						values -> values.put(field, UUID.randomUUID().toString())));
+		assertRejectedBeforePublication(fixture, archive);
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = {"expected_question_booklet_count", "expected_answer_file_count"})
+	void rejectsIncorrectDeclaredCounts(String field) throws Exception {
+		rejects(records -> change(records, "EXAM", values -> values.put(field, 99)));
+	}
+
+	@Test
+	void rejectsBookletWithoutRequiredSharedAnswerLink() throws Exception {
+		rejects(records -> change(records, "EXAM_BOOKLET", values -> values.remove("answer_file_id")));
+	}
+
+	@Test
+	void rejectsNonPdfAssetWithMatchingManifestIndexAndSourceHashes() throws Exception {
+		Fixture fixture = fixture();
+		Path archive = PortableArchiveEditor.replaceQuestionPdf(fixture.archive(), directory.resolve("invalid-pdf.examwork"),
+				"%PDF-1.4\nNot a PDF document".getBytes(StandardCharsets.UTF_8));
+		assertRejectedBeforePublication(fixture, archive);
+	}
+
+	@Test
+	void rejectsManifestIntendedMasterDisagreeingWithOriginAndContext() throws Exception {
+		Fixture fixture = fixture();
+		Path archive = PortableArchiveEditor.rewriteContents(fixture.archive(), directory.resolve("master.examwork"),
+				contents -> { }, manifest -> new ExamWorkManifest(manifest.formatVersion(), manifest.packageId(),
+						manifest.packageType(), manifest.createdAt(), manifest.originInstallationId(), UUID.randomUUID(),
+						manifest.subjectId(), manifest.subjectName(), manifest.assignmentId(), manifest.baselineSnapshotId(),
+						manifest.producerApplicationVersion(), manifest.minimumReaderApplicationVersion(),
+						manifest.producerSchemaVersion(), manifest.minimumReaderSchemaVersion(), manifest.scope(), manifest.entries()));
+		assertRejectedBeforePublication(fixture, archive);
+	}
+
+	@Test
+	void rejectsOmittedBookletEvenWhenItsPdfAndSharedAnswerRemain() throws Exception {
+		rejects(records -> records.removeIf(record -> record.recordType().equals("EXAM_BOOKLET")
+				&& record.values().path("booklet_name").asText().equals("Paper 2")));
+	}
+
+	@Test
+	void rejectsSubjectNameDisagreeingWithManifestAndAssetPaths() throws Exception {
+		rejects(records -> change(records, "SUBJECT", values -> values.put("subject_name", "Physics")));
+	}
+
+	@Test
+	void rejectsMissingAnswerFileCount() throws Exception {
+		rejects(records -> change(records, "EXAM", values -> values.remove("expected_answer_file_count")));
+	}
 
 	@Test
 	void assignmentResolvesInterruptedSubjectPublicationBeforeReusingItsDestination() throws Exception {
@@ -420,6 +486,32 @@ class WorkAssignmentInstallationCoordinatorTest {
 		fixture.sourceDatabase().verifyIntegrity();
 	}
 
+	private void rejects(Consumer<List<ExchangeRecord>> edit) throws Exception {
+		Fixture fixture = fixture();
+		Path archive = PortableArchiveEditor.rewrite(fixture.archive(), directory.resolve("crafted.examwork"), edit);
+		assertRejectedBeforePublication(fixture, archive);
+	}
+
+	private void assertRejectedBeforePublication(Fixture fixture, Path archive) throws Exception {
+		Path unrelated = preserveUnrelatedSubject(fixture);
+		new ExamWorkArchiveValidator().validate(archive, ApplicationVersion.current(), SqliteDatabase.latestSchemaVersion());
+		assertThrows(PackageFormatException.class, () -> new WorkAssignmentInstallationCoordinator(fixture.contributor()).install(archive));
+		assertEquals(1, count(fixture.contributorDatabase(), "SELECT COUNT(*) FROM subjects"));
+		for (String table : List.of("exams", "exam_booklets", "source_documents", "contributor_assignment_sessions")) {
+			assertEquals(0, count(fixture.contributorDatabase(), "SELECT COUNT(*) FROM " + table), table);
+		}
+		assertFalse(Files.exists(fixture.contributor().dataRoot().resolve("subjects/Biology")));
+		assertEquals("Unrelated authoritative material", Files.readString(unrelated));
+	}
+
+	private static void change(List<ExchangeRecord> records, String type, Consumer<ObjectNode> edit) {
+		ExchangeRecord record = records.stream().filter(candidate -> candidate.recordType().equals(type)).findFirst().orElseThrow();
+		ObjectNode values = (ObjectNode) record.values();
+		edit.accept(values);
+		records.set(records.indexOf(record), new ExchangeRecord(record.recordVersion(), record.recordType(),
+				record.recordId(), record.revisionId(), record.baselineRevisionId(), values));
+	}
+
 	private void assertAllCommittedFilesVerified(Fixture fixture) throws Exception {
 		var hashes = new SourceDocumentHashService();
 		try (var connection = fixture.contributorDatabase().openConnection();
@@ -478,8 +570,8 @@ class WorkAssignmentInstallationCoordinatorTest {
 				.resolve("subjects/Biology/exams/QCAA/2025/External Assessment/questions.pdf");
 		Path answerPdf = source.dataRoot().resolve("subjects/Biology/exams/QCAA/2025/External Assessment/answers.pdf");
 		Files.createDirectories(questionPdf.getParent());
-		Files.writeString(questionPdf, "Question PDF test content");
-		Files.writeString(answerPdf, "Answer PDF test content");
+		Files.write(questionPdf, TestPdf.bytes("Question PDF test content"));
+		Files.write(answerPdf, TestPdf.bytes("Answer PDF test content"));
 		execute(sourceDatabase, """
 				INSERT INTO subjects (id, subject_name)
 				VALUES (1, 'Biology')

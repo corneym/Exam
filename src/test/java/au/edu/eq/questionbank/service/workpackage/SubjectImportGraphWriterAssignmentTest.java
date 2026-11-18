@@ -20,11 +20,12 @@ import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ManagedDataLayout;
+import au.edu.eq.questionbank.TestPdf;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Subject;
-import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationReview.Key;
 import au.edu.eq.questionbank.service.workpackage.WorkAssignmentArchiveStager.StagedAssignment;
@@ -178,8 +179,8 @@ class SubjectImportGraphWriterAssignmentTest {
 		Path questions = source.dataRoot().resolve("subjects/Biology/exams/questions.pdf");
 		Path answers = source.dataRoot().resolve("subjects/Biology/exams/answers.pdf");
 		Files.createDirectories(questions.getParent());
-		Files.writeString(questions, "Question PDF test content");
-		Files.writeString(answers, "Answer PDF test content");
+		Files.write(questions, TestPdf.bytes("Question PDF test content"));
+		Files.write(answers, TestPdf.bytes("Answer PDF test content"));
 		try (Connection connection = sourceDb.openConnection(); Statement statement = connection.createStatement()) {
 			statement.execute("""
 					INSERT INTO subjects (id, subject_name)

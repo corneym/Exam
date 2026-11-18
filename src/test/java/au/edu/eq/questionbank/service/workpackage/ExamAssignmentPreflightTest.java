@@ -1,5 +1,6 @@
 package au.edu.eq.questionbank.service.workpackage;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -11,10 +12,16 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.Statement;
 
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.pdmodel.encryption.AccessPermission;
+import org.apache.pdfbox.pdmodel.encryption.StandardProtectionPolicy;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import au.edu.eq.questionbank.ManagedDataLayout;
+import au.edu.eq.questionbank.TestPdf;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Subject;
@@ -24,6 +31,67 @@ class ExamAssignmentPreflightTest {
 
 	@TempDir
 	Path directory;
+
+	@ParameterizedTest
+	@ValueSource(strings = {"missing", "directory", "empty", "invalid", "wrong-hash"})
+	void rejectsUnusableQuestionPdfWithoutChangingMaster(String defect) throws Exception {
+		Fixture fixture = fixture();
+		Path source = fixture.questionPdf();
+		switch (defect) {
+		case "missing" -> Files.delete(source);
+		case "directory" -> {
+			Files.delete(source);
+			Files.createDirectory(source);
+		}
+		case "empty" -> Files.write(source, new byte[0]);
+		case "invalid" -> Files.writeString(source, "%PDF-1.4\nInvalid document");
+		case "wrong-hash" -> execute(fixture.database(),
+				"UPDATE source_documents SET content_sha256 = '" + "0".repeat(64) + "' WHERE id = 51");
+		default -> throw new IllegalArgumentException(defect);
+		}
+		byte[] answerBefore = Files.readAllBytes(fixture.answerPdf());
+		assertThrows(IOException.class, () -> fixture.preflight().check(fixture.exam(), false));
+		assertArrayEquals(answerBefore, Files.readAllBytes(fixture.answerPdf()));
+		assertTrue(Files.exists(source) || defect.equals("missing"));
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = {"missing", "directory", "invalid"})
+	void rejectsUnusableSyllabusPdf(String defect) throws Exception {
+		Fixture fixture = fixture();
+		String relative = "subjects/Biology/curriculum/2025/sources/syllabus.pdf";
+		Path source = directory.resolve("data").resolve(relative);
+		Files.createDirectories(source.getParent());
+		if (defect.equals("directory")) {
+			Files.createDirectory(source);
+		} else if (defect.equals("invalid")) {
+			Files.writeString(source, "%PDF-1.4\nInvalid syllabus");
+		}
+		execute(fixture.database(), "UPDATE syllabus_versions SET source_pdf_path = '" + relative + "' WHERE id = 12");
+		assertThrows(IOException.class, () -> fixture.preflight().check(fixture.exam(), false));
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = {"", "required-password"})
+	void acceptsPdfReadableWithoutPasswordAndRejectsPasswordRequired(String userPassword) throws Exception {
+		Fixture fixture = fixture();
+		try (var pdf = Loader.loadPDF(TestPdf.bytes("Protected PDF"))) {
+			pdf.protect(new StandardProtectionPolicy("owner-password", userPassword, new AccessPermission()));
+			pdf.save(fixture.questionPdf().toFile());
+		}
+		if (userPassword.isEmpty()) {
+			assertEquals(1, fixture.preflight().check(fixture.exam(), false).booklets().size());
+		} else {
+			assertThrows(IOException.class, () -> fixture.preflight().check(fixture.exam(), false));
+		}
+	}
+
+	@Test
+	void rejectsNonPdfBytesEvenWithoutStoredHash() throws Exception {
+		Fixture fixture = fixture();
+		Files.writeString(fixture.questionPdf(), "%PDF-1.4\nThis is not a PDF document");
+		assertThrows(IOException.class, () -> fixture.preflight().check(fixture.exam(), false));
+	}
 
 	@Test
 	void acceptsSyllabusWithSubtopicInsteadOfDescriptor() throws Exception {
@@ -177,8 +245,8 @@ class ExamAssignmentPreflightTest {
 		Path questionPdf = layout.resolve("subjects/Biology/exams/questions.pdf");
 		Path answerPdf = layout.resolve("subjects/Biology/exams/answers.pdf");
 		Files.createDirectories(questionPdf.getParent());
-		Files.writeString(questionPdf, "Question PDF fixture");
-		Files.writeString(answerPdf, "Answer PDF fixture");
+		Files.write(questionPdf, TestPdf.bytes("Question PDF fixture"));
+		Files.write(answerPdf, TestPdf.bytes("Answer PDF fixture"));
 		execute(database, """
 				INSERT INTO subjects (id, subject_name)
 				VALUES (1, 'Biology')

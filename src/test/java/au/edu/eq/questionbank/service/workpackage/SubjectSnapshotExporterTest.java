@@ -28,20 +28,21 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
-
 import javax.imageio.ImageIO;
 
+import org.apache.pdfbox.Loader;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.ApplicationVersion;
 import au.edu.eq.questionbank.ManagedDataLayout;
+import au.edu.eq.questionbank.TestPdf;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.repository.identity.SqliteExamAssignmentGraphReader;
-import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqliteSubjectGraphReader.SubjectGraph;
 import au.edu.eq.questionbank.repository.identity.SqliteSubjectPortableRecordReader;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
@@ -204,7 +205,9 @@ class SubjectSnapshotExporterTest {
 			ZipEntry entry = zip.getEntry(packagedPdf.archivePath());
 			assertNotNull(entry);
 			try (var input = zip.getInputStream(entry)) {
-				assertEquals("Biology questions PDF", new String(input.readAllBytes(), StandardCharsets.UTF_8));
+				try (var pdf = Loader.loadPDF(input.readAllBytes())) {
+					assertEquals("Biology questions PDF", pdf.getDocumentInformation().getTitle());
+				}
 			}
 		}
 	}
@@ -1030,7 +1033,11 @@ class SubjectSnapshotExporterTest {
 	private void createManagedFile(ManagedDataLayout layout, String relativePath, String contents) throws IOException {
 		Path destination = layout.resolve(relativePath);
 		Files.createDirectories(destination.getParent());
-		Files.writeString(destination, contents, StandardCharsets.UTF_8);
+		if (relativePath.endsWith(".pdf")) {
+			Files.write(destination, TestPdf.bytes(contents));
+		} else {
+			Files.writeString(destination, contents, StandardCharsets.UTF_8);
+		}
 	}
 
 	private void execute(SqliteDatabase database, String... statements) throws SQLException {
