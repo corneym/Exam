@@ -2,8 +2,9 @@ package au.edu.eq.questionbank.service.workpackage;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -20,6 +21,7 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import au.edu.eq.questionbank.ApplicationVersion;
+import au.edu.eq.questionbank.TestPdf;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkArchiveWriter.EntrySource;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkAssetIndex.Reference;
@@ -32,8 +34,8 @@ final class WorkAssignmentArchiveFixture {
 
 	static final String QUESTION_PATH = "subjects/Biology/exams/QCAA/2025/External Assessment/questions.pdf";
 	static final String ANSWER_PATH = "subjects/Biology/exams/QCAA/2025/External Assessment/answers.pdf";
-	static final byte[] QUESTION_BYTES = "%PDF-1.4\nQuestion fixture\n".getBytes(StandardCharsets.UTF_8);
-	static final byte[] ANSWER_BYTES = "%PDF-1.4\nAnswer fixture\n".getBytes(StandardCharsets.UTF_8);
+	static final byte[] QUESTION_BYTES = pdf("Question fixture");
+	static final byte[] ANSWER_BYTES = pdf("Answer fixture");
 
 	private WorkAssignmentArchiveFixture() {
 	}
@@ -63,6 +65,8 @@ final class WorkAssignmentArchiveFixture {
 		ObjectNode exam = fields("subject_id", id(1).toString(), "provider_id", id(4).toString(),
 				"exam_name", "External Assessment");
 		exam.put("exam_year", 2025);
+		exam.put("expected_question_booklet_count", 2);
+		exam.put("expected_answer_file_count", 1);
 		List<ExchangeRecord> records = List.of(record("SUBJECT", 1, fields("subject_name", "Biology")),
 				record("SYLLABUS_VERSION", 2, current),
 				record("CURRICULUM_NODE", 13, unit),
@@ -131,6 +135,14 @@ final class WorkAssignmentArchiveFixture {
 			new ExamWorkArchiveWriter().write(manifest, sources, output);
 		}
 		return destination;
+	}
+
+	private static byte[] pdf(String title) {
+		try {
+			return TestPdf.bytes(title);
+		} catch (IOException failure) {
+			throw new UncheckedIOException(failure);
+		}
 	}
 
 	private static String assetPath(byte[] bytes) throws Exception {

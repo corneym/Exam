@@ -34,7 +34,8 @@ import au.edu.eq.questionbank.service.workpackage.WorkAssignmentManagedAssetGate
  * <p>
  * The staged archive is independently validated immediately before extraction.
  * All extracted bytes are checked against their declared length and SHA-256,
- * and written to private files without replacing any existing entry.
+ * and written to private files without replacing any existing entry. PDFs must
+ * also open successfully with the application's PDF reader before publication.
  *
  * <p>
  * Physical assets are extracted once even when multiple Booklets or other
@@ -180,6 +181,9 @@ public final class WorkAssignmentAssetExtractor {
 		String actualHash = HexFormat.of().formatHex(digest.digest());
 		if (length != entry.size() || !actualHash.equals(entry.sha256())) {
 			throw new IOException("Extracted assignment asset failed integrity check: " + entry.path());
+		}
+		if (entry.path().endsWith(".pdf")) {
+			WorkAssignmentPdfValidator.validate(target, entry.path());
 		}
 		return new StagedAsset(entry.path(), target, entry.sha256(), entry.size());
 	}

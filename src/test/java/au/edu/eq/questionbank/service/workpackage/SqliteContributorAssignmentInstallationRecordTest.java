@@ -173,6 +173,9 @@ class SqliteContributorAssignmentInstallationRecordTest {
 					    (31, 1, 21, 2025, 'Chemistry Exam'),
 					    (32, 1, 21, 2024, 'Other Exam')
 					""");
+			statement.execute("UPDATE exams SET expected_question_booklet_count = 1, expected_answer_file_count = 0 WHERE id = 31");
+			statement.execute("INSERT INTO source_documents (id, relative_path) VALUES (41, 'subjects/Chemistry/exams/questions.pdf')");
+			statement.execute("INSERT INTO exam_booklets (id, exam_id, source_document_id, booklet_name) VALUES (51, 31, 41, 'Paper 1')");
 		}
 		return database;
 	}
@@ -184,6 +187,8 @@ class SqliteContributorAssignmentInstallationRecordTest {
 		var node = identities.requireByLocalId(EntityType.CURRICULUM_NODE, 12);
 		var provider = identities.requireByLocalId(EntityType.EXAM_PROVIDER, 21);
 		var exam = identities.requireByLocalId(EntityType.EXAM, 31);
+		var source = identities.requireByLocalId(EntityType.SOURCE_DOCUMENT, 41);
+		var booklet = identities.requireByLocalId(EntityType.EXAM_BOOKLET, 51);
 		UUID assignmentId = UUID.randomUUID();
 		UUID baselineId = UUID.randomUUID();
 		UUID masterId = UUID.randomUUID();
@@ -204,9 +209,15 @@ class SqliteContributorAssignmentInstallationRecordTest {
 		ObjectNode examValues = values();
 		examValues.put("subject_id", subject.portableId().toString());
 		examValues.put("provider_id", provider.portableId().toString());
+		examValues.put("expected_question_booklet_count", 1);
+		examValues.put("expected_answer_file_count", 0);
+		ObjectNode bookletValues = values();
+		bookletValues.put("exam_id", exam.portableId().toString());
+		bookletValues.put("source_document_id", source.portableId().toString());
 		List<ExchangeRecord> records = List.of(record("SUBJECT", subject, subjectValues),
 				record("SYLLABUS_VERSION", syllabus, syllabusValues), record("CURRICULUM_NODE", node, nodeValues),
-				record("EXAM_PROVIDER", provider, providerValues), record("EXAM", exam, examValues));
+				record("EXAM_PROVIDER", provider, providerValues), record("EXAM", exam, examValues),
+				record("SOURCE_DOCUMENT", source, values()), record("EXAM_BOOKLET", booklet, bookletValues));
 		ObjectNode contextValues = values();
 		contextValues.put("assignment_id", assignmentId.toString());
 		contextValues.put("baseline_snapshot_id", baselineId.toString());
@@ -220,7 +231,10 @@ class SqliteContributorAssignmentInstallationRecordTest {
 		contextValues.put("contributor_name", "Test Contributor");
 		var context = new ExchangeRecord(1, "WORK_ASSIGNMENT_CONTEXT", assignmentId, baselineId, null, contextValues);
 		return new WorkAssignmentPackageInspector.Inspection(manifest, records, records, context,
-				new ExamWorkAssetIndex(List.of()), "a".repeat(64));
+				new ExamWorkAssetIndex(List.of(new ExamWorkAssetIndex.Reference(
+						"assets/sha256/aa/" + "a".repeat(64) + ".pdf", "a".repeat(64), 1, "application/pdf",
+						"subjects/Chemistry/exams/questions.pdf", "SOURCE_DOCUMENT", source.portableId(), "SOURCE_PDF"))),
+				"a".repeat(64));
 	}
 
 	private ExchangeRecord record(String type, SqlitePortableIdentityRepository.Identity identity, ObjectNode values) {
