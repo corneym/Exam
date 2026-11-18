@@ -49,7 +49,8 @@ public final class ExamAssignmentPreflight {
 	}
 
 	/**
-	 * Verifies that one complete Exam can be issued for offline work.
+	 * Verifies that one complete Exam can be issued for offline work, including
+	 * opening every required PDF with the application's PDF reader.
 	 *
 	 * @param requestedExam        Exam selected by the coordinator
 	 * @param legacyCaptureEnabled whether the original 2019 syllabus must be
@@ -144,6 +145,7 @@ public final class ExamAssignmentPreflight {
 		if (Files.size(path) == 0) {
 			throw new IOException("Assignment blocked: empty source file: " + description);
 		}
+		WorkAssignmentPdfValidator.validate(path, description);
 		String expectedHash = document.getContentSha256();
 		if (expectedHash == null) {
 			return;
@@ -188,6 +190,11 @@ public final class ExamAssignmentPreflight {
 					|| !Files.isRegularFile(pdf, LinkOption.NOFOLLOW_LINKS) || !Files.isReadable(pdf)) {
 				throw new IOException("Assignment blocked: missing syllabus PDF for " + version.getName());
 			}
+			Path subjectRoot = layout.subjectDirectory(version.getSubject().getName());
+			if (!pdf.toRealPath().startsWith(subjectRoot.toRealPath())) {
+				throw new IOException("Assignment blocked: syllabus PDF escapes Subject storage");
+			}
+			WorkAssignmentPdfValidator.validate(pdf, "syllabus " + version.getName());
 		}
 	}
 

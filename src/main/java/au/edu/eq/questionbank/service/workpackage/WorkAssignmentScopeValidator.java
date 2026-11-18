@@ -44,7 +44,8 @@ public final class WorkAssignmentScopeValidator {
 	}
 
 	/**
-	 * Validates assignment domain ownership and reference closure.
+	 * Validates assignment identity, declared asset completeness, domain ownership
+	 * and reference closure.
 	 *
 	 * <p>
 	 * Call only after normal archive integrity validation. The supplied record
@@ -74,7 +75,14 @@ public final class WorkAssignmentScopeValidator {
 		UUID examId = manifest.scope().examIds().getFirst();
 		ExchangeRecord subject = requireOnly(index, "SUBJECT", subjectId);
 		ExchangeRecord exam = requireOnly(index, "EXAM", examId);
+		if (!manifest.subjectName().equals(subject.values().path("subject_name").asText())) {
+			throw new PackageFormatException("Assignment Subject name disagrees with manifest");
+		}
+		if (!manifest.originInstallationId().equals(manifest.intendedMasterInstallationId())) {
+			throw new PackageFormatException("Assignment originating and intended master identities disagree");
+		}
 		requireLink(exam, "subject_id", subject.recordId());
+		requireCompleteExam(index, exam);
 
 		// All assessment entities must belong to the one Exam,
 		// either directly or through a selected parent record.
@@ -332,6 +340,32 @@ public final class WorkAssignmentScopeValidator {
 		UUID actual = parseId(context.values().path(field), "assignment context " + field);
 		if (!expected.equals(actual)) {
 			throw new PackageFormatException("Assignment context identity mismatch: " + field);
+		}
+	}
+
+	private void requireCompleteExam(Map<String, Map<UUID, ExchangeRecord>> index, ExchangeRecord exam)
+			throws PackageFormatException {
+		Collection<ExchangeRecord> booklets = recordsOf(index, "EXAM_BOOKLET");
+		Collection<ExchangeRecord> answers = recordsOf(index, "ANSWER_FILE");
+		requireDeclaredCount(exam, "expected_question_booklet_count", booklets.size(), 1);
+		requireDeclaredCount(exam, "expected_answer_file_count", answers.size(), 0);
+		for (ExchangeRecord booklet : booklets) {
+			if (!answers.isEmpty()) {
+				requireParent(index, booklet, "answer_file_id", "ANSWER_FILE");
+			}
+		}
+	}
+
+	private void requireDeclaredCount(ExchangeRecord exam, String field, int actual, int minimum)
+			throws PackageFormatException {
+		JsonNode expected = exam.values().path(field);
+
+		// Reference closure alone cannot detect an omitted, otherwise unreferenced
+		// Booklet.
+		if (!expected.isIntegralNumber() || !expected.canConvertToInt() || expected.intValue() < minimum
+				|| expected.intValue() != actual) {
+			throw new PackageFormatException(
+					"Incomplete whole-Exam assignment: " + field + " must match included records (" + actual + ")");
 		}
 	}
 

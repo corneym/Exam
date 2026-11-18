@@ -30,6 +30,7 @@ import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ManagedDataLayout;
+import au.edu.eq.questionbank.TestPdf;
 import au.edu.eq.questionbank.model.Answer;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamProvider;
@@ -587,8 +588,8 @@ class ContributorAssignmentDashboardWorkflowTest {
 	private void prepareMaster(SqliteDatabase database, Path dataRoot) throws Exception {
 		Path pdfRoot = dataRoot.resolve("subjects/Biology/exams");
 		Files.createDirectories(pdfRoot);
-		Files.writeString(pdfRoot.resolve("questions.pdf"), "Question PDF fixture");
-		Files.writeString(pdfRoot.resolve("answers.pdf"), "Answer PDF fixture");
+		Files.write(pdfRoot.resolve("questions.pdf"), TestPdf.bytes("Question PDF fixture"));
+		Files.write(pdfRoot.resolve("answers.pdf"), TestPdf.bytes("Answer PDF fixture"));
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.execute("""
 					INSERT INTO subjects (id, subject_name)
