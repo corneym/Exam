@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 40;
+	private static final int LATEST_SCHEMA_VERSION = 41;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -866,6 +866,13 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v39-to-v40.sql", 40);
 			return 40;
 		}
+		if (version == 40) {
+
+			// Version 41 permits individual approved Question/Answer
+			// scalar mutations while retaining the master Exam lock.
+			executeMigration(connection, "/db/migration-v40-to-v41.sql", 41);
+			return 41;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -1229,8 +1236,11 @@ public final class SqliteDatabase {
 		if (version >= 39) {
 			verifyVersion39MasterExamStructureSchema(connection);
 		}
-		if (version >= 40) {
+		if (version == 40) {
 			verifyVersion40MasterCaptureSchema(connection);
+		}
+		if (version >= 41) {
+			verifyVersion41MasterContributionScalarSchema(connection);
 		}
 	}
 
@@ -2100,6 +2110,49 @@ public final class SqliteDatabase {
 				"/db/migration-v39-to-v40.sql");
 		SqliteMigrationTriggerVerifier.verify(connection, "trg_master_return_", "master return reconciliation",
 				"/db/migration-v39-to-v40.sql");
+	}
+
+	private void verifyVersion41MasterContributionScalarSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "master_contribution_write_permits",
+				List.of(column("singleton_id", false, 1), column("review_id", true, 0), column("record_type", true, 0),
+						column("record_id", true, 0), column("operation", true, 0), column("exam_local_id", true, 0)),
+				List.of(foreignKey("review_id", "contribution_application_batches", "review_id"),
+						foreignKey("exam_local_id", "exams", "id")),
+				List.of());
+		verifyTableSchema(connection, "contribution_application_entity_mappings",
+				List.of(column("review_id", true, 1), column("record_type", true, 2), column("record_id", true, 3),
+						column("canonical_record_id", true, 0), column("local_id", true, 0)),
+				List.of(), List.of());
+		if (!hasExactCompositeForeignKey(connection, "master_contribution_write_permits",
+				List.of("review_id", "record_type", "record_id"), "contribution_review_decisions",
+				List.of("review_id", "record_type", "record_id"))) {
+			throw new SQLException("Master write permit review foreign key is missing");
+		}
+		if (!hasExactCompositeForeignKey(connection, "contribution_application_entity_mappings",
+				List.of("review_id", "record_type", "record_id"), "contribution_application_results",
+				List.of("review_id", "record_type", "record_id"))) {
+			throw new SQLException("Contribution canonical mapping foreign key is missing");
+		}
+
+		// Reconstruct the capture trigger definitions across v40 and
+		// v41, including the explicit DROP/CREATE replacements.
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
+				"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql");
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_master_return_", "master return reconciliation",
+				"/db/migration-v39-to-v40.sql");
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_master_application_", "master contribution application",
+				"/db/migration-v40-to-v41.sql");
+
+		// Write permits are transient transaction evidence.
+		// None may survive a successful application.
+		try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery("""
+				SELECT COUNT(*)
+				FROM master_contribution_write_permits
+				""")) {
+			if (!result.next() || result.getLong(1) != 0) {
+				throw new SQLException("Unreleased master contribution write permit");
+			}
+		}
 	}
 
 	private record ForeignKeyColumn(int sequence, String fromColumn, String targetColumn) {

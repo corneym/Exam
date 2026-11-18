@@ -160,7 +160,7 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 	void migratesVersion39ToMasterCaptureAndReturnGuards() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("version-40-upgrade.db"));
 		database.initialiseSchema();
-		assertEquals(40, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try (Statement statement = connection.createStatement()) {
@@ -168,8 +168,8 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 				statement.execute("""
 						UPDATE schema_version
 						SET version = 39
-						WHERE version = 40
-						""");
+						WHERE version = %d
+						""".formatted(SqliteDatabase.latestSchemaVersion()));
 				connection.commit();
 			} catch (SQLException | RuntimeException failure) {
 				connection.rollback();
@@ -179,7 +179,7 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 		assertEquals(39, database.schemaVersion());
 		database.verifySchema();
 		database.initialiseSchema();
-		assertEquals(40, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		database.verifySchema();
 		database.verifyIntegrity();
 	}
@@ -195,6 +195,19 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 		}
 		SQLException failure = assertThrows(SQLException.class, database::verifySchema);
 		assertTrue(failure.getMessage().contains("Missing master capture lock trigger"));
+	}
+
+	@Test
+	void missingMasterContributionPermitTriggerFailsVerification() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(directory.resolve("missing-application-guard.db"));
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					DROP TRIGGER trg_master_application_permit_validate
+					""");
+		}
+		SQLException failure = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(failure.getMessage().contains("Missing master contribution application trigger"));
 	}
 
 	@Test

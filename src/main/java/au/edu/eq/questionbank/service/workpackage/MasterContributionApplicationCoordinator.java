@@ -10,6 +10,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
@@ -18,14 +19,10 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-
 import au.edu.eq.questionbank.repository.identity.SqlitePortableContentRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
-import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 import au.edu.eq.questionbank.service.workpackage.MasterContributionDecisionLedger.Choice;
 import au.edu.eq.questionbank.service.workpackage.MasterContributionDecisionLedger.RecordDecision;
 import au.edu.eq.questionbank.service.workpackage.MasterContributionDecisionLedger.RecordKey;
@@ -62,29 +59,26 @@ public final class MasterContributionApplicationCoordinator {
 	}
 
 	/**
-	 * Atomically applies a complete, approved contribution review and closes the
-	 * corresponding coordinator assignment.
+	 * Applies a complete coordinator-approved return, records canonical entity
+	 * mappings and closes its assignment atomically.
 	 *
 	 * <p>
-	 * All supported domain changes, terminal result evidence, the audited
-	 * reconciled-return closure and release of the Exam lock commit in one SQLite
-	 * transaction. Any failure rolls all of them back.
+	 * Supported queued operations are new Questions and Answers, existing Question
+	 * text/classification updates, and existing Answer text updates. Region, image
+	 * and structural changes remain unsupported. All approved Question operations
+	 * run before Answer operations so new Answers can reference newly imported
+	 * Questions.
 	 *
 	 * <p>
-	 * An assignment must be ACTIVE and have exactly one READY_FOR_REVIEW first
-	 * return. Unsupported queued changes or held choices are rejected. Only
-	 * reviewed changes to existing Question text are currently supported.
+	 * Domain changes, application results, canonical mappings, assignment closure
+	 * and Exam unlock commit together. Any failure rolls the entire transaction
+	 * back.
 	 *
-	 * <p>
-	 * A replay of an already applied review returns the persisted outcomes only
-	 * when the corresponding reconciled closure exists.
-	 *
-	 * @param reviewId recorded coordinator review identity
-	 * @return committed application results and replay indicator
-	 * @throws SQLException         if review evidence, assignment state, revisions
-	 *                              or database constraints prevent atomic
-	 *                              application and closure
-	 * @throws IOException          if stored portable content cannot be processed
+	 * @param reviewId immutable coordinator review identity
+	 * @return terminal application outcomes and replay indicator
+	 * @throws SQLException         if validation, dependencies, review evidence or
+	 *                              persistence prevent atomic application
+	 * @throws IOException          if portable content cannot be processed
 	 * @throws NullPointerException if reviewId is null
 	 */
 	public ApplicationResult execute(UUID reviewId) throws SQLException, IOException {
@@ -93,17 +87,15 @@ public final class MasterContributionApplicationCoordinator {
 				.orElseThrow(() -> new SQLException("Unknown contribution review: " + reviewId));
 		List<ExchangeRecord> incoming = new MasterContributionIntake(database).proposedChanges(review.packageId());
 		Map<RecordKey, ExchangeRecord> proposedByKey = new HashMap<>();
-		for (ExchangeRecord record : incoming) {
-			RecordKey key = new RecordKey(record.recordType(), record.recordId());
-			if (proposedByKey.putIfAbsent(key, record) != null) {
+		for (ExchangeRecord proposed : incoming) {
+			RecordKey key = new RecordKey(proposed.recordType(), proposed.recordId());
+			if (proposedByKey.putIfAbsent(key, proposed) != null) {
 				throw new SQLException("Duplicate received proposal identity");
 			}
 		}
 		if (proposedByKey.size() != review.decisions().size()) {
-			throw new SQLException("Review does not match its complete received proposal set");
+			throw new SQLException("Review does not match its complete proposal set");
 		}
-
-		// Reject unsupported work before entering the write transaction.
 		for (RecordDecision decision : review.decisions()) {
 			ExchangeRecord proposed = proposedByKey.get(decision.key());
 			if (proposed == null || !proposed.revisionId().equals(decision.proposedRevisionId())
@@ -111,45 +103,73 @@ public final class MasterContributionApplicationCoordinator {
 				throw new SQLException("Review and immutable proposal evidence disagree");
 			}
 			if (decision.choice() == Choice.HOLD) {
-				throw new SQLException("Held contribution decisions cannot be applied");
+				throw new SQLException("Held decisions cannot be applied");
 			}
-			if (decision.choice() == Choice.QUEUE_APPLY && (!"QUESTION".equals(decision.key().recordType())
-					|| decision.preliminaryStatus() != ReviewStatus.READY_UPDATE)) {
-				throw new SQLException("Only existing Question updates are supported");
+			if (decision.choice() == Choice.QUEUE_APPLY) {
+				boolean supportedType = "QUESTION".equals(decision.key().recordType())
+						|| "ANSWER".equals(decision.key().recordType());
+				boolean supportedStatus = decision.preliminaryStatus() == ReviewStatus.READY_UPDATE
+						|| decision.preliminaryStatus() == ReviewStatus.READY_NEW;
+				if (!supportedType || !supportedStatus) {
+					throw new SQLException("Only reviewed Question and Answer " + "scalar operations are supported");
+				}
 			}
 		}
+
+		// Apply parents before dependent Answers. This ordering is
+		// independent of the alphabetical order of stored review rows.
+		List<RecordDecision> ordered = new ArrayList<>(review.decisions());
+		ordered.sort(Comparator.comparingInt(decision -> switch (decision.key().recordType()) {
+		case "QUESTION" -> 0;
+		case "ANSWER" -> 1;
+		default -> 2;
+		}));
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
-				Optional<ApplicationResult> existing = find(connection, reviewId);
-				if (existing.isPresent()) {
-
-					// A historical application without matching closure
-					// evidence is not silently treated as an unlocked Exam.
+				Optional<ApplicationResult> previous = find(connection, reviewId);
+				if (previous.isPresent()) {
 					requireReconciledClosure(connection, review.packageId());
-					ApplicationResult previous = existing.orElseThrow();
+					ApplicationResult original = previous.orElseThrow();
 					connection.commit();
-					return new ApplicationResult(previous.reviewId(), previous.packageId(), previous.completedAt(),
-							previous.outcomes(), true);
+					return new ApplicationResult(original.reviewId(), original.packageId(), original.completedAt(),
+							original.outcomes(), true);
 				}
 				Instant completedAt = Instant.now();
 
-				// The first INSERT obtains SQLite's write reservation.
-				// From here, assignment-state validation, domain changes
-				// and closure observe one controlled transaction.
+				// The first write reserves SQLite's writer transaction.
 				insertBatch(connection, review, completedAt);
 				UUID assignmentId = requireOneActiveReturn(connection, review.packageId());
+				long examId = requireAssignedExamLocalId(connection, review.packageId());
+				Map<RecordKey, Long> localIds = new HashMap<>();
+				Map<RecordKey, UUID> canonicalIds = new HashMap<>();
 				List<RecordOutcome> outcomes = new ArrayList<>();
-				for (RecordDecision decision : review.decisions()) {
-					RecordOutcome outcome = applyDecision(connection, decision, proposedByKey.get(decision.key()));
+				for (RecordDecision decision : ordered) {
+					RecordOutcome outcome = applyDecision(connection, reviewId, examId, decision,
+							proposedByKey.get(decision.key()), localIds, canonicalIds);
 					insertOutcome(connection, reviewId, outcome);
+					if (outcome.outcome() != Outcome.REJECTED) {
+						insertCanonicalMapping(connection, reviewId, decision.key(), canonicalIds.get(decision.key()),
+								localIds.get(decision.key()));
+					}
 					outcomes.add(outcome);
 				}
 
-				// Inserting closure evidence invokes the existing v38
-				// lifecycle triggers and releases the Exam lock.
-				// Version 40 additionally checks that the received
-				// return and every application outcome are resolved.
+				// Return results in the same canonical order used by
+				// find(...) and idempotent replay.
+				outcomes.sort(Comparator.comparing((RecordOutcome outcome) -> outcome.key().recordType())
+						.thenComparing(outcome -> outcome.key().recordId().toString()));
+
+				// No permit survives into the assignment closure.
+				try (PreparedStatement statement = connection.prepareStatement("""
+						SELECT 1
+						FROM master_contribution_write_permits
+						LIMIT 1
+						"""); ResultSet result = statement.executeQuery()) {
+					if (result.next()) {
+						throw new SQLException("Contribution write permit remains active");
+					}
+				}
 				insertReconciledClosure(connection, assignmentId, review.packageId(), reviewId, completedAt);
 				connection.commit();
 				return new ApplicationResult(reviewId, review.packageId(), completedAt, outcomes, false);
@@ -179,44 +199,32 @@ public final class MasterContributionApplicationCoordinator {
 		}
 	}
 
-	private RecordOutcome applyDecision(Connection connection, RecordDecision decision, ExchangeRecord proposed)
+	private RecordOutcome applyDecision(Connection connection, UUID reviewId, long examId, RecordDecision decision,
+			ExchangeRecord proposed, Map<RecordKey, Long> localIds, Map<RecordKey, UUID> canonicalIds)
 			throws SQLException, IOException {
+		RecordKey key = decision.key();
 		if (decision.choice() == Choice.REJECT) {
-			return new RecordOutcome(decision.key(), Outcome.REJECTED, null);
+			return new RecordOutcome(key, Outcome.REJECTED, null);
 		}
-		ExchangeRecord current = requireCurrent(connection, decision);
-		requireFreshEvidence(decision, current);
 		if (decision.choice() == Choice.SKIP_IDENTICAL) {
+			ExchangeRecord current = requireCurrent(connection, decision);
+			requireFreshEvidence(decision, current);
 			if (!current.values().equals(proposed.values())) {
 				throw new SQLException("Master is no longer identical to skipped proposal");
 			}
-			return new RecordOutcome(decision.key(), Outcome.SKIPPED, current.revisionId());
+			localIds.put(key, requireLocalId(connection, key));
+			canonicalIds.put(key, current.recordId());
+			return new RecordOutcome(key, Outcome.SKIPPED, current.revisionId());
 		}
-
-		// Only the Question text is currently supported. Classification,
-		// content parts, Question images and all other fields must match.
-		requireTextOnlyChange(current, proposed);
-		long localId = requireLocalId(connection, decision.key());
-		try (PreparedStatement update = connection.prepareStatement("""
-				UPDATE questions
-				SET question_text = ?
-				WHERE id = ?
-				""")) {
-			update.setString(1, proposed.values().path("question_text").asText());
-			update.setLong(2, localId);
-			if (SqliteDirectChanges.executeUpdate(update) != 1) {
-				throw new SQLException("Question update did not affect exactly one row");
-			}
+		if (decision.preliminaryStatus() == ReviewStatus.READY_UPDATE) {
+			ExchangeRecord current = requireCurrent(connection, decision);
+			requireFreshEvidence(decision, current);
 		}
-		ExchangeRecord applied = new SqlitePortableContentRepository(database)
-				.snapshot(connection, EntityType.QUESTION, localId).record();
-		if (!applied.values().equals(proposed.values())) {
-			throw new SQLException("Applied Question content differs from approved proposal");
-		}
-		if (applied.revisionId().equals(current.revisionId())) {
-			throw new SQLException("Question mutation did not advance master revision");
-		}
-		return new RecordOutcome(decision.key(), Outcome.APPLIED, applied.revisionId());
+		MasterContributionScalarWriter.Applied applied = new MasterContributionScalarWriter(database).apply(connection,
+				reviewId, examId, decision, proposed, localIds, canonicalIds);
+		localIds.put(key, applied.localId());
+		canonicalIds.put(key, applied.canonicalId());
+		return new RecordOutcome(key, Outcome.APPLIED, applied.revisionId());
 	}
 
 	private Optional<ApplicationResult> find(Connection connection, UUID reviewId) throws SQLException {
@@ -274,6 +282,32 @@ public final class MasterContributionApplicationCoordinator {
 		}
 	}
 
+	private void insertCanonicalMapping(Connection connection, UUID reviewId, RecordKey key, UUID canonicalId,
+			Long localId) throws SQLException {
+		if (canonicalId == null || localId == null || localId < 1) {
+			throw new SQLException("Accepted contribution has no canonical master mapping");
+		}
+		try (PreparedStatement statement = connection.prepareStatement("""
+				INSERT INTO contribution_application_entity_mappings (
+				    review_id,
+				    record_type,
+				    record_id,
+				    canonical_record_id,
+				    local_id
+				)
+				VALUES (?, ?, ?, ?, ?)
+				""")) {
+			statement.setString(1, reviewId.toString());
+			statement.setString(2, key.recordType());
+			statement.setString(3, key.recordId().toString());
+			statement.setString(4, canonicalId.toString());
+			statement.setLong(5, localId);
+			if (statement.executeUpdate() != 1) {
+				throw new SQLException("Canonical contribution mapping was not recorded");
+			}
+		}
+	}
+
 	private void insertOutcome(Connection connection, UUID reviewId, RecordOutcome outcome) throws SQLException {
 		try (PreparedStatement insert = connection.prepareStatement("""
 				INSERT INTO contribution_application_results (
@@ -321,6 +355,39 @@ public final class MasterContributionApplicationCoordinator {
 			return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(output.toByteArray()));
 		} catch (NoSuchAlgorithmException failure) {
 			throw new IllegalStateException("SHA-256 is unavailable", failure);
+		}
+	}
+
+	private long requireAssignedExamLocalId(Connection connection, UUID packageId) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT identity.local_id
+				FROM contribution_intake_packages packet
+				JOIN exam_work_assignments assignment
+				  ON assignment.assignment_id =
+				     packet.assignment_id
+				JOIN exam_work_assignment_exam_locks locked
+				  ON locked.assignment_id =
+				     assignment.assignment_id
+				 AND locked.exam_portable_id =
+				     assignment.exam_portable_id
+				JOIN portable_entity_identities identity
+				  ON identity.portable_id =
+				     assignment.exam_portable_id
+				 AND identity.entity_type = 'EXAM'
+				 AND identity.retired = 0
+				WHERE packet.package_id = ?
+				""")) {
+			statement.setString(1, packageId.toString());
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new SQLException("Received return has no locked master Exam");
+				}
+				long examId = result.getLong(1);
+				if (examId < 1 || result.next()) {
+					throw new SQLException("Invalid master Exam assignment identity");
+				}
+				return examId;
+			}
 		}
 	}
 
@@ -418,26 +485,6 @@ public final class MasterContributionApplicationCoordinator {
 							"Previously applied review has no matching " + "reconciled assignment closure");
 				}
 			}
-		}
-	}
-
-	private void requireTextOnlyChange(ExchangeRecord current, ExchangeRecord proposed) throws SQLException {
-		if (!(current.values() instanceof ObjectNode currentValues)
-				|| !(proposed.values() instanceof ObjectNode proposedValues)) {
-			throw new SQLException("Question values are not portable JSON objects");
-		}
-		JsonNode proposedText = proposedValues.get("question_text");
-		JsonNode currentText = currentValues.get("question_text");
-		if (proposedText == null || !proposedText.isTextual() || currentText == null || !currentText.isTextual()
-				|| proposedText.equals(currentText)) {
-			throw new SQLException("Queued Question does not contain a text-only change");
-		}
-		ObjectNode originalOtherFields = currentValues.deepCopy();
-		ObjectNode proposedOtherFields = proposedValues.deepCopy();
-		originalOtherFields.remove("question_text");
-		proposedOtherFields.remove("question_text");
-		if (!originalOtherFields.equals(proposedOtherFields)) {
-			throw new SQLException("Queued Question includes unsupported content changes");
 		}
 	}
 

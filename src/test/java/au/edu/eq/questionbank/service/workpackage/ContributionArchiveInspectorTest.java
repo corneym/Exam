@@ -136,6 +136,92 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
+	void masterApplicationAppliesReviewedAnswerText() throws Exception {
+		Fixture fixture = fixture();
+		try (Connection connection = fixture.contributor().openConnection();
+				Statement statement = connection.createStatement()) {
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
+					UPDATE answers
+					SET answer_text = 'Reviewed contributor answer'
+					WHERE question_id IN (
+					    SELECT id
+					    FROM questions
+					    WHERE question_code = '1'
+					)
+					"""));
+		}
+		Path archive = directory.resolve("reviewed-answer.examwork");
+		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
+				.export(fixture.assignmentId(), archive);
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		ExchangeRecord proposed = intake.proposedChanges(packageId).getFirst();
+		assertEquals("ANSWER", proposed.recordType());
+		var key = new MasterContributionDecisionLedger.RecordKey(proposed.recordType(), proposed.recordId());
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
+				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY), "Accept Answer text correction");
+		var result = new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId());
+		assertEquals(MasterContributionApplicationCoordinator.Outcome.APPLIED, result.outcomes().getFirst().outcome());
+		try (Connection connection = fixture.master().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet rows = statement.executeQuery("""
+						SELECT answer_text
+						FROM answers
+						WHERE id = 91
+						""")) {
+			assertTrue(rows.next());
+			assertEquals("Reviewed contributor answer", rows.getString(1));
+		}
+		assertEquals(WorkAssignmentLedger.State.COMPLETE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
+	void masterApplicationAppliesReviewedClassificationChange() throws Exception {
+		Fixture fixture = fixture();
+		try (Connection connection = fixture.contributor().openConnection();
+				Statement statement = connection.createStatement()) {
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
+					UPDATE questions
+					SET classification_node_id = (
+					    SELECT id
+					    FROM curriculum_nodes
+					    WHERE curriculum_code = 'B25U1T1D2'
+					)
+					WHERE question_code = '1'
+					"""));
+		}
+		Path archive = directory.resolve("classification-change.examwork");
+		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
+				.export(fixture.assignmentId(), archive);
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		ExchangeRecord proposed = intake.proposedChanges(packageId).getFirst();
+		assertEquals("QUESTION", proposed.recordType());
+		var key = new MasterContributionDecisionLedger.RecordKey(proposed.recordType(), proposed.recordId());
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
+				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY),
+				"Approve Question classification correction");
+		var result = new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId());
+		assertEquals(MasterContributionApplicationCoordinator.Outcome.APPLIED, result.outcomes().getFirst().outcome());
+		try (Connection connection = fixture.master().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet rows = statement.executeQuery("""
+						SELECT classification_node_id,
+						       question_text
+						FROM questions
+						WHERE id = 81
+						""")) {
+			assertTrue(rows.next());
+			assertEquals(104, rows.getLong("classification_node_id"));
+			assertEquals("Biology question", rows.getString("question_text"));
+		}
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
 	void masterApplicationBlocksCompetingReturnUntilResolved() throws Exception {
 		Fixture fixture = fixture();
 		Path firstArchive = publish(fixture, "First contributor revision", "competing-first.examwork");
@@ -238,6 +324,69 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
+	void masterApplicationImportsNewQuestionAndAnswer() throws Exception {
+		Fixture fixture = fixture();
+		addNewContributorQuestionAndAnswer(fixture);
+		Path archive = directory.resolve("new-question-answer.examwork");
+		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
+				.export(fixture.assignmentId(), archive);
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		List<ExchangeRecord> proposed = intake.proposedChanges(packageId);
+		assertEquals(2, proposed.size());
+		Map<MasterContributionDecisionLedger.RecordKey, MasterContributionDecisionLedger.Choice> choices = new HashMap<>();
+		for (ExchangeRecord record : proposed) {
+			choices.put(new MasterContributionDecisionLedger.RecordKey(record.recordType(), record.recordId()),
+					MasterContributionDecisionLedger.Choice.QUEUE_APPLY);
+		}
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId, choices,
+				"Accept new Question and its Answer");
+		for (var decision : review.decisions()) {
+			assertEquals(MasterContributionReviewPlanner.ReviewStatus.READY_NEW, decision.preliminaryStatus());
+		}
+		var coordinator = new MasterContributionApplicationCoordinator(fixture.master());
+		var result = coordinator.execute(review.reviewId());
+		assertFalse(result.duplicate());
+		assertEquals(2, result.outcomes().size());
+		for (var outcome : result.outcomes()) {
+			assertEquals(MasterContributionApplicationCoordinator.Outcome.APPLIED, outcome.outcome());
+			assertNotNull(outcome.resultingRevisionId());
+		}
+		try (Connection connection = fixture.master().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet rows = statement.executeQuery("""
+						SELECT question.question_text,
+						       answer.answer_text
+						FROM questions question
+						JOIN answers answer
+						  ON answer.question_id = question.id
+						WHERE question.question_code = '2'
+						""")) {
+			assertTrue(rows.next());
+			assertEquals("New contributor question", rows.getString("question_text"));
+			assertEquals("New contributor answer", rows.getString("answer_text"));
+			assertFalse(rows.next());
+		}
+		try (Connection connection = fixture.master().openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT COUNT(*)
+						FROM contribution_application_entity_mappings
+						WHERE review_id = ?
+						""")) {
+			statement.setString(1, review.reviewId().toString());
+			try (ResultSet rows = statement.executeQuery()) {
+				assertTrue(rows.next());
+				assertEquals(2, rows.getInt(1));
+			}
+		}
+		assertEquals(WorkAssignmentLedger.State.COMPLETE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		assertEquals(result.outcomes(), coordinator.execute(review.reviewId()).outcomes());
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
 	void masterApplicationPreventsCoordinatorEditBetweenReviewAndApply() throws Exception {
 		Fixture fixture = fixture();
 		Path archive = publish(fixture, "Contributor proposal", "apply-stale.examwork");
@@ -312,41 +461,62 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
-	void masterApplicationRejectsUnsupportedQueuedAnswer() throws Exception {
+	void masterApplicationRollsBackDependentInsertFailure() throws Exception {
 		Fixture fixture = fixture();
-
-		// An Answer edit is valid contributor work, but this first
-		// application slice supports only existing Question text changes.
-		try (Connection connection = fixture.contributor().openConnection();
-				Statement statement = connection.createStatement()) {
-			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
-					UPDATE answers
-					SET answer_text = 'Contributor answer revision'
-					"""));
-		}
-		Path archive = directory.resolve("apply-answer.examwork");
+		addNewContributorQuestionAndAnswer(fixture);
+		Path archive = directory.resolve("rollback-question-answer.examwork");
 		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
 				.export(fixture.assignmentId(), archive);
 		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
 		UUID packageId = intake.receive(archive).received().packageId();
-		ExchangeRecord proposal = intake.proposedChanges(packageId).getFirst();
-		assertEquals("ANSWER", proposal.recordType());
-		var key = new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId());
-		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
-				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY),
-				"Answer proposal queued for future support");
+		Map<MasterContributionDecisionLedger.RecordKey, MasterContributionDecisionLedger.Choice> choices = new HashMap<>();
+		for (ExchangeRecord record : intake.proposedChanges(packageId)) {
+			choices.put(new MasterContributionDecisionLedger.RecordKey(record.recordType(), record.recordId()),
+					MasterContributionDecisionLedger.Choice.QUEUE_APPLY);
+		}
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId, choices,
+				"Test atomic dependent-record rollback");
+
+		// Force failure only when the newly approved Answer reaches
+		// the actual master INSERT. This tests transactional rollback
+		// rather than archive-preflight rejection.
+		execute(fixture.master(), """
+				CREATE TRIGGER trg_test_reject_new_answer
+				BEFORE INSERT ON answers
+				BEGIN
+				    SELECT RAISE(
+				        ABORT,
+				        'Injected Answer insert failure'
+				    );
+				END;
+				""");
 		MasterContributionApplicationCoordinator coordinator = new MasterContributionApplicationCoordinator(
 				fixture.master());
 		assertThrows(SQLException.class, () -> coordinator.execute(review.reviewId()));
 		assertTrue(coordinator.find(review.reviewId()).isEmpty());
 		try (Connection connection = fixture.master().openConnection();
 				Statement statement = connection.createStatement();
-				ResultSet result = statement.executeQuery("""
-						SELECT answer_text FROM answers WHERE id = 91
+				ResultSet rows = statement.executeQuery("""
+						SELECT COUNT(*)
+						FROM questions
+						WHERE question_code = '2'
 						""")) {
-			assertTrue(result.next());
-			assertEquals("Biology answer", result.getString(1));
+			assertTrue(rows.next());
+			assertEquals(0, rows.getInt(1));
 		}
+		assertEquals(WorkAssignmentLedger.State.ACTIVE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		try (Connection connection = fixture.master().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet rows = statement.executeQuery("""
+						SELECT COUNT(*)
+						FROM master_contribution_write_permits
+						""")) {
+			assertTrue(rows.next());
+			assertEquals(0, rows.getInt(1));
+		}
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
 	}
 
 	@Test
@@ -984,6 +1154,49 @@ class ContributionArchiveInspectorTest {
 		otherMaster.verifyIntegrity();
 	}
 
+	private void addNewContributorQuestionAndAnswer(Fixture fixture) throws SQLException {
+		try (Connection connection = fixture.contributor().openConnection();
+				Statement statement = connection.createStatement()) {
+
+			// Copy the existing Question's valid classification and
+			// capture metadata, but create a distinct Question identity.
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
+					INSERT INTO questions (
+					    booklet_id,
+					    classification_node_id,
+					    question_code,
+					    question_text,
+					    marks,
+					    shared_context_capture_required,
+					    response_type,
+					    source_capture_required
+					)
+					SELECT
+					    booklet_id,
+					    classification_node_id,
+					    '2',
+					    'New contributor question',
+					    marks,
+					    shared_context_capture_required,
+					    response_type,
+					    source_capture_required
+					FROM questions
+					WHERE question_code = '1'
+					"""));
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
+					INSERT INTO answers (
+					    question_id,
+					    answer_text
+					)
+					SELECT
+					    id,
+					    'New contributor answer'
+					FROM questions
+					WHERE question_code = '2'
+					"""));
+		}
+	}
+
 	private void assertArchiveWellFormed(Path archive, SqliteDatabase database) throws Exception {
 		assertNotNull(new ExamWorkArchiveValidator().validate(archive, ApplicationVersion.current(),
 				database.schemaVersion()));
@@ -1032,11 +1245,11 @@ class ContributionArchiveInspectorTest {
 				""");
 		execute(master, """
 				INSERT INTO curriculum_nodes (id, syllabus_version_id, parent_id,
-				    curriculum_code, curriculum_name, curriculum_level, display_order)
-				VALUES
-				    (101, 11, NULL, 'B25U1', 'Biology Unit', 'UNIT', 0),
-				    (102, 11, 101, 'B25U1T1', 'Biology Topic', 'TOPIC', 0),
-				    (103, 11, 102, 'B25U1T1D1', 'Biology Descriptor', 'DESCRIPTOR', 0)
+				curriculum_code, curriculum_name, curriculum_level, display_order) VALUES
+				(101, 11, NULL, 'B25U1', 'Biology Unit', 'UNIT', 0),
+				(102, 11, 101, 'B25U1T1', 'Biology Topic', 'TOPIC', 0),
+				(103, 11, 102, 'B25U1T1D1', 'Biology Descriptor', 'DESCRIPTOR', 0),
+				(104, 11, 102, 'B25U1T1D2', 'Second Biology Descriptor', 'DESCRIPTOR', 1)
 				""");
 		execute(master, """
 				INSERT INTO exam_providers (id, provider_name) VALUES (21, 'QCAA')

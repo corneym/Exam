@@ -448,6 +448,7 @@ public final class HistoricalSchemaFixture {
 	 */
 	public static void removeVersion40Objects(Statement statement) throws SQLException {
 		Objects.requireNonNull(statement, "statement");
+		removeVersion41Objects(statement);
 		List<String> triggerNames = new ArrayList<>();
 		try (PreparedStatement lookup = statement.getConnection().prepareStatement("""
 				SELECT name
@@ -470,6 +471,48 @@ public final class HistoricalSchemaFixture {
 		for (String name : triggerNames) {
 			statement.execute("DROP TRIGGER \"" + name + "\"");
 		}
+	}
+
+	/**
+	 * Removes v41 scalar-application tables and triggers from a disposable
+	 * historical migration fixture.
+	 *
+	 * <p>
+	 * This operation is intended only as preparation for also removing v40 objects
+	 * and replaying historical migrations. It does not independently reconstruct
+	 * the four original v40 capture trigger definitions.
+	 *
+	 * @param statement statement for the disposable database
+	 * @throws SQLException         if schema cleanup fails
+	 * @throws NullPointerException if statement is null
+	 */
+	public static void removeVersion41Objects(Statement statement) throws SQLException {
+		Objects.requireNonNull(statement, "statement");
+		List<String> names = new ArrayList<>();
+		try (PreparedStatement lookup = statement.getConnection().prepareStatement("""
+				SELECT name
+				FROM sqlite_master
+				WHERE type = 'trigger'
+				  AND name GLOB 'trg_master_application_*'
+				ORDER BY name
+				"""); ResultSet result = lookup.executeQuery()) {
+			while (result.next()) {
+				String name = result.getString(1);
+				if (!name.matches("trg_master_application_[a-z_]+")) {
+					throw new SQLException("Unexpected v41 application trigger: " + name);
+				}
+				names.add(name);
+			}
+		}
+		for (String name : names) {
+			statement.execute("DROP TRIGGER \"" + name + "\"");
+		}
+		statement.execute("""
+				DROP TABLE IF EXISTS master_contribution_write_permits
+				""");
+		statement.execute("""
+				DROP TABLE IF EXISTS contribution_application_entity_mappings
+				""");
 	}
 
 	private static void dropAssignmentTriggers(Statement statement, String pattern) throws SQLException {
