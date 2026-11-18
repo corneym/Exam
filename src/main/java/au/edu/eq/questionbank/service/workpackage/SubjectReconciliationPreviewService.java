@@ -143,13 +143,13 @@ public final class SubjectReconciliationPreviewService {
 			ExchangeRecord match = candidates.size() == 1 ? candidates.getFirst() : null;
 			Classification kind;
 			String reason;
-			if (sourceMatch == null || targetMatch == null || sourceMatch.classification() != Classification.IDENTICAL
-					|| targetMatch.classification() != Classification.IDENTICAL || candidates.size() > 1) {
+			if (!hasResolvableMappingEndpoint(sourceMatch) || !hasResolvableMappingEndpoint(targetMatch)
+					|| candidates.size() > 1) {
 				kind = Classification.CONFLICT;
 				reason = "Curriculum mapping endpoints are ambiguous, different or unresolved.";
 			} else if (match == null) {
 				kind = Classification.COMPATIBLE_ADDITION;
-				reason = "New mapping between otherwise identical curriculum nodes; review required.";
+				reason = "New mapping between existing or proposed new curriculum nodes; endpoint and mapping approval required.";
 			} else if (sameRebasedMapping(match, mapping, masterSource, masterTarget)) {
 				kind = Classification.IDENTICAL;
 				reason = "Both curriculum endpoints and mapping metadata agree.";
@@ -160,6 +160,21 @@ public final class SubjectReconciliationPreviewService {
 			proposals.add(new Proposal("CURRICULUM_MAPPING", mapping.recordId(),
 					match == null ? null : match.recordId(), source, masterSource, kind, reason));
 		}
+	}
+
+	/**
+	 * Allows unambiguous existing identities or insertions whose dependencies must
+	 * also be accepted by the coordinator. Conflicting endpoints remain blocked.
+	 */
+	private boolean hasResolvableMappingEndpoint(Proposal endpoint) {
+		if (endpoint == null) {
+			return false;
+		}
+		return switch (endpoint.classification()) {
+		case IDENTICAL -> endpoint.masterId() != null;
+		case NEW, COMPATIBLE_ADDITION -> endpoint.masterId() == null;
+		case CONFLICT -> false;
+		};
 	}
 
 	/**
