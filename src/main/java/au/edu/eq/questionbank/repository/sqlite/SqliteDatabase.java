@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 35;
+	private static final int LATEST_SCHEMA_VERSION = 36;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -831,6 +831,13 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v34-to-v35.sql", 35);
 			return 35;
 		}
+		if (version == 35) {
+
+			// Version 36 introduces immutable coordinator review decisions.
+			// Receipt and master-domain records remain unchanged.
+			executeMigration(connection, "/db/migration-v35-to-v36.sql", 36);
+			return 36;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -1181,6 +1188,9 @@ public final class SqliteDatabase {
 		}
 		if (version >= 35) {
 			verifyVersion35ContributionIntakeSchema(connection);
+		}
+		if (version >= 36) {
+			verifyVersion36ContributionReviewSchema(connection);
 		}
 	}
 
@@ -1917,6 +1927,33 @@ public final class SqliteDatabase {
 				List.of(foreignKey("package_id", "contribution_intake_packages", "package_id")), List.of());
 		SqliteMigrationTriggerVerifier.verify(connection, "trg_contribution_intake_", "contribution intake",
 				"/db/migration-v34-to-v35.sql");
+	}
+
+	private void verifyVersion36ContributionReviewSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "contribution_review_batches",
+				List.of(column("review_id", true, 1), column("package_id", true, 0), column("observed_at", true, 0),
+						column("recorded_at", true, 0), column("review_note", true, 0)),
+				List.of(foreignKey("package_id", "contribution_intake_packages", "package_id")),
+				List.of(List.of("review_id", "package_id")));
+		verifyTableSchema(connection, "contribution_review_decisions",
+				List.of(column("review_id", true, 1), column("package_id", true, 0), column("record_type", true, 2),
+						column("record_id", true, 3), column("baseline_revision_id", false, 0),
+						column("proposed_revision_id", true, 0), column("master_revision_id", false, 0),
+						column("master_sha256", false, 0), column("preliminary_status", true, 0),
+						column("choice", true, 0), column("result_revision_id", false, 0)),
+				List.of(), List.of());
+		if (!hasExactCompositeForeignKey(connection, "contribution_review_decisions",
+				List.of("review_id", "package_id"), "contribution_review_batches",
+				List.of("review_id", "package_id"))) {
+			throw new SQLException("Missing review batch foreign key");
+		}
+		if (!hasExactCompositeForeignKey(connection, "contribution_review_decisions",
+				List.of("package_id", "record_type", "record_id"), "contribution_intake_proposals",
+				List.of("package_id", "record_type", "record_id"))) {
+			throw new SQLException("Missing received proposal foreign key");
+		}
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_contribution_review_", "contribution review",
+				"/db/migration-v35-to-v36.sql");
 	}
 
 	private record ForeignKeyColumn(int sequence, String fromColumn, String targetColumn) {

@@ -79,6 +79,145 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
+	void masterDecisionHistoryIsImmutable() throws Exception {
+		Fixture fixture = fixture();
+		Path archive = publish(fixture, "Immutable proposal", "decision-immutable.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		var proposal = intake.proposedChanges(packageId).getFirst();
+		var key = new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId());
+		MasterContributionDecisionLedger ledger = new MasterContributionDecisionLedger(fixture.master());
+		var recorded = ledger.record(packageId, Map.of(key, MasterContributionDecisionLedger.Choice.REJECT),
+				"Evidence protection regression");
+		String reviewId = recorded.reviewId().toString();
+		assertThrows(SQLException.class, () -> execute(fixture.master(), """
+				UPDATE contribution_review_decisions
+				SET choice = 'HOLD'
+				WHERE review_id = '%s'
+				""".formatted(reviewId)));
+		assertThrows(SQLException.class, () -> execute(fixture.master(), """
+				DELETE FROM contribution_review_decisions
+				WHERE review_id = '%s'
+				""".formatted(reviewId)));
+		assertThrows(SQLException.class, () -> execute(fixture.master(), """
+				UPDATE contribution_review_batches
+				SET review_note = 'Altered'
+				WHERE review_id = '%s'
+				""".formatted(reviewId)));
+		assertThrows(SQLException.class, () -> execute(fixture.master(), """
+				DELETE FROM contribution_review_batches
+				WHERE review_id = '%s'
+				""".formatted(reviewId)));
+		assertEquals(recorded, ledger.find(recorded.reviewId()).orElseThrow());
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
+	void masterDecisionsQueueSafeUpdateWithoutApplyingIt() throws Exception {
+		Fixture fixture = fixture();
+		Path archive = publish(fixture, "Contributor revision", "decision-ready.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		var proposal = intake.proposedChanges(packageId).getFirst();
+		var key = new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId());
+		MasterContributionDecisionLedger ledger = new MasterContributionDecisionLedger(fixture.master());
+		var recorded = ledger.record(packageId, Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY),
+				"Reviewed against issued baseline");
+		assertEquals(packageId, recorded.packageId());
+		assertEquals(1, recorded.decisions().size());
+		var decision = recorded.decisions().getFirst();
+		assertEquals(MasterContributionDecisionLedger.Choice.QUEUE_APPLY, decision.choice());
+		assertEquals(MasterContributionReviewPlanner.ReviewStatus.READY_UPDATE, decision.preliminaryStatus());
+		assertEquals(decision.baselineRevisionId(), decision.masterRevisionId());
+		assertNull(decision.resultRevisionId());
+
+		// The entire decision and its observed revision survive rereading.
+		assertEquals(recorded, ledger.find(recorded.reviewId()).orElseThrow());
+
+		// QUEUE_APPLY is not a write operation.
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+	}
+
+	@Test
+	void masterDecisionsRecordIdenticalSkipWithResultRevision() throws Exception {
+		Fixture fixture = fixture();
+		Path archive = publish(fixture, "Already present", "decision-identical.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		var proposal = intake.proposedChanges(packageId).getFirst();
+
+		// Simulate another master operation producing the same content.
+		try (Connection connection = fixture.master().openConnection();
+				Statement statement = connection.createStatement()) {
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
+					UPDATE questions
+					SET question_text = 'Already present'
+					WHERE id = 81
+					"""));
+		}
+		var key = new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId());
+		MasterContributionDecisionLedger ledger = new MasterContributionDecisionLedger(fixture.master());
+		var recorded = ledger.record(packageId, Map.of(key, MasterContributionDecisionLedger.Choice.SKIP_IDENTICAL),
+				"Master already contains identical content");
+		var decision = recorded.decisions().getFirst();
+		assertEquals(MasterContributionReviewPlanner.ReviewStatus.SKIP_IDENTICAL, decision.preliminaryStatus());
+		assertEquals(MasterContributionDecisionLedger.Choice.SKIP_IDENTICAL, decision.choice());
+		assertNotNull(decision.resultRevisionId());
+		assertEquals(decision.masterRevisionId(), decision.resultRevisionId());
+		assertEquals(recorded, ledger.find(recorded.reviewId()).orElseThrow());
+		assertEquals("Already present", masterQuestionText(fixture.master()));
+	}
+
+	@Test
+	void masterDecisionsRejectHeldLineageForApplication() throws Exception {
+		Fixture fixture = fixture();
+		publish(fixture, "First revision", "held-first.examwork");
+		Path secondArchive = publish(fixture, "Second revision", "held-second.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+
+		// Return 2 is received before return 1.
+		UUID packageId = intake.receive(secondArchive).received().packageId();
+		var proposal = intake.proposedChanges(packageId).getFirst();
+		var key = new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId());
+		MasterContributionDecisionLedger ledger = new MasterContributionDecisionLedger(fixture.master());
+		assertThrows(IllegalArgumentException.class,
+				() -> ledger.record(packageId, Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY),
+						"Attempt to queue an unresolved return"));
+
+		// A held return can be retained without falsely accepting it.
+		var recorded = ledger.record(packageId, Map.of(key, MasterContributionDecisionLedger.Choice.HOLD),
+				"Awaiting previous return");
+		assertEquals(MasterContributionDecisionLedger.Choice.HOLD, recorded.decisions().getFirst().choice());
+		assertEquals(MasterContributionReviewPlanner.ReviewStatus.HELD_LINEAGE,
+				recorded.decisions().getFirst().preliminaryStatus());
+		assertNull(recorded.decisions().getFirst().resultRevisionId());
+		assertEquals(recorded, ledger.find(recorded.reviewId()).orElseThrow());
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+	}
+
+	@Test
+	void masterDecisionsRequireCompleteChoicesAndAllowRejection() throws Exception {
+		Fixture fixture = fixture();
+		Path archive = publish(fixture, "Unwanted contributor edit", "decision-rejected.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		MasterContributionDecisionLedger ledger = new MasterContributionDecisionLedger(fixture.master());
+		assertThrows(IllegalArgumentException.class, () -> ledger.record(packageId, Map.of(), "Incomplete review"));
+		assertThrows(IllegalArgumentException.class, () -> ledger.record(packageId, Map.of(), "  "));
+		var proposal = intake.proposedChanges(packageId).getFirst();
+		var key = new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId());
+		var recorded = ledger.record(packageId, Map.of(key, MasterContributionDecisionLedger.Choice.REJECT),
+				"Contributor edit not required");
+		assertEquals(MasterContributionDecisionLedger.Choice.REJECT, recorded.decisions().getFirst().choice());
+		assertNull(recorded.decisions().getFirst().resultRevisionId());
+		assertEquals(recorded, ledger.find(recorded.reviewId()).orElseThrow());
+
+		// Rejection does not remove the proposed intake evidence.
+		assertEquals(1, intake.proposedChanges(packageId).size());
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+	}
+
+	@Test
 	void masterIntakeEvidenceCannotBeUpdatedOrDeleted() throws Exception {
 		Fixture fixture = fixture();
 		Path archive = publish(fixture, "Immutable contribution", "immutable-return.examwork");
@@ -361,18 +500,62 @@ class ContributionArchiveInspectorTest {
 	void migrationToVersion35InstallsProtectedIntakeTables() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("v35-migration.db"));
 		database.initialiseSchema();
+		assertEquals(36, database.schemaVersion());
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try (Statement statement = connection.createStatement()) {
+
+				// Reconstruct a disposable v34 database.
+				// Remove the newer review structures before the
+				// v35 intake tables and their protection triggers.
+				HistoricalSchemaFixture.removeVersion36Objects(statement);
 				HistoricalSchemaFixture.removeVersion35Objects(statement);
-				statement.execute("UPDATE schema_version SET version = 34 WHERE version = 35");
+				int updated = SqliteDirectChanges.executeUpdate(statement, """
+						UPDATE schema_version
+						SET version = 34
+						WHERE version = 36
+						""");
+				assertEquals(1, updated);
+				connection.commit();
+			} catch (SQLException | RuntimeException failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
+		assertEquals(34, database.schemaVersion());
+		database.verifySchema();
+
+		// Exercise both migrations: v34 -> v35 -> v36.
+		database.initialiseSchema();
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
+		database.verifySchema();
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void migrationToVersion36InstallsProtectedReviewTables() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(directory.resolve("v36-migration.db"));
+		database.initialiseSchema();
+		assertEquals(36, database.schemaVersion());
+
+		// Reconstruct a disposable v35 database, retaining v35 intake
+		// structures but removing all v36 review structures.
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try (Statement statement = connection.createStatement()) {
+				HistoricalSchemaFixture.removeVersion36Objects(statement);
+				statement.execute("""
+						UPDATE schema_version
+						SET version = 35
+						WHERE version = 36
+						""");
 				connection.commit();
 			} catch (SQLException failure) {
 				connection.rollback();
 				throw failure;
 			}
 		}
-		assertEquals(34, database.schemaVersion());
+		assertEquals(35, database.schemaVersion());
 		database.verifySchema();
 		database.initialiseSchema();
 		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
