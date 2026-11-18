@@ -62,29 +62,112 @@ public final class MasterContributionApplicationCoordinator {
 	}
 
 	/**
-	 * Applies a complete coordinator-approved return, records canonical entity
-	 * mappings and closes its assignment atomically.
+	 * Applies a reviewed return containing only supported scalar Question/Answer
+	 * changes and closes its assignment atomically.
 	 *
 	 * <p>
-	 * Supported queued operations are new Questions and Answers, existing Question
-	 * text/classification updates, and existing Answer text updates. Region, image
-	 * and structural changes remain unsupported. All approved Question operations
-	 * run before Answer operations so new Answers can reference newly imported
-	 * Questions.
-	 *
-	 * <p>
-	 * Domain changes, application results, canonical mappings, assignment closure
-	 * and Exam unlock commit together. Any failure rolls the entire transaction
-	 * back.
+	 * This entry point deliberately rejects PDF-region changes because it has not
+	 * verified the returned archive and master source PDFs. Use the archive-aware
+	 * overload for reviewed PDF-region imports.
 	 *
 	 * @param reviewId immutable coordinator review identity
 	 * @return terminal application outcomes and replay indicator
-	 * @throws SQLException         if validation, dependencies, review evidence or
-	 *                              persistence prevent atomic application
+	 * @throws SQLException         if review, dependency or persistence checks fail
 	 * @throws IOException          if portable content cannot be processed
 	 * @throws NullPointerException if reviewId is null
 	 */
 	public ApplicationResult execute(UUID reviewId) throws SQLException, IOException {
+		return executeReviewed(reviewId, false);
+	}
+
+	/**
+	 * Applies a reviewed contribution after verifying the original returned archive
+	 * and all issued master PDF dependencies.
+	 *
+	 * <p>
+	 * A managed-asset publication lock covers verification and the complete SQLite
+	 * reconciliation. The supported Question/Answer PDF-region collections may be
+	 * applied without replacing PDFs.
+	 *
+	 * <p>
+	 * Embedded images, Shared Context changes, new source documents and binary
+	 * publication remain unsupported.
+	 *
+	 * @param reviewId immutable coordinator review identity
+	 * @param archive  original, durably received contribution archive
+	 * @param layout   authoritative master managed-data layout
+	 * @return terminal application outcomes and replay indicator
+	 * @throws SQLException         if review or persistence checks fail
+	 * @throws IOException          if archive, source PDFs or application fail
+	 * @throws NullPointerException if any argument is null
+	 */
+	public ApplicationResult execute(UUID reviewId, Path archive, ManagedDataLayout layout)
+			throws SQLException, IOException {
+		Objects.requireNonNull(reviewId, "reviewId");
+		Objects.requireNonNull(archive, "archive");
+		Objects.requireNonNull(layout, "layout");
+		RecordedReview review = new MasterContributionDecisionLedger(database).find(reviewId)
+				.orElseThrow(() -> new SQLException("Unknown contribution review: " + reviewId));
+
+		// A committed application is replayed from durable SQLite
+		// evidence; the original archive is no longer required.
+		if (find(reviewId).isPresent()) {
+			return execute(reviewId);
+		}
+		try (var publicationLock = ManagedAssetPublicationLock.acquire(layout.dataRoot())) {
+			publicationLock.requireNoPendingPublications();
+			new MasterContributionAssetPreflight(database, layout).verify(review.packageId(), archive);
+
+			// The same filesystem lock remains held throughout
+			// the SQLite transaction and assignment unlock.
+			return executeReviewed(reviewId, true);
+		}
+	}
+
+	/**
+	 * Finds durable terminal application evidence for a review.
+	 *
+	 * @param reviewId review UUID
+	 * @return completed application, or empty if not applied
+	 * @throws SQLException         if retrieval fails
+	 * @throws NullPointerException if reviewId is null
+	 */
+	public Optional<ApplicationResult> find(UUID reviewId) throws SQLException {
+		Objects.requireNonNull(reviewId, "reviewId");
+		try (Connection connection = database.openConnection()) {
+			return find(connection, reviewId);
+		}
+	}
+
+	private RecordOutcome applyDecision(Connection connection, UUID reviewId, long examId, RecordDecision decision,
+			ExchangeRecord proposed, Map<RecordKey, Long> localIds, Map<RecordKey, UUID> canonicalIds,
+			boolean allowPdfRegions) throws SQLException, IOException {
+		RecordKey key = decision.key();
+		if (decision.choice() == Choice.REJECT) {
+			return new RecordOutcome(key, Outcome.REJECTED, null);
+		}
+		if (decision.choice() == Choice.SKIP_IDENTICAL) {
+			ExchangeRecord current = requireCurrent(connection, decision);
+			requireFreshEvidence(decision, current);
+			if (!current.values().equals(proposed.values())) {
+				throw new SQLException("Master is no longer identical to skipped proposal");
+			}
+			localIds.put(key, requireLocalId(connection, key));
+			canonicalIds.put(key, current.recordId());
+			return new RecordOutcome(key, Outcome.SKIPPED, current.revisionId());
+		}
+		if (decision.preliminaryStatus() == ReviewStatus.READY_UPDATE) {
+			ExchangeRecord current = requireCurrent(connection, decision);
+			requireFreshEvidence(decision, current);
+		}
+		MasterContributionScalarWriter.Applied applied = new MasterContributionScalarWriter(database).apply(connection,
+				reviewId, examId, decision, proposed, localIds, canonicalIds, allowPdfRegions);
+		localIds.put(key, applied.localId());
+		canonicalIds.put(key, applied.canonicalId());
+		return new RecordOutcome(key, Outcome.APPLIED, applied.revisionId());
+	}
+
+	private ApplicationResult executeReviewed(UUID reviewId, boolean allowPdfRegions) throws SQLException, IOException {
 		Objects.requireNonNull(reviewId, "reviewId");
 		RecordedReview review = new MasterContributionDecisionLedger(database).find(reviewId)
 				.orElseThrow(() -> new SQLException("Unknown contribution review: " + reviewId));
@@ -114,13 +197,10 @@ public final class MasterContributionApplicationCoordinator {
 				boolean supportedStatus = decision.preliminaryStatus() == ReviewStatus.READY_UPDATE
 						|| decision.preliminaryStatus() == ReviewStatus.READY_NEW;
 				if (!supportedType || !supportedStatus) {
-					throw new SQLException("Only reviewed Question and Answer " + "scalar operations are supported");
+					throw new SQLException("Only reviewed Question and Answer " + "changes are supported");
 				}
 			}
 		}
-
-		// Apply parents before dependent Answers. This ordering is
-		// independent of the alphabetical order of stored review rows.
 		List<RecordDecision> ordered = new ArrayList<>(review.decisions());
 		ordered.sort(Comparator.comparingInt(decision -> switch (decision.key().recordType()) {
 		case "QUESTION" -> 0;
@@ -140,7 +220,8 @@ public final class MasterContributionApplicationCoordinator {
 				}
 				Instant completedAt = Instant.now();
 
-				// The first write reserves SQLite's writer transaction.
+				// Acquire the SQLite write reservation before checking
+				// assignment state or applying domain changes.
 				insertBatch(connection, review, completedAt);
 				UUID assignmentId = requireOneActiveReturn(connection, review.packageId());
 				long examId = requireAssignedExamLocalId(connection, review.packageId());
@@ -149,7 +230,7 @@ public final class MasterContributionApplicationCoordinator {
 				List<RecordOutcome> outcomes = new ArrayList<>();
 				for (RecordDecision decision : ordered) {
 					RecordOutcome outcome = applyDecision(connection, reviewId, examId, decision,
-							proposedByKey.get(decision.key()), localIds, canonicalIds);
+							proposedByKey.get(decision.key()), localIds, canonicalIds, allowPdfRegions);
 					insertOutcome(connection, reviewId, outcome);
 					if (outcome.outcome() != Outcome.REJECTED) {
 						insertCanonicalMapping(connection, reviewId, decision.key(), canonicalIds.get(decision.key()),
@@ -157,19 +238,19 @@ public final class MasterContributionApplicationCoordinator {
 					}
 					outcomes.add(outcome);
 				}
-
-				// Return results in the same canonical order used by
-				// find(...) and idempotent replay.
 				outcomes.sort(Comparator.comparing((RecordOutcome outcome) -> outcome.key().recordType())
 						.thenComparing(outcome -> outcome.key().recordId().toString()));
 
-				// No permit survives into the assignment closure.
+				// Both permit tables must be empty before the Exam
+				// can be released by the reconciliation closure.
 				try (PreparedStatement statement = connection.prepareStatement("""
-						SELECT 1
-						FROM master_contribution_write_permits
-						LIMIT 1
+						SELECT
+						    (SELECT COUNT(*)
+						     FROM master_contribution_write_permits)
+						  + (SELECT COUNT(*)
+						     FROM master_contribution_region_permits)
 						"""); ResultSet result = statement.executeQuery()) {
-					if (result.next()) {
+					if (!result.next() || result.getLong(1) != 0) {
 						throw new SQLException("Contribution write permit remains active");
 					}
 				}
@@ -185,95 +266,6 @@ public final class MasterContributionApplicationCoordinator {
 				throw failure;
 			}
 		}
-	}
-
-	/**
-	 * Applies a reviewed contribution after verifying its original archive and
-	 * existing master PDF dependencies.
-	 *
-	 * <p>
-	 * The shared publication lock is held from verification through application.
-	 * Existing terminal applications use the ordinary idempotent replay path
-	 * without requiring the old archive again.
-	 *
-	 * <p>
-	 * This overload does not yet publish new binary content or permit unsupported
-	 * region/image changes. Those operations remain rejected by the existing scalar
-	 * application boundary.
-	 *
-	 * @param reviewId immutable coordinator review identity
-	 * @param archive  original received contribution archive
-	 * @param layout   authoritative master managed-data layout
-	 * @return completed contribution application and replay indicator
-	 * @throws SQLException         if review or application persistence fails
-	 * @throws IOException          if archive, PDF dependencies, publication state
-	 *                              or contribution application is invalid
-	 * @throws NullPointerException if any argument is null
-	 */
-	public ApplicationResult execute(UUID reviewId, Path archive, ManagedDataLayout layout)
-			throws SQLException, IOException {
-		Objects.requireNonNull(reviewId, "reviewId");
-		Objects.requireNonNull(archive, "archive");
-		Objects.requireNonNull(layout, "layout");
-		RecordedReview review = new MasterContributionDecisionLedger(database).find(reviewId)
-				.orElseThrow(() -> new SQLException("Unknown contribution review: " + reviewId));
-
-		// Once an application has committed, replay must not depend
-		// on an old archive or on PDFs changed after assignment closure.
-		if (find(reviewId).isPresent()) {
-			return execute(reviewId);
-		}
-		try (var publicationLock = ManagedAssetPublicationLock.acquire(layout.dataRoot())) {
-			publicationLock.requireNoPendingPublications();
-			new MasterContributionAssetPreflight(database, layout).verify(review.packageId(), archive);
-
-			// The publication lock remains held throughout the
-			// existing atomic application and closure transaction.
-			return execute(reviewId);
-		}
-	}
-
-	/**
-	 * Finds durable terminal application evidence for a review.
-	 *
-	 * @param reviewId review UUID
-	 * @return completed application, or empty if not applied
-	 * @throws SQLException         if retrieval fails
-	 * @throws NullPointerException if reviewId is null
-	 */
-	public Optional<ApplicationResult> find(UUID reviewId) throws SQLException {
-		Objects.requireNonNull(reviewId, "reviewId");
-		try (Connection connection = database.openConnection()) {
-			return find(connection, reviewId);
-		}
-	}
-
-	private RecordOutcome applyDecision(Connection connection, UUID reviewId, long examId, RecordDecision decision,
-			ExchangeRecord proposed, Map<RecordKey, Long> localIds, Map<RecordKey, UUID> canonicalIds)
-			throws SQLException, IOException {
-		RecordKey key = decision.key();
-		if (decision.choice() == Choice.REJECT) {
-			return new RecordOutcome(key, Outcome.REJECTED, null);
-		}
-		if (decision.choice() == Choice.SKIP_IDENTICAL) {
-			ExchangeRecord current = requireCurrent(connection, decision);
-			requireFreshEvidence(decision, current);
-			if (!current.values().equals(proposed.values())) {
-				throw new SQLException("Master is no longer identical to skipped proposal");
-			}
-			localIds.put(key, requireLocalId(connection, key));
-			canonicalIds.put(key, current.recordId());
-			return new RecordOutcome(key, Outcome.SKIPPED, current.revisionId());
-		}
-		if (decision.preliminaryStatus() == ReviewStatus.READY_UPDATE) {
-			ExchangeRecord current = requireCurrent(connection, decision);
-			requireFreshEvidence(decision, current);
-		}
-		MasterContributionScalarWriter.Applied applied = new MasterContributionScalarWriter(database).apply(connection,
-				reviewId, examId, decision, proposed, localIds, canonicalIds);
-		localIds.put(key, applied.localId());
-		canonicalIds.put(key, applied.canonicalId());
-		return new RecordOutcome(key, Outcome.APPLIED, applied.revisionId());
 	}
 
 	private Optional<ApplicationResult> find(Connection connection, UUID reviewId) throws SQLException {

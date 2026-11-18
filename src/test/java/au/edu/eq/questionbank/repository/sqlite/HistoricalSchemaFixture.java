@@ -488,6 +488,7 @@ public final class HistoricalSchemaFixture {
 	 */
 	public static void removeVersion41Objects(Statement statement) throws SQLException {
 		Objects.requireNonNull(statement, "statement");
+		removeVersion42Objects(statement);
 		List<String> names = new ArrayList<>();
 		try (PreparedStatement lookup = statement.getConnection().prepareStatement("""
 				SELECT name
@@ -512,6 +513,45 @@ public final class HistoricalSchemaFixture {
 				""");
 		statement.execute("""
 				DROP TABLE IF EXISTS contribution_application_entity_mappings
+				""");
+	}
+
+	/**
+	 * Removes version 42 region-authorisation objects from a disposable historical
+	 * migration fixture.
+	 *
+	 * <p>
+	 * This is used before removing the v41 and older schemas. It does not
+	 * reconstruct the six original v40 capture triggers; callers requiring a
+	 * complete older schema must continue the historical cleanup chain.
+	 *
+	 * @param statement statement for the disposable database
+	 * @throws SQLException         if schema cleanup fails
+	 * @throws NullPointerException if statement is null
+	 */
+	public static void removeVersion42Objects(Statement statement) throws SQLException {
+		Objects.requireNonNull(statement, "statement");
+		List<String> triggerNames = new ArrayList<>();
+		try (PreparedStatement lookup = statement.getConnection().prepareStatement("""
+				SELECT name
+				FROM sqlite_master
+				WHERE type = 'trigger'
+				  AND name GLOB 'trg_master_region_*'
+				ORDER BY name
+				"""); ResultSet result = lookup.executeQuery()) {
+			while (result.next()) {
+				String name = result.getString(1);
+				if (!name.matches("trg_master_region_[a-z_]+")) {
+					throw new SQLException("Unexpected version 42 trigger: " + name);
+				}
+				triggerNames.add(name);
+			}
+		}
+		for (String name : triggerNames) {
+			statement.execute("DROP TRIGGER \"" + name + "\"");
+		}
+		statement.execute("""
+				DROP TABLE IF EXISTS master_contribution_region_permits
 				""");
 	}
 

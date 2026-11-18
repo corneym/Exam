@@ -211,6 +211,20 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 	}
 
 	@Test
+	void missingMasterPdfRegionPermitTriggerFailsVerification() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(directory.resolve("missing-region-permit.db"));
+		database.initialiseSchema();
+		assertEquals(42, database.schemaVersion());
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					DROP TRIGGER trg_master_region_permit_validate
+					""");
+		}
+		SQLException failure = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(failure.getMessage().contains("Missing master PDF-region authorisation trigger"));
+	}
+
+	@Test
 	void preventsChangesToIssuedBaselineAndTerminalState() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("protected-baseline.db"));
 		database.initialiseSchema();

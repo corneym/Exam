@@ -387,6 +387,134 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
+	void masterApplicationImportsVerifiedAnswerRegion() throws Exception {
+		Fixture fixture = fixture();
+		execute(fixture.contributor(), """
+				INSERT INTO answer_regions (
+				    answer_id,
+				    region_order,
+				    answer_file_id,
+				    page_number,
+				    x, y, width, height
+				)
+				SELECT
+				    answer.id,
+				    0,
+				    booklet.answer_file_id,
+				    1,
+				    0.15, 0.25, 0.35, 0.45
+				FROM answers answer
+				JOIN questions question
+				  ON question.id = answer.question_id
+				JOIN exam_booklets booklet
+				  ON booklet.id = question.booklet_id
+				WHERE question.question_code = '1'
+				""");
+		Path archive = directory.resolve("answer-region-return.examwork");
+		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
+				.export(fixture.assignmentId(), archive);
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		ExchangeRecord proposed = intake.proposedChanges(packageId).getFirst();
+		assertEquals("ANSWER", proposed.recordType());
+		var key = new MasterContributionDecisionLedger.RecordKey(proposed.recordType(), proposed.recordId());
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
+				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY), "Accept verified Answer PDF region");
+		var result = new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId(), archive,
+				new ManagedDataLayout(directory.resolve("coordinator")));
+		assertEquals(MasterContributionApplicationCoordinator.Outcome.APPLIED, result.outcomes().getFirst().outcome());
+		try (Connection connection = fixture.master().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet rows = statement.executeQuery("""
+						SELECT
+						    region_order,
+						    answer_file_id,
+						    page_number
+						FROM answer_regions
+						WHERE answer_id = 91
+						""")) {
+			assertTrue(rows.next());
+			assertEquals(0, rows.getInt("region_order"));
+			assertEquals(71, rows.getLong("answer_file_id"));
+			assertEquals(1, rows.getInt("page_number"));
+			assertFalse(rows.next());
+		}
+		assertEquals(WorkAssignmentLedger.State.COMPLETE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
+	void masterApplicationImportsVerifiedQuestionRegion() throws Exception {
+		Fixture fixture = fixture();
+		execute(fixture.contributor(), """
+				INSERT INTO question_regions (
+				    question_id,
+				    region_order,
+				    booklet_id,
+				    page_number,
+				    x, y, width, height
+				)
+				SELECT
+				    id,
+				    0,
+				    booklet_id,
+				    1,
+				    0.1, 0.2, 0.3, 0.4
+				FROM questions
+				WHERE question_code = '1'
+				""");
+		Path archive = directory.resolve("question-region-return.examwork");
+		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
+				.export(fixture.assignmentId(), archive);
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		ExchangeRecord proposed = intake.proposedChanges(packageId).getFirst();
+		var key = new MasterContributionDecisionLedger.RecordKey(proposed.recordType(), proposed.recordId());
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
+				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY),
+				"Accept verified Question PDF region");
+		MasterContributionApplicationCoordinator coordinator = new MasterContributionApplicationCoordinator(
+				fixture.master());
+
+		// The original scalar-only entry point must not bypass
+		// archive verification or unlock the assigned Exam.
+		assertThrows(SQLException.class, () -> coordinator.execute(review.reviewId()));
+		assertTrue(coordinator.find(review.reviewId()).isEmpty());
+		var applied = coordinator.execute(review.reviewId(), archive,
+				new ManagedDataLayout(directory.resolve("coordinator")));
+		assertFalse(applied.duplicate());
+		assertEquals(MasterContributionApplicationCoordinator.Outcome.APPLIED, applied.outcomes().getFirst().outcome());
+		try (Connection connection = fixture.master().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet rows = statement.executeQuery("""
+						SELECT
+						    region_order,
+						    booklet_id,
+						    page_number,
+						    x, y, width, height
+						FROM question_regions
+						WHERE question_id = 81
+						""")) {
+			assertTrue(rows.next());
+			assertEquals(0, rows.getInt("region_order"));
+			assertEquals(61, rows.getLong("booklet_id"));
+			assertEquals(1, rows.getInt("page_number"));
+			assertEquals(0.1, rows.getDouble("x"), 0.000001);
+			assertEquals(0.2, rows.getDouble("y"), 0.000001);
+			assertEquals(0.3, rows.getDouble("width"), 0.000001);
+			assertEquals(0.4, rows.getDouble("height"), 0.000001);
+			assertFalse(rows.next());
+		}
+		assertEquals(WorkAssignmentLedger.State.COMPLETE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		assertEquals(applied.outcomes(), coordinator.execute(review.reviewId()).outcomes());
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
 	void masterApplicationPreventsCoordinatorEditBetweenReviewAndApply() throws Exception {
 		Fixture fixture = fixture();
 		Path archive = publish(fixture, "Contributor proposal", "apply-stale.examwork");
@@ -854,6 +982,295 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
+	void masterReceiptExportsAcceptedCanonicalMapping() throws Exception {
+
+		Fixture fixture = fixture();
+
+		Path contribution = publish(fixture, "Accepted receipt contribution", "accepted-for-receipt.examwork");
+
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+
+		UUID packageId = intake.receive(contribution).received().packageId();
+
+		ExchangeRecord proposed = intake.proposedChanges(packageId).getFirst();
+
+		var key = new MasterContributionDecisionLedger.RecordKey(proposed.recordType(), proposed.recordId());
+
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
+				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY),
+				"Accept contribution and issue receipt");
+
+		var application = new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId());
+
+		Path destination = directory.resolve("accepted-receipt.examwork");
+
+		ExamWorkManifest receipt = new MasterContributionReceiptExporter(fixture.master()).export(review.reviewId(),
+				destination);
+
+		assertEquals(ExamWorkPackageType.IMPORT_RECEIPT, receipt.packageType());
+
+		assertEquals(fixture.assignmentId(), receipt.assignmentId());
+
+		assertEquals(application.completedAt(), receipt.createdAt());
+
+		assertArchiveWellFormed(destination, fixture.master());
+
+		List<ExchangeRecord> records = new ExamWorkJsonlCodec()
+				.readRecords(new ByteArrayInputStream(readEntry(destination, "receipts/import-results.jsonl")));
+
+		assertEquals(2, records.size());
+
+		ExchangeRecord context = records.stream().filter(record -> record.recordType().equals("IMPORT_RECEIPT_CONTEXT"))
+				.findFirst().orElseThrow();
+
+		assertEquals(review.reviewId().toString(), context.values().path("review_id").asText());
+
+		assertEquals(packageId.toString(), context.values().path("contribution_package_id").asText());
+
+		assertEquals(receipt.packageId().toString(), context.values().path("receipt_package_id").asText());
+
+		ExchangeRecord outcome = records.stream()
+				.filter(record -> record.recordType().equals("IMPORT_RECEIPT_QUESTION")).findFirst().orElseThrow();
+
+		assertEquals(proposed.recordId(), outcome.recordId());
+
+		assertEquals("APPLIED", outcome.values().path("outcome").asText());
+
+		assertEquals("QUEUE_APPLY", outcome.values().path("decision").asText());
+
+		assertEquals(application.outcomes().getFirst().resultingRevisionId().toString(),
+				outcome.values().path("resulting_revision_id").asText());
+
+		assertFalse(outcome.values().path("canonical_record_id").asText().isBlank());
+
+		assertEquals(WorkAssignmentLedger.State.COMPLETE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+
+		assertEquals("Accepted receipt contribution", masterQuestionText(fixture.master()));
+
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
+	void masterReceiptPreservesRejectedReviewOutcome() throws Exception {
+
+		Fixture fixture = fixture();
+
+		Path contribution = publish(fixture, "Rejected contributor text", "rejected-for-receipt.examwork");
+
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+
+		UUID packageId = intake.receive(contribution).received().packageId();
+
+		ExchangeRecord proposed = intake.proposedChanges(packageId).getFirst();
+
+		var key = new MasterContributionDecisionLedger.RecordKey(proposed.recordType(), proposed.recordId());
+
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
+				Map.of(key, MasterContributionDecisionLedger.Choice.REJECT),
+				"Preserve master; reject contributor proposal");
+
+		var result = new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId());
+
+		assertEquals(MasterContributionApplicationCoordinator.Outcome.REJECTED, result.outcomes().getFirst().outcome());
+
+		Path receiptPath = directory.resolve("rejection-receipt.examwork");
+
+		new MasterContributionReceiptExporter(fixture.master()).export(review.reviewId(), receiptPath);
+
+		List<ExchangeRecord> records = new ExamWorkJsonlCodec()
+				.readRecords(new ByteArrayInputStream(readEntry(receiptPath, "receipts/import-results.jsonl")));
+
+		ExchangeRecord rejected = records.stream()
+				.filter(record -> record.recordType().equals("IMPORT_RECEIPT_QUESTION")).findFirst().orElseThrow();
+
+		assertEquals("REJECTED", rejected.values().path("outcome").asText());
+
+		assertEquals("REJECT", rejected.values().path("decision").asText());
+
+		assertTrue(rejected.values().path("canonical_record_id").isNull());
+
+		assertTrue(rejected.values().path("resulting_revision_id").isNull());
+
+		// Rejected work must not overwrite the master Question.
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+
+		assertArchiveWellFormed(receiptPath, fixture.master());
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
+	void masterReceiptRejectsIncompleteApplication() throws Exception {
+
+		Fixture fixture = fixture();
+
+		Path contribution = publish(fixture, "Not yet reconciled", "pending-for-receipt.examwork");
+
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+
+		UUID packageId = intake.receive(contribution).received().packageId();
+
+		ExchangeRecord proposed = intake.proposedChanges(packageId).getFirst();
+
+		var key = new MasterContributionDecisionLedger.RecordKey(proposed.recordType(), proposed.recordId());
+
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
+				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY),
+				"Review recorded but application pending");
+
+		Path destination = directory.resolve("premature-receipt.examwork");
+
+		SQLException failure = assertThrows(SQLException.class,
+				() -> new MasterContributionReceiptExporter(fixture.master()).export(review.reviewId(), destination));
+
+		assertTrue(failure.getMessage().contains("Receipt requires a completed application"));
+
+		assertFalse(Files.exists(destination));
+
+		assertEquals(WorkAssignmentLedger.State.ACTIVE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
+	void masterReceiptRepeatedExportIsDeterministic() throws Exception {
+
+		Fixture fixture = fixture();
+
+		Path contribution = publish(fixture, "Receipt replay contribution", "replay-for-receipt.examwork");
+
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+
+		UUID packageId = intake.receive(contribution).received().packageId();
+
+		ExchangeRecord proposed = intake.proposedChanges(packageId).getFirst();
+
+		var key = new MasterContributionDecisionLedger.RecordKey(proposed.recordType(), proposed.recordId());
+
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
+				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY),
+				"Accept once; export same receipt repeatedly");
+
+		MasterContributionApplicationCoordinator coordinator = new MasterContributionApplicationCoordinator(
+				fixture.master());
+
+		coordinator.execute(review.reviewId());
+
+		MasterContributionReceiptExporter exporter = new MasterContributionReceiptExporter(fixture.master());
+
+		Path first = directory.resolve("receipt-first.examwork");
+
+		Path second = directory.resolve("receipt-second.examwork");
+
+		ExamWorkManifest firstManifest = exporter.export(review.reviewId(), first);
+
+		ExamWorkManifest secondManifest = exporter.export(review.reviewId(), second);
+
+		assertEquals(firstManifest.packageId(), secondManifest.packageId());
+
+		assertEquals(firstManifest, secondManifest);
+
+		assertArrayEquals(Files.readAllBytes(first), Files.readAllBytes(second));
+
+		// Existing archives are never intentionally overwritten.
+		byte[] originalBytes = Files.readAllBytes(first);
+
+		assertThrows(IOException.class, () -> exporter.export(review.reviewId(), first));
+
+		assertArrayEquals(originalBytes, Files.readAllBytes(first));
+
+		assertTrue(coordinator.execute(review.reviewId()).duplicate());
+
+		assertEquals(WorkAssignmentLedger.State.COMPLETE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
+	void masterRegionImportRollsBackOnInsertionFailure() throws Exception {
+		Fixture fixture = fixture();
+		execute(fixture.contributor(), """
+				INSERT INTO answer_regions (
+				    answer_id,
+				    region_order,
+				    answer_file_id,
+				    page_number,
+				    x, y, width, height
+				)
+				SELECT
+				    answer.id,
+				    0,
+				    booklet.answer_file_id,
+				    1,
+				    0.1, 0.1, 0.4, 0.4
+				FROM answers answer
+				JOIN questions question
+				  ON question.id = answer.question_id
+				JOIN exam_booklets booklet
+				  ON booklet.id = question.booklet_id
+				WHERE question.question_code = '1'
+				""");
+		Path archive = directory.resolve("rollback-region-return.examwork");
+		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
+				.export(fixture.assignmentId(), archive);
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		ExchangeRecord proposed = intake.proposedChanges(packageId).getFirst();
+		var key = new MasterContributionDecisionLedger.RecordKey(proposed.recordType(), proposed.recordId());
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
+				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY), "Test atomic PDF-region rollback");
+
+		// Inject failure at the actual region INSERT, after the
+		// Answer scalar UPDATE and write permits have been acquired.
+		execute(fixture.master(), """
+				CREATE TRIGGER trg_test_fail_answer_region
+				BEFORE INSERT ON answer_regions
+				BEGIN
+				    SELECT RAISE(
+				        ABORT,
+				        'Injected PDF-region insertion failure'
+				    );
+				END;
+				""");
+		MasterContributionApplicationCoordinator coordinator = new MasterContributionApplicationCoordinator(
+				fixture.master());
+		assertThrows(SQLException.class, () -> coordinator.execute(review.reviewId(), archive,
+				new ManagedDataLayout(directory.resolve("coordinator"))));
+		assertTrue(coordinator.find(review.reviewId()).isEmpty());
+		try (Connection connection = fixture.master().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet rows = statement.executeQuery("""
+						SELECT COUNT(*)
+						FROM answer_regions
+						WHERE answer_id = 91
+						""")) {
+			assertTrue(rows.next());
+			assertEquals(0, rows.getInt(1));
+		}
+		try (Connection connection = fixture.master().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet rows = statement.executeQuery("""
+						SELECT
+						    (SELECT COUNT(*)
+						     FROM master_contribution_write_permits)
+						  + (SELECT COUNT(*)
+						     FROM master_contribution_region_permits)
+						""")) {
+			assertTrue(rows.next());
+			assertEquals(0, rows.getInt(1));
+		}
+		assertEquals(WorkAssignmentLedger.State.ACTIVE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
 	void masterReviewCannotClaimUnapprovedConcurrentContent() throws Exception {
 		Fixture fixture = fixture();
 		Path archive = publish(fixture, "Matching text", "review-identical.examwork");
@@ -1129,6 +1546,28 @@ class ContributionArchiveInspectorTest {
 				WHERE id = 91
 				"""));
 		assertEquals("Biology question", masterQuestionText(fixture.master()));
+		assertEquals(WorkAssignmentLedger.State.ACTIVE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
+	void ordinaryMasterPdfRegionWriteRemainsBlocked() throws Exception {
+		Fixture fixture = fixture();
+		SQLException failure = assertThrows(SQLException.class, () -> execute(fixture.master(), """
+				INSERT INTO question_regions (
+				    question_id,
+				    region_order,
+				    booklet_id,
+				    page_number,
+				    x, y, width, height
+				)
+				VALUES (
+				    81, 0, 61, 1,
+				    0.1, 0.1, 0.4, 0.4
+				)
+				"""));
+		assertTrue(failure.getMessage().contains("Assigned Exam capture is read-only on the master"));
 		assertEquals(WorkAssignmentLedger.State.ACTIVE,
 				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
 		fixture.master().verifyIntegrity();

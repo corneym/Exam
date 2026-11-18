@@ -38,7 +38,8 @@ final class MasterContributionScalarWriter {
 	}
 
 	Applied apply(Connection connection, UUID reviewId, long examId, RecordDecision decision, ExchangeRecord proposed,
-			Map<RecordKey, Long> newLocalIds, Map<RecordKey, UUID> newCanonicalIds) throws SQLException {
+			Map<RecordKey, Long> newLocalIds, Map<RecordKey, UUID> newCanonicalIds, boolean allowPdfRegions)
+			throws SQLException {
 		Objects.requireNonNull(connection, "connection");
 		EntityType type = EntityType.valueOf(decision.key().recordType());
 		if (type != EntityType.QUESTION && type != EntityType.ANSWER) {
@@ -61,16 +62,27 @@ final class MasterContributionScalarWriter {
 					.findByPortableId(connection, type, decision.key().recordId())
 					.orElseThrow(() -> new SQLException("Updated master record is missing")).localId();
 			current = new SqlitePortableContentRepository(database).snapshot(connection, type, currentId).record();
-			requireScalarChange(type, current, proposed);
+			requireScalarChange(type, current, proposed, allowPdfRegions);
 		}
+		String regionField = type == EntityType.QUESTION ? "question_regions" : "answer_regions";
+		JsonNode proposedRegions = proposed.values().path(regionField);
+		if (!proposedRegions.isArray()) {
+			throw new SQLException("Missing PDF-region collection: " + regionField);
+		}
+		boolean regionsChanged = create ? !proposedRegions.isEmpty()
+				: !current.values().path(regionField).equals(proposedRegions);
 
-		// Only this approved record can mutate its assigned Exam.
+		// Only the archive-verified coordinator path is allowed to
+		// modify regions. The original execute(reviewId) stays scalar-only.
+		if (regionsChanged && !allowPdfRegions) {
+			throw new SQLException("PDF-region changes require verified return assets");
+		}
 		permit(connection, reviewId, decision, examId, create);
 		long localId;
 		try {
 			if (create) {
 				localId = type == EntityType.QUESTION ? insertQuestion(connection, proposed, newLocalIds)
-						: insertAnswer(connection, proposed, newLocalIds);
+						: insertAnswer(connection, proposed, newLocalIds, allowPdfRegions);
 			} else {
 				localId = currentId;
 				if (type == EntityType.QUESTION) {
@@ -79,7 +91,14 @@ final class MasterContributionScalarWriter {
 					updateAnswer(connection, currentId, proposed);
 				}
 			}
+			if (regionsChanged) {
+				new MasterContributionRegionWriter(database).replace(connection, reviewId, decision, examId, localId,
+						proposed);
+			}
 		} finally {
+
+			// The child permit must have been cleared before this
+			// parent permit can be released.
 			clearPermit(connection);
 		}
 		ExchangeRecord actual = new SqlitePortableContentRepository(database).snapshot(connection, type, localId)
@@ -89,7 +108,7 @@ final class MasterContributionScalarWriter {
 			throw new SQLException("Applied " + type + " differs from approved contribution");
 		}
 		if (!create && actual.revisionId().equals(current.revisionId())) {
-			throw new SQLException("Master scalar update did not advance revision");
+			throw new SQLException("Master record mutation did not advance revision");
 		}
 		return new Applied(localId, actual.recordId(), actual.revisionId());
 	}
@@ -120,21 +139,27 @@ final class MasterContributionScalarWriter {
 		return expected;
 	}
 
-	private long insertAnswer(Connection connection, ExchangeRecord proposed, Map<RecordKey, Long> newLocalIds)
-			throws SQLException {
-		requireEmptyChildren(proposed, "answer_regions");
+	private long insertAnswer(Connection connection, ExchangeRecord proposed, Map<RecordKey, Long> newLocalIds,
+			boolean allowPdfRegions) throws SQLException {
 		JsonNode values = proposed.values();
 		JsonNode text = values.get("answer_text");
-		if (text == null || !text.isTextual() || text.asText().isBlank()) {
-			throw new SQLException("New Answer requires text without PDF regions");
+		JsonNode regions = values.path("answer_regions");
+		boolean hasText = text != null && text.isTextual() && !text.asText().isBlank();
+		boolean hasRegions = regions.isArray() && !regions.isEmpty();
+		if (!hasText && !(allowPdfRegions && hasRegions)) {
+			throw new SQLException("New Answer requires text or verified PDF regions");
+		}
+		if (text != null && !text.isNull() && !text.isTextual()) {
+			throw new SQLException("New Answer text has an invalid type");
 		}
 		try (PreparedStatement statement = connection.prepareStatement("""
 				INSERT INTO answers (
 				    question_id, answer_text
-				) VALUES (?, ?)
+				)
+				VALUES (?, ?)
 				""")) {
 			statement.setLong(1, reference(connection, EntityType.QUESTION, values.get("question_id"), newLocalIds));
-			statement.setString(2, text.asText());
+			statement.setString(2, text == null || text.isNull() ? null : text.asText());
 			if (statement.executeUpdate() != 1) {
 				throw new SQLException("New Answer was not inserted");
 			}
@@ -144,8 +169,7 @@ final class MasterContributionScalarWriter {
 
 	private long insertQuestion(Connection connection, ExchangeRecord proposed, Map<RecordKey, Long> newLocalIds)
 			throws SQLException {
-		for (String child : List.of("question_regions", "question_images", "question_content_parts",
-				"question_output_exclusions")) {
+		for (String child : List.of("question_images", "question_content_parts", "question_output_exclusions")) {
 			requireEmptyChildren(proposed, child);
 		}
 		JsonNode values = proposed.values();
@@ -269,8 +293,8 @@ final class MasterContributionScalarWriter {
 		}
 	}
 
-	private void requireScalarChange(EntityType type, ExchangeRecord current, ExchangeRecord proposed)
-			throws SQLException {
+	private void requireScalarChange(EntityType type, ExchangeRecord current, ExchangeRecord proposed,
+			boolean allowPdfRegions) throws SQLException {
 		if (!(current.values() instanceof ObjectNode before) || !(proposed.values() instanceof ObjectNode after)) {
 			throw new SQLException("Review values must be portable JSON objects");
 		}
@@ -281,12 +305,20 @@ final class MasterContributionScalarWriter {
 				currentOther.remove(field);
 				proposedOther.remove(field);
 			}
+			if (allowPdfRegions) {
+				currentOther.remove("question_regions");
+				proposedOther.remove("question_regions");
+			}
 		} else {
 			currentOther.remove("answer_text");
 			proposedOther.remove("answer_text");
+			if (allowPdfRegions) {
+				currentOther.remove("answer_regions");
+				proposedOther.remove("answer_regions");
+			}
 		}
 		if (!currentOther.equals(proposedOther) || before.equals(after)) {
-			throw new SQLException("Reviewed change contains unsupported fields " + "or no scalar change");
+			throw new SQLException("Reviewed change contains unsupported fields " + "or no permitted content change");
 		}
 	}
 

@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 41;
+	private static final int LATEST_SCHEMA_VERSION = 42;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -868,10 +868,16 @@ public final class SqliteDatabase {
 		}
 		if (version == 40) {
 
-			// Version 41 permits individual approved Question/Answer
-			// scalar mutations while retaining the master Exam lock.
+			// Version 41 provides reviewed Question/Answer scalar permits.
 			executeMigration(connection, "/db/migration-v40-to-v41.sql", 41);
 			return 41;
+		}
+		if (version == 41) {
+
+			// Version 42 adds transaction-scoped, owner-specific PDF-region
+			// permits without changing managed PDF bytes.
+			executeMigration(connection, "/db/migration-v41-to-v42.sql", 42);
+			return 42;
 		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
@@ -1240,7 +1246,10 @@ public final class SqliteDatabase {
 			verifyVersion40MasterCaptureSchema(connection);
 		}
 		if (version >= 41) {
-			verifyVersion41MasterContributionScalarSchema(connection);
+			verifyVersion41MasterContributionScalarSchema(connection, version);
+		}
+		if (version >= 42) {
+			verifyVersion42MasterRegionSchema(connection);
 		}
 	}
 
@@ -2112,7 +2121,7 @@ public final class SqliteDatabase {
 				"/db/migration-v39-to-v40.sql");
 	}
 
-	private void verifyVersion41MasterContributionScalarSchema(Connection connection) throws SQLException {
+	private void verifyVersion41MasterContributionScalarSchema(Connection connection, int version) throws SQLException {
 		verifyTableSchema(connection, "master_contribution_write_permits",
 				List.of(column("singleton_id", false, 1), column("review_id", true, 0), column("record_type", true, 0),
 						column("record_id", true, 0), column("operation", true, 0), column("exam_local_id", true, 0)),
@@ -2134,23 +2143,48 @@ public final class SqliteDatabase {
 			throw new SQLException("Contribution canonical mapping foreign key is missing");
 		}
 
-		// Reconstruct the capture trigger definitions across v40 and
-		// v41, including the explicit DROP/CREATE replacements.
-		SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
-				"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql");
+		// Version 42 replaces six v40 capture guards. Verification
+		// must reconstruct the final definitions in migration order.
+		if (version >= 42) {
+			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
+					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql", "/db/migration-v41-to-v42.sql");
+		} else {
+			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
+					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql");
+		}
 		SqliteMigrationTriggerVerifier.verify(connection, "trg_master_return_", "master return reconciliation",
 				"/db/migration-v39-to-v40.sql");
 		SqliteMigrationTriggerVerifier.verify(connection, "trg_master_application_", "master contribution application",
 				"/db/migration-v40-to-v41.sql");
-
-		// Write permits are transient transaction evidence.
-		// None may survive a successful application.
 		try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery("""
 				SELECT COUNT(*)
 				FROM master_contribution_write_permits
 				""")) {
 			if (!result.next() || result.getLong(1) != 0) {
 				throw new SQLException("Unreleased master contribution write permit");
+			}
+		}
+	}
+
+	private void verifyVersion42MasterRegionSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "master_contribution_region_permits",
+				List.of(column("singleton_id", false, 1), column("review_id", true, 0), column("record_type", true, 0),
+						column("record_id", true, 0), column("exam_local_id", true, 0),
+						column("owner_local_id", true, 0)),
+				List.of(foreignKey("exam_local_id", "exams", "id")), List.of());
+		if (!hasExactCompositeForeignKey(connection, "master_contribution_region_permits",
+				List.of("review_id", "record_type", "record_id"), "contribution_review_decisions",
+				List.of("review_id", "record_type", "record_id"))) {
+			throw new SQLException("Master PDF-region permit review foreign key is missing");
+		}
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_master_region_", "master PDF-region authorisation",
+				"/db/migration-v41-to-v42.sql");
+		try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery("""
+				SELECT COUNT(*)
+				FROM master_contribution_region_permits
+				""")) {
+			if (!result.next() || result.getLong(1) != 0) {
+				throw new SQLException("Unreleased master PDF-region permit");
 			}
 		}
 	}
