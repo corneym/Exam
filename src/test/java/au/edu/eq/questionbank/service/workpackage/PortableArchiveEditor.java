@@ -20,7 +20,10 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkArchiveWriter.EntrySource;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest.Entry;
 
-/** Builds integrity-valid adversarial packages, including matching assignment baselines. */
+/**
+ * Builds integrity-valid adversarial packages, including matching assignment
+ * baselines.
+ */
 final class PortableArchiveEditor {
 
 	private PortableArchiveEditor() {

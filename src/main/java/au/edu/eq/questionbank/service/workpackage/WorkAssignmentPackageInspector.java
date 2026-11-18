@@ -21,8 +21,8 @@ import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest.Entry;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest.EntryRole;
 
 /**
- * Performs read-only package, domain-semantic and scope validation before a contributor
- * installation may import a WORK_ASSIGNMENT.
+ * Performs read-only package, domain-semantic and scope validation before a
+ * contributor installation may import a WORK_ASSIGNMENT.
  */
 public final class WorkAssignmentPackageInspector {
 

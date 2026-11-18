@@ -121,6 +121,70 @@ public final class WorkAssignmentScopeValidator {
 		requireAssets(index, assets);
 	}
 
+	/**
+	 * Checks a proposed contribution graph against the issued whole-Exam scope.
+	 *
+	 * <p>
+	 * The caller must first verify the exact original baseline against master
+	 * evidence and reconstruct the complete graph from that baseline and the
+	 * independently validated contribution candidates. This method reuses the same
+	 * portable reference and logical asset checks as assignment issuance.
+	 *
+	 * @param manifest validated contribution manifest
+	 * @param proposed complete original graph with proposed changes overlaid
+	 * @param assets   contribution archive's verified asset index
+	 * @throws PackageFormatException if an entity, reference or asset escapes the
+	 *                                assigned Exam or a dependency is missing
+	 */
+	void validateContribution(ExamWorkManifest manifest, List<ExchangeRecord> proposed, ExamWorkAssetIndex assets)
+			throws PackageFormatException {
+		Objects.requireNonNull(manifest, "manifest");
+		Objects.requireNonNull(proposed, "proposed");
+		Objects.requireNonNull(assets, "assets");
+		if (manifest.packageType() != ExamWorkPackageType.CONTRIBUTION || manifest.scope().level() != ScopeLevel.EXAMS
+				|| manifest.scope().examIds().size() != 1 || !manifest.scope().bookletIds().isEmpty()) {
+			throw new PackageFormatException("Contribution requires one whole-Exam scope");
+		}
+		Map<String, Map<UUID, ExchangeRecord>> index = index(proposed);
+		UUID subjectId = manifest.subjectId();
+		UUID examId = manifest.scope().examIds().getFirst();
+		ExchangeRecord subject = requireOnly(index, "SUBJECT", subjectId);
+		ExchangeRecord exam = requireOnly(index, "EXAM", examId);
+		requireLink(exam, "subject_id", subject.recordId());
+		for (ExchangeRecord booklet : recordsOf(index, "EXAM_BOOKLET")) {
+			requireLink(booklet, "exam_id", examId);
+		}
+		for (ExchangeRecord file : recordsOf(index, "ANSWER_FILE")) {
+			requireLink(file, "exam_id", examId);
+		}
+		for (ExchangeRecord question : recordsOf(index, "QUESTION")) {
+			requireParent(index, question, "booklet_id", "EXAM_BOOKLET");
+		}
+		for (ExchangeRecord source : recordsOf(index, "SOURCE_QUESTION")) {
+			requireParent(index, source, "booklet_id", "EXAM_BOOKLET");
+		}
+		for (ExchangeRecord shared : recordsOf(index, "SHARED_QUESTION_CONTEXT")) {
+			requireParent(index, shared, "booklet_id", "EXAM_BOOKLET");
+		}
+		for (ExchangeRecord answer : recordsOf(index, "ANSWER")) {
+			requireParent(index, answer, "question_id", "QUESTION");
+		}
+		for (ExchangeRecord image : recordsOf(index, "QUESTION_IMAGE")) {
+			requireParent(index, image, "question_id", "QUESTION");
+		}
+		for (ExchangeRecord syllabus : recordsOf(index, "SYLLABUS_VERSION")) {
+			requireLink(syllabus, "subject_id", subjectId);
+		}
+
+		// Nested relationships are checked too, including Question source and
+		// Shared Context links, content parts, classifications and image IDs.
+		for (ExchangeRecord record : proposed) {
+			requireReferenceClosure(record.values(), index);
+		}
+		requireSources(index);
+		requireAssets(index, assets);
+	}
+
 	private Map<String, Map<UUID, ExchangeRecord>> index(List<ExchangeRecord> records) throws PackageFormatException {
 		Map<String, Map<UUID, ExchangeRecord>> indexed = new HashMap<>();
 		for (ExchangeRecord record : records) {

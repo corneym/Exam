@@ -73,8 +73,8 @@ class SqliteContributorAssignmentSessionSchemaTest {
 			statement.execute("""
 					UPDATE schema_version
 					SET version = 28
-					WHERE version = 33
-					""");
+					WHERE version = %d
+					""".formatted(SqliteDatabase.latestSchemaVersion()));
 
 			// Reject the final version update, after the migration
 			// has attempted to install its tables and triggers.
@@ -284,8 +284,8 @@ class SqliteContributorAssignmentSessionSchemaTest {
 					statement.execute("""
 							UPDATE schema_version
 							SET version = 28
-							WHERE version = 33
-							""");
+							WHERE version = %d
+							""".formatted(SqliteDatabase.latestSchemaVersion()));
 				}
 
 				// Install version 29 exclusively from its SQL resource.

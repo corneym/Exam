@@ -114,6 +114,47 @@ class SqlScriptExecutorTest {
 	}
 
 	@Test
+	void recognisesCommentsWithoutDiscardingSqlLiterals() throws Exception {
+		String sql = """
+				-- Leading comment.
+				/* Another leading comment. */
+
+				SELECT '/* literal */', '-- literal';
+
+				-- Trailing comment.
+				""";
+		var statements = SqlScriptExecutor.splitStatements(sql);
+		assertEquals(1, statements.size());
+		assertTrue(statements.getFirst().contains("'/* literal */', '-- literal'"));
+	}
+
+	@Test
+	void recognisesTriggerAfterManyLeadingComments() throws Exception {
+
+		// Exercise the repeated block-comment sequence that caused
+		// excessive backtracking in the original regular expression.
+		String comments = "/* */".repeat(5_000);
+		String sql = comments + """
+
+				-- Leading line comment.
+				CREATE TEMPORARY TRIGGER test_trigger
+				AFTER INSERT ON example
+				BEGIN
+				    SELECT 1;
+				    SELECT 2;
+				END;
+
+				INSERT INTO example (id) VALUES (1);
+				""";
+		var statements = SqlScriptExecutor.splitStatements(sql);
+		assertEquals(2, statements.size());
+		assertTrue(statements.getFirst().contains("CREATE TEMPORARY TRIGGER test_trigger"));
+		assertTrue(statements.getFirst().contains("SELECT 1;"));
+		assertTrue(statements.getFirst().contains("SELECT 2;"));
+		assertTrue(statements.get(1).startsWith("INSERT INTO example"));
+	}
+
+	@Test
 	void rejectsUnterminatedTriggerScripts() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("incomplete-trigger.db"));
 		try (Connection connection = database.openConnection()) {

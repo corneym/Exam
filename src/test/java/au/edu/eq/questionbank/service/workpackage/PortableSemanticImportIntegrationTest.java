@@ -41,15 +41,18 @@ class PortableSemanticImportIntegrationTest {
 	Path directory;
 
 	static Stream<Arguments> invalidPackages() {
-		return Stream.of(false, true).flatMap(assignment -> Stream.of("UNIT", "TOPIC", "SYLLABUS", "SUBJECT",
-				"SOURCE_BOOKLET", "REGION_BOOKLET", "MCQ_MARKS", "EMPTY_ANSWER", "REGION_BOUNDS", "EMPTY_CONTEXT",
-				"BLANK_BOOKLET", "SAME_SYLLABUS_MAPPING", "SYLLABUS_STATE")
-				.map(defect -> Arguments.of(assignment, defect)));
+		return Stream.of(false, true)
+				.flatMap(assignment -> Stream
+						.of("UNIT", "TOPIC", "SYLLABUS", "SUBJECT", "SOURCE_BOOKLET", "REGION_BOOKLET", "MCQ_MARKS",
+								"EMPTY_ANSWER", "REGION_BOUNDS", "EMPTY_CONTEXT", "BLANK_BOOKLET",
+								"SAME_SYLLABUS_MAPPING", "SYLLABUS_STATE")
+						.map(defect -> Arguments.of(assignment, defect)));
 	}
 
 	static Stream<Arguments> validPackages() {
-		return Stream.of(false, true).flatMap(assignment -> Stream.of("SUBTOPIC", "DESCRIPTOR", "LEGACY_2019", "REPEATED_REGION")
-				.map(classification -> Arguments.of(assignment, classification)));
+		return Stream.of(false, true)
+				.flatMap(assignment -> Stream.of("SUBTOPIC", "DESCRIPTOR", "LEGACY_2019", "REPEATED_REGION")
+						.map(classification -> Arguments.of(assignment, classification)));
 	}
 
 	@ParameterizedTest
@@ -59,15 +62,19 @@ class PortableSemanticImportIntegrationTest {
 		Fixture fixture = fixture(assignment, false);
 		Path crafted = PortableArchiveEditor.rewrite(fixture.archive(), directory.resolve("crafted.examwork"),
 				records -> corrupt(records, defect));
-		// Prove manifest lengths, hashes, CRCs and record syntax are valid before import.
-		new ExamWorkArchiveValidator().validate(crafted, ApplicationVersion.current(), SqliteDatabase.latestSchemaVersion());
+
+		// Prove manifest lengths, hashes, CRCs and record syntax are valid before
+		// import.
+		new ExamWorkArchiveValidator().validate(crafted, ApplicationVersion.current(),
+				SqliteDatabase.latestSchemaVersion());
 		SubjectImportApprovalPlan plan = assignment ? null : approve(fixture, crafted);
 		List<String> before = databaseContents(fixture.database());
 		PackageFormatException failure = assertThrows(PackageFormatException.class,
 				() -> install(fixture, crafted, plan, assignment));
-		assertTrue(failure.getMessage().toLowerCase(Locale.ROOT).contains(expectedMessage(defect).toLowerCase(Locale.ROOT)),
-				failure.getMessage());
-		assertEquals(before, databaseContents(fixture.database()), "All persisted graph, ledger and session rows must remain unchanged");
+		assertTrue(failure.getMessage().toLowerCase(Locale.ROOT)
+				.contains(expectedMessage(defect).toLowerCase(Locale.ROOT)), failure.getMessage());
+		assertEquals(before, databaseContents(fixture.database()),
+				"All persisted graph, ledger and session rows must remain unchanged");
 		assertFalse(Files.exists(fixture.config().dataRoot().resolve("subjects/Biology/exams/questions.pdf")));
 		assertEquals("unrelated", Files.readString(fixture.config().dataRoot().resolve("subjects/Chemistry/keep.txt")));
 	}
@@ -77,30 +84,35 @@ class PortableSemanticImportIntegrationTest {
 	void acceptsSupportedClassificationsAndReplaysWithoutDuplicatingGraph(boolean assignment, String classification)
 			throws Exception {
 		Fixture fixture = fixture(assignment, classification.equals("LEGACY_2019"));
-		Path crafted = PortableArchiveEditor.rewrite(fixture.archive(), directory.resolve("valid.examwork"), records -> {
-			if (classification.equals("SUBTOPIC")) {
-				change(records, "QUESTION", "classification_node_id", node(records, "SUBTOPIC").recordId().toString());
-			} else if (classification.equals("REPEATED_REGION")) {
-				ExchangeRecord question = first(records, "QUESTION");
-				ObjectNode values = (ObjectNode) question.values();
-				var parts = (ArrayNode) values.path("question_content_parts");
-				ObjectNode repeated = ((ObjectNode) parts.get(0)).deepCopy();
-				repeated.put("content_order", 1);
-				parts.add(repeated);
-				replaceValues(records, question, values);
-			}
-		});
+		Path crafted = PortableArchiveEditor.rewrite(fixture.archive(), directory.resolve("valid.examwork"),
+				records -> {
+					if (classification.equals("SUBTOPIC")) {
+						change(records, "QUESTION", "classification_node_id",
+								node(records, "SUBTOPIC").recordId().toString());
+					} else if (classification.equals("REPEATED_REGION")) {
+						ExchangeRecord question = first(records, "QUESTION");
+						ObjectNode values = (ObjectNode) question.values();
+						var parts = (ArrayNode) values.path("question_content_parts");
+						ObjectNode repeated = ((ObjectNode) parts.get(0)).deepCopy();
+						repeated.put("content_order", 1);
+						parts.add(repeated);
+						replaceValues(records, question, values);
+					}
+				});
 		SubjectImportApprovalPlan plan = assignment ? null : approve(fixture, crafted);
 		assertFalse(install(fixture, crafted, plan, assignment));
+
 		// Normal repository loading must reconstruct the imported domain object.
 		long id;
-		try (var connection = fixture.database().openConnection(); var statement = connection.createStatement();
+		try (var connection = fixture.database().openConnection();
+				var statement = connection.createStatement();
 				var rows = statement.executeQuery("SELECT id FROM questions")) {
 			assertTrue(rows.next());
 			id = rows.getLong(1);
 		}
 		var question = new SqliteQuestionRepository(fixture.database()).findById(id).orElseThrow();
-		assertEquals(classification.equals("SUBTOPIC") ? "SUBTOPIC" : "DESCRIPTOR", question.getClassification().getLevel().name());
+		assertEquals(classification.equals("SUBTOPIC") ? "SUBTOPIC" : "DESCRIPTOR",
+				question.getClassification().getLevel().name());
 		if (classification.equals("LEGACY_2019")) {
 			assertEquals("Biology 2019", question.getClassification().getSyllabusVersion().getName());
 		} else if (classification.equals("REPEATED_REGION")) {
@@ -146,10 +158,12 @@ class PortableSemanticImportIntegrationTest {
 
 	private void corrupt(List<ExchangeRecord> records, String defect) {
 		switch (defect) {
-		case "UNIT", "TOPIC" -> change(records, "QUESTION", "classification_node_id", node(records, defect).recordId().toString());
+		case "UNIT", "TOPIC" ->
+			change(records, "QUESTION", "classification_node_id", node(records, defect).recordId().toString());
 		case "SYLLABUS" -> {
-			ExchangeRecord version = records.stream().filter(r -> r.recordType().equals("SYLLABUS_VERSION")
-					&& r.values().path("is_current").asInt() == 0).findFirst().orElseThrow();
+			ExchangeRecord version = records.stream().filter(
+					r -> r.recordType().equals("SYLLABUS_VERSION") && r.values().path("is_current").asInt() == 0)
+					.findFirst().orElseThrow();
 			ExchangeRecord descriptor = node(records, "DESCRIPTOR");
 			replace(records, descriptor, "syllabus_version_id", version.recordId().toString());
 		}
@@ -163,8 +177,9 @@ class PortableSemanticImportIntegrationTest {
 		}
 		case "SOURCE_BOOKLET", "REGION_BOOKLET" -> {
 			String owner = first(records, "QUESTION").values().path("booklet_id").asText();
-			ExchangeRecord other = records.stream().filter(r -> r.recordType().equals("EXAM_BOOKLET")
-					&& !r.recordId().toString().equals(owner)).findFirst().orElseThrow();
+			ExchangeRecord other = records.stream()
+					.filter(r -> r.recordType().equals("EXAM_BOOKLET") && !r.recordId().toString().equals(owner))
+					.findFirst().orElseThrow();
 			if (defect.equals("SOURCE_BOOKLET")) {
 				change(records, "SOURCE_QUESTION", "booklet_id", other.recordId().toString());
 			} else {
@@ -183,7 +198,8 @@ class PortableSemanticImportIntegrationTest {
 			values.put("source_node_id", endpoint);
 			values.put("target_node_id", endpoint);
 			values.put("mapping_status", "CONFIRMED");
-			records.add(new ExchangeRecord(1, "CURRICULUM_MAPPING", UUID.randomUUID(), UUID.randomUUID(), null, values));
+			records.add(
+					new ExchangeRecord(1, "CURRICULUM_MAPPING", UUID.randomUUID(), UUID.randomUUID(), null, values));
 		}
 		case "EMPTY_ANSWER" -> change(records, "ANSWER", "answer_text", " ");
 		case "REGION_BOUNDS" -> {
@@ -214,33 +230,39 @@ class PortableSemanticImportIntegrationTest {
 	}
 
 	private void replaceValues(List<ExchangeRecord> records, ExchangeRecord record, ObjectNode values) {
-		records.set(records.indexOf(record), new ExchangeRecord(record.recordVersion(), record.recordType(), record.recordId(),
-				record.revisionId(), record.baselineRevisionId(), values));
+		records.set(records.indexOf(record), new ExchangeRecord(record.recordVersion(), record.recordType(),
+				record.recordId(), record.revisionId(), record.baselineRevisionId(), values));
 	}
 
 	private ExchangeRecord node(List<ExchangeRecord> records, String level) {
 		String classificationId = first(records, "QUESTION").values().path("classification_node_id").asText();
-		String syllabus = records.stream().filter(r -> r.recordId().toString().equals(classificationId))
-				.findFirst().orElseThrow().values().path("syllabus_version_id").asText();
-		return records.stream().filter(r -> r.recordType().equals("CURRICULUM_NODE")
-				&& r.values().path("curriculum_level").asText().equals(level)
-				&& r.values().path("syllabus_version_id").asText().equals(syllabus)).findFirst().orElseThrow();
+		String syllabus = records.stream().filter(r -> r.recordId().toString().equals(classificationId)).findFirst()
+				.orElseThrow().values().path("syllabus_version_id").asText();
+		return records.stream()
+				.filter(r -> r.recordType().equals("CURRICULUM_NODE")
+						&& r.values().path("curriculum_level").asText().equals(level)
+						&& r.values().path("syllabus_version_id").asText().equals(syllabus))
+				.findFirst().orElseThrow();
 	}
 
 	private ExchangeRecord first(List<ExchangeRecord> records, String type) {
 		return records.stream().filter(r -> r.recordType().equals(type)).findFirst().orElseThrow();
 	}
 
-	private boolean install(Fixture fixture, Path archive, SubjectImportApprovalPlan plan, boolean assignment) throws Exception {
+	private boolean install(Fixture fixture, Path archive, SubjectImportApprovalPlan plan, boolean assignment)
+			throws Exception {
 		if (assignment) {
 			return new WorkAssignmentInstallationCoordinator(fixture.config()).install(archive).replay();
 		}
-		return new SubjectImportCoordinator(fixture.config()).execute(1, plan, archive, directory.resolve("backups"),
-				"Approve semantic import regression fixture").replay();
+		return new SubjectImportCoordinator(fixture.config())
+				.execute(1, plan, archive, directory.resolve("backups"), "Approve semantic import regression fixture")
+				.replay();
 	}
 
 	private SubjectImportApprovalPlan approve(Fixture fixture, Path archive) throws Exception {
-		// Exercise the coordinator even when a caller supplies decisions from an earlier
+
+		// Exercise the coordinator even when a caller supplies decisions from an
+		// earlier
 		// graph. Fingerprints below bind the actual crafted bytes; semantic validity
 		// must not be inferred from approval coverage or a previous preview.
 		var preview = new SubjectReconciliationPreviewService().preview(fixture.masterArchive(), fixture.archive());
@@ -249,7 +271,8 @@ class PortableSemanticImportIntegrationTest {
 			review.decide(key, Decision.ACCEPT, "Approved test addition");
 		}
 		var fingerprints = new SubjectImportSnapshotFingerprint();
-		return SubjectImportApprovalPlan.prepare(review, fingerprints.inspect(fixture.masterArchive()), fingerprints.inspect(archive));
+		return SubjectImportApprovalPlan.prepare(review, fingerprints.inspect(fixture.masterArchive()),
+				fingerprints.inspect(archive));
 	}
 
 	private List<String> databaseContents(SqliteDatabase database) throws Exception {
@@ -258,14 +281,17 @@ class PortableSemanticImportIntegrationTest {
 
 	private List<String> databaseContents(SqliteDatabase database, boolean replay) throws Exception {
 		List<String> contents = new ArrayList<>();
-		try (var connection = database.openConnection(); var tables = connection.createStatement();
+		try (var connection = database.openConnection();
+				var tables = connection.createStatement();
 				var names = tables.executeQuery("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")) {
 			while (names.next()) {
 				String table = names.getString(1);
-				try (var statement = connection.createStatement(); var rows = statement.executeQuery("SELECT * FROM \"" + table + "\"")) {
+				try (var statement = connection.createStatement();
+						var rows = statement.executeQuery("SELECT * FROM \"" + table + "\"")) {
 					while (rows.next()) {
 						StringBuilder row = new StringBuilder(table);
 						for (int column = 1; column <= rows.getMetaData().getColumnCount(); column++) {
+
 							// A successful replay explicitly reselects its assignment. Only
 							// that selection timestamp may change; rejection compares it too.
 							if (replay && table.equals("contributor_assignment_selection")
@@ -305,13 +331,13 @@ class PortableSemanticImportIntegrationTest {
 				"INSERT INTO subjects(id, subject_name) VALUES (1, 'Biology')",
 				"INSERT INTO syllabus_versions(id, subject_id, syllabus_name, is_current) VALUES (1, 1, 'Biology 2025', 1), (2, 1, 'Biology 2019', 0)",
 				"INSERT INTO curriculum_nodes(id, syllabus_version_id, parent_id, curriculum_code, curriculum_name, curriculum_level, display_order) VALUES "
-						+ "(1, " + (legacy ? 2 : 1) + ", NULL, 'U1', 'Unit', 'UNIT', 0),"
-						+ "(2, " + (legacy ? 2 : 1) + ", 1, 'T1', 'Topic', 'TOPIC', 0),"
-						+ "(3, " + (legacy ? 2 : 1) + ", 2, 'S1', 'Subtopic', 'SUBTOPIC', 0),"
-						+ "(4, " + (legacy ? 2 : 1) + ", 3, 'D1', 'Descriptor', 'DESCRIPTOR', 0),"
-						+ "(11, " + (legacy ? 1 : 2) + ", NULL, 'U2', 'Other Unit', 'UNIT', 0),"
-						+ "(12, " + (legacy ? 1 : 2) + ", 11, 'T2', 'Other Topic', 'TOPIC', 0),"
-						+ "(13, " + (legacy ? 1 : 2) + ", 12, 'D2', 'Other Descriptor', 'DESCRIPTOR', 0)",
+						+ "(1, " + (legacy ? 2 : 1) + ", NULL, 'U1', 'Unit', 'UNIT', 0)," + "(2, " + (legacy ? 2 : 1)
+						+ ", 1, 'T1', 'Topic', 'TOPIC', 0)," + "(3, " + (legacy ? 2 : 1)
+						+ ", 2, 'S1', 'Subtopic', 'SUBTOPIC', 0)," + "(4, " + (legacy ? 2 : 1)
+						+ ", 3, 'D1', 'Descriptor', 'DESCRIPTOR', 0)," + "(11, " + (legacy ? 1 : 2)
+						+ ", NULL, 'U2', 'Other Unit', 'UNIT', 0)," + "(12, " + (legacy ? 1 : 2)
+						+ ", 11, 'T2', 'Other Topic', 'TOPIC', 0)," + "(13, " + (legacy ? 1 : 2)
+						+ ", 12, 'D2', 'Other Descriptor', 'DESCRIPTOR', 0)",
 				"INSERT INTO exam_providers(id, provider_name) VALUES (1, 'QCAA')",
 				"INSERT INTO exams(id, subject_id, provider_id, exam_year, exam_name, expected_question_booklet_count, expected_answer_file_count) VALUES (1, 1, 1, 2025, 'External Assessment', 2, 0)",
 				"INSERT INTO source_documents(id, relative_path) VALUES (1, 'subjects/Biology/exams/questions.pdf')",
@@ -326,9 +352,11 @@ class PortableSemanticImportIntegrationTest {
 				"INSERT INTO answers(id, question_id, answer_text) VALUES (1, 1, 'Answer')");
 		Path archive = directory.resolve("original.examwork");
 		if (assignment) {
-			Exam exam = new Exam(1, new Subject(1, "Biology"), new ExamProvider(1, "QCAA"), 2025, "External Assessment");
-			new WorkAssignmentExporter(sourceDb, new ManagedDataLayout(source.dataRoot())).export(
-					new WorkAssignmentExporter.Request(exam, UUID.randomUUID(), UUID.randomUUID(), "Contributor", true, archive));
+			Exam exam = new Exam(1, new Subject(1, "Biology"), new ExamProvider(1, "QCAA"), 2025,
+					"External Assessment");
+			new WorkAssignmentExporter(sourceDb, new ManagedDataLayout(source.dataRoot()))
+					.export(new WorkAssignmentExporter.Request(exam, UUID.randomUUID(), UUID.randomUUID(),
+							"Contributor", true, archive));
 		} else {
 			new SubjectSnapshotExporter(sourceDb, new ManagedDataLayout(source.dataRoot())).export(1, archive);
 		}

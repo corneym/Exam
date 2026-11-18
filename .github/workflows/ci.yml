@@ -34,10 +34,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  non-ui-tests:
-    name: Non-UI tests
+
+  non-ui-batches:
+    name: Non-UI - ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: repository
+            suite: NonUIRepositoryTests.java
+
+          - name: work-packages
+            suite: NonUIWorkPackageTests.java
+
+          - name: services
+            suite: NonUIServiceTests.java
+
+          - name: core
+            suite: NonUICoreTests.java
+
+          - name: import-output
+            suite: NonUIImportOutputTests.java
 
     steps:
       - name: Check out repository
@@ -52,16 +72,36 @@ jobs:
           java-version: '25'
           cache: maven
 
-      - name: Run non-UI tests
-        run: bash ./mvnw --batch-mode clean verify
+      - name: Run non-UI test batch
+        run: bash ./mvnw --batch-mode "-Dtest.suite=**/${{ matrix.suite }}" clean verify
 
       - name: Upload test reports on failure
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: non-ui-test-reports
+          name: non-ui-${{ matrix.name }}-test-reports
           path: target/surefire-reports/
           retention-days: 7
+
+  non-ui-tests:
+    name: Non-UI tests
+    needs: non-ui-batches
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Verify all non-UI batches passed
+        env:
+          BATCH_RESULT: ${{ needs.non-ui-batches.result }}
+        run: |
+          if [ "$BATCH_RESULT" != "success" ]; then
+            echo "Non-UI batches did not all succeed: $BATCH_RESULT"
+            exit 1
+          fi
+
+          echo "All non-UI batches passed."
+
 
   ui-tests:
     name: UI - ${{ matrix.name }}

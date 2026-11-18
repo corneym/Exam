@@ -28,22 +28,26 @@ final class PortableDomainRecordValidator {
 
 	private PortableDomainRecordValidator(List<ExchangeRecord> graph) throws PackageFormatException {
 		for (ExchangeRecord record : graph) {
-			if (records.computeIfAbsent(record.recordType(), _ -> new HashMap<>())
-					.putIfAbsent(record.recordId(), record) != null) {
+			if (records.computeIfAbsent(record.recordType(), _ -> new HashMap<>()).putIfAbsent(record.recordId(),
+					record) != null) {
 				throw invalid(record, "duplicate portable identity");
 			}
 		}
 	}
 
-	/** Validates a complete Subject graph, without requiring the current syllabus for historical Questions. */
+	/**
+	 * Validates a complete Subject graph, without requiring the current syllabus
+	 * for historical Questions.
+	 */
 	static void validate(UUID subjectId, List<ExchangeRecord> graph) throws PackageFormatException {
 		var validator = new PortableDomainRecordValidator(graph);
 		for (ExchangeRecord record : graph) {
 			try {
 				validator.validateRecord(subjectId, record);
 			} catch (IllegalArgumentException | DateTimeException exception) {
-				throw new PackageFormatException("Invalid " + record.recordType() + " " + record.recordId()
-						+ ": " + exception.getMessage(), exception);
+				throw new PackageFormatException(
+						"Invalid " + record.recordType() + " " + record.recordId() + ": " + exception.getMessage(),
+						exception);
 			}
 		}
 	}
@@ -70,7 +74,8 @@ final class PortableDomainRecordValidator {
 		case "SHARED_QUESTION_CONTEXT" -> validateContext(record);
 		case "QUESTION" -> validateQuestion(record);
 		case "ANSWER" -> validateAnswer(record);
-		default -> { }
+		default -> {
+		}
 		}
 	}
 
@@ -153,7 +158,8 @@ final class PortableDomainRecordValidator {
 					"answer_file_id must belong to the booklet's Exam");
 		}
 		if (record.values().hasNonNull("pending_mcq_shared_context_id")) {
-			ExchangeRecord context = reference(record.values(), "pending_mcq_shared_context_id", "SHARED_QUESTION_CONTEXT");
+			ExchangeRecord context = reference(record.values(), "pending_mcq_shared_context_id",
+					"SHARED_QUESTION_CONTEXT");
 			require(record, reference(context.values(), "booklet_id", "EXAM_BOOKLET").equals(record),
 					"pending_mcq_shared_context_id must belong to the same Booklet");
 		}
@@ -219,7 +225,8 @@ final class PortableDomainRecordValidator {
 			}
 			case "IMAGE" -> {
 				if (context) {
-					require(record, imageOrders.contains(integer(part, "image_order")), "content part has missing image_order");
+					require(record, imageOrders.contains(integer(part, "image_order")),
+							"content part has missing image_order");
 				} else {
 					ExchangeRecord image = reference(part, "image_id", "QUESTION_IMAGE");
 					require(record, reference(image.values(), "question_id", "QUESTION").equals(record),
@@ -258,7 +265,9 @@ final class PortableDomainRecordValidator {
 	}
 
 	private void validateRegion(JsonNode region) {
-		// All PDF-region domain types share these proportional bounds and one-based pages.
+
+		// All PDF-region domain types share these proportional bounds and one-based
+		// pages.
 		new SharedQuestionContextRegion(integer(region, "page_number"), number(region, "x"), number(region, "y"),
 				number(region, "width"), number(region, "height"));
 	}

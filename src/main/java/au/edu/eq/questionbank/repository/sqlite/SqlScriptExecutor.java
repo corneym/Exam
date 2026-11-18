@@ -14,8 +14,7 @@ import java.util.regex.Pattern;
 final class SqlScriptExecutor {
 
 	private static final Pattern TRIGGER_END = Pattern.compile("(?is)\\bEND\\s*;\\s*$");
-	private static final Pattern TRIGGER_START = Pattern.compile(
-			"(?is)^(?:\\s|--[^\\r\\n]*(?:\\r?\\n|$)|/\\*.*?\\*/)*" + "CREATE\\s+(?:TEMP(?:ORARY)?\\s+)?TRIGGER\\b");
+	private static final Pattern TRIGGER_START = Pattern.compile("(?i)CREATE\\s+(?:TEMP(?:ORARY)?\\s+)?TRIGGER\\b");
 
 	private SqlScriptExecutor() {
 	}
@@ -113,7 +112,7 @@ final class SqlScriptExecutor {
 			if (character == ';') {
 				current.append(character);
 				String candidate = current.toString();
-				boolean trigger = TRIGGER_START.matcher(candidate).find();
+				boolean trigger = startsWithTrigger(candidate);
 				boolean completeTrigger = TRIGGER_END.matcher(candidate).find();
 
 				// Ordinary statements terminate at a semicolon.
@@ -133,7 +132,7 @@ final class SqlScriptExecutor {
 		}
 		String remaining = current.toString().strip();
 		if (!isCommentOnly(remaining)) {
-			if (TRIGGER_START.matcher(remaining).find()) {
+			if (startsWithTrigger(remaining)) {
 				throw new SQLException("Unterminated CREATE TRIGGER statement");
 			}
 			statements.add(remaining);
@@ -142,7 +141,52 @@ final class SqlScriptExecutor {
 	}
 
 	private static boolean isCommentOnly(String sql) {
-		String withoutComments = sql.replaceAll("(?s)/\\*.*?\\*/", " ").replaceAll("(?m)--[^\\r\\n]*", " ");
-		return withoutComments.isBlank();
+		return skipLeadingTrivia(sql) == sql.length();
+	}
+
+	private static int skipLeadingTrivia(String sql) {
+		int index = 0;
+		int length = sql.length();
+		while (index < length) {
+			char current = sql.charAt(index);
+			if (Character.isWhitespace(current)) {
+				index++;
+				continue;
+			}
+
+			// Skip SQL line comments through their newline or EOF.
+			if (current == '-' && index + 1 < length && sql.charAt(index + 1) == '-') {
+				index += 2;
+				while (index < length && sql.charAt(index) != '\n') {
+					index++;
+				}
+				continue;
+			}
+
+			// Skip block comments without regular-expression backtracking.
+			if (current == '/' && index + 1 < length && sql.charAt(index + 1) == '*') {
+				int end = sql.indexOf("*/", index + 2);
+				if (end < 0) {
+					return length;
+				}
+				index = end + 2;
+				continue;
+			}
+
+			// The first non-trivia character begins the SQL statement.
+			return index;
+		}
+		return index;
+	}
+
+	private static boolean startsWithTrigger(String sql) {
+		int start = skipLeadingTrivia(sql);
+		if (start == sql.length()) {
+			return false;
+		}
+
+		// Match the first SQL keywords only. No repeated alternatives
+		// or backtracking through preceding comments are required.
+		return TRIGGER_START.matcher(sql).region(start, sql.length()).lookingAt();
 	}
 }

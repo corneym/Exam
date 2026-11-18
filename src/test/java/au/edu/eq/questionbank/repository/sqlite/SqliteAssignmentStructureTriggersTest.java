@@ -45,6 +45,7 @@ class SqliteAssignmentStructureTriggersTest {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try (Statement statement = connection.createStatement()) {
+				HistoricalSchemaFixture.removeVersion34Objects(statement);
 				HistoricalSchemaFixture.removeAssignmentGuardObjects(statement);
 				statement.execute("""
 						UPDATE schema_version
@@ -75,6 +76,7 @@ class SqliteAssignmentStructureTriggersTest {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try (Statement statement = connection.createStatement()) {
+				HistoricalSchemaFixture.removeVersion34Objects(statement);
 				HistoricalSchemaFixture.removeAssignmentGuardObjects(statement);
 
 				// Reconstruct the original version-31 guards using the
@@ -82,7 +84,7 @@ class SqliteAssignmentStructureTriggersTest {
 				SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v29-to-v30.sql"));
 				SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v30-to-v31.sql"));
 
-				// The test starts from a version-33 fixture. Restore the
+				// The test starts from a latest-schema fixture. Restore the
 				// historical version after installing its trigger definitions.
 				statement.execute("""
 						UPDATE schema_version
@@ -339,12 +341,13 @@ class SqliteAssignmentStructureTriggersTest {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try (Statement statement = connection.createStatement()) {
+				HistoricalSchemaFixture.removeVersion34Objects(statement);
 				HistoricalSchemaFixture.removeAssignmentGuardObjects(statement);
 				statement.execute("""
 						UPDATE schema_version
 						SET version = 29
-						WHERE version = 33
-						""");
+						WHERE version = %d
+						""".formatted(SqliteDatabase.latestSchemaVersion()));
 				SqlScriptExecutor.execute(connection, migration);
 
 				// All original v30 definitions must match exactly.
