@@ -359,11 +359,13 @@ public final class WorkAssignmentScopeValidator {
 	private void requireDeclaredCount(ExchangeRecord exam, String field, int actual, int minimum)
 			throws PackageFormatException {
 		JsonNode expected = exam.values().path(field);
-		// Reference closure alone cannot detect an omitted, otherwise unreferenced Booklet.
+
+		// Reference closure alone cannot detect an omitted, otherwise unreferenced
+		// Booklet.
 		if (!expected.isIntegralNumber() || !expected.canConvertToInt() || expected.intValue() < minimum
 				|| expected.intValue() != actual) {
-			throw new PackageFormatException("Incomplete whole-Exam assignment: " + field
-					+ " must match included records (" + actual + ")");
+			throw new PackageFormatException(
+					"Incomplete whole-Exam assignment: " + field + " must match included records (" + actual + ")");
 		}
 	}
 

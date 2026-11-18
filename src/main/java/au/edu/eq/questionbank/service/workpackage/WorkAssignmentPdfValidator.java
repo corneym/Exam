@@ -7,7 +7,10 @@ import java.nio.file.Path;
 
 import org.apache.pdfbox.Loader;
 
-/** Checks that an assignment dependency can be opened by the application's PDF reader. */
+/**
+ * Checks that an assignment dependency can be opened by the application's PDF
+ * reader.
+ */
 final class WorkAssignmentPdfValidator {
 
 	private WorkAssignmentPdfValidator() {
@@ -17,6 +20,7 @@ final class WorkAssignmentPdfValidator {
 		if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) || !Files.isReadable(file)) {
 			throw new PackageFormatException("Missing or unreadable assignment PDF: " + description);
 		}
+
 		// Use the same tolerant parser as normal viewing; do not impose PDF/A or
 		// signature checks that would reject existing, readable examination PDFs.
 		try (var document = Loader.loadPDF(file.toFile())) {

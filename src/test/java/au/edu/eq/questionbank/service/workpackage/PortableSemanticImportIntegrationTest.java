@@ -327,8 +327,7 @@ class PortableSemanticImportIntegrationTest {
 		Path pdf = source.dataRoot().resolve("subjects/Biology/exams/questions.pdf");
 		Files.createDirectories(pdf.getParent());
 		Files.write(pdf, TestPdf.bytes("Disposable source asset"));
-		execute(sourceDb,
-				"INSERT INTO subjects(id, subject_name) VALUES (1, 'Biology')",
+		execute(sourceDb, "INSERT INTO subjects(id, subject_name) VALUES (1, 'Biology')",
 				"INSERT INTO syllabus_versions(id, subject_id, syllabus_name, is_current) VALUES (1, 1, 'Biology 2025', 1), (2, 1, 'Biology 2019', 0)",
 				"INSERT INTO curriculum_nodes(id, syllabus_version_id, parent_id, curriculum_code, curriculum_name, curriculum_level, display_order) VALUES "
 						+ "(1, " + (legacy ? 2 : 1) + ", NULL, 'U1', 'Unit', 'UNIT', 0)," + "(2, " + (legacy ? 2 : 1)

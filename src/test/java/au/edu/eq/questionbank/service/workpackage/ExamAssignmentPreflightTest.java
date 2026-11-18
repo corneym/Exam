@@ -33,7 +33,7 @@ class ExamAssignmentPreflightTest {
 	Path directory;
 
 	@ParameterizedTest
-	@ValueSource(strings = {"missing", "directory", "empty", "invalid", "wrong-hash"})
+	@ValueSource(strings = { "missing", "directory", "empty", "invalid", "wrong-hash" })
 	void rejectsUnusableQuestionPdfWithoutChangingMaster(String defect) throws Exception {
 		Fixture fixture = fixture();
 		Path source = fixture.questionPdf();
@@ -56,7 +56,7 @@ class ExamAssignmentPreflightTest {
 	}
 
 	@ParameterizedTest
-	@ValueSource(strings = {"missing", "directory", "invalid"})
+	@ValueSource(strings = { "missing", "directory", "invalid" })
 	void rejectsUnusableSyllabusPdf(String defect) throws Exception {
 		Fixture fixture = fixture();
 		String relative = "subjects/Biology/curriculum/2025/sources/syllabus.pdf";
@@ -72,7 +72,7 @@ class ExamAssignmentPreflightTest {
 	}
 
 	@ParameterizedTest
-	@ValueSource(strings = {"", "required-password"})
+	@ValueSource(strings = { "", "required-password" })
 	void acceptsPdfReadableWithoutPasswordAndRejectsPasswordRequired(String userPassword) throws Exception {
 		Fixture fixture = fixture();
 		try (var pdf = Loader.loadPDF(TestPdf.bytes("Protected PDF"))) {

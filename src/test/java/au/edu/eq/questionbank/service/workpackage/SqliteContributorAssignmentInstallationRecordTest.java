@@ -173,9 +173,12 @@ class SqliteContributorAssignmentInstallationRecordTest {
 					    (31, 1, 21, 2025, 'Chemistry Exam'),
 					    (32, 1, 21, 2024, 'Other Exam')
 					""");
-			statement.execute("UPDATE exams SET expected_question_booklet_count = 1, expected_answer_file_count = 0 WHERE id = 31");
-			statement.execute("INSERT INTO source_documents (id, relative_path) VALUES (41, 'subjects/Chemistry/exams/questions.pdf')");
-			statement.execute("INSERT INTO exam_booklets (id, exam_id, source_document_id, booklet_name) VALUES (51, 31, 41, 'Paper 1')");
+			statement.execute(
+					"UPDATE exams SET expected_question_booklet_count = 1, expected_answer_file_count = 0 WHERE id = 31");
+			statement.execute(
+					"INSERT INTO source_documents (id, relative_path) VALUES (41, 'subjects/Chemistry/exams/questions.pdf')");
+			statement.execute(
+					"INSERT INTO exam_booklets (id, exam_id, source_document_id, booklet_name) VALUES (51, 31, 41, 'Paper 1')");
 		}
 		return database;
 	}
@@ -231,9 +234,10 @@ class SqliteContributorAssignmentInstallationRecordTest {
 		contextValues.put("contributor_name", "Test Contributor");
 		var context = new ExchangeRecord(1, "WORK_ASSIGNMENT_CONTEXT", assignmentId, baselineId, null, contextValues);
 		return new WorkAssignmentPackageInspector.Inspection(manifest, records, records, context,
-				new ExamWorkAssetIndex(List.of(new ExamWorkAssetIndex.Reference(
-						"assets/sha256/aa/" + "a".repeat(64) + ".pdf", "a".repeat(64), 1, "application/pdf",
-						"subjects/Chemistry/exams/questions.pdf", "SOURCE_DOCUMENT", source.portableId(), "SOURCE_PDF"))),
+				new ExamWorkAssetIndex(
+						List.of(new ExamWorkAssetIndex.Reference("assets/sha256/aa/" + "a".repeat(64) + ".pdf",
+								"a".repeat(64), 1, "application/pdf", "subjects/Chemistry/exams/questions.pdf",
+								"SOURCE_DOCUMENT", source.portableId(), "SOURCE_PDF"))),
 				"a".repeat(64));
 	}
 

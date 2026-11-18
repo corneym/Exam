@@ -273,6 +273,7 @@ public final class WorkAssignmentExporter {
 	}
 
 	private void validateStagedPdfs(SubjectAssetCollector.CollectedAssets assets) throws IOException {
+
 		// Validate the immutable copies too: live sources may change after preflight.
 		for (var asset : assets.stagedFiles().entrySet()) {
 			if (asset.getKey().endsWith(".pdf")) {

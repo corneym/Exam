@@ -22,6 +22,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ManagedDataLayout;
+import au.edu.eq.questionbank.TestPdf;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Subject;
@@ -322,8 +323,8 @@ public class ContributionSnapshotReaderTest {
 		Path questionPdf = coordinator.dataRoot().resolve("subjects/Biology/exams/questions.pdf");
 		Path answerPdf = coordinator.dataRoot().resolve("subjects/Biology/exams/answers.pdf");
 		Files.createDirectories(questionPdf.getParent());
-		Files.writeString(questionPdf, "Question PDF content");
-		Files.writeString(answerPdf, "Answer PDF content");
+		Files.write(questionPdf, TestPdf.bytes("Question PDF content"));
+		Files.write(answerPdf, TestPdf.bytes("Answer PDF content"));
 		execute(coordinatorDatabase, """
 				INSERT INTO subjects (id, subject_name)
 				VALUES (1, 'Biology')

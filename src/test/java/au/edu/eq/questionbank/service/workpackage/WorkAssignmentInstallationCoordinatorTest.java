@@ -55,8 +55,8 @@ class WorkAssignmentInstallationCoordinatorTest {
 	Path directory;
 
 	@ParameterizedTest
-	@ValueSource(strings = {"assignment_id", "baseline_snapshot_id", "master_installation_id", "subject_id",
-			"exam_id", "current_syllabus_id", "issued_at"})
+	@ValueSource(strings = { "assignment_id", "baseline_snapshot_id", "master_installation_id", "subject_id", "exam_id",
+			"current_syllabus_id", "issued_at" })
 	void rejectsInconsistentAssignmentContext(String field) throws Exception {
 		Fixture fixture = fixture();
 		Path archive = PortableArchiveEditor.rewriteRecords(fixture.archive(), directory.resolve("context.examwork"),
@@ -66,7 +66,7 @@ class WorkAssignmentInstallationCoordinatorTest {
 	}
 
 	@ParameterizedTest
-	@ValueSource(strings = {"expected_question_booklet_count", "expected_answer_file_count"})
+	@ValueSource(strings = { "expected_question_booklet_count", "expected_answer_file_count" })
 	void rejectsIncorrectDeclaredCounts(String field) throws Exception {
 		rejects(records -> change(records, "EXAM", values -> values.put(field, 99)));
 	}
@@ -79,7 +79,8 @@ class WorkAssignmentInstallationCoordinatorTest {
 	@Test
 	void rejectsNonPdfAssetWithMatchingManifestIndexAndSourceHashes() throws Exception {
 		Fixture fixture = fixture();
-		Path archive = PortableArchiveEditor.replaceQuestionPdf(fixture.archive(), directory.resolve("invalid-pdf.examwork"),
+		Path archive = PortableArchiveEditor.replaceQuestionPdf(fixture.archive(),
+				directory.resolve("invalid-pdf.examwork"),
 				"%PDF-1.4\nNot a PDF document".getBytes(StandardCharsets.UTF_8));
 		assertRejectedBeforePublication(fixture, archive);
 	}
@@ -88,11 +89,14 @@ class WorkAssignmentInstallationCoordinatorTest {
 	void rejectsManifestIntendedMasterDisagreeingWithOriginAndContext() throws Exception {
 		Fixture fixture = fixture();
 		Path archive = PortableArchiveEditor.rewriteContents(fixture.archive(), directory.resolve("master.examwork"),
-				contents -> { }, manifest -> new ExamWorkManifest(manifest.formatVersion(), manifest.packageId(),
-						manifest.packageType(), manifest.createdAt(), manifest.originInstallationId(), UUID.randomUUID(),
-						manifest.subjectId(), manifest.subjectName(), manifest.assignmentId(), manifest.baselineSnapshotId(),
+				contents -> {
+				},
+				manifest -> new ExamWorkManifest(manifest.formatVersion(), manifest.packageId(), manifest.packageType(),
+						manifest.createdAt(), manifest.originInstallationId(), UUID.randomUUID(), manifest.subjectId(),
+						manifest.subjectName(), manifest.assignmentId(), manifest.baselineSnapshotId(),
 						manifest.producerApplicationVersion(), manifest.minimumReaderApplicationVersion(),
-						manifest.producerSchemaVersion(), manifest.minimumReaderSchemaVersion(), manifest.scope(), manifest.entries()));
+						manifest.producerSchemaVersion(), manifest.minimumReaderSchemaVersion(), manifest.scope(),
+						manifest.entries()));
 		assertRejectedBeforePublication(fixture, archive);
 	}
 
@@ -494,8 +498,10 @@ class WorkAssignmentInstallationCoordinatorTest {
 
 	private void assertRejectedBeforePublication(Fixture fixture, Path archive) throws Exception {
 		Path unrelated = preserveUnrelatedSubject(fixture);
-		new ExamWorkArchiveValidator().validate(archive, ApplicationVersion.current(), SqliteDatabase.latestSchemaVersion());
-		assertThrows(PackageFormatException.class, () -> new WorkAssignmentInstallationCoordinator(fixture.contributor()).install(archive));
+		new ExamWorkArchiveValidator().validate(archive, ApplicationVersion.current(),
+				SqliteDatabase.latestSchemaVersion());
+		assertThrows(PackageFormatException.class,
+				() -> new WorkAssignmentInstallationCoordinator(fixture.contributor()).install(archive));
 		assertEquals(1, count(fixture.contributorDatabase(), "SELECT COUNT(*) FROM subjects"));
 		for (String table : List.of("exams", "exam_booklets", "source_documents", "contributor_assignment_sessions")) {
 			assertEquals(0, count(fixture.contributorDatabase(), "SELECT COUNT(*) FROM " + table), table);
@@ -505,7 +511,8 @@ class WorkAssignmentInstallationCoordinatorTest {
 	}
 
 	private static void change(List<ExchangeRecord> records, String type, Consumer<ObjectNode> edit) {
-		ExchangeRecord record = records.stream().filter(candidate -> candidate.recordType().equals(type)).findFirst().orElseThrow();
+		ExchangeRecord record = records.stream().filter(candidate -> candidate.recordType().equals(type)).findFirst()
+				.orElseThrow();
 		ObjectNode values = (ObjectNode) record.values();
 		edit.accept(values);
 		records.set(records.indexOf(record), new ExchangeRecord(record.recordVersion(), record.recordType(),

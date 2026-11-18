@@ -6,7 +6,10 @@ import java.io.IOException;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 
-/** Generates disposable, parseable PDF assets without restricted source material. */
+/**
+ * Generates disposable, parseable PDF assets without restricted source
+ * material.
+ */
 public final class TestPdf {
 
 	private TestPdf() {
@@ -14,6 +17,7 @@ public final class TestPdf {
 
 	/**
 	 * Creates a one-page PDF with a distinguishing document title.
+	 *
 	 * @param title fixture title
 	 * @return generated PDF bytes
 	 * @throws IOException if PDF generation fails

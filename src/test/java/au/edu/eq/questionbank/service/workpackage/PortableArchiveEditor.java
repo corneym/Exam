@@ -33,23 +33,23 @@ final class PortableArchiveEditor {
 		return rewriteRecords(original, destination, "records/subject-graph.jsonl", edit);
 	}
 
-	static Path rewriteRecords(Path original, Path destination, String recordPath,
-			Consumer<List<ExchangeRecord>> edit) throws Exception {
+	static Path rewriteRecords(Path original, Path destination, String recordPath, Consumer<List<ExchangeRecord>> edit)
+			throws Exception {
 		return rewriteContents(original, destination, contents -> {
-
 			editRecords(contents, recordPath, edit);
 		}, UnaryOperator.identity());
 	}
 
-	static void editRecords(Map<String, byte[]> contents, String recordPath,
-			Consumer<List<ExchangeRecord>> edit) throws Exception {
+	static void editRecords(Map<String, byte[]> contents, String recordPath, Consumer<List<ExchangeRecord>> edit)
+			throws Exception {
 		var codec = new ExamWorkJsonlCodec();
 		var records = new ArrayList<>(codec.readRecords(new ByteArrayInputStream(contents.get(recordPath))));
 		edit.accept(records);
 		var output = new ByteArrayOutputStream();
 		codec.writeRecords(records, output);
 		contents.put(recordPath, output.toByteArray());
-		if (recordPath.equals("records/subject-graph.jsonl") && contents.containsKey("baseline/initial-records.jsonl")) {
+		if (recordPath.equals("records/subject-graph.jsonl")
+				&& contents.containsKey("baseline/initial-records.jsonl")) {
 			contents.put("baseline/initial-records.jsonl", output.toByteArray());
 		}
 	}
@@ -74,8 +74,8 @@ final class PortableArchiveEditor {
 		Map<String, EntrySource> sources = new LinkedHashMap<>();
 		for (var item : contents.entrySet()) {
 			String path = item.getKey();
-			var role = manifest.entries().stream().filter(entry -> entry.path().equals(path))
-					.map(Entry::role).findFirst().orElse(ExamWorkManifest.EntryRole.ASSET);
+			var role = manifest.entries().stream().filter(entry -> entry.path().equals(path)).map(Entry::role)
+					.findFirst().orElse(ExamWorkManifest.EntryRole.ASSET);
 			byte[] bytes = item.getValue();
 			String hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
 			entries.add(new Entry(path, role, bytes.length, hash));
@@ -91,12 +91,13 @@ final class PortableArchiveEditor {
 		}
 		return destination;
 	}
+
 	static Path replaceQuestionPdf(Path original, Path destination, byte[] replacement) throws Exception {
 		return rewriteContents(original, destination, contents -> {
 			var codec = new ExamWorkJsonlCodec();
 			var index = codec.readAssetIndex(new ByteArrayInputStream(contents.get(ExamWorkAssetIndex.INDEX_PATH)));
-			var old = index.references().stream().filter(reference -> reference.managedPath().endsWith("/questions.pdf"))
-					.findFirst().orElseThrow();
+			var old = index.references().stream()
+					.filter(reference -> reference.managedPath().endsWith("/questions.pdf")).findFirst().orElseThrow();
 			String hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(replacement));
 			String path = "assets/sha256/" + hash.substring(0, 2) + "/" + hash + ".pdf";
 			var references = new ArrayList<>(index.references());
@@ -113,8 +114,8 @@ final class PortableArchiveEditor {
 					if (record.recordType().equals("SOURCE_DOCUMENT") && record.recordId().equals(old.ownerId())) {
 						var values = (ObjectNode) record.values();
 						values.put("content_sha256", hash);
-						records.set(i, new ExchangeRecord(record.recordVersion(), record.recordType(), record.recordId(),
-								record.revisionId(), record.baselineRevisionId(), values));
+						records.set(i, new ExchangeRecord(record.recordVersion(), record.recordType(),
+								record.recordId(), record.revisionId(), record.baselineRevisionId(), values));
 					}
 				}
 			});
@@ -123,6 +124,7 @@ final class PortableArchiveEditor {
 
 	@FunctionalInterface
 	interface ContentsEdit {
+
 		void accept(Map<String, byte[]> contents) throws Exception;
 	}
 }

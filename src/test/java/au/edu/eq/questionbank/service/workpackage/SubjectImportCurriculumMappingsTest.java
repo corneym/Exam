@@ -34,7 +34,10 @@ import au.edu.eq.questionbank.service.workpackage.SubjectImportAssetStager.Stage
 import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationPreviewService.Result;
 import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationReview.Decision;
 
-/** Exercises additive mappings through real independently exported Subject packages. */
+/**
+ * Exercises additive mappings through real independently exported Subject
+ * packages.
+ */
 class SubjectImportCurriculumMappingsTest {
 
 	@TempDir
@@ -51,8 +54,9 @@ class SubjectImportCurriculumMappingsTest {
 		assertEquals(3 * (2 - existingVersions), preview.forType("CURRICULUM_NODE").stream()
 				.filter(node -> node.classification() == Classification.COMPATIBLE_ADDITION).count());
 		SubjectImportApprovalPlan plan = plan(fixture, acceptAll(preview));
-		assertEquals(Operation.INSERT_RECORD, plan.actions().stream()
-				.filter(action -> mapping.incomingId().equals(action.incomingId())).findFirst().orElseThrow().operation());
+		assertEquals(Operation.INSERT_RECORD,
+				plan.actions().stream().filter(action -> mapping.incomingId().equals(action.incomingId())).findFirst()
+						.orElseThrow().operation());
 		Map<String, List<String>> unrelatedBefore = unrelated(fixture);
 		var coordinator = new SubjectImportCoordinator(fixture.master());
 		var result = coordinator.execute(1, plan, fixture.incomingArchive(), directory.resolve("backups"),
@@ -64,11 +68,13 @@ class SubjectImportCurriculumMappingsTest {
 		assertNotEquals(mapping.incomingId(), new SqlitePortableIdentityRepository(fixture.masterDb())
 				.requireByLocalId(EntityType.CURRICULUM_MAPPING, mappingId(fixture)).portableId());
 		assertEquals(1, rows(fixture.masterDb(), "SELECT approval_note FROM portable_identity_aliases "
-				+ "WHERE entity_type = 'CURRICULUM_MAPPING' AND approval_note = 'Reviewed curriculum relationship'").size());
+				+ "WHERE entity_type = 'CURRICULUM_MAPPING' AND approval_note = 'Reviewed curriculum relationship'")
+				.size());
 		assertEquals(1, rows(fixture.masterDb(), "SELECT * FROM subject_import_packages").size());
 		Map<String, List<String>> afterImport = databaseState(fixture.masterDb());
-		assertTrue(coordinator.execute(1, plan, fixture.incomingArchive(), directory.resolve("backups"),
-				"Replay approved mapping").replay());
+		assertTrue(coordinator
+				.execute(1, plan, fixture.incomingArchive(), directory.resolve("backups"), "Replay approved mapping")
+				.replay());
 		assertEquals(afterImport, databaseState(fixture.masterDb()));
 
 		// A freshly exported package has a new package identity. Endpoint evidence
@@ -113,14 +119,17 @@ class SubjectImportCurriculumMappingsTest {
 	void conflictingOrAmbiguousEndpointsBlockMappingApproval(boolean ambiguous) throws Exception {
 		Fixture fixture = fixture(1);
 		if (ambiguous) {
-			// SQLite permits distinct raw codes which reconcile to the same normalised path.
+
+			// SQLite permits distinct raw codes which reconcile to the same normalised
+			// path.
 			execute(fixture.sourceDb(), """
 					INSERT INTO curriculum_nodes (id, syllabus_version_id, parent_id, curriculum_code,
 					    curriculum_name, curriculum_level, display_order)
 					VALUES (114, 11, 112, ' s1 ', 'Duplicate subtopic', 'SUBTOPIC', 1)
 					""");
 		} else {
-			execute(fixture.sourceDb(), "UPDATE curriculum_nodes SET curriculum_name = 'Different content' WHERE id = 113");
+			execute(fixture.sourceDb(),
+					"UPDATE curriculum_nodes SET curriculum_name = 'Different content' WHERE id = 113");
 		}
 		export(fixture.source(), fixture.incomingArchive());
 		Result preview = preview(fixture);
@@ -170,7 +179,8 @@ class SubjectImportCurriculumMappingsTest {
 		UUID incomingId = new SqlitePortableIdentityRepository(fixture.sourceDb())
 				.requireByLocalId(EntityType.CURRICULUM_NODE, rejectedNode).portableId();
 		var endpointKey = SubjectReconciliationReview.recordKey("CURRICULUM_NODE", incomingId);
-		assertThrows(IllegalStateException.class, () -> review.decide(endpointKey, Decision.REJECT, "Endpoint declined"));
+		assertThrows(IllegalStateException.class,
+				() -> review.decide(endpointKey, Decision.REJECT, "Endpoint declined"));
 		review.decide(key(mapping(preview)), Decision.REJECT, "Decline dependent mapping first");
 		review.decide(endpointKey, Decision.REJECT, "Endpoint declined");
 		assertThrows(IllegalStateException.class,
@@ -184,10 +194,11 @@ class SubjectImportCurriculumMappingsTest {
 	void staleApprovalCannotInsertMappingOrLedger() throws Exception {
 		Fixture fixture = fixture(1);
 		SubjectImportApprovalPlan plan = plan(fixture, acceptAll(preview(fixture)));
-		execute(fixture.masterDb(), "UPDATE curriculum_nodes SET curriculum_name = 'Edited after review' WHERE id = 113");
+		execute(fixture.masterDb(),
+				"UPDATE curriculum_nodes SET curriculum_name = 'Edited after review' WHERE id = 113");
 		Map<String, List<String>> before = databaseState(fixture.masterDb());
-		assertThrows(IllegalStateException.class, () -> new SubjectImportCoordinator(fixture.master()).execute(1,
-				plan, fixture.incomingArchive(), directory.resolve("backups"), "Stale mapping approval"));
+		assertThrows(IllegalStateException.class, () -> new SubjectImportCoordinator(fixture.master()).execute(1, plan,
+				fixture.incomingArchive(), directory.resolve("backups"), "Stale mapping approval"));
 		assertEquals(before, databaseState(fixture.masterDb()));
 	}
 
@@ -195,11 +206,12 @@ class SubjectImportCurriculumMappingsTest {
 	void rollingBackAfterMappingInsertionRemovesNodesMappingsAndAliasesTogether() throws Exception {
 		Fixture fixture = fixture(0);
 		SubjectImportApprovalPlan plan = plan(fixture, acceptAll(preview(fixture)));
+
 		// This package has no assets. Decode a private archive copy, then exercise
 		// the writer's caller-owned transaction after every graph row is inserted.
 		Path stagedArchive = Files.copy(fixture.incomingArchive(), directory.resolve("private.examwork"));
-		StagedPackage staged = new StagedPackage(plan.reviewedIncoming().packageId(), plan.approvalSha256(),
-				directory, stagedArchive, List.of());
+		StagedPackage staged = new StagedPackage(plan.reviewedIncoming().packageId(), plan.approvalSha256(), directory,
+				stagedArchive, List.of());
 		SubjectImportGraphWriter writer = new SubjectImportGraphWriter(fixture.masterDb());
 		var decoded = writer.decode(staged, plan);
 		Map<String, List<String>> before = databaseState(fixture.masterDb());
@@ -253,13 +265,14 @@ class SubjectImportCurriculumMappingsTest {
 	}
 
 	private void addVersion(SqliteDatabase database, int version, int subject) throws Exception {
-		execute(database, "INSERT INTO syllabus_versions (id, subject_id, syllabus_name, is_current) VALUES ("
-				+ version + ", " + subject + ", '" + (version % 10 == 1 ? "2019" : "2025") + "', 0)",
+		execute(database,
+				"INSERT INTO syllabus_versions (id, subject_id, syllabus_name, is_current) VALUES (" + version + ", "
+						+ subject + ", '" + (version % 10 == 1 ? "2019" : "2025") + "', 0)",
 				"INSERT INTO curriculum_nodes (id, syllabus_version_id, parent_id, curriculum_code, "
-				+ "curriculum_name, curriculum_level, display_order) VALUES "
-				+ "(" + (version * 10 + 1) + ", " + version + ", NULL, 'U1', 'Unit', 'UNIT', 0),"
-				+ "(" + (version * 10 + 2) + ", " + version + ", " + (version * 10 + 1) + ", 'T1', 'Topic', 'TOPIC', 0),"
-				+ "(" + (version * 10 + 3) + ", " + version + ", " + (version * 10 + 2) + ", 'S1', 'Subtopic', 'SUBTOPIC', 0)");
+						+ "curriculum_name, curriculum_level, display_order) VALUES " + "(" + (version * 10 + 1) + ", "
+						+ version + ", NULL, 'U1', 'Unit', 'UNIT', 0)," + "(" + (version * 10 + 2) + ", " + version
+						+ ", " + (version * 10 + 1) + ", 'T1', 'Topic', 'TOPIC', 0)," + "(" + (version * 10 + 3) + ", "
+						+ version + ", " + (version * 10 + 2) + ", 'S1', 'Subtopic', 'SUBTOPIC', 0)");
 	}
 
 	private void addMapping(SqliteDatabase database) throws Exception {
@@ -268,6 +281,7 @@ class SubjectImportCurriculumMappingsTest {
 	}
 
 	private void export(ApplicationConfig config, Path archive) throws Exception {
+
 		// Export deliberately creates a fresh package for each subsequent review.
 		Files.deleteIfExists(archive);
 		new SubjectSnapshotExporter(new SqliteDatabase(config.databasePath()), new ManagedDataLayout(config.dataRoot()))
@@ -318,13 +332,14 @@ class SubjectImportCurriculumMappingsTest {
 	}
 
 	private long mappingId(Fixture fixture) throws Exception {
-		return Long.parseLong(rows(fixture.masterDb(), "SELECT id FROM curriculum_mappings WHERE id <> 999").getFirst());
+		return Long
+				.parseLong(rows(fixture.masterDb(), "SELECT id FROM curriculum_mappings WHERE id <> 999").getFirst());
 	}
 
 	private Map<String, List<String>> unrelated(Fixture fixture) throws Exception {
-		return Map.of("subject", rows(fixture.masterDb(), "SELECT * FROM subjects WHERE id = 2"),
-				"versions", rows(fixture.masterDb(), "SELECT * FROM syllabus_versions WHERE subject_id = 2"),
-				"nodes", rows(fixture.masterDb(), "SELECT * FROM curriculum_nodes WHERE syllabus_version_id IN (21, 22)"),
+		return Map.of("subject", rows(fixture.masterDb(), "SELECT * FROM subjects WHERE id = 2"), "versions",
+				rows(fixture.masterDb(), "SELECT * FROM syllabus_versions WHERE subject_id = 2"), "nodes",
+				rows(fixture.masterDb(), "SELECT * FROM curriculum_nodes WHERE syllabus_version_id IN (21, 22)"),
 				"mappings", rows(fixture.masterDb(), "SELECT * FROM curriculum_mappings WHERE id = 999"));
 	}
 
@@ -337,7 +352,8 @@ class SubjectImportCurriculumMappingsTest {
 	}
 
 	private List<String> rows(SqliteDatabase database, String sql) throws Exception {
-		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement();
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery(sql)) {
 			List<String> rows = new ArrayList<>();
 			while (result.next()) {
