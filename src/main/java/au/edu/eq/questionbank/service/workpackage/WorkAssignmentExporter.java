@@ -32,8 +32,8 @@ import au.edu.eq.questionbank.ApplicationVersion;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.repository.identity.SqliteExamAssignmentGraphReader;
-import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqliteSubjectGraphReader.SubjectGraph;
 import au.edu.eq.questionbank.repository.identity.SqliteSubjectPortableRecordReader;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
@@ -119,6 +119,7 @@ public final class WorkAssignmentExporter {
 			Instant issuedAt = Instant.now();
 			SubjectAssetCollector.CollectedAssets assets = new SubjectAssetCollector(snapshotDatabase, layout,
 					stagingDirectory).collectAssignment(graph);
+			validateStagedPdfs(assets);
 			Map<String, EntrySource> sources = new LinkedHashMap<>();
 			Map<String, Entry> entries = new LinkedHashMap<>();
 			byte[] initialRecords = encodeRecords(records);
@@ -146,8 +147,8 @@ public final class WorkAssignmentExporter {
 					StandardOpenOption.WRITE)) {
 				new ExamWorkArchiveWriter().write(manifest, sources, output);
 			}
-			ExamWorkManifest verified = new ExamWorkArchiveValidator().validate(stagedArchive, applicationVersion,
-					schemaVersion);
+			ExamWorkManifest verified = new WorkAssignmentPackageInspector()
+					.inspect(stagedArchive, applicationVersion, schemaVersion).manifest();
 			if (!manifest.equals(verified)) {
 				throw new PackageFormatException("Validated assignment manifest differs from export");
 			}
@@ -269,6 +270,16 @@ public final class WorkAssignmentExporter {
 			}
 		}
 		return HexFormat.of().formatHex(digest.digest());
+	}
+
+	private void validateStagedPdfs(SubjectAssetCollector.CollectedAssets assets) throws IOException {
+
+		// Validate the immutable copies too: live sources may change after preflight.
+		for (var asset : assets.stagedFiles().entrySet()) {
+			if (asset.getKey().endsWith(".pdf")) {
+				WorkAssignmentPdfValidator.validate(asset.getValue(), asset.getKey());
+			}
+		}
 	}
 
 	/**

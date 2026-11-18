@@ -92,12 +92,15 @@ class WorkAssignmentScopeValidatorTest {
 		currentVersion.put("is_current", 1);
 		ObjectNode legacyVersion = values("subject_id", uuid(1).toString(), "syllabus_name", "Biology 2019");
 		legacyVersion.put("is_current", 0);
+		ObjectNode exam = values("subject_id", uuid(1).toString(), "provider_id", uuid(4).toString());
+		exam.put("expected_question_booklet_count", 2);
+		exam.put("expected_answer_file_count", 1);
 		List<ExchangeRecord> records = List.of(record("SUBJECT", 1, values("subject_name", "Biology")),
 				new ExchangeRecord(1, "SYLLABUS_VERSION", uuid(2), uuid(401), null, currentVersion),
 				new ExchangeRecord(1, "SYLLABUS_VERSION", uuid(17), uuid(402), null, legacyVersion),
 				record("EXAM_PROVIDER", 4, values("provider_name", "QCAA")),
 				record("CURRICULUM_NODE", 13, values("syllabus_version_id", uuid(2).toString())),
-				record("EXAM", 3, values("subject_id", uuid(1).toString(), "provider_id", uuid(4).toString())),
+				record("EXAM", 3, exam),
 				record("EXAM_BOOKLET", 5,
 						values("exam_id", uuid(3).toString(), "source_document_id", uuid(8).toString(),
 								"answer_file_id", uuid(7).toString())),
