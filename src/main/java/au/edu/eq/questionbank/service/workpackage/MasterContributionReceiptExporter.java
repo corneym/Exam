@@ -29,6 +29,8 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import au.edu.eq.questionbank.ApplicationVersion;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableContentRepository;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkArchiveWriter.EntrySource;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest.Entry;
@@ -64,6 +66,7 @@ public final class MasterContributionReceiptExporter {
 
 	private static final String INDEX_PATH = ExamWorkAssetIndex.INDEX_PATH;
 	private static final String RECEIPT_PATH = "receipts/import-results.jsonl";
+	private static final String MASTER_STATE_PATH = "records/accepted-master-state.jsonl";
 	private final SqliteDatabase database;
 
 	/**
@@ -77,26 +80,28 @@ public final class MasterContributionReceiptExporter {
 	}
 
 	/**
-	 * Publishes a validated IMPORT_RECEIPT archive for a committed contribution
-	 * application.
+	 * Publishes a validated IMPORT_RECEIPT containing terminal decisions and the
+	 * current canonical master values of accepted records.
 	 *
 	 * <p>
-	 * Publication requires matching durable reconciliation and terminal
-	 * assignment-closure evidence. Every applied or skipped record must have a
-	 * canonical master identity mapping. Rejected records must have no mapping.
+	 * Each accepted record must still have precisely the revision committed by the
+	 * reviewed application. If master content changed after application, export
+	 * fails rather than attributing the later change to the return.
 	 *
 	 * <p>
-	 * An existing destination is never intentionally overwritten. The archive is
-	 * written and validated privately before an atomic move to the destination.
+	 * The receipt is not cryptographically authenticated by its internal checksums.
+	 * Contributors must independently confirm the archive digest before using its
+	 * contents as authoritative evidence.
 	 *
 	 * @param reviewId    completed coordinator review UUID
-	 * @param destination new .examwork receipt destination
+	 * @param destination new receipt archive destination
 	 * @return validated receipt manifest
-	 * @throws SQLException             if required application evidence is missing,
-	 *                                  inconsistent or unreadable
-	 * @throws IOException              if encoding, validation or publication fails
+	 * @throws SQLException             if application evidence, canonical mappings
+	 *                                  or current master revisions are inconsistent
+	 * @throws IOException              if serialisation, validation or publication
+	 *                                  fails
 	 * @throws IllegalArgumentException if the destination suffix is invalid
-	 * @throws NullPointerException     if either argument is null
+	 * @throws NullPointerException     if an argument is null
 	 */
 	public ExamWorkManifest export(UUID reviewId, Path destination) throws SQLException, IOException {
 		Objects.requireNonNull(reviewId, "reviewId");
@@ -132,6 +137,10 @@ public final class MasterContributionReceiptExporter {
 		if (application.outcomes().size() != decisions.size()) {
 			throw new SQLException("Receipt outcomes do not cover the entire review");
 		}
+
+		// Read complete canonical master values before consuming the
+		// mapping collection. A changed revision must stop export.
+		List<ExchangeRecord> acceptedMasterState = currentAcceptedMasterState(application.outcomes(), mappings);
 		UUID receiptId = UUID
 				.nameUUIDFromBytes(("examwork-import-receipt-v1:" + reviewId).getBytes(StandardCharsets.UTF_8));
 		List<ExchangeRecord> records = new ArrayList<>();
@@ -187,21 +196,26 @@ public final class MasterContributionReceiptExporter {
 			records.add(new ExchangeRecord(ExchangeRecord.CURRENT_RECORD_VERSION, "IMPORT_RECEIPT_" + key.recordType(),
 					key.recordId(), outcome.resultingRevisionId(), null, values));
 		}
-		if (!decisions.isEmpty() || !mappings.isEmpty() || mapped != countMapped(application.outcomes())) {
-			throw new SQLException("Receipt decision or mapping coverage is incomplete");
+		if (!decisions.isEmpty() || !mappings.isEmpty() || mapped != countMapped(application.outcomes())
+				|| mapped != acceptedMasterState.size()) {
+			throw new SQLException("Receipt decision or master mapping coverage is incomplete");
 		}
 		ExamWorkJsonlCodec codec = new ExamWorkJsonlCodec();
 		ByteArrayOutputStream receiptOutput = new ByteArrayOutputStream();
 		codec.writeRecords(records, receiptOutput);
+		ByteArrayOutputStream masterStateOutput = new ByteArrayOutputStream();
+		codec.writeRecords(acceptedMasterState, masterStateOutput);
 		ByteArrayOutputStream indexOutput = new ByteArrayOutputStream();
 
-		// Receipts carry no binary assets, but the version-one
-		// package contract requires a canonical asset index.
+		// Accepted records currently refer only to existing master PDF
+		// dependencies. The receipt does not publish binary assets.
 		codec.writeAssetIndex(new ExamWorkAssetIndex(List.of()), indexOutput);
 		byte[] receiptBytes = receiptOutput.toByteArray();
+		byte[] masterStateBytes = masterStateOutput.toByteArray();
 		byte[] indexBytes = indexOutput.toByteArray();
 		List<Entry> entries = List.of(entry(INDEX_PATH, EntryRole.INDEX, indexBytes),
-				entry(RECEIPT_PATH, EntryRole.RECEIPT, receiptBytes));
+				entry(RECEIPT_PATH, EntryRole.RECEIPT, receiptBytes),
+				entry(MASTER_STATE_PATH, EntryRole.RECORDS, masterStateBytes));
 		String version = ApplicationVersion.current();
 		int schemaVersion = database.schemaVersion();
 		ExamWorkManifest manifest = new ExamWorkManifest(ExamWorkManifest.CURRENT_FORMAT_VERSION, receiptId,
@@ -211,7 +225,8 @@ public final class MasterContributionReceiptExporter {
 				version, version, schemaVersion, schemaVersion,
 				new Scope(ScopeLevel.EXAMS, List.of(assignment.examPortableId()), List.of()), entries);
 		Map<String, EntrySource> sources = Map.of(INDEX_PATH, () -> new ByteArrayInputStream(indexBytes), RECEIPT_PATH,
-				() -> new ByteArrayInputStream(receiptBytes));
+				() -> new ByteArrayInputStream(receiptBytes), MASTER_STATE_PATH,
+				() -> new ByteArrayInputStream(masterStateBytes));
 		Path temporary = Files.createTempFile(target.getParent(), ".examwork-receipt-", ".examwork");
 		try {
 			try (OutputStream output = Files.newOutputStream(temporary, StandardOpenOption.TRUNCATE_EXISTING,
@@ -244,6 +259,54 @@ public final class MasterContributionReceiptExporter {
 			}
 		}
 		return count;
+	}
+
+	private List<ExchangeRecord> currentAcceptedMasterState(List<RecordOutcome> outcomes,
+			Map<RecordKey, Mapping> mappings) throws SQLException {
+		List<ExchangeRecord> records = new ArrayList<>();
+		SqlitePortableContentRepository content = new SqlitePortableContentRepository(database);
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				for (RecordOutcome outcome : outcomes) {
+					if (outcome.outcome() == Outcome.REJECTED) {
+						continue;
+					}
+					RecordKey key = outcome.key();
+					Mapping mapping = mappings.get(key);
+					if (mapping == null || outcome.resultingRevisionId() == null) {
+						throw new SQLException("Accepted record has no master mapping: " + key);
+					}
+					EntityType type;
+					try {
+						type = EntityType.valueOf(key.recordType());
+					} catch (IllegalArgumentException failure) {
+						throw new SQLException("Unsupported receipt master entity: " + key.recordType(), failure);
+					}
+					if (type != EntityType.QUESTION && type != EntityType.ANSWER) {
+						throw new SQLException("Unsupported accepted master state: " + type);
+					}
+					ExchangeRecord current = content.snapshot(connection, type, mapping.localId()).record();
+
+					// A later master edit must not be represented as
+					// the earlier accepted contributor revision.
+					if (!current.recordId().equals(mapping.canonicalId())
+							|| !current.revisionId().equals(outcome.resultingRevisionId())) {
+						throw new SQLException("Master record changed after contribution " + "application: " + key);
+					}
+					records.add(current);
+				}
+				connection.commit();
+				return List.copyOf(records);
+			} catch (SQLException | RuntimeException failure) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					failure.addSuppressed(rollbackFailure);
+				}
+				throw failure;
+			}
+		}
 	}
 
 	private String digest(byte[] contents) {

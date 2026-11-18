@@ -10,8 +10,10 @@ import java.security.NoSuchAlgorithmException;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -45,6 +47,7 @@ import au.edu.eq.questionbank.service.workpackage.MasterContributionReviewPlanne
 public final class ContributorReceiptInspector {
 
 	private static final String RECEIPT_PATH = "receipts/import-results.jsonl";
+	private static final String MASTER_STATE_PATH = "records/accepted-master-state.jsonl";
 	private final SqliteDatabase database;
 
 	/**
@@ -58,14 +61,17 @@ public final class ContributorReceiptInspector {
 	}
 
 	/**
-	 * Validates a received import receipt without changing local state.
+	 * Validates a receipt against the installed assignment and return history.
 	 *
-	 * @param archive original IMPORT_RECEIPT .examwork archive
-	 * @return validated receipt metadata and immutable record list
-	 * @throws IOException          if archive contents or receipt evidence are
-	 *                              invalid, unreadable or inconsistent
-	 * @throws SQLException         if local assignment or return evidence cannot be
-	 *                              read or does not exist
+	 * <p>
+	 * This operation does not authenticate the sender. It preserves the historical
+	 * read-only inspection path while also validating accepted master records when
+	 * the receipt contains them.
+	 *
+	 * @param archive original receipt archive
+	 * @return validated, non-mutating receipt inspection
+	 * @throws IOException          if the archive or receipt evidence is invalid
+	 * @throws SQLException         if local assignment evidence cannot be read
 	 * @throws NullPointerException if archive is null
 	 */
 	public Inspection inspect(Path archive) throws IOException, SQLException {
@@ -76,7 +82,7 @@ public final class ContributorReceiptInspector {
 		if (manifest.packageType() != ExamWorkPackageType.IMPORT_RECEIPT) {
 			throw new PackageFormatException("Contributor receipt requires IMPORT_RECEIPT");
 		}
-		requireStructure(manifest);
+		boolean containsMasterState = requireStructure(manifest);
 		var session = new SqliteContributorAssignmentSessionRepository(database).find(manifest.assignmentId())
 				.orElseThrow(() -> new SQLException("Receipt assignment is not installed"));
 		UUID installationId = new SqlitePortableIdentityRepository(database).installationId();
@@ -90,13 +96,24 @@ public final class ContributorReceiptInspector {
 			throw new PackageFormatException("Receipt does not match installed assignment");
 		}
 		List<ExchangeRecord> records;
+		List<ExchangeRecord> acceptedMasterRecords = List.of();
 		try (ZipFile zip = ZipFile.builder().setPath(archive).get()) {
 			ZipArchiveEntry entry = zip.getEntry(RECEIPT_PATH);
 			if (entry == null) {
 				throw new PackageFormatException("Missing receipt records");
 			}
+			ExamWorkJsonlCodec codec = new ExamWorkJsonlCodec();
 			try (InputStream input = zip.getInputStream(entry)) {
-				records = new ExamWorkJsonlCodec().readRecords(input);
+				records = codec.readRecords(input);
+			}
+			if (containsMasterState) {
+				ZipArchiveEntry masterEntry = zip.getEntry(MASTER_STATE_PATH);
+				if (masterEntry == null) {
+					throw new PackageFormatException("Missing accepted master records");
+				}
+				try (InputStream input = zip.getInputStream(masterEntry)) {
+					acceptedMasterRecords = codec.readRecords(input);
+				}
 			}
 		}
 		if (!originalDigest.equals(sha256(archive))) {
@@ -153,7 +170,52 @@ public final class ContributorReceiptInspector {
 				|| countNode.intValue() != outcomes.size() || outcomes.isEmpty()) {
 			throw new PackageFormatException("Receipt outcome count is inconsistent");
 		}
-		return new Inspection(manifest, reviewId, returnId, outcomes, originalDigest);
+		if (containsMasterState) {
+			validateMasterRecords(outcomes, acceptedMasterRecords);
+		}
+		return new Inspection(manifest, reviewId, returnId, outcomes, acceptedMasterRecords, originalDigest);
+	}
+
+	/**
+	 * Inspects a receipt whose exact archive digest has been independently
+	 * confirmed through a trusted coordinator channel.
+	 *
+	 * <p>
+	 * The caller must obtain the expected digest independently of the archive being
+	 * examined. Reading a digest supplied inside or alongside an untrusted archive
+	 * does not establish coordinator authority.
+	 *
+	 * <p>
+	 * Accepted outcomes must contain complete canonical master records. Historical
+	 * receipts without these records remain inspectable but cannot enter the
+	 * trusted rebase path.
+	 *
+	 * @param archive        received receipt archive
+	 * @param expectedSha256 independently confirmed SHA-256 archive digest
+	 * @return validated, digest-matched receipt and accepted master state
+	 * @throws IOException          if the digest, archive or master-state evidence
+	 *                              is invalid or inconsistent
+	 * @throws SQLException         if contributor assignment evidence is invalid
+	 * @throws NullPointerException if an argument is null
+	 */
+	public Inspection inspectTrusted(Path archive, String expectedSha256) throws IOException, SQLException {
+		Objects.requireNonNull(archive, "archive");
+		Objects.requireNonNull(expectedSha256, "expectedSha256");
+		if (!expectedSha256.matches("[0-9a-f]{64}")) {
+			throw new PackageFormatException("Invalid independently confirmed receipt SHA-256");
+		}
+		Inspection inspection = inspect(archive);
+		byte[] expected = HexFormat.of().parseHex(expectedSha256);
+		byte[] actual = HexFormat.of().parseHex(inspection.archiveSha256());
+		if (!MessageDigest.isEqual(expected, actual)) {
+			throw new PackageFormatException("Receipt does not match independently confirmed SHA-256");
+		}
+		long accepted = inspection.outcomes().stream()
+				.filter(record -> !record.values().path("outcome").asText().equals("REJECTED")).count();
+		if (accepted != inspection.acceptedMasterRecords().size()) {
+			throw new PackageFormatException("Trusted receipt lacks complete accepted master state");
+		}
+		return inspection;
 	}
 
 	private UUID optionalUuid(JsonNode values, String field) throws PackageFormatException {
@@ -185,17 +247,20 @@ public final class ContributorReceiptInspector {
 		}
 	}
 
-	private void requireStructure(ExamWorkManifest manifest) throws PackageFormatException {
-		if (manifest.entries().size() != 2) {
-			throw new PackageFormatException("Receipt must contain exactly two structured entries");
+	private boolean requireStructure(ExamWorkManifest manifest) throws PackageFormatException {
+		if (manifest.entries().size() < 2 || manifest.entries().size() > 3) {
+			throw new PackageFormatException("Receipt must contain two or three structured entries");
 		}
 		boolean index = false;
 		boolean results = false;
+		boolean masterState = false;
 		for (var entry : manifest.entries()) {
 			if (entry.path().equals(ExamWorkAssetIndex.INDEX_PATH) && entry.role() == EntryRole.INDEX) {
 				index = true;
 			} else if (entry.path().equals(RECEIPT_PATH) && entry.role() == EntryRole.RECEIPT) {
 				results = true;
+			} else if (entry.path().equals(MASTER_STATE_PATH) && entry.role() == EntryRole.RECORDS) {
+				masterState = true;
 			} else {
 				throw new PackageFormatException("Unexpected receipt archive entry: " + entry.path());
 			}
@@ -203,6 +268,7 @@ public final class ContributorReceiptInspector {
 		if (!index || !results) {
 			throw new PackageFormatException("Receipt structure is incomplete");
 		}
+		return masterState;
 	}
 
 	private void requireUuid(JsonNode values, String field, UUID expected) throws PackageFormatException {
@@ -225,6 +291,40 @@ public final class ContributorReceiptInspector {
 			}
 		}
 		return HexFormat.of().formatHex(digest.digest());
+	}
+
+	private void validateMasterRecords(List<ExchangeRecord> outcomes, List<ExchangeRecord> masterRecords)
+			throws PackageFormatException {
+		Map<String, ExchangeRecord> expected = new HashMap<>();
+		for (ExchangeRecord outcome : outcomes) {
+			JsonNode values = outcome.values();
+			if ("REJECTED".equals(values.path("outcome").asText())) {
+				continue;
+			}
+			String type = requiredText(values, "record_type");
+			UUID canonical = requiredUuid(values, "canonical_record_id");
+			String key = type + "\0" + canonical;
+			if (expected.putIfAbsent(key, outcome) != null) {
+				throw new PackageFormatException("Duplicate receipt canonical master mapping");
+			}
+		}
+		for (ExchangeRecord master : masterRecords) {
+			if (!"QUESTION".equals(master.recordType()) && !"ANSWER".equals(master.recordType())) {
+				throw new PackageFormatException("Unsupported accepted master record type");
+			}
+			String key = master.recordType() + "\0" + master.recordId();
+			ExchangeRecord outcome = expected.remove(key);
+			if (outcome == null) {
+				throw new PackageFormatException("Unexpected or duplicate accepted master record");
+			}
+			UUID revision = requiredUuid(outcome.values(), "resulting_revision_id");
+			if (!revision.equals(master.revisionId()) || master.baselineRevisionId() != null) {
+				throw new PackageFormatException("Accepted master record revision disagrees " + "with receipt outcome");
+			}
+		}
+		if (!expected.isEmpty()) {
+			throw new PackageFormatException("Receipt is missing accepted master records");
+		}
 	}
 
 	private void validateOutcome(ExchangeRecord record, UUID reviewId) throws PackageFormatException {
@@ -269,19 +369,28 @@ public final class ContributorReceiptInspector {
 	}
 
 	/**
-	 * Fully inspected receipt evidence.
+	 * Fully inspected receipt evidence and any accepted canonical master records
+	 * embedded in the archive.
 	 *
-	 * @param manifest        validated package manifest
-	 * @param reviewId        completed coordinator review identity
-	 * @param returnPackageId contributor return being acknowledged
-	 * @param outcomes        immutable copy of per-record outcome envelopes
-	 * @param archiveSha256   digest of the original archive
+	 * <p>
+	 * Inspection alone does not establish sender authority. Only a successful
+	 * independently confirmed digest check permits this evidence to enter the
+	 * trusted rebase assessment path.
+	 *
+	 * @param manifest              validated receipt package manifest
+	 * @param reviewId              completed coordinator review identity
+	 * @param returnPackageId       acknowledged contributor return identity
+	 * @param outcomes              immutable per-record terminal outcomes
+	 * @param acceptedMasterRecords complete accepted canonical records, or empty
+	 *                              for a historical receipt without master-state
+	 *                              entries
+	 * @param archiveSha256         SHA-256 of the inspected original archive
 	 */
 	public record Inspection(ExamWorkManifest manifest, UUID reviewId, UUID returnPackageId,
-			List<ExchangeRecord> outcomes, String archiveSha256) {
+			List<ExchangeRecord> outcomes, List<ExchangeRecord> acceptedMasterRecords, String archiveSha256) {
 
 		/**
-		 * Validates and defensively copies the inspection result.
+		 * Validates the inspection and defensively copies its lists.
 		 *
 		 * @throws NullPointerException if required evidence is null
 		 */
@@ -290,6 +399,7 @@ public final class ContributorReceiptInspector {
 			Objects.requireNonNull(reviewId, "reviewId");
 			Objects.requireNonNull(returnPackageId, "returnPackageId");
 			outcomes = List.copyOf(Objects.requireNonNull(outcomes, "outcomes"));
+			acceptedMasterRecords = List.copyOf(Objects.requireNonNull(acceptedMasterRecords, "acceptedMasterRecords"));
 			Objects.requireNonNull(archiveSha256, "archiveSha256");
 		}
 	}

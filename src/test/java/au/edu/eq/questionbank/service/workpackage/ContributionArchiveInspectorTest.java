@@ -1247,6 +1247,30 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
+	void masterReceiptRefusesToMisattributeLaterMasterRevision() throws Exception {
+		Fixture fixture = fixture();
+		Path firstReceipt = exportAppliedReceipt(fixture, "Originally accepted master revision",
+				"original-master-revision.examwork");
+		UUID reviewId = new ContributorReceiptInspector(fixture.contributor()).inspect(firstReceipt).reviewId();
+
+		// The assignment has closed. This is now a separate,
+		// subsequent master edit, not part of the accepted return.
+		execute(fixture.master(), """
+				UPDATE questions
+				SET question_text = 'Later independent master correction'
+				WHERE question_code = '1'
+				""");
+		Path secondReceipt = directory.resolve("misattributed-master-revision.examwork");
+		SQLException failure = assertThrows(SQLException.class,
+				() -> new MasterContributionReceiptExporter(fixture.master()).export(reviewId, secondReceipt));
+		assertTrue(failure.getMessage().contains("Master record changed after contribution application"),
+				failure.getMessage());
+		assertFalse(Files.exists(secondReceipt));
+		assertEquals("Later independent master correction", masterQuestionText(fixture.master()));
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
 	void masterReceiptRejectsIncompleteApplication() throws Exception {
 		Fixture fixture = fixture();
 		Path contribution = publish(fixture, "Not yet reconciled", "pending-for-receipt.examwork");
@@ -1810,6 +1834,106 @@ class ContributionArchiveInspectorTest {
 		otherMaster.initialiseSchema();
 		assertThrows(PackageFormatException.class, () -> new ContributionArchiveInspector(otherMaster).inspect(issued));
 		otherMaster.verifyIntegrity();
+	}
+
+	@Test
+	void trustedReceiptCarriesAcceptedMasterState() throws Exception {
+		Fixture fixture = fixture();
+		Path receipt = exportAppliedReceipt(fixture, "Trusted accepted contributor text",
+				"trusted-master-state.examwork");
+		String digest = HexFormat.of().formatHex(digest(Files.readAllBytes(receipt)));
+		var inspection = new ContributorReceiptInspector(fixture.contributor()).inspectTrusted(receipt, digest);
+		assertEquals(1, inspection.outcomes().size());
+		assertEquals(1, inspection.acceptedMasterRecords().size());
+		ExchangeRecord accepted = inspection.acceptedMasterRecords().getFirst();
+		assertEquals("QUESTION", accepted.recordType());
+		assertEquals("Trusted accepted contributor text", accepted.values().path("question_text").asText());
+		var outcome = inspection.outcomes().getFirst().values();
+		assertEquals(outcome.path("canonical_record_id").asText(), accepted.recordId().toString());
+		assertEquals(outcome.path("resulting_revision_id").asText(), accepted.revisionId().toString());
+		var trusted = new ContributorReceiptRebasePlanner(fixture.contributor()).planTrusted(receipt, digest);
+		assertEquals(ContributorReceiptRebasePlanner.Disposition.READY_FOR_KNOWN_MASTER_ACKNOWLEDGEMENT,
+				trusted.plan().assessments().getFirst().disposition());
+		assertEquals(inspection.acceptedMasterRecords(), trusted.acceptedMasterRecords());
+		fixture.contributor().verifyIntegrity();
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
+	void trustedReceiptPreservesPostReturnLocalWork() throws Exception {
+		Fixture fixture = fixture();
+		Path receipt = exportAppliedReceipt(fixture, "Previously submitted contributor text",
+				"trusted-later-local-edit.examwork");
+		String digest = HexFormat.of().formatHex(digest(Files.readAllBytes(receipt)));
+		var sessions = new SqliteContributorAssignmentSessionRepository(fixture.contributor());
+		byte[] baseline = sessions.readBaseline(fixture.assignmentId()).records();
+		execute(fixture.contributor(), """
+				UPDATE questions
+				SET question_text = 'Important unreturned local revision'
+				WHERE question_code = '1'
+				""");
+		var trusted = new ContributorReceiptRebasePlanner(fixture.contributor()).planTrusted(receipt, digest);
+		assertEquals(ContributorReceiptRebasePlanner.Disposition.PRESERVE_LATER_LOCAL_REVISION,
+				trusted.plan().assessments().getFirst().disposition());
+		assertEquals("Previously submitted contributor text",
+				trusted.acceptedMasterRecords().getFirst().values().path("question_text").asText());
+		assertEquals("Important unreturned local revision", masterQuestionText(fixture.contributor()));
+		assertArrayEquals(baseline, sessions.readBaseline(fixture.assignmentId()).records());
+		fixture.contributor().verifyIntegrity();
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
+	void trustedReceiptRejectsWellFormedModifiedMasterState() throws Exception {
+		Fixture fixture = fixture();
+		Path original = exportAppliedReceipt(fixture, "Genuine accepted master value", "trusted-original.examwork");
+		String trustedDigest = HexFormat.of().formatHex(digest(Files.readAllBytes(original)));
+		List<ExchangeRecord> accepted = new ExamWorkJsonlCodec()
+				.readRecords(new ByteArrayInputStream(readEntry(original, "records/accepted-master-state.jsonl")));
+		assertEquals(1, accepted.size());
+		ExchangeRecord source = accepted.getFirst();
+		ObjectNode alteredValues = (ObjectNode) source.values();
+
+		// The attacker keeps the canonical UUID and revision but
+		// replaces accepted content and rebuilds a valid archive.
+		alteredValues.put("question_text", "Forged master acknowledgement value");
+		ExchangeRecord forged = withValues(source, alteredValues);
+		Path altered = repackage(original, "records/accepted-master-state.jsonl", encode(List.of(forged)));
+
+		// Internal archive integrity is valid, demonstrating why
+		// a separate coordinator-authenticated digest is required.
+		assertArchiveWellFormed(altered, fixture.contributor());
+		PackageFormatException failure = assertThrows(PackageFormatException.class,
+				() -> new ContributorReceiptInspector(fixture.contributor()).inspectTrusted(altered, trustedDigest));
+		assertTrue(failure.getMessage().contains("independently confirmed SHA-256"), failure.getMessage());
+		assertEquals("Genuine accepted master value", masterQuestionText(fixture.contributor()));
+		fixture.contributor().verifyIntegrity();
+	}
+
+	@Test
+	void trustedReceiptSupportsRejectedWithoutMasterRecord() throws Exception {
+		Fixture fixture = fixture();
+		Path contribution = publish(fixture, "Rejected but retained contributor work",
+				"trusted-rejected-source.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(contribution).received().packageId();
+		ExchangeRecord proposed = intake.proposedChanges(packageId).getFirst();
+		var key = new MasterContributionDecisionLedger.RecordKey(proposed.recordType(), proposed.recordId());
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
+				Map.of(key, MasterContributionDecisionLedger.Choice.REJECT),
+				"Reject without replacing contributor work");
+		new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId());
+		Path receipt = directory.resolve("trusted-rejected-receipt.examwork");
+		new MasterContributionReceiptExporter(fixture.master()).export(review.reviewId(), receipt);
+		String digest = HexFormat.of().formatHex(digest(Files.readAllBytes(receipt)));
+		var trusted = new ContributorReceiptRebasePlanner(fixture.contributor()).planTrusted(receipt, digest);
+		assertTrue(trusted.acceptedMasterRecords().isEmpty());
+		assertEquals(ContributorReceiptRebasePlanner.Disposition.PRESERVE_REJECTED,
+				trusted.plan().assessments().getFirst().disposition());
+		assertEquals("Rejected but retained contributor work", masterQuestionText(fixture.contributor()));
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+		fixture.contributor().verifyIntegrity();
+		fixture.master().verifyIntegrity();
 	}
 
 	private void addNewContributorQuestionAndAnswer(Fixture fixture) throws SQLException {

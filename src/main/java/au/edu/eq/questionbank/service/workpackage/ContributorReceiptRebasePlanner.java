@@ -46,24 +46,77 @@ public final class ContributorReceiptRebasePlanner {
 	}
 
 	/**
-	 * Inspects a receipt and assesses every outcome against the contributor's
-	 * current portable identity revision.
+	 * Produces an unauthenticated, read-only receipt assessment.
 	 *
 	 * <p>
-	 * All dispositions are non-mutating. An accepted outcome with an unchanged
-	 * local revision awaits trusted master content; one with a newer local revision
-	 * must retain the newer local work.
+	 * This method preserves the Batch 09 behaviour. Without independent coordinator
+	 * authentication, accepted outcomes remain awaiting trusted master state.
 	 *
-	 * @param archive original IMPORT_RECEIPT archive
-	 * @return immutable, read-only rebase assessment
-	 * @throws IOException          if the receipt is malformed or inconsistent
-	 * @throws SQLException         if local assignment or identity evidence cannot
-	 *                              be read
+	 * @param archive original receipt archive
+	 * @return non-mutating assessment
+	 * @throws IOException          if receipt validation fails
+	 * @throws SQLException         if local assignment or identity reading fails
 	 * @throws NullPointerException if archive is null
 	 */
 	public Plan plan(Path archive) throws IOException, SQLException {
 		Objects.requireNonNull(archive, "archive");
 		ContributorReceiptInspector.Inspection receipt = new ContributorReceiptInspector(database).inspect(archive);
+		return plan(receipt);
+	}
+
+	/**
+	 * Produces a trusted, non-mutating acknowledgement assessment.
+	 *
+	 * <p>
+	 * The expected archive digest must have been confirmed independently through a
+	 * trusted coordinator channel. Accepted canonical records are verified against
+	 * terminal receipt outcomes.
+	 *
+	 * <p>
+	 * A ready disposition means that accepted master state may be recorded
+	 * separately. It does not authorise replacing the local working record,
+	 * advancing the immutable issued baseline or discarding edits performed after
+	 * the contributor return.
+	 *
+	 * @param archive        original IMPORT_RECEIPT archive
+	 * @param expectedSha256 independently confirmed archive SHA-256
+	 * @return authenticated receipt evidence and rebase assessments
+	 * @throws IOException          if the archive, digest or record evidence is
+	 *                              invalid
+	 * @throws SQLException         if local assignment or identity evidence is
+	 *                              invalid
+	 * @throws NullPointerException if an argument is null
+	 */
+	public TrustedPlan planTrusted(Path archive, String expectedSha256) throws IOException, SQLException {
+		Objects.requireNonNull(archive, "archive");
+		Objects.requireNonNull(expectedSha256, "expectedSha256");
+		ContributorReceiptInspector.Inspection receipt = new ContributorReceiptInspector(database)
+				.inspectTrusted(archive, expectedSha256);
+		Plan ordinary = plan(receipt);
+		List<Assessment> trustedAssessments = new ArrayList<>();
+		for (Assessment assessment : ordinary.assessments()) {
+			Disposition disposition = assessment.disposition();
+			if (disposition == Disposition.AWAIT_TRUSTED_MASTER_STATE) {
+				disposition = Disposition.READY_FOR_KNOWN_MASTER_ACKNOWLEDGEMENT;
+			}
+			trustedAssessments.add(new Assessment(assessment.recordType(), assessment.contributorRecordId(),
+					assessment.proposedRevisionId(), assessment.canonicalMasterId(),
+					assessment.resultingMasterRevisionId(), assessment.localRevisionId(), assessment.outcome(),
+					disposition));
+		}
+		Plan trusted = new Plan(ordinary.reviewId(), ordinary.returnPackageId(), trustedAssessments);
+		return new TrustedPlan(trusted, receipt.acceptedMasterRecords(), receipt.archiveSha256());
+	}
+
+	private UUID optionalUuid(JsonNode values, String field) throws PackageFormatException {
+		JsonNode value = values.get(field);
+		if (value == null) {
+			throw new PackageFormatException("Missing receipt field: " + field);
+		}
+		return value.isNull() ? null : requiredUuid(values, field);
+	}
+
+	private Plan plan(ContributorReceiptInspector.Inspection receipt) throws SQLException, IOException {
 		SqlitePortableIdentityRepository identities = new SqlitePortableIdentityRepository(database);
 		List<Assessment> assessments = new ArrayList<>();
 		for (ExchangeRecord record : receipt.outcomes()) {
@@ -96,14 +149,6 @@ public final class ContributorReceiptRebasePlanner {
 		return new Plan(receipt.reviewId(), receipt.returnPackageId(), assessments);
 	}
 
-	private UUID optionalUuid(JsonNode values, String field) throws PackageFormatException {
-		JsonNode value = values.get(field);
-		if (value == null) {
-			throw new PackageFormatException("Missing receipt field: " + field);
-		}
-		return value.isNull() ? null : requiredUuid(values, field);
-	}
-
 	private UUID requiredUuid(JsonNode values, String field) throws PackageFormatException {
 		JsonNode value = values.get(field);
 		if (value == null || !value.isTextual()) {
@@ -121,19 +166,54 @@ public final class ContributorReceiptRebasePlanner {
 	}
 
 	/**
-	 * Non-mutating action required for a receipt result.
+	 * Non-mutating disposition for one contributor receipt result.
 	 */
 	public enum Disposition {
-		/** The master rejected the proposal; local work is retained. */
+		/** The master rejected the proposal; preserve local work. */
 		PRESERVE_REJECTED,
-		/** The receipt names a record type not supported by this planner. */
+		/** The record type is unsupported by this rebase planner. */
 		HOLD_UNSUPPORTED_TYPE,
-		/** No corresponding active local portable record exists. */
+		/** The acknowledged record is missing locally. */
 		HOLD_MISSING_LOCAL_RECORD,
-		/** The local record changed since the acknowledged submission. */
+		/** The local record changed after the acknowledged submission. */
 		PRESERVE_LATER_LOCAL_REVISION,
-		/** Local revision matches the submission; trusted master state is needed. */
-		AWAIT_TRUSTED_MASTER_STATE
+		/** The accepted outcome still needs trusted master values. */
+		AWAIT_TRUSTED_MASTER_STATE,
+		/**
+		 * Independently authenticated master values are available for acknowledgement
+		 * without replacing local working content.
+		 */
+		READY_FOR_KNOWN_MASTER_ACKNOWLEDGEMENT
+	}
+
+	/**
+	 * Trusted receipt assessment with complete accepted canonical master state.
+	 *
+	 * <p>
+	 * Trust here means that the caller supplied an independently confirmed digest
+	 * matching the complete archive. This object contains no persistence authority
+	 * and performs no acknowledgement writes.
+	 *
+	 * @param plan                  per-record trusted assessment
+	 * @param acceptedMasterRecords accepted canonical master records
+	 * @param archiveSha256         independently matched archive digest
+	 */
+	public record TrustedPlan(Plan plan, List<ExchangeRecord> acceptedMasterRecords, String archiveSha256) {
+
+		/**
+		 * Validates and defensively retains trusted assessment evidence.
+		 *
+		 * @throws NullPointerException     if required evidence is null
+		 * @throws IllegalArgumentException if the digest is malformed
+		 */
+		public TrustedPlan {
+			Objects.requireNonNull(plan, "plan");
+			acceptedMasterRecords = List.copyOf(Objects.requireNonNull(acceptedMasterRecords, "acceptedMasterRecords"));
+			Objects.requireNonNull(archiveSha256, "archiveSha256");
+			if (!archiveSha256.matches("[0-9a-f]{64}")) {
+				throw new IllegalArgumentException("Invalid trusted receipt digest");
+			}
+		}
 	}
 
 	/**
