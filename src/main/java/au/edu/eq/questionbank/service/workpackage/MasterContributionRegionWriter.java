@@ -4,6 +4,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Types;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -20,14 +21,18 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.workpackage.MasterContributionDecisionLedger.RecordDecision;
 
 /**
- * Replaces approved Question or Answer PDF-region collections under a
- * transaction-scoped, owner-specific master write permit.
+ * Applies approved Question and Answer PDF regions and ordered Question content
+ * parts within a caller-owned SQLite transaction.
  *
  * <p>
- * The caller must independently verify the original return archive and current
- * master PDF bytes while holding the managed-asset publication lock. This
- * writer changes database region rows only; it does not publish or replace
- * managed binary assets.
+ * Mutations require the existing owner-specific master region permit. Question
+ * image references are resolved by portable UUID to existing master-local image
+ * identities. This writer does not create, modify or publish image bytes or
+ * managed source PDFs.
+ *
+ * <p>
+ * The caller must have verified the original contribution archive and source
+ * PDF dependencies while holding the managed-asset publication lock.
  */
 final class MasterContributionRegionWriter {
 
@@ -48,13 +53,24 @@ final class MasterContributionRegionWriter {
 			throw new SQLException("Only Question and Answer regions are supported");
 		}
 
-		// Validate the entire proposed collection before deleting
-		// any authoritative region. Parent and file relationships
-		// must already exist inside the caller's transaction.
+		// Validate all proposed rows and every portable dependency
+		// before deleting any existing authoritative content.
 		List<Region> regions = validate(connection, type, examId, ownerLocalId, proposed);
+		List<ContentPart> contentParts = type.equals("QUESTION")
+				? validateQuestionParts(connection, ownerLocalId, proposed, regions)
+				: List.of();
 		acquirePermit(connection, reviewId, decision, examId, ownerLocalId);
 		try {
+			if (type.equals("QUESTION")) {
+
+				// Remove content-part references before replacing the
+				// region rows they may reference through foreign keys.
+				deleteQuestionParts(connection, ownerLocalId);
+			}
 			replaceRows(connection, type, ownerLocalId, regions);
+			if (type.equals("QUESTION")) {
+				insertQuestionParts(connection, ownerLocalId, contentParts);
+			}
 		} finally {
 			releasePermit(connection);
 		}
@@ -80,6 +96,49 @@ final class MasterContributionRegionWriter {
 			statement.setLong(5, ownerLocalId);
 			if (statement.executeUpdate() != 1) {
 				throw new SQLException("Master PDF-region permit was not acquired");
+			}
+		}
+	}
+
+	private void deleteQuestionParts(Connection connection, long questionLocalId) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				DELETE FROM question_content_parts
+				WHERE question_id = ?
+				""")) {
+			statement.setLong(1, questionLocalId);
+			statement.executeUpdate();
+		}
+	}
+
+	private void insertQuestionParts(Connection connection, long questionLocalId, List<ContentPart> parts)
+			throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				INSERT INTO question_content_parts (
+				    question_id,
+				    content_order,
+				    content_type,
+				    region_order,
+				    image_id
+				)
+				VALUES (?, ?, ?, ?, ?)
+				""")) {
+			for (ContentPart part : parts) {
+				statement.setLong(1, questionLocalId);
+				statement.setInt(2, part.contentOrder());
+				statement.setString(3, part.contentType());
+				if (part.regionOrder() == null) {
+					statement.setNull(4, Types.INTEGER);
+				} else {
+					statement.setInt(4, part.regionOrder());
+				}
+				if (part.imageLocalId() == null) {
+					statement.setNull(5, Types.INTEGER);
+				} else {
+					statement.setLong(5, part.imageLocalId());
+				}
+				if (statement.executeUpdate() != 1) {
+					throw new SQLException("Question content part was not inserted");
+				}
 			}
 		}
 	}
@@ -237,6 +296,73 @@ final class MasterContributionRegionWriter {
 			regions.add(new Region(order, sourceLocalId, page, x, y, width, height));
 		}
 		return List.copyOf(regions);
+	}
+
+	private List<ContentPart> validateQuestionParts(Connection connection, long questionLocalId,
+			ExchangeRecord proposed, List<Region> regions) throws SQLException {
+		JsonNode supplied = proposed.values().get("question_content_parts");
+		if (supplied == null || !supplied.isArray()) {
+			throw new SQLException("Missing approved Question content parts");
+		}
+		Set<Integer> availableRegions = new HashSet<>();
+		for (Region region : regions) {
+			availableRegions.add(region.order());
+		}
+		Set<Integer> contentOrders = new HashSet<>();
+		Set<Integer> usedRegions = new HashSet<>();
+		List<ContentPart> result = new ArrayList<>();
+		for (JsonNode row : supplied) {
+			if (!row.isObject()) {
+				throw new SQLException("Question content part must be an object");
+			}
+			int contentOrder = requireInt(row, "content_order");
+			if (contentOrder < 0 || !contentOrders.add(contentOrder)) {
+				throw new SQLException("Invalid or duplicate Question content order");
+			}
+			JsonNode typeNode = row.get("content_type");
+			if (typeNode == null || !typeNode.isTextual()) {
+				throw new SQLException("Question content part has no valid type");
+			}
+			String contentType = typeNode.asText();
+			if ("PDF_REGION".equals(contentType)) {
+				int regionOrder = requireInt(row, "region_order");
+				JsonNode imageId = row.get("image_id");
+				if (!availableRegions.contains(regionOrder) || !usedRegions.add(regionOrder) || imageId == null
+						|| !imageId.isNull()) {
+					throw new SQLException("Question PDF content part has " + "invalid region or image reference");
+				}
+				result.add(new ContentPart(contentOrder, contentType, regionOrder, null));
+			} else if ("IMAGE".equals(contentType)) {
+				JsonNode regionOrder = row.get("region_order");
+				if (regionOrder == null || !regionOrder.isNull()) {
+					throw new SQLException("Image content part cannot reference " + "a PDF region");
+				}
+				long imageLocalId = reference(connection, EntityType.QUESTION_IMAGE, row.get("image_id"));
+
+				// An existing Question image may be reordered.
+				// A new or foreign Question image is not imported
+				// merely because its UUID appeared in the archive.
+				try (PreparedStatement lookup = connection.prepareStatement("""
+						SELECT question_id
+						FROM question_images
+						WHERE id = ?
+						""")) {
+					lookup.setLong(1, imageLocalId);
+					try (ResultSet rows = lookup.executeQuery()) {
+						if (!rows.next() || rows.getLong(1) != questionLocalId || rows.next()) {
+							throw new SQLException("Question content part references " + "a missing or foreign image");
+						}
+					}
+				}
+				result.add(new ContentPart(contentOrder, contentType, null, imageLocalId));
+			} else {
+				throw new SQLException("Unsupported Question content type: " + contentType);
+			}
+		}
+		return List.copyOf(result);
+	}
+
+	private record ContentPart(int contentOrder, String contentType, Integer regionOrder, Long imageLocalId) {
 	}
 
 	private record Region(int order, long sourceLocalId, int pageNumber, double x, double y, double width,

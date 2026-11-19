@@ -21,13 +21,18 @@ import au.edu.eq.questionbank.service.workpackage.MasterContributionDecisionLedg
 import au.edu.eq.questionbank.service.workpackage.MasterContributionReviewPlanner.ReviewStatus;
 
 /**
- * Applies reviewed Question and Answer scalar changes within a caller-owned
+ * Applies reviewed Question and Answer changes within a caller-owned master
  * transaction.
  *
  * <p>
- * Only existing classification references are supported. PDF regions, images,
- * Shared Context creation and other binary dependencies remain outside this
- * implementation.
+ * Supported operations include Question text and classification, Answer text,
+ * verified PDF regions and ordered Question content parts referencing existing
+ * images.
+ *
+ * <p>
+ * New embedded images, output exclusions, Shared Context changes and other
+ * unsupported dependencies are rejected. Every accepted mutation must match its
+ * approved portable content snapshot.
  */
 final class MasterContributionScalarWriter {
 
@@ -71,11 +76,20 @@ final class MasterContributionScalarWriter {
 		}
 		boolean regionsChanged = create ? !proposedRegions.isEmpty()
 				: !current.values().path(regionField).equals(proposedRegions);
+		boolean contentPartsChanged = false;
+		if (type == EntityType.QUESTION) {
+			JsonNode parts = proposed.values().path("question_content_parts");
+			if (!parts.isArray()) {
+				throw new SQLException("Missing Question content-part collection");
+			}
+			contentPartsChanged = create ? !parts.isEmpty()
+					: !current.values().path("question_content_parts").equals(parts);
+		}
 
-		// Only the archive-verified coordinator path is allowed to
-		// modify regions. The original execute(reviewId) stays scalar-only.
-		if (regionsChanged && !allowPdfRegions) {
-			throw new SQLException("PDF-region changes require verified return assets");
+		// Mixed-content ordering, even without a changed PDF region,
+		// requires the archive-verified application path.
+		if ((regionsChanged || contentPartsChanged) && !allowPdfRegions) {
+			throw new SQLException("PDF-region or Question content-part changes " + "require verified return assets");
 		}
 		permit(connection, reviewId, decision, examId, create);
 		long localId;
@@ -91,14 +105,14 @@ final class MasterContributionScalarWriter {
 					updateAnswer(connection, currentId, proposed);
 				}
 			}
-			if (regionsChanged) {
+			if (regionsChanged || contentPartsChanged) {
 				new MasterContributionRegionWriter(database).replace(connection, reviewId, decision, examId, localId,
 						proposed);
 			}
 		} finally {
 
-			// The child permit must have been cleared before this
-			// parent permit can be released.
+			// The child permit is released before the parent permit.
+			// Failure to release either causes transaction rollback.
 			clearPermit(connection);
 		}
 		ExchangeRecord actual = new SqlitePortableContentRepository(database).snapshot(connection, type, localId)
@@ -169,7 +183,11 @@ final class MasterContributionScalarWriter {
 
 	private long insertQuestion(Connection connection, ExchangeRecord proposed, Map<RecordKey, Long> newLocalIds)
 			throws SQLException {
-		for (String child : List.of("question_images", "question_content_parts", "question_output_exclusions")) {
+		for (String child : List.of("question_images", "question_output_exclusions")) {
+
+			// New images and output exclusions still require separate
+			// reviewed import support. Ordered PDF content parts are
+			// now handled by the region writer.
 			requireEmptyChildren(proposed, child);
 		}
 		JsonNode values = proposed.values();
@@ -306,8 +324,10 @@ final class MasterContributionScalarWriter {
 				proposedOther.remove(field);
 			}
 			if (allowPdfRegions) {
-				currentOther.remove("question_regions");
-				proposedOther.remove("question_regions");
+				for (String field : List.of("question_regions", "question_content_parts")) {
+					currentOther.remove(field);
+					proposedOther.remove(field);
+				}
 			}
 		} else {
 			currentOther.remove("answer_text");
@@ -317,6 +337,9 @@ final class MasterContributionScalarWriter {
 				proposedOther.remove("answer_regions");
 			}
 		}
+
+		// Image bytes, parent references, unsupported graph changes
+		// and every other unapproved field must remain identical.
 		if (!currentOther.equals(proposedOther) || before.equals(after)) {
 			throw new SQLException("Reviewed change contains unsupported fields " + "or no permitted content change");
 		}

@@ -24,6 +24,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
@@ -766,6 +767,92 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
+	void masterApplicationImportsOrderedMixedQuestionContent() throws Exception {
+		Fixture fixture = fixture(true);
+
+		// The original assignment already contains an image.
+		// The contributor adds a PDF region and places it before
+		// the existing image in the mixed-content sequence.
+		execute(fixture.contributor(), """
+				INSERT INTO question_regions (
+				    question_id, region_order, booklet_id,
+				    page_number, x, y, width, height
+				)
+				SELECT id, 0, booklet_id, 1,
+				       0.1, 0.1, 0.3, 0.3
+				FROM questions
+				WHERE question_code = '1'
+				""");
+		execute(fixture.contributor(), """
+				UPDATE question_content_parts
+				SET content_order = 1
+				WHERE content_type = 'IMAGE'
+				""");
+		execute(fixture.contributor(), """
+				INSERT INTO question_content_parts (
+				    question_id, content_order,
+				    content_type, region_order, image_id
+				)
+				SELECT id, 0, 'PDF_REGION', 0, NULL
+				FROM questions
+				WHERE question_code = '1'
+				""");
+		Path archive = publish(fixture, "Accepted mixed Question content", "mixed-content-return.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		ExchangeRecord proposed = intake.proposedChanges(packageId).getFirst();
+		var key = new MasterContributionDecisionLedger.RecordKey(proposed.recordType(), proposed.recordId());
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
+				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY),
+				"Accept verified mixed Question content");
+		var applied = new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId(), archive,
+				new ManagedDataLayout(directory.resolve("coordinator")));
+		assertEquals(1, applied.outcomes().size());
+		assertEquals(MasterContributionApplicationCoordinator.Outcome.APPLIED, applied.outcomes().getFirst().outcome());
+		assertEquals("Accepted mixed Question content", masterQuestionText(fixture.master()));
+		try (Connection connection = fixture.master().openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT part.content_type,
+						       part.content_order,
+						       part.region_order,
+						       part.image_id
+						FROM question_content_parts part
+						JOIN questions question
+						  ON question.id = part.question_id
+						WHERE question.question_code = '1'
+						ORDER BY part.content_order
+						""")) {
+			try (ResultSet rows = statement.executeQuery()) {
+				assertTrue(rows.next());
+				assertEquals("PDF_REGION", rows.getString(1));
+				assertEquals(0, rows.getInt(2));
+				assertEquals(0, rows.getInt(3));
+				assertNull(rows.getObject(4));
+				assertTrue(rows.next());
+				assertEquals("IMAGE", rows.getString(1));
+				assertEquals(1, rows.getInt(2));
+				assertNull(rows.getObject(3));
+				assertNotNull(rows.getObject(4));
+				assertFalse(rows.next());
+			}
+		}
+		var identities = new SqlitePortableIdentityRepository(fixture.master());
+		var contributorIdentities = new SqlitePortableIdentityRepository(fixture.contributor());
+		var masterImage = identities.findByLocalId(EntityType.QUESTION_IMAGE, 151L).orElseThrow();
+		var contributorImage = contributorIdentities
+				.findByPortableId(EntityType.QUESTION_IMAGE, masterImage.portableId()).orElseThrow();
+
+		// Portable identity survives independent installation.
+		assertEquals(masterImage.portableId(), contributorImage.portableId());
+		assertNotEquals(masterImage.localId(), contributorImage.localId());
+		assertEquals(WorkAssignmentLedger.State.COMPLETE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
+		fixture.contributor().verifyIntegrity();
+	}
+
+	@Test
 	void masterApplicationImportsVerifiedAnswerRegion() throws Exception {
 		Fixture fixture = fixture();
 		execute(fixture.contributor(), """
@@ -968,6 +1055,34 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
+	void masterApplicationRequiresVerifiedArchiveForContentParts() throws Exception {
+		Fixture fixture = fixture(true);
+
+		// Change only the image's content order.
+		// No Question text or PDF-region edit is necessary.
+		execute(fixture.contributor(), """
+				UPDATE question_content_parts
+				SET content_order = 1
+				WHERE content_type = 'IMAGE'
+				""");
+		Path archive = directory.resolve("unverified-content-order.examwork");
+		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
+				.export(fixture.assignmentId(), archive);
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		ExchangeRecord proposal = intake.proposedChanges(packageId).getFirst();
+		var key = new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId());
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
+				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY), "Review order-only content change");
+		assertThrows(SQLException.class,
+				() -> new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId()));
+		assertEquals(WorkAssignmentLedger.State.ACTIVE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
 	void masterApplicationRollsBackDependentInsertFailure() throws Exception {
 		Fixture fixture = fixture();
 		addNewContributorQuestionAndAnswer(fixture);
@@ -1023,6 +1138,67 @@ class ContributionArchiveInspectorTest {
 			assertEquals(0, rows.getInt(1));
 		}
 		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
+	void masterApplicationRollsBackMixedContentInsertionFailure() throws Exception {
+		Fixture fixture = fixture();
+		execute(fixture.contributor(), """
+				INSERT INTO question_regions (
+				    question_id, region_order, booklet_id,
+				    page_number, x, y, width, height
+				)
+				SELECT id, 0, booklet_id, 1,
+				       0.1, 0.1, 0.4, 0.4
+				FROM questions
+				WHERE question_code = '1'
+				""");
+		execute(fixture.contributor(), """
+				INSERT INTO question_content_parts (
+				    question_id, content_order,
+				    content_type, region_order, image_id
+				)
+				SELECT id, 0, 'PDF_REGION', 0, NULL
+				FROM questions
+				WHERE question_code = '1'
+				""");
+		Path archive = publish(fixture, "Content that must roll back", "mixed-content-rollback.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		ExchangeRecord proposal = intake.proposedChanges(packageId).getFirst();
+		var key = new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId());
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
+				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY), "Test mixed-content atomic rollback");
+
+		// Inject a failure after the scalar and region mutation
+		// have begun, but before the application can commit.
+		execute(fixture.master(), """
+				CREATE TRIGGER test_reject_contribution_content_part
+				BEFORE INSERT ON question_content_parts
+				BEGIN
+				    SELECT RAISE(
+				        ABORT,
+				        'Injected mixed-content insertion failure'
+				    );
+				END
+				""");
+		assertThrows(SQLException.class, () -> new MasterContributionApplicationCoordinator(fixture.master())
+				.execute(review.reviewId(), archive, new ManagedDataLayout(directory.resolve("coordinator"))));
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+		try (Connection connection = fixture.master().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet rows = statement.executeQuery("""
+						SELECT
+						    (SELECT COUNT(*) FROM question_regions)
+						  + (SELECT COUNT(*) FROM question_content_parts)
+						""")) {
+			assertTrue(rows.next());
+			assertEquals(0, rows.getInt(1));
+		}
+		assertTrue(new MasterContributionApplicationCoordinator(fixture.master()).find(review.reviewId()).isEmpty());
+		assertEquals(WorkAssignmentLedger.State.ACTIVE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
 		fixture.master().verifyIntegrity();
 	}
 
@@ -1850,15 +2026,21 @@ class ContributionArchiveInspectorTest {
 	void migrationToVersion43InstallsReceiptAcknowledgementLedger() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("v43-migration.db"));
 		database.initialiseSchema();
-		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
+
+		// The current schema is now v44.
+		assertEquals(44, database.schemaVersion());
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try (Statement statement = connection.createStatement()) {
+
+				// Remove v43 receipt structures and restore the
+				// v40 Question content-part triggers replaced by v44.
+				// This reconstructs a valid schema-v42 fixture.
 				HistoricalSchemaFixture.removeVersion43Objects(statement);
 				assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
 						UPDATE schema_version
 						SET version = 42
-						WHERE version = 43
+						WHERE version = 44
 						"""));
 				connection.commit();
 			} catch (SQLException | RuntimeException failure) {
@@ -1867,9 +2049,43 @@ class ContributionArchiveInspectorTest {
 			}
 		}
 		assertEquals(42, database.schemaVersion());
+
+		// The downgraded schema must be internally consistent
+		// before migrations are replayed.
+		database.verifySchema();
+
+		// Initialisation must now run both:
+		// v42 -> v43, then v43 -> v44.
+		database.initialiseSchema();
+		assertEquals(44, database.schemaVersion());
+		database.verifySchema();
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void migrationToVersion44InstallsQuestionContentPartPermissions() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(directory.resolve("v44-migration.db"));
+		database.initialiseSchema();
+		assertEquals(44, database.schemaVersion());
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try (Statement statement = connection.createStatement()) {
+				HistoricalSchemaFixture.removeVersion44Objects(statement);
+				assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
+						UPDATE schema_version
+						SET version = 43
+						WHERE version = 44
+						"""));
+				connection.commit();
+			} catch (SQLException | RuntimeException failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
+		assertEquals(43, database.schemaVersion());
 		database.verifySchema();
 		database.initialiseSchema();
-		assertEquals(43, database.schemaVersion());
+		assertEquals(44, database.schemaVersion());
 		database.verifySchema();
 		database.verifyIntegrity();
 	}
@@ -2207,6 +2423,10 @@ class ContributionArchiveInspectorTest {
 	}
 
 	private Fixture fixture() throws Exception {
+		return fixture(false);
+	}
+
+	private Fixture fixture(boolean includeOriginalImage) throws Exception {
 		ApplicationConfig coordinator = ApplicationConfig.fromDataRoot(directory.resolve("coordinator"));
 		ApplicationConfig contributor = ApplicationConfig.fromDataRoot(directory.resolve("contributor"));
 		Files.createDirectories(coordinator.dataRoot());
@@ -2221,50 +2441,113 @@ class ContributionArchiveInspectorTest {
 		Files.write(questionPdf, TestPdf.bytes("Question PDF content"));
 		Files.write(answerPdf, TestPdf.bytes("Answer PDF content"));
 		execute(master, """
-				INSERT INTO subjects (id, subject_name) VALUES (1, 'Biology')
+				INSERT INTO subjects (id, subject_name)
+				VALUES (1, 'Biology')
 				""");
 		execute(master, """
-				INSERT INTO syllabus_versions (id, subject_id, syllabus_name, is_current)
+				INSERT INTO syllabus_versions (
+				    id, subject_id, syllabus_name, is_current
+				)
 				VALUES (11, 1, 'Biology 2025', 1)
 				""");
 		execute(master, """
-				INSERT INTO curriculum_nodes (id, syllabus_version_id, parent_id,
-				curriculum_code, curriculum_name, curriculum_level, display_order) VALUES
-				(101, 11, NULL, 'B25U1', 'Biology Unit', 'UNIT', 0),
-				(102, 11, 101, 'B25U1T1', 'Biology Topic', 'TOPIC', 0),
-				(103, 11, 102, 'B25U1T1D1', 'Biology Descriptor', 'DESCRIPTOR', 0),
-				(104, 11, 102, 'B25U1T1D2', 'Second Biology Descriptor', 'DESCRIPTOR', 1)
+				INSERT INTO curriculum_nodes (
+				    id, syllabus_version_id, parent_id,
+				    curriculum_code, curriculum_name,
+				    curriculum_level, display_order
+				)
+				VALUES
+				    (101, 11, NULL, 'B25U1',
+				     'Biology Unit', 'UNIT', 0),
+				    (102, 11, 101, 'B25U1T1',
+				     'Biology Topic', 'TOPIC', 0),
+				    (103, 11, 102, 'B25U1T1D1',
+				     'Biology Descriptor', 'DESCRIPTOR', 0),
+				    (104, 11, 102, 'B25U1T1D2',
+				     'Second Biology Descriptor', 'DESCRIPTOR', 1)
 				""");
 		execute(master, """
-				INSERT INTO exam_providers (id, provider_name) VALUES (21, 'QCAA')
+				INSERT INTO exam_providers (
+				    id, provider_name
+				)
+				VALUES (21, 'QCAA')
 				""");
 		execute(master, """
-				INSERT INTO source_documents (id, relative_path) VALUES
+				INSERT INTO source_documents (
+				    id, relative_path
+				)
+				VALUES
 				    (51, 'subjects/Biology/exams/questions.pdf'),
 				    (52, 'subjects/Biology/exams/answers.pdf')
 				""");
 		execute(master, """
-				INSERT INTO exams (id, subject_id, provider_id, exam_year, exam_name,
-				    expected_question_booklet_count, expected_answer_file_count)
-				VALUES (31, 1, 21, 2025, 'External Assessment', 2, 1)
+				INSERT INTO exams (
+				    id, subject_id, provider_id,
+				    exam_year, exam_name,
+				    expected_question_booklet_count,
+				    expected_answer_file_count
+				)
+				VALUES (
+				    31, 1, 21, 2025, 'External Assessment', 2, 1
+				)
 				""");
 		execute(master, """
-				INSERT INTO answer_files (id, exam_id, source_document_id, answer_file_name)
+				INSERT INTO answer_files (
+				    id, exam_id, source_document_id,
+				    answer_file_name
+				)
 				VALUES (71, 31, 52, 'Marking Guide')
 				""");
 		execute(master, """
-				INSERT INTO exam_booklets (id, exam_id, source_document_id, answer_file_id, booklet_name)
-				VALUES (61, 31, 51, 71, 'Paper 1'), (62, 31, 51, 71, 'Paper 2')
+				INSERT INTO exam_booklets (
+				    id, exam_id, source_document_id,
+				    answer_file_id, booklet_name
+				)
+				VALUES
+				    (61, 31, 51, 71, 'Paper 1'),
+				    (62, 31, 51, 71, 'Paper 2')
 				""");
 		execute(master, """
-				INSERT INTO questions (id, booklet_id, classification_node_id,
-				    question_code, question_text, marks, shared_context_capture_required)
-				VALUES (81, 61, 103, '1', 'Biology question', 2, 0)
+				INSERT INTO questions (
+				    id, booklet_id, classification_node_id,
+				    question_code, question_text,
+				    marks, shared_context_capture_required
+				)
+				VALUES (
+				    81, 61, 103, '1', 'Biology question', 2, 0
+				)
 				""");
 		execute(master, """
-				INSERT INTO answers (id, question_id, answer_text)
+				INSERT INTO answers (
+				    id, question_id, answer_text
+				)
 				VALUES (91, 81, 'Biology answer')
 				""");
+		if (includeOriginalImage) {
+
+			// Create a valid small PNG before issuance so that
+			// master and contributor retain the same portable image
+			// identity despite independently assigned SQLite IDs.
+			byte[] png = Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC"
+					+ "AAAAC0lEQVR42mP8/x8AAwMCAO3Ry8UAAAAASUVORK5CYII=");
+			try (Connection connection = master.openConnection();
+					PreparedStatement statement = connection.prepareStatement("""
+							INSERT INTO question_images (
+							    id, question_id, image_png
+							)
+							VALUES (151, 81, ?)
+							""")) {
+				statement.setBytes(1, png);
+				assertEquals(1, statement.executeUpdate());
+			}
+			execute(master, """
+					INSERT INTO question_content_parts (
+					    question_id, content_order, content_type,
+					    region_order, image_id
+					)
+					VALUES (81, 0, 'IMAGE', NULL, 151)
+					""");
+		}
 		UUID assignmentId = UUID.randomUUID();
 		Exam exam = new Exam(31, new Subject(1, "Biology"), new ExamProvider(21, "QCAA"), 2025, "External Assessment");
 		Path assignment = directory.resolve("issued.examwork");

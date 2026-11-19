@@ -1,12 +1,15 @@
 package au.edu.eq.questionbank.repository.sqlite;
 
+import java.io.IOException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -570,6 +573,7 @@ public final class HistoricalSchemaFixture {
 	 */
 	public static void removeVersion43Objects(Statement statement) throws SQLException {
 		Objects.requireNonNull(statement, "statement");
+		removeVersion44Objects(statement);
 		statement.execute("""
 				DROP TRIGGER IF EXISTS
 				    trg_contributor_receipt_ack_validate
@@ -586,6 +590,64 @@ public final class HistoricalSchemaFixture {
 				DROP TABLE IF EXISTS
 				    contributor_receipt_acknowledgements
 				""");
+	}
+
+	/**
+	 * Restores the original v40 Question content-part guards in a disposable
+	 * historical migration fixture.
+	 *
+	 * <p>
+	 * The original definitions are recovered from the versioned migration resource,
+	 * ensuring exact compatibility with schema verification. This method must never
+	 * be called on production data.
+	 *
+	 * @param statement statement for a disposable test database
+	 * @throws SQLException         if the original trigger definitions cannot be
+	 *                              read or restored
+	 * @throws NullPointerException if statement is null
+	 */
+	public static void removeVersion44Objects(Statement statement) throws SQLException {
+		Objects.requireNonNull(statement, "statement");
+		List<String> names = List.of("trg_master_capture_question_content_parts_insert",
+				"trg_master_capture_question_content_parts_update", "trg_master_capture_question_content_parts_delete");
+		String migration;
+		try {
+			migration = SqlResourceLoader.load("/db/migration-v39-to-v40.sql");
+		} catch (IOException failure) {
+			throw new SQLException("Cannot load original master capture migration", failure);
+		}
+		Map<String, String> originals = new HashMap<>();
+		for (String fragment : SqlScriptExecutor.splitStatements(migration)) {
+
+			// Strip any preceding migration comments while
+			// preserving the original CREATE TRIGGER statement.
+			int start = fragment.lastIndexOf("CREATE TRIGGER ");
+			if (start < 0) {
+				continue;
+			}
+			String sql = fragment.substring(start).strip();
+			String heading = sql.lines().findFirst().orElse("");
+			if (!heading.startsWith("CREATE TRIGGER ")) {
+				continue;
+			}
+			String name = heading.substring("CREATE TRIGGER ".length()).strip();
+			if (!names.contains(name)) {
+				continue;
+			}
+			if (originals.putIfAbsent(name, sql) != null) {
+				throw new SQLException("Duplicate historical trigger definition: " + name);
+			}
+		}
+		if (originals.size() != names.size()) {
+			throw new SQLException("Incomplete historical Question content-part " + "trigger definitions");
+		}
+
+		// These operations remain inside the caller-owned
+		// historical fixture transaction.
+		for (String name : names) {
+			statement.execute("DROP TRIGGER IF EXISTS " + name);
+			statement.execute(originals.get(name));
+		}
 	}
 
 	private static void dropAssignmentTriggers(Statement statement, String pattern) throws SQLException {

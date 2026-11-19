@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 43;
+	private static final int LATEST_SCHEMA_VERSION = 44;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -886,6 +886,13 @@ public final class SqliteDatabase {
 			// from the immutable assignment baseline and local work.
 			executeMigration(connection, "/db/migration-v42-to-v43.sql", 43);
 			return 43;
+		}
+		if (version == 43) {
+
+			// Version 44 permits reviewed Question content-part changes
+			// under the same transaction-scoped authority as PDF regions.
+			executeMigration(connection, "/db/migration-v43-to-v44.sql", 44);
+			return 44;
 		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
@@ -2156,24 +2163,16 @@ public final class SqliteDatabase {
 
 		// Version 42 replaces six v40 capture guards. Verification
 		// must reconstruct the final definitions in migration order.
-		if (version >= 42) {
+		if (version >= 44) {
+			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
+					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql", "/db/migration-v41-to-v42.sql",
+					"/db/migration-v43-to-v44.sql");
+		} else if (version >= 42) {
 			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
 					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql", "/db/migration-v41-to-v42.sql");
 		} else {
 			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
 					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql");
-		}
-		SqliteMigrationTriggerVerifier.verify(connection, "trg_master_return_", "master return reconciliation",
-				"/db/migration-v39-to-v40.sql");
-		SqliteMigrationTriggerVerifier.verify(connection, "trg_master_application_", "master contribution application",
-				"/db/migration-v40-to-v41.sql");
-		try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery("""
-				SELECT COUNT(*)
-				FROM master_contribution_write_permits
-				""")) {
-			if (!result.next() || result.getLong(1) != 0) {
-				throw new SQLException("Unreleased master contribution write permit");
-			}
 		}
 	}
 

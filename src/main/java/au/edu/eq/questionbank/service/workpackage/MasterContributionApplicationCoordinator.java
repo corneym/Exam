@@ -86,19 +86,22 @@ public final class MasterContributionApplicationCoordinator {
 	 *
 	 * <p>
 	 * A managed-asset publication lock covers verification and the complete SQLite
-	 * reconciliation. The supported Question/Answer PDF-region collections may be
-	 * applied without replacing PDFs.
+	 * reconciliation transaction. Supported Question and Answer PDF-region
+	 * collections, together with ordered Question content parts referencing
+	 * existing images, may be applied without replacing source PDFs.
 	 *
 	 * <p>
-	 * Embedded images, Shared Context changes, new source documents and binary
-	 * publication remain unsupported.
+	 * New or modified image bytes, Shared Context graph changes, new source
+	 * documents and binary publication remain unsupported.
 	 *
 	 * @param reviewId immutable coordinator review identity
-	 * @param archive  original, durably received contribution archive
+	 * @param archive  original durably received contribution archive
 	 * @param layout   authoritative master managed-data layout
 	 * @return terminal application outcomes and replay indicator
-	 * @throws SQLException         if review or persistence checks fail
-	 * @throws IOException          if archive, source PDFs or application fail
+	 * @throws SQLException         if review, dependency or persistence validation
+	 *                              fails
+	 * @throws IOException          if archive validation, source PDF verification
+	 *                              or application fails
 	 * @throws NullPointerException if any argument is null
 	 */
 	public ApplicationResult execute(UUID reviewId, Path archive, ManagedDataLayout layout)
