@@ -176,7 +176,9 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 	void migrationToVersion46InstallsReviewedGraphPermissions() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("v46-migration.db"));
 		database.initialiseSchema();
-		assertEquals(46, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
+
+		// Reconstruct a genuine v45 database from the latest schema.
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try (Statement statement = connection.createStatement()) {
@@ -184,7 +186,7 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 				assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
 						UPDATE schema_version
 						SET version = 45
-						WHERE version = 46
+						WHERE version = 47
 						"""));
 				connection.commit();
 			} catch (SQLException | RuntimeException failure) {
@@ -194,8 +196,26 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 		}
 		assertEquals(45, database.schemaVersion());
 		database.verifySchema();
-		database.initialiseSchema();
+
+		// Apply only the v46 migration, so its schema can be
+		// independently verified before introducing v47.
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v45-to-v46.sql"));
+				connection.commit();
+			} catch (Exception failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
 		assertEquals(46, database.schemaVersion());
+		database.verifySchema();
+		database.verifyIntegrity();
+
+		// Normal initialisation must then migrate v46 to the latest version.
+		database.initialiseSchema();
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		database.verifySchema();
 		database.verifyIntegrity();
 	}
