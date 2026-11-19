@@ -44,11 +44,29 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: repository
-            suite: NonUIRepositoryTests.java
+          - name: repository-assessment
+            suite: NonUIRepositoryAssessmentTests.java
 
-          - name: work-packages
-            suite: NonUIWorkPackageTests.java
+          - name: repository-curriculum
+            suite: NonUIRepositoryCurriculumTests.java
+
+          - name: repository-identity
+            suite: NonUIRepositoryIdentityTests.java
+
+          - name: repository-sqlite
+            suite: NonUIRepositorySqliteTests.java
+
+          - name: work-packages-archives
+            suite: NonUIWorkPackageArchivesTests.java
+
+          - name: work-packages-assignments
+            suite: NonUIWorkPackageAssignmentsTests.java
+
+          - name: work-packages-contributions
+            suite: NonUIWorkPackageContributionsTests.java
+
+          - name: work-packages-subject-import
+            suite: NonUIWorkPackageSubjectImportTests.java
 
           - name: services
             suite: NonUIServiceTests.java
