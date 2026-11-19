@@ -1337,51 +1337,6 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
-	void masterApplicationRejectsReplacementOfExistingImage() throws Exception {
-		Fixture fixture = fixture(true);
-
-		// A different, valid one-pixel PNG is submitted against
-		// an existing image, not as a newly created image.
-		byte[] replacement = Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
-				+ "AAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==");
-		try (Connection connection = fixture.contributor().openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
-						UPDATE question_images
-						SET image_png = ?
-						WHERE question_id = (
-						    SELECT id
-						    FROM questions
-						    WHERE question_code = '1'
-						)
-						""")) {
-			statement.setBytes(1, replacement);
-			assertEquals(1, statement.executeUpdate());
-		}
-		Path archive = directory.resolve("existing-image-replacement.examwork");
-		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
-				.export(fixture.assignmentId(), archive);
-		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
-		UUID packageId = intake.receive(archive).received().packageId();
-		Map<MasterContributionDecisionLedger.RecordKey, MasterContributionDecisionLedger.Choice> choices = new HashMap<>();
-		for (ExchangeRecord proposal : intake.proposedChanges(packageId)) {
-			choices.put(new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId()),
-					MasterContributionDecisionLedger.Choice.QUEUE_APPLY);
-		}
-		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId, choices,
-				"Review existing image replacement");
-		SQLException failure = assertThrows(SQLException.class,
-				() -> new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId(), archive,
-						new ManagedDataLayout(directory.resolve("coordinator"))));
-		assertTrue(failure.getMessage().contains("Existing Question image replacement"), failure.getMessage());
-		assertEquals(WorkAssignmentLedger.State.ACTIVE,
-				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
-		assertTrue(new MasterContributionApplicationCoordinator(fixture.master()).find(review.reviewId()).isEmpty());
-		fixture.master().verifySchema();
-		fixture.master().verifyIntegrity();
-		fixture.contributor().verifyIntegrity();
-	}
-
-	@Test
 	void masterApplicationRejectsUnjustifiedIdenticalSkip() throws Exception {
 		Fixture fixture = fixture();
 		Path archive = publish(fixture, "Already accepted content", "apply-identical.examwork");
@@ -1430,6 +1385,95 @@ class ContributionArchiveInspectorTest {
 				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
 		assertEquals("Biology question", masterQuestionText(fixture.master()));
 		fixture.master().verifyIntegrity();
+	}
+
+	@Test
+	void masterApplicationRequiresVerifiedArchiveForExistingImageReplacement() throws Exception {
+		Fixture fixture = fixture(true);
+
+		byte[] originalImage;
+		try (Connection connection = fixture.master().openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT image_png
+						FROM question_images
+						WHERE id = 151
+						""");
+				ResultSet rows = statement.executeQuery()) {
+			assertTrue(rows.next());
+			originalImage = rows.getBytes(1);
+			assertFalse(rows.next());
+		}
+
+		// The contributor legitimately replaces an existing image.
+		byte[] replacement = Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+				+ "AAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==");
+
+		try (Connection connection = fixture.contributor().openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						UPDATE question_images
+						SET image_png = ?
+						WHERE question_id = (
+						    SELECT id
+						    FROM questions
+						    WHERE question_code = '1'
+						)
+						""")) {
+			statement.setBytes(1, replacement);
+			assertEquals(1, statement.executeUpdate());
+		}
+
+		Path archive = directory.resolve("unverified-existing-image-replacement.examwork");
+
+		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
+				.export(fixture.assignmentId(), archive);
+
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+
+		UUID packageId = intake.receive(archive).received().packageId();
+
+		Map<MasterContributionDecisionLedger.RecordKey, MasterContributionDecisionLedger.Choice> choices = new HashMap<>();
+
+		for (ExchangeRecord proposal : intake.proposedChanges(packageId)) {
+			choices.put(new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId()),
+					MasterContributionDecisionLedger.Choice.QUEUE_APPLY);
+		}
+
+		assertEquals(2, choices.size());
+
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId, choices,
+				"Approve existing PNG replacement requiring archive");
+
+		var coordinator = new MasterContributionApplicationCoordinator(fixture.master());
+
+		// An approved replacement is supported, but this archive-free
+		// execution path has no verified PNG payload.
+		SQLException failure = assertThrows(SQLException.class, () -> coordinator.execute(review.reviewId()));
+
+		assertTrue(failure.getMessage().contains("Prepared Question image set differs from review"),
+				failure.getMessage());
+
+		// The failure must leave the master image and the assignment intact.
+		try (Connection connection = fixture.master().openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT image_png
+						FROM question_images
+						WHERE id = 151
+						""");
+				ResultSet rows = statement.executeQuery()) {
+			assertTrue(rows.next());
+			assertArrayEquals(originalImage, rows.getBytes(1));
+			assertFalse(rows.next());
+		}
+
+		assertEquals(WorkAssignmentLedger.State.ACTIVE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+
+		assertTrue(coordinator.find(review.reviewId()).isEmpty());
+		assertEquals(2, intake.proposedChanges(packageId).size());
+
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
+		fixture.contributor().verifyIntegrity();
 	}
 
 	@Test
@@ -2749,27 +2793,41 @@ class ContributionArchiveInspectorTest {
 	@Test
 	void migrationToVersion45InstallsApprovedImageInsertionGuard() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("v45-migration.db"));
+
 		database.initialiseSchema();
-		assertEquals(45, database.schemaVersion());
+
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
+
+		// Reconstruct v44 from the latest schema.
+		// This removes v45, v46 and v47 additions in dependency order.
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
+
 			try (Statement statement = connection.createStatement()) {
 				HistoricalSchemaFixture.removeVersion45Objects(statement);
+
 				assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
 						UPDATE schema_version
 						SET version = 44
-						WHERE version = 45
+						WHERE version = 47
 						"""));
+
 				connection.commit();
 			} catch (SQLException | RuntimeException failure) {
 				connection.rollback();
 				throw failure;
 			}
 		}
+
 		assertEquals(44, database.schemaVersion());
 		database.verifySchema();
+
+		// Initialisation applies v45 and verifies its image-insertion
+		// guard before proceeding through v46 and v47.
 		database.initialiseSchema();
-		assertEquals(45, database.schemaVersion());
+
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
+
 		database.verifySchema();
 		database.verifyIntegrity();
 	}
