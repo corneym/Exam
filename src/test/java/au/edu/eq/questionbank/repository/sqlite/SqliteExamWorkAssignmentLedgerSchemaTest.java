@@ -201,6 +201,7 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 	void missingMasterContributionPermitTriggerFailsVerification() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("missing-application-guard.db"));
 		database.initialiseSchema();
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.execute("""
 					DROP TRIGGER trg_master_application_permit_validate
@@ -208,13 +209,14 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 		}
 		SQLException failure = assertThrows(SQLException.class, database::verifySchema);
 		assertTrue(failure.getMessage().contains("Missing master contribution application trigger"));
+		assertTrue(failure.getMessage().contains("trg_master_application_permit_validate"));
 	}
 
 	@Test
 	void missingMasterPdfRegionPermitTriggerFailsVerification() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("missing-region-permit.db"));
 		database.initialiseSchema();
-		assertEquals(42, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.execute("""
 					DROP TRIGGER trg_master_region_permit_validate
@@ -222,6 +224,7 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 		}
 		SQLException failure = assertThrows(SQLException.class, database::verifySchema);
 		assertTrue(failure.getMessage().contains("Missing master PDF-region authorisation trigger"));
+		assertTrue(failure.getMessage().contains("trg_master_region_permit_validate"));
 	}
 
 	@Test

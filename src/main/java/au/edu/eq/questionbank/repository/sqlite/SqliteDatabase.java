@@ -2161,8 +2161,13 @@ public final class SqliteDatabase {
 			throw new SQLException("Contribution canonical mapping foreign key is missing");
 		}
 
-		// Version 42 replaces six v40 capture guards. Verification
-		// must reconstruct the final definitions in migration order.
+		// Application permits and canonical mappings remain protected
+		// by the original v41 triggers in every subsequent schema version.
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_master_application_", "master contribution application",
+				"/db/migration-v40-to-v41.sql");
+
+		// Later migrations replace selected capture guards. Reconstruct
+		// the expected definitions from all applicable migration scripts.
 		if (version >= 44) {
 			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
 					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql", "/db/migration-v41-to-v42.sql",

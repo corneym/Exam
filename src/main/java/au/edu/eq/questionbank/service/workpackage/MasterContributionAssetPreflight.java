@@ -25,18 +25,22 @@ import au.edu.eq.questionbank.service.workpackage.ExamWorkAssetIndex.Reference;
 
 /**
  * Verifies the binary dependencies of a received contribution against its
- * immutable issuance baseline and the current master data root.
+ * immutable issuance baseline and the locked master installation.
  *
  * <p>
- * The original archive must still match its durable intake receipt. Existing
- * Question/Answer source PDFs and syllabus PDFs must have the exact bytes
- * issued to the contributor. Embedded binary assets remain inside the validated
- * archive and are not published here.
+ * Source Question/Answer PDFs and syllabus PDFs must retain their originally
+ * issued paths and bytes. Existing embedded Question PNGs and Shared Context
+ * content must retain their issued master values and revision evidence.
+ *
+ * <p>
+ * Returned embedded PNG entries are checked against their asset references,
+ * canonical ownership paths, expected size, SHA-256 and PNG file signature.
  *
  * <p>
  * This is a read-only verification boundary. The calling application
- * coordinator must retain the managed-asset publication lock across
- * verification and any subsequent application.
+ * coordinator holds the managed-asset publication lock throughout verification
+ * and subsequent SQLite reconciliation. This class does not publish assets or
+ * authorise new image database writes.
  */
 public final class MasterContributionAssetPreflight {
 
@@ -56,24 +60,24 @@ public final class MasterContributionAssetPreflight {
 	}
 
 	/**
-	 * Verifies one received return's archive and existing PDF dependencies.
+	 * Verifies one received contribution and all issued binary dependencies.
 	 *
 	 * <p>
-	 * Source files are checked against the original issued asset index, the
-	 * received asset index, their master SourceDocument or syllabus metadata, and
-	 * the current physical file bytes.
+	 * The original archive must match its durable intake evidence. Issued master
+	 * PDFs and embedded images must remain unchanged. Returned PNG entries must
+	 * match their verified portable asset index.
 	 *
 	 * <p>
-	 * New or replaced source PDFs are not accepted through this method. Their
-	 * conflict and publication handling requires a separate approved asset-import
-	 * transaction.
+	 * New and replaced source PDFs are unsupported. New or modified embedded images
+	 * may pass preflight but still require a separately authorised reviewed
+	 * database write before they can be accepted.
 	 *
-	 * @param packageId durable received contribution package ID
-	 * @param archive   original contribution archive
-	 * @throws SQLException         if assignment, receipt or master identity
-	 *                              evidence cannot be read
-	 * @throws IOException          if archive contents or source assets differ from
-	 *                              the original approved dependency evidence
+	 * @param packageId durable received contribution package UUID
+	 * @param archive   original durably received contribution archive
+	 * @throws SQLException         if assignment, receipt, identity or master
+	 *                              persistence evidence cannot be read
+	 * @throws IOException          if archive contents, asset references or master
+	 *                              binary dependencies are inconsistent
 	 * @throws NullPointerException if either argument is null
 	 */
 	public void verify(UUID packageId, Path archive) throws SQLException, IOException {
@@ -88,28 +92,33 @@ public final class MasterContributionAssetPreflight {
 		if (!packageId.equals(inspected.manifest().packageId())
 				|| !received.assignmentId().equals(inspected.assignment().assignmentId())
 				|| !received.archiveSha256().equals(inspected.archiveSha256())) {
-			throw new IOException("Contribution archive differs from durable intake evidence");
+			throw new IOException("Contribution archive differs from " + "durable intake evidence");
 		}
-		byte[] issuedIndexBytes = new WorkAssignmentLedger(database).readBaseline(received.assignmentId()).assets();
+		WorkAssignmentLedger.Baseline baseline = new WorkAssignmentLedger(database)
+				.readBaseline(received.assignmentId());
 		ExamWorkAssetIndex issuedIndex = new ExamWorkJsonlCodec()
-				.readAssetIndex(new ByteArrayInputStream(issuedIndexBytes));
+				.readAssetIndex(new ByteArrayInputStream(baseline.assets()));
 		Map<String, Reference> issuedPdfs = pdfReferences(issuedIndex);
 		Map<String, Reference> receivedPdfs = pdfReferences(inspected.assets());
-
-		// A return cannot silently remove an issued PDF dependency
-		// or introduce a different source PDF.
 		if (!issuedPdfs.keySet().equals(receivedPdfs.keySet())) {
-			throw new IOException("Contribution PDF dependency set differs from issuance");
+			throw new IOException("Contribution PDF dependency set differs " + "from issuance");
 		}
 		for (Map.Entry<String, Reference> entry : issuedPdfs.entrySet()) {
 			Reference original = entry.getValue();
 			Reference returned = receivedPdfs.get(entry.getKey());
 			if (!original.managedPath().equals(returned.managedPath()) || !original.sha256().equals(returned.sha256())
 					|| original.size() != returned.size() || !original.mediaType().equals(returned.mediaType())) {
-				throw new IOException("Contribution source PDF differs from issued bytes: " + original.managedPath());
+				throw new IOException(
+						"Contribution source PDF differs " + "from issued bytes: " + original.managedPath());
 			}
 			requireMasterPdfMatches(original);
 		}
+
+		// The returned image assets have already passed ordinary
+		// ZIP and graph-closure validation. Recheck actual embedded
+		// bytes and current locked-master baseline here, under
+		// the caller's managed-asset publication lock.
+		new MasterContributionEmbeddedImagePreflight(database).verify(baseline, inspected, archive);
 	}
 
 	private String digest(Path file) throws IOException {

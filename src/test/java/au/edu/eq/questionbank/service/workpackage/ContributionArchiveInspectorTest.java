@@ -1441,6 +1441,111 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
+	void masterEmbeddedPreflightAcceptsVerifiedIssuedImage() throws Exception {
+		Fixture fixture = fixture(true);
+		Path archive = publish(fixture, "Question with unchanged issued image", "preflight-image-valid.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		var preflight = new MasterContributionAssetPreflight(fixture.master(),
+				new ManagedDataLayout(directory.resolve("coordinator")));
+		preflight.verify(packageId, archive);
+
+		// Preflight is read-only. No accepted content should have
+		// appeared on the master before reviewed application.
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+		ExchangeRecord proposed = intake.proposedChanges(packageId).getFirst();
+		var key = new MasterContributionDecisionLedger.RecordKey(proposed.recordType(), proposed.recordId());
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
+				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY),
+				"Accept Question with verified issued image");
+		var result = new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId(), archive,
+				new ManagedDataLayout(directory.resolve("coordinator")));
+		assertEquals(MasterContributionApplicationCoordinator.Outcome.APPLIED, result.outcomes().getFirst().outcome());
+		assertEquals("Question with unchanged issued image", masterQuestionText(fixture.master()));
+		assertEquals(WorkAssignmentLedger.State.COMPLETE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
+		fixture.contributor().verifyIntegrity();
+	}
+
+	@Test
+	void masterEmbeddedPreflightRejectsChangedLockedMasterImage() throws Exception {
+		Fixture fixture = fixture(true);
+		Path archive = publish(fixture, "Contributor proposal with original image",
+				"preflight-master-image-drift.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+
+		// Deliberately simulate an unexpected direct database
+		// modification that bypasses the normal master capture
+		// protection. This represents damaged authoritative data,
+		// not a permitted application operation.
+		execute(fixture.master(), """
+				DROP TRIGGER trg_master_capture_question_images_update
+				""");
+		execute(fixture.master(), """
+				UPDATE question_images
+				SET image_png = X'0102030405060708090A'
+				WHERE question_id = (
+				    SELECT id
+				    FROM questions
+				    WHERE question_code = '1'
+				)
+				""");
+		var preflight = new MasterContributionAssetPreflight(fixture.master(),
+				new ManagedDataLayout(directory.resolve("coordinator")));
+		IOException failure = assertThrows(IOException.class, () -> preflight.verify(packageId, archive));
+		assertTrue(failure.getMessage().contains("Master embedded content differs")
+				|| failure.getMessage().contains("Master Question images differ"), failure.getMessage());
+		assertEquals(WorkAssignmentLedger.State.ACTIVE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+		assertTrue(new MasterContributionApplicationCoordinator(fixture.master()).find(UUID.randomUUID()).isEmpty());
+
+		// This test deliberately removed a trigger, so schema
+		// verification is not expected to pass for the damaged
+		// fixture. Referential and SQLite integrity should hold.
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
+	void masterEmbeddedPreflightRejectsInvalidContributorPngBytes() throws Exception {
+		Fixture fixture = fixture(true);
+
+		// The contributor's local database has been corrupted
+		// with non-PNG bytes. The SHA-256 and archive manifest will
+		// still be internally consistent because export hashes the
+		// exact stored BLOB.
+		execute(fixture.contributor(), """
+				UPDATE question_images
+				SET image_png = X'0102030405060708090A'
+				WHERE question_id = (
+				    SELECT id
+				    FROM questions
+				    WHERE question_code = '1'
+				)
+				""");
+		Path archive = publish(fixture, "Question with invalid contributor image", "preflight-invalid-png.examwork");
+
+		// The archive is structurally valid; the new preflight
+		// must check more than its internally consistent hashes.
+		assertArchiveWellFormed(archive, fixture.master());
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		var preflight = new MasterContributionAssetPreflight(fixture.master(),
+				new ManagedDataLayout(directory.resolve("coordinator")));
+		IOException failure = assertThrows(IOException.class, () -> preflight.verify(packageId, archive));
+		assertTrue(failure.getMessage().contains("invalid PNG signature"), failure.getMessage());
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+		assertEquals(WorkAssignmentLedger.State.ACTIVE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
+		fixture.contributor().verifyIntegrity();
+	}
+
+	@Test
 	void masterIntakeEvidenceCannotBeUpdatedOrDeleted() throws Exception {
 		Fixture fixture = fixture();
 		Path archive = publish(fixture, "Immutable contribution", "immutable-return.examwork");
