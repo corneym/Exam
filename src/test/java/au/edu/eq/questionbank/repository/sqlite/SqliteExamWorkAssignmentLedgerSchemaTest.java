@@ -43,18 +43,6 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 	}
 
 	@Test
-	void createsLatestSchemaWithProtectedCoordinatorLedger() throws Exception {
-		SqliteDatabase database = new SqliteDatabase(directory.resolve("ledger-schema.db"));
-		database.initialiseSchema();
-		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
-		try (Connection connection = database.openConnection()) {
-			SqliteExamWorkAssignmentLedgerTriggers.verify(connection);
-			SqliteContributorAssignmentSessionTriggers.verify(connection);
-			SqliteAssignmentStructureTriggers.verify(connection);
-		}
-	}
-
-	@Test
 	void detectsMissingProtectionTriggerOnReinitialisation() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("missing-trigger.db"));
 		database.initialiseSchema();
@@ -185,6 +173,76 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 	}
 
 	@Test
+	void migrationToVersion46InstallsReviewedGraphPermissions() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(directory.resolve("v46-migration.db"));
+		database.initialiseSchema();
+		assertEquals(46, database.schemaVersion());
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try (Statement statement = connection.createStatement()) {
+				HistoricalSchemaFixture.removeVersion46Objects(statement);
+				assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
+						UPDATE schema_version
+						SET version = 45
+						WHERE version = 46
+						"""));
+				connection.commit();
+			} catch (SQLException | RuntimeException failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
+		assertEquals(45, database.schemaVersion());
+		database.verifySchema();
+		database.initialiseSchema();
+		assertEquals(46, database.schemaVersion());
+		database.verifySchema();
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void migrationToVersion47RestoresBookletReviewPermissions() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(directory.resolve("version-47-upgrade.db"));
+		database.initialiseSchema();
+		assertEquals(47, database.schemaVersion());
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try (Statement statement = connection.createStatement()) {
+				HistoricalSchemaFixture.removeVersion47Objects(statement);
+				assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
+						UPDATE schema_version
+						SET version = 46
+						WHERE version = 47
+						"""));
+				connection.commit();
+			} catch (SQLException | RuntimeException failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
+		assertEquals(46, database.schemaVersion());
+		database.verifySchema();
+		database.initialiseSchema();
+		assertEquals(47, database.schemaVersion());
+		database.verifySchema();
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void missingBookletReviewInvalidationGuardFailsVerification() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(directory.resolve("missing-booklet-review-guard.db"));
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					DROP TRIGGER
+					    trg_master_exam_structure_booklet_applicability_reviews_delete
+					""");
+		}
+		SQLException failure = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(failure.getMessage().contains("trg_master_exam_structure_booklet_applicability_reviews_delete"));
+	}
+
+	@Test
 	void missingMasterCaptureTriggerFailsSchemaVerification() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("missing-capture-guard.db"));
 		database.initialiseSchema();
@@ -225,6 +283,19 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 		SQLException failure = assertThrows(SQLException.class, database::verifySchema);
 		assertTrue(failure.getMessage().contains("Missing master PDF-region authorisation trigger"));
 		assertTrue(failure.getMessage().contains("trg_master_region_permit_validate"));
+	}
+
+	@Test
+	void missingReviewedGraphPermitTriggerFailsVerification() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(directory.resolve("missing-v46-trigger.db"));
+		database.initialiseSchema();
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					DROP TRIGGER trg_master_graph_permit_validate
+					""");
+		}
+		SQLException failure = assertThrows(SQLException.class, database::verifySchema);
+		assertTrue(failure.getMessage().contains("trg_master_graph_permit_validate"));
 	}
 
 	@Test

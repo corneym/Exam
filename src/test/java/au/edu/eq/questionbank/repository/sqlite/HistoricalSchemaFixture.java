@@ -669,6 +669,7 @@ public final class HistoricalSchemaFixture {
 	 */
 	public static void removeVersion45Objects(Statement statement) throws SQLException {
 		Objects.requireNonNull(statement, "statement");
+		removeVersion46Objects(statement);
 		String name = "trg_master_capture_question_images_insert";
 		String migration;
 		try {
@@ -694,6 +695,115 @@ public final class HistoricalSchemaFixture {
 		}
 		if (original == null) {
 			throw new SQLException("Original Question image insertion guard " + "was not found");
+		}
+		statement.execute("DROP TRIGGER IF EXISTS " + name);
+		statement.execute(original);
+	}
+
+	/**
+	 * Removes v46 graph authorisation objects and restores the original v40 guards
+	 * in a disposable historical migration fixture.
+	 *
+	 * <p>
+	 * This method must never be used on production data.
+	 *
+	 * @param statement statement for the historical fixture
+	 * @throws SQLException         if schema restoration fails
+	 * @throws NullPointerException if statement is null
+	 */
+	public static void removeVersion46Objects(Statement statement) throws SQLException {
+		Objects.requireNonNull(statement, "statement");
+		removeVersion47Objects(statement);
+		List<String> originalNames = List.of("trg_master_capture_source_questions_insert",
+				"trg_master_capture_source_questions_update", "trg_master_capture_shared_question_contexts_insert",
+				"trg_master_capture_shared_question_contexts_update",
+				"trg_master_capture_shared_question_context_regions_insert",
+				"trg_master_capture_shared_question_context_regions_delete",
+				"trg_master_capture_shared_question_context_images_insert",
+				"trg_master_capture_shared_question_context_images_delete",
+				"trg_master_capture_shared_question_context_content_parts_insert",
+				"trg_master_capture_shared_question_context_content_parts_delete",
+				"trg_master_capture_question_images_update");
+		String migration;
+		try {
+			migration = SqlResourceLoader.load("/db/migration-v39-to-v40.sql");
+		} catch (IOException failure) {
+			throw new SQLException("Cannot load original master capture guards", failure);
+		}
+		Map<String, String> originals = new HashMap<>();
+		for (String fragment : SqlScriptExecutor.splitStatements(migration)) {
+			int start = fragment.lastIndexOf("CREATE TRIGGER ");
+			if (start < 0) {
+				continue;
+			}
+			String sql = fragment.substring(start).strip();
+			String heading = sql.lines().findFirst().orElse("");
+			if (!heading.startsWith("CREATE TRIGGER ")) {
+				continue;
+			}
+			String name = heading.substring("CREATE TRIGGER ".length()).strip();
+			if (originalNames.contains(name)) {
+				if (originals.putIfAbsent(name, sql) != null) {
+					throw new SQLException("Duplicate historical capture trigger: " + name);
+				}
+			}
+		}
+		if (originals.size() != originalNames.size()) {
+			throw new SQLException("Incomplete historical v46 trigger restoration");
+		}
+		for (String name : originalNames) {
+			statement.execute("DROP TRIGGER IF EXISTS " + name);
+			statement.execute(originals.get(name));
+		}
+		statement.execute("""
+				DROP TRIGGER IF EXISTS trg_master_graph_permit_validate
+				""");
+		statement.execute("""
+				DROP TRIGGER IF EXISTS trg_master_graph_permit_bind_owner
+				""");
+		statement.execute("""
+				DROP TABLE IF EXISTS master_contribution_graph_permits
+				""");
+	}
+
+	/**
+	 * Restores the original v39 Booklet applicability-review deletion guard in a
+	 * disposable historical schema fixture.
+	 *
+	 * <p>
+	 * This method must never be used against production data.
+	 *
+	 * @param statement statement for a disposable historical database
+	 * @throws SQLException         if the original trigger cannot be restored
+	 * @throws NullPointerException if statement is null
+	 */
+	public static void removeVersion47Objects(Statement statement) throws SQLException {
+		Objects.requireNonNull(statement, "statement");
+		String name = "trg_master_exam_structure_booklet_applicability_reviews_delete";
+		String migration;
+		try {
+			migration = SqlResourceLoader.load("/db/migration-v38-to-v39.sql");
+		} catch (IOException failure) {
+			throw new SQLException("Cannot load historical Booklet review guard", failure);
+		}
+		String original = null;
+		for (String fragment : SqlScriptExecutor.splitStatements(migration)) {
+			int start = fragment.lastIndexOf("CREATE TRIGGER ");
+			if (start < 0) {
+				continue;
+			}
+			String sql = fragment.substring(start).strip();
+			String heading = sql.lines().findFirst().orElse("");
+			if (!heading.equals("CREATE TRIGGER " + name)) {
+				continue;
+			}
+			if (original != null) {
+				throw new SQLException("Duplicate original Booklet review guard");
+			}
+			original = sql;
+		}
+		if (original == null) {
+			throw new SQLException("Original Booklet review guard was not found");
 		}
 		statement.execute("DROP TRIGGER IF EXISTS " + name);
 		statement.execute(original);

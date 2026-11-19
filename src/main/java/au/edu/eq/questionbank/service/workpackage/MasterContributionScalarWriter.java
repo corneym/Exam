@@ -149,11 +149,17 @@ final class MasterContributionScalarWriter {
 			}
 		}
 		if ("QUESTION".equals(proposed.recordType())) {
-
-			// Portable content parts reference Question images by
-			// UUID, not by their contributor SQLite-local IDs.
-			// Rebase only image references that have received a
-			// new canonical master identity in this transaction.
+			for (String field : List.of("source_question_id", "shared_context_id")) {
+				JsonNode original = expected.get(field);
+				if (original == null || original.isNull()) {
+					continue;
+				}
+				String type = "source_question_id".equals(field) ? "SOURCE_QUESTION" : "SHARED_QUESTION_CONTEXT";
+				UUID canonical = canonicalIds.get(new RecordKey(type, UUID.fromString(original.asText())));
+				if (canonical != null) {
+					expected.put(field, canonical.toString());
+				}
+			}
 			for (JsonNode part : expected.path("question_content_parts")) {
 				if (!"IMAGE".equals(part.path("content_type").asText())) {
 					continue;
@@ -198,12 +204,13 @@ final class MasterContributionScalarWriter {
 
 	private long insertQuestion(Connection connection, ExchangeRecord proposed, Map<RecordKey, Long> newLocalIds)
 			throws SQLException {
-
-		// Image rows are created separately under the exact reviewed
-		// parent region permit. Output-exclusion import is still
-		// unsupported.
 		requireEmptyChildren(proposed, "question_output_exclusions");
 		JsonNode values = proposed.values();
+		long bookletId = reference(connection, EntityType.EXAM_BOOKLET, values.get("booklet_id"), newLocalIds);
+		Long sourceId = sameBookletDependency(connection, EntityType.SOURCE_QUESTION, values.get("source_question_id"),
+				newLocalIds, bookletId);
+		Long contextId = sameBookletDependency(connection, EntityType.SHARED_QUESTION_CONTEXT,
+				values.get("shared_context_id"), newLocalIds, bookletId);
 		try (PreparedStatement statement = connection.prepareStatement("""
 				INSERT INTO questions (
 				    booklet_id,
@@ -216,24 +223,21 @@ final class MasterContributionScalarWriter {
 				    shared_context_id,
 				    response_type,
 				    source_capture_required
-				)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				""")) {
-			statement.setLong(1, reference(connection, EntityType.EXAM_BOOKLET, values.get("booklet_id"), newLocalIds));
+			statement.setLong(1, bookletId);
 			statement.setLong(2, reference(connection, EntityType.CURRICULUM_NODE, values.get("classification_node_id"),
 					newLocalIds));
 			statement.setString(3, requiredText(values, "question_code"));
 			statement.setString(4, requiredText(values, "question_text"));
 			statement.setInt(5, requiredInt(values, "marks"));
 			statement.setInt(6, requiredInt(values, "shared_context_capture_required"));
-			statement.setObject(7, optionalReference(connection, EntityType.SOURCE_QUESTION,
-					values.get("source_question_id"), newLocalIds));
-			statement.setObject(8, optionalReference(connection, EntityType.SHARED_QUESTION_CONTEXT,
-					values.get("shared_context_id"), newLocalIds));
+			statement.setObject(7, sourceId);
+			statement.setObject(8, contextId);
 			statement.setString(9, requiredText(values, "response_type"));
 			statement.setInt(10, requiredInt(values, "source_capture_required"));
 			if (statement.executeUpdate() != 1) {
-				throw new SQLException("New Question was not inserted");
+				throw new SQLException("Reviewed Question insertion did not affect one row");
 			}
 		}
 		return lastInsertedId(connection);
@@ -327,12 +331,23 @@ final class MasterContributionScalarWriter {
 	private void requireScalarChange(EntityType type, ExchangeRecord current, ExchangeRecord proposed,
 			boolean allowPdfRegions) throws SQLException {
 		if (!(current.values() instanceof ObjectNode before) || !(proposed.values() instanceof ObjectNode after)) {
-			throw new SQLException("Review values must be portable JSON objects");
+			throw new SQLException("Reviewed scalar values must be portable JSON objects");
 		}
 		ObjectNode currentOther = before.deepCopy();
 		ObjectNode proposedOther = after.deepCopy();
 		if (type == EntityType.QUESTION) {
-			for (String field : List.of("question_text", "classification_node_id")) {
+
+			// An existing non-null Source or Shared Context association
+			// cannot be redirected to a different parent.
+			for (String field : List.of("source_question_id", "shared_context_id")) {
+				JsonNode original = before.path(field);
+				JsonNode replacement = after.path(field);
+				if (!original.equals(replacement) && !original.isNull()) {
+					throw new SQLException("Contributor cannot replace an existing Question dependency");
+				}
+			}
+			for (String field : List.of("question_text", "classification_node_id", "source_question_id",
+					"shared_context_id")) {
 				currentOther.remove(field);
 				proposedOther.remove(field);
 			}
@@ -350,12 +365,32 @@ final class MasterContributionScalarWriter {
 				proposedOther.remove("answer_regions");
 			}
 		}
-
-		// Parent references, unapproved metadata, Shared Context
-		// changes and unrelated graph changes remain prohibited.
 		if (!currentOther.equals(proposedOther) || before.equals(after)) {
-			throw new SQLException("Reviewed change contains unsupported fields " + "or no permitted content change");
+			throw new SQLException(
+					"Reviewed scalar change contains unsupported fields " + "or no permitted content change");
 		}
+	}
+
+	private Long sameBookletDependency(Connection connection, EntityType type, JsonNode portableId,
+			Map<RecordKey, Long> newLocalIds, long bookletId) throws SQLException {
+		if (portableId == null || portableId.isNull()) {
+			return null;
+		}
+		if (type != EntityType.SOURCE_QUESTION && type != EntityType.SHARED_QUESTION_CONTEXT) {
+			throw new SQLException("Unsupported Question dependency type");
+		}
+		long localId = reference(connection, type, portableId, newLocalIds);
+		String sql = type == EntityType.SOURCE_QUESTION ? "SELECT booklet_id FROM source_questions WHERE id = ?"
+				: "SELECT booklet_id FROM shared_question_contexts WHERE id = ?";
+		try (PreparedStatement statement = connection.prepareStatement(sql)) {
+			statement.setLong(1, localId);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next() || result.getLong(1) != bookletId || result.next()) {
+					throw new SQLException("Question dependency belongs to another Booklet");
+				}
+			}
+		}
+		return localId;
 	}
 
 	private void updateAnswer(Connection connection, long localId, ExchangeRecord proposed) throws SQLException {
@@ -376,16 +411,28 @@ final class MasterContributionScalarWriter {
 
 	private void updateQuestion(Connection connection, long localId, ExchangeRecord proposed,
 			Map<RecordKey, Long> newLocalIds) throws SQLException {
+		JsonNode values = proposed.values();
+		long bookletId = reference(connection, EntityType.EXAM_BOOKLET, values.get("booklet_id"), newLocalIds);
+		Long sourceId = sameBookletDependency(connection, EntityType.SOURCE_QUESTION, values.get("source_question_id"),
+				newLocalIds, bookletId);
+		Long contextId = sameBookletDependency(connection, EntityType.SHARED_QUESTION_CONTEXT,
+				values.get("shared_context_id"), newLocalIds, bookletId);
 		try (PreparedStatement statement = connection.prepareStatement("""
 				UPDATE questions
 				SET question_text = ?,
-				    classification_node_id = ?
+				    classification_node_id = ?,
+				    source_question_id = ?,
+				    shared_context_id = ?
 				WHERE id = ?
+				  AND booklet_id = ?
 				""")) {
-			statement.setString(1, requiredText(proposed.values(), "question_text"));
-			statement.setLong(2, reference(connection, EntityType.CURRICULUM_NODE,
-					proposed.values().get("classification_node_id"), newLocalIds));
-			statement.setLong(3, localId);
+			statement.setString(1, requiredText(values, "question_text"));
+			statement.setLong(2, reference(connection, EntityType.CURRICULUM_NODE, values.get("classification_node_id"),
+					newLocalIds));
+			statement.setObject(3, sourceId);
+			statement.setObject(4, contextId);
+			statement.setLong(5, localId);
+			statement.setLong(6, bookletId);
 			if (statement.executeUpdate() != 1) {
 				throw new SQLException("Reviewed Question update did not affect one row");
 			}

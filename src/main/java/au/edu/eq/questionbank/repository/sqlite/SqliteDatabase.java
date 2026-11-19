@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 45;
+	private static final int LATEST_SCHEMA_VERSION = 47;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -902,6 +902,20 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v44-to-v45.sql", 45);
 			return 45;
 		}
+		if (version == 45) {
+
+			// Version 46 permits transaction-scoped Source Question and
+			// Shared Context application, and reviewed Question PNG replacement.
+			executeMigration(connection, "/db/migration-v45-to-v46.sql", 46);
+			return 46;
+		}
+		if (version == 46) {
+
+			// Preserve automatic applicability-review invalidation while
+			// reviewed capture writes are authorised on the locked master.
+			executeMigration(connection, "/db/migration-v46-to-v47.sql", 47);
+			return 47;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -1263,7 +1277,7 @@ public final class SqliteDatabase {
 			verifyVersion38AssignmentLifecycleSchema(connection);
 		}
 		if (version >= 39) {
-			verifyVersion39MasterExamStructureSchema(connection);
+			verifyVersion39MasterExamStructureSchema(connection, version);
 		}
 		if (version == 40) {
 			verifyVersion40MasterCaptureSchema(connection);
@@ -1277,7 +1291,12 @@ public final class SqliteDatabase {
 		if (version >= 43) {
 			verifyVersion43ContributorReceiptSchema(connection);
 		}
-		if (version >= 45) {
+		if (version >= 46) {
+			verifyVersion46MasterGraphSchema(connection);
+			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
+					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql", "/db/migration-v41-to-v42.sql",
+					"/db/migration-v43-to-v44.sql", "/db/migration-v44-to-v45.sql", "/db/migration-v45-to-v46.sql");
+		} else if (version >= 45) {
 			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
 					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql", "/db/migration-v41-to-v42.sql",
 					"/db/migration-v43-to-v44.sql", "/db/migration-v44-to-v45.sql");
@@ -1288,7 +1307,7 @@ public final class SqliteDatabase {
 		} else if (version >= 42) {
 			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
 					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql", "/db/migration-v41-to-v42.sql");
-		} else {
+		} else if (version >= 41) {
 			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
 					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql");
 		}
@@ -2150,9 +2169,14 @@ public final class SqliteDatabase {
 		}
 	}
 
-	private void verifyVersion39MasterExamStructureSchema(Connection connection) throws SQLException {
-		SqliteMigrationTriggerVerifier.verify(connection, "trg_master_exam_structure_", "master Exam structure",
-				"/db/migration-v38-to-v39.sql");
+	private void verifyVersion39MasterExamStructureSchema(Connection connection, int version) throws SQLException {
+		if (version >= 47) {
+			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_exam_structure_", "master Exam structure",
+					"/db/migration-v38-to-v39.sql", "/db/migration-v46-to-v47.sql");
+		} else {
+			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_exam_structure_", "master Exam structure",
+					"/db/migration-v38-to-v39.sql");
+		}
 	}
 
 	private void verifyVersion40MasterCaptureSchema(Connection connection) throws SQLException {
@@ -2190,8 +2214,16 @@ public final class SqliteDatabase {
 				"/db/migration-v40-to-v41.sql");
 
 		// Later migrations replace selected capture guards. Reconstruct
-		// the expected definitions from all applicable migration scripts.
-		if (version >= 44) {
+		// the exact trigger definitions for the schema version being verified.
+		if (version >= 46) {
+			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
+					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql", "/db/migration-v41-to-v42.sql",
+					"/db/migration-v43-to-v44.sql", "/db/migration-v44-to-v45.sql", "/db/migration-v45-to-v46.sql");
+		} else if (version >= 45) {
+			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
+					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql", "/db/migration-v41-to-v42.sql",
+					"/db/migration-v43-to-v44.sql", "/db/migration-v44-to-v45.sql");
+		} else if (version >= 44) {
 			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
 					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql", "/db/migration-v41-to-v42.sql",
 					"/db/migration-v43-to-v44.sql");
@@ -2239,6 +2271,31 @@ public final class SqliteDatabase {
 				List.of(List.of("return_package_id")));
 		SqliteMigrationTriggerVerifier.verify(connection, "trg_contributor_receipt_ack_",
 				"contributor receipt acknowledgement", "/db/migration-v42-to-v43.sql");
+	}
+
+	private void verifyVersion46MasterGraphSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "master_contribution_graph_permits",
+				List.of(column("singleton_id", false, 1), column("review_id", true, 0), column("record_type", true, 0),
+						column("record_id", true, 0), column("operation", true, 0), column("exam_local_id", true, 0),
+						column("owner_local_id", false, 0)),
+				List.of(foreignKey("review_id", "contribution_application_batches", "review_id"),
+						foreignKey("exam_local_id", "exams", "id")),
+				List.of());
+		if (!hasExactCompositeForeignKey(connection, "master_contribution_graph_permits",
+				List.of("review_id", "record_type", "record_id"), "contribution_review_decisions",
+				List.of("review_id", "record_type", "record_id"))) {
+			throw new SQLException("Master graph permit review foreign key is missing");
+		}
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_master_graph_", "master graph authorisation",
+				"/db/migration-v45-to-v46.sql");
+		try (Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery("""
+				SELECT COUNT(*)
+				FROM master_contribution_graph_permits
+				""")) {
+			if (!rows.next() || rows.getLong(1) != 0) {
+				throw new SQLException("Unreleased master graph write permit");
+			}
+		}
 	}
 
 	private record ForeignKeyColumn(int sequence, String fromColumn, String targetColumn) {

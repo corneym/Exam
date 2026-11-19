@@ -186,6 +186,127 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
+	void approvedSharedContextPreparationPreservesPngEvidenceAndMasterLock() throws Exception {
+		Fixture fixture = fixture();
+		byte[] png = Base64.getDecoder().decode(
+				"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC" + "AAAAC0lEQVR42mP8/x8AAwMCAO3Ry8UAAAAASUVORK5CYII=");
+		try (Connection connection = fixture.contributor().openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				long bookletId;
+				try (PreparedStatement lookup = connection.prepareStatement("""
+						SELECT id
+						FROM exam_booklets
+						WHERE booklet_name = 'Paper 1'
+						"""); ResultSet rows = lookup.executeQuery()) {
+					assertTrue(rows.next());
+					bookletId = rows.getLong(1);
+					assertFalse(rows.next());
+				}
+				long contextId;
+				try (PreparedStatement insert = connection.prepareStatement("""
+						INSERT INTO shared_question_contexts (
+						    booklet_id, context_label
+						) VALUES (?, 'Imported image context')
+						""")) {
+					insert.setLong(1, bookletId);
+					assertEquals(1, insert.executeUpdate());
+				}
+				try (Statement statement = connection.createStatement();
+						ResultSet rows = statement.executeQuery("SELECT last_insert_rowid()")) {
+					assertTrue(rows.next());
+					contextId = rows.getLong(1);
+				}
+				try (PreparedStatement insert = connection.prepareStatement("""
+						INSERT INTO shared_question_context_images (
+						    shared_context_id, image_order, image_png
+						) VALUES (?, 0, ?)
+						""")) {
+					insert.setLong(1, contextId);
+					insert.setBytes(2, png);
+					assertEquals(1, insert.executeUpdate());
+				}
+				try (PreparedStatement insert = connection.prepareStatement("""
+						INSERT INTO shared_question_context_content_parts (
+						    shared_context_id, content_order,
+						    content_type, region_order, image_order
+						) VALUES (?, 0, 'IMAGE', NULL, 0)
+						""")) {
+					insert.setLong(1, contextId);
+					assertEquals(1, insert.executeUpdate());
+				}
+				connection.commit();
+			} catch (SQLException | RuntimeException failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
+		Path archive = directory.resolve("shared-context-return.examwork");
+		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
+				.export(fixture.assignmentId(), archive);
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		Map<MasterContributionDecisionLedger.RecordKey, MasterContributionDecisionLedger.Choice> choices = new HashMap<>();
+		for (ExchangeRecord proposal : intake.proposedChanges(packageId)) {
+			choices.put(new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId()),
+					MasterContributionDecisionLedger.Choice.QUEUE_APPLY);
+		}
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId, choices,
+				"Approve returned Shared Context image");
+		var prepared = new MasterContributionApprovedContextPreparer(fixture.master()).prepare(review, archive);
+		assertEquals(1, prepared.size());
+		var context = prepared.getFirst();
+		assertEquals("SHARED_QUESTION_CONTEXT", context.proposal().recordType());
+		assertEquals(1, context.images().size());
+		var image = context.images().getFirst();
+		assertEquals(0, image.imageOrder());
+		assertArrayEquals(png, image.pngBytes());
+		byte[] altered = image.pngBytes();
+		altered[0] = 0;
+		assertArrayEquals(png, image.pngBytes());
+
+		// Preparation must not apply any contributor content.
+		try (Connection connection = fixture.master().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("""
+						SELECT COUNT(*)
+						FROM shared_question_contexts
+						""")) {
+			assertTrue(result.next());
+			assertEquals(0, result.getInt(1));
+		}
+		assertEquals(WorkAssignmentLedger.State.ACTIVE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
+	void approvedSharedContextPreparationRejectsDifferentReturnArchive() throws Exception {
+		Fixture fixture = fixture();
+
+		// Establish an original received return and its durable review.
+		Path original = publish(fixture, "Original contributor response", "original-context-lineage.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(original).received().packageId();
+		Map<MasterContributionDecisionLedger.RecordKey, MasterContributionDecisionLedger.Choice> choices = new HashMap<>();
+		for (ExchangeRecord proposal : intake.proposedChanges(packageId)) {
+			choices.put(new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId()),
+					MasterContributionDecisionLedger.Choice.QUEUE_APPLY);
+		}
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId, choices,
+				"Original contribution review");
+
+		// A later return may have valid lineage but is not the
+		// original archive recorded by this review.
+		Path later = publish(fixture, "Later contributor response", "later-context-lineage.examwork");
+		assertThrows(IOException.class,
+				() -> new MasterContributionApprovedContextPreparer(fixture.master()).prepare(review, later));
+		assertEquals(WorkAssignmentLedger.State.ACTIVE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+	}
+
+	@Test
 	void contributorAcknowledgementHistoryIsDatabaseProtected() throws Exception {
 		Fixture fixture = fixture();
 		Path receipt = exportAppliedReceipt(fixture, "Protected acknowledged revision",
@@ -1543,6 +1664,55 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
+	void masterAppliesReviewedSharedContextAndQuestionReference() throws Exception {
+		Fixture fixture = fixture();
+		Path archive = publishNewContributorContext(fixture, "applied-context-return.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		Map<MasterContributionDecisionLedger.RecordKey, MasterContributionDecisionLedger.Choice> choices = new HashMap<>();
+		for (ExchangeRecord proposal : intake.proposedChanges(packageId)) {
+			choices.put(new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId()),
+					MasterContributionDecisionLedger.Choice.QUEUE_APPLY);
+		}
+		assertEquals(2, choices.size());
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId, choices,
+				"Approve Shared Context and linked Question");
+		var result = new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId(), archive,
+				new ManagedDataLayout(directory.resolve("coordinator")));
+		assertFalse(result.duplicate());
+		assertEquals(2, result.outcomes().size());
+		assertTrue(result.outcomes().stream()
+				.allMatch(outcome -> outcome.outcome() == MasterContributionApplicationCoordinator.Outcome.APPLIED));
+		try (Connection connection = fixture.master().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet rows = statement.executeQuery("""
+						SELECT context.context_label,
+						       question.shared_context_id,
+						       image.image_png
+						FROM questions question
+						JOIN shared_question_contexts context
+						  ON context.id = question.shared_context_id
+						JOIN shared_question_context_images image
+						  ON image.shared_context_id = context.id
+						 AND image.image_order = 0
+						WHERE question.id = 81
+						""")) {
+			assertTrue(rows.next());
+			assertEquals("Imported shared image", rows.getString("context_label"));
+			assertTrue(rows.getLong("shared_context_id") > 0);
+			assertNotNull(rows.getBytes("image_png"));
+			assertFalse(rows.next());
+		}
+		assertEquals(WorkAssignmentLedger.State.COMPLETE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		var replay = new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId());
+		assertTrue(replay.duplicate());
+		assertEquals(result.outcomes(), replay.outcomes());
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
 	void masterAssetPreflightAcceptsUnchangedSources() throws Exception {
 		Fixture fixture = fixture();
 		Path archive = publish(fixture, "Contributor revision", "verified-assets.examwork");
@@ -2185,6 +2355,86 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
+	void masterReplacesReviewedQuestionPngWithoutChangingImageIdentity() throws Exception {
+		Fixture fixture = fixture(true);
+		byte[] replacement = Base64.getDecoder().decode(
+				"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1Pe" + "AAAADElEQVR4nGOQ67kEAAJIAX1YW9a6AAAAAElFTkSuQmCC");
+		UUID originalPortableId;
+		try (Connection connection = fixture.master().openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				originalPortableId = new SqlitePortableIdentityRepository(fixture.master())
+						.findByLocalId(connection, EntityType.QUESTION_IMAGE, 151).orElseThrow().portableId();
+				connection.commit();
+			} catch (SQLException | RuntimeException failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
+		try (Connection connection = fixture.contributor().openConnection()) {
+			connection.setAutoCommit(false);
+			try (PreparedStatement statement = connection.prepareStatement("""
+					UPDATE question_images
+					SET image_png = ?
+					WHERE question_id = (
+					    SELECT id
+					    FROM questions
+					    WHERE question_code = '1'
+					)
+					""")) {
+				statement.setBytes(1, replacement);
+				assertEquals(1, statement.executeUpdate());
+				connection.commit();
+			} catch (SQLException | RuntimeException failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
+		Path archive = directory.resolve("existing-image-update.examwork");
+		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
+				.export(fixture.assignmentId(), archive);
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		Map<MasterContributionDecisionLedger.RecordKey, MasterContributionDecisionLedger.Choice> choices = new HashMap<>();
+		for (ExchangeRecord proposal : intake.proposedChanges(packageId)) {
+			choices.put(new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId()),
+					MasterContributionDecisionLedger.Choice.QUEUE_APPLY);
+		}
+		assertEquals(2, choices.size());
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId, choices,
+				"Approve replacement of existing Question PNG");
+		var result = new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId(), archive,
+				new ManagedDataLayout(directory.resolve("coordinator")));
+		assertFalse(result.duplicate());
+		try (Connection connection = fixture.master().openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT image_png
+						FROM question_images
+						WHERE id = 151
+						""")) {
+			try (ResultSet rows = statement.executeQuery()) {
+				assertTrue(rows.next());
+				assertArrayEquals(replacement, rows.getBytes(1));
+				assertFalse(rows.next());
+			}
+			connection.setAutoCommit(false);
+			try {
+				UUID actualPortableId = new SqlitePortableIdentityRepository(fixture.master())
+						.findByLocalId(connection, EntityType.QUESTION_IMAGE, 151).orElseThrow().portableId();
+				assertEquals(originalPortableId, actualPortableId);
+				connection.commit();
+			} catch (SQLException | RuntimeException failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
+		assertEquals(WorkAssignmentLedger.State.COMPLETE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
 	void masterReviewCannotClaimUnapprovedConcurrentContent() throws Exception {
 		Fixture fixture = fixture();
 		Path archive = publish(fixture, "Matching text", "review-identical.examwork");
@@ -2572,6 +2822,29 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
+	void ordinaryMasterSharedContextInsertionRemainsBlocked() throws Exception {
+		Fixture fixture = fixture();
+		assertThrows(SQLException.class, () -> execute(fixture.master(), """
+				INSERT INTO shared_question_contexts (
+				    booklet_id, context_label
+				) VALUES (61, 'Unauthorised master context')
+				"""));
+		try (Connection connection = fixture.master().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet rows = statement.executeQuery("""
+						SELECT COUNT(*)
+						FROM shared_question_contexts
+						""")) {
+			assertTrue(rows.next());
+			assertEquals(0, rows.getInt(1));
+		}
+		assertEquals(WorkAssignmentLedger.State.ACTIVE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
 	void rejectsBaselineChangedInsideOtherwiseValidArchive() throws Exception {
 		Fixture fixture = fixture();
 		Path issued = publish(fixture, "Modified question", "valid.examwork");
@@ -2698,6 +2971,53 @@ class ContributionArchiveInspectorTest {
 		otherMaster.initialiseSchema();
 		assertThrows(PackageFormatException.class, () -> new ContributionArchiveInspector(otherMaster).inspect(issued));
 		otherMaster.verifyIntegrity();
+	}
+
+	@Test
+	void reviewedQuestionChangeInvalidatesOnlyAffectedBookletReview() throws Exception {
+		Fixture fixture = fixture(false, true);
+
+		// Neither reviewed Booklet may be changed by ordinary master SQL.
+		assertThrows(SQLException.class, () -> execute(fixture.master(), """
+				DELETE FROM booklet_applicability_reviews
+				WHERE booklet_id = 62
+				"""));
+		Path contribution = publish(fixture, "Changed Question requiring a fresh applicability review",
+				"booklet-review-invalidation.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(contribution).received().packageId();
+		Map<MasterContributionDecisionLedger.RecordKey, MasterContributionDecisionLedger.Choice> choices = new HashMap<>();
+		for (ExchangeRecord proposal : intake.proposedChanges(packageId)) {
+			var key = new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId());
+			choices.put(key,
+					"QUESTION".equals(proposal.recordType()) ? MasterContributionDecisionLedger.Choice.QUEUE_APPLY
+							: MasterContributionDecisionLedger.Choice.REJECT);
+		}
+		assertTrue(choices.keySet().stream().anyMatch(key -> "QUESTION".equals(key.recordType())));
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId, choices,
+				"Apply Question and invalidate stale Booklet review");
+		var result = new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId());
+		assertFalse(result.duplicate());
+		assertTrue(result.outcomes().stream().anyMatch(outcome -> "QUESTION".equals(outcome.key().recordType())
+				&& outcome.outcome() == MasterContributionApplicationCoordinator.Outcome.APPLIED));
+		try (Connection connection = fixture.master().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet rows = statement.executeQuery("""
+						SELECT booklet_id
+						FROM booklet_applicability_reviews
+						ORDER BY booklet_id
+						""")) {
+
+			// Paper 1 was materially changed. Its earlier review is stale.
+			// Paper 2 remains reviewed because its content was unchanged.
+			assertTrue(rows.next());
+			assertEquals(62, rows.getLong(1));
+			assertFalse(rows.next());
+		}
+		assertEquals(WorkAssignmentLedger.State.COMPLETE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
 	}
 
 	@Test
@@ -2861,6 +3181,10 @@ class ContributionArchiveInspectorTest {
 	}
 
 	private Fixture fixture(boolean includeOriginalImage) throws Exception {
+		return fixture(includeOriginalImage, false);
+	}
+
+	private Fixture fixture(boolean includeOriginalImage, boolean includeReviewedBooklets) throws Exception {
 		ApplicationConfig coordinator = ApplicationConfig.fromDataRoot(directory.resolve("coordinator"));
 		ApplicationConfig contributor = ApplicationConfig.fromDataRoot(directory.resolve("contributor"));
 		Files.createDirectories(coordinator.dataRoot());
@@ -2982,6 +3306,15 @@ class ContributionArchiveInspectorTest {
 					VALUES (81, 0, 'IMAGE', NULL, 151)
 					""");
 		}
+		if (includeReviewedBooklets) {
+
+			// Reviews must exist before issuance; master capture is locked
+			// after the assignment has been registered.
+			execute(master, """
+					INSERT INTO booklet_applicability_reviews (booklet_id)
+					VALUES (61), (62)
+					""");
+		}
 		UUID assignmentId = UUID.randomUUID();
 		Exam exam = new Exam(31, new Subject(1, "Biology"), new ExamProvider(21, "QCAA"), 2025, "External Assessment");
 		Path assignment = directory.resolve("issued.examwork");
@@ -3034,6 +3367,83 @@ class ContributionArchiveInspectorTest {
 		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
 				.export(fixture.assignmentId(), target);
 		return target;
+	}
+
+	private Path publishNewContributorContext(Fixture fixture, String filename) throws Exception {
+		byte[] png = Base64.getDecoder().decode(
+				"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC" + "AAAAC0lEQVR42mP8/x8AAwMCAO3Ry8UAAAAASUVORK5CYII=");
+		try (Connection connection = fixture.contributor().openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				long bookletId;
+				long questionId;
+				try (Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery("""
+						SELECT question.id, question.booklet_id
+						FROM questions question
+						WHERE question.question_code = '1'
+						""")) {
+					assertTrue(rows.next());
+					questionId = rows.getLong(1);
+					bookletId = rows.getLong(2);
+					assertFalse(rows.next());
+				}
+				try (PreparedStatement insert = connection.prepareStatement("""
+						INSERT INTO shared_question_contexts (
+						    booklet_id, context_label
+						) VALUES (?, 'Imported shared image')
+						""")) {
+					insert.setLong(1, bookletId);
+					assertEquals(1, insert.executeUpdate());
+				}
+				long contextId;
+				try (Statement statement = connection.createStatement();
+						ResultSet rows = statement.executeQuery("SELECT last_insert_rowid()")) {
+					assertTrue(rows.next());
+					contextId = rows.getLong(1);
+				}
+				try (PreparedStatement insert = connection.prepareStatement("""
+						INSERT INTO shared_question_context_images (
+						    shared_context_id,
+						    image_order,
+						    image_png
+						) VALUES (?, 0, ?)
+						""")) {
+					insert.setLong(1, contextId);
+					insert.setBytes(2, png);
+					assertEquals(1, insert.executeUpdate());
+				}
+				try (PreparedStatement insert = connection.prepareStatement("""
+						INSERT INTO shared_question_context_content_parts (
+						    shared_context_id,
+						    content_order,
+						    content_type,
+						    region_order,
+						    image_order
+						) VALUES (?, 0, 'IMAGE', NULL, 0)
+						""")) {
+					insert.setLong(1, contextId);
+					assertEquals(1, insert.executeUpdate());
+				}
+				try (PreparedStatement update = connection.prepareStatement("""
+						UPDATE questions
+						SET shared_context_id = ?,
+						    question_text = 'Question with shared image'
+						WHERE id = ?
+						""")) {
+					update.setLong(1, contextId);
+					update.setLong(2, questionId);
+					assertEquals(1, update.executeUpdate());
+				}
+				connection.commit();
+			} catch (SQLException | RuntimeException failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
+		Path archive = directory.resolve(filename);
+		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
+				.export(fixture.assignmentId(), archive);
+		return archive;
 	}
 
 	private Path publishNewContributorImage(Fixture fixture, String filename) throws Exception {

@@ -38,19 +38,23 @@ import au.edu.eq.questionbank.service.workpackage.MasterContributionDecisionLedg
 import au.edu.eq.questionbank.service.workpackage.MasterContributionReviewPlanner.ReviewStatus;
 
 /**
- * Atomically applies the supported subset of coordinator-reviewed
- * contributions.
+ * Applies coordinator-reviewed contributions to a locked master Exam.
  *
  * <p>
- * The initial implementation supports only existing QUESTION records whose sole
- * content change is question_text. Other queued record changes are rejected
- * before publication. Rejected and identical-skip decisions can be recorded
- * alongside supported Question updates.
+ * The application follows the single-active-assignment workflow. Current master
+ * identities, revisions and content are checked against immutable review
+ * evidence inside the authoritative transaction. Unsupported or divergent
+ * changes fail closed; no three-way merge is attempted.
  *
  * <p>
- * Domain mutations and terminal result evidence use one SQLite transaction.
- * Recorded revision and content evidence are rechecked after obtaining the
- * SQLite writer reservation. No managed assets are published by this class.
+ * The archive-aware path supports reviewed Question/Answer content, Source
+ * Questions, Shared Context graphs, ordered regions and embedded PNGs. Reviewed
+ * changes, canonical UUID mappings, terminal outcomes and assignment closure
+ * commit atomically.
+ *
+ * <p>
+ * External managed-asset publication is not performed here. The caller holds
+ * the shared managed-data publication lock for binary dependencies.
  */
 public final class MasterContributionApplicationCoordinator {
 
@@ -67,54 +71,38 @@ public final class MasterContributionApplicationCoordinator {
 	}
 
 	/**
-	 * Applies a reviewed return containing supported scalar Question and Answer
-	 * changes, and atomically completes its assignment.
+	 * Applies a reviewed contribution that needs no external binary content, or
+	 * replays an already committed review.
 	 *
-	 * <p>
-	 * This overload does not verify archive binary dependencies and therefore
-	 * cannot apply PDF regions, changed content parts or new embedded images. Use
-	 * the archive-aware overload for those operations.
-	 *
-	 * <p>
-	 * A previously committed review may be replayed without its original archive.
-	 *
-	 * @param reviewId immutable coordinator review identity
-	 * @return terminal outcomes and replay indicator
-	 * @throws SQLException         if review, dependency or persistence validation
-	 *                              fails
+	 * @param reviewId recorded coordinator review UUID
+	 * @return committed application result
+	 * @throws SQLException         if review or master evidence is invalid
 	 * @throws IOException          if portable content processing fails
 	 * @throws NullPointerException if reviewId is null
 	 */
 	public ApplicationResult execute(UUID reviewId) throws SQLException, IOException {
-		return executeReviewed(reviewId, false, List.of());
+		return executeReviewed(reviewId, false, List.of(), List.of());
 	}
 
 	/**
-	 * Applies a reviewed contribution with verified binary dependencies.
+	 * Applies a reviewed contribution with its original verified binary archive.
 	 *
 	 * <p>
-	 * The managed-asset publication lock remains held throughout original archive
-	 * verification, prepared PNG acquisition, SQLite mutations, outcome recording
-	 * and assignment closure.
+	 * The managed-asset publication lock covers archive verification, the
+	 * preparation of approved Question and Shared Context PNGs, and the complete
+	 * authoritative application transaction.
 	 *
 	 * <p>
-	 * Supported changes include Question/Answer scalars, verified PDF regions,
-	 * ordered Question content parts and newly approved embedded Question images.
-	 * Existing image replacement and deletion, Shared Context graph changes, new
-	 * source PDFs and managed binary publication remain unsupported.
+	 * New Source Questions, Shared Contexts, Question and Answer content, approved
+	 * Question PNG creation/replacement and supported PDF regions commit together
+	 * with terminal outcomes and assignment closure.
 	 *
-	 * <p>
-	 * Already committed reviews are replayed from durable evidence without
-	 * requiring the original return archive.
-	 *
-	 * @param reviewId immutable coordinator review identity
-	 * @param archive  original durably received contribution archive
+	 * @param reviewId immutable coordinator review UUID
+	 * @param archive  original received contribution archive
 	 * @param layout   authoritative master managed-data layout
-	 * @return committed terminal outcomes and replay indicator
-	 * @throws SQLException         if review, dependency or persistence validation
-	 *                              fails
-	 * @throws IOException          if archive, source assets or binary preparation
-	 *                              fails
+	 * @return committed terminal result, including replay status
+	 * @throws SQLException         if review, dependency or master state is invalid
+	 * @throws IOException          if archive or binary evidence is invalid
 	 * @throws NullPointerException if any argument is null
 	 */
 	public ApplicationResult execute(UUID reviewId, Path archive, ManagedDataLayout layout)
@@ -131,10 +119,9 @@ public final class MasterContributionApplicationCoordinator {
 			publicationLock.requireNoPendingPublications();
 			new MasterContributionAssetPreflight(database, layout).verify(review.packageId(), archive);
 			List<PreparedImage> images = new MasterContributionApprovedImagePreparer(database).prepare(review, archive);
-
-			// The lock protects the source assets while the prepared
-			// immutable evidence is consumed by the database transaction.
-			return executeReviewed(reviewId, true, images);
+			List<MasterContributionApprovedContextPreparer.PreparedContext> contexts = new MasterContributionApprovedContextPreparer(
+					database).prepare(review, archive);
+			return executeReviewed(reviewId, true, images, contexts);
 		}
 	}
 
@@ -156,7 +143,9 @@ public final class MasterContributionApplicationCoordinator {
 	private RecordOutcome applyDecision(Connection connection, UUID reviewId, long examId, RecordDecision decision,
 			ExchangeRecord proposed, Map<RecordKey, Long> localIds, Map<RecordKey, UUID> canonicalIds,
 			boolean allowPdfRegions, Map<RecordKey, RecordDecision> decisions, Map<RecordKey, ExchangeRecord> proposals,
-			Map<RecordKey, PreparedImage> images) throws SQLException, IOException {
+			Map<RecordKey, PreparedImage> images,
+			Map<RecordKey, MasterContributionApprovedContextPreparer.PreparedContext> contexts)
+			throws SQLException, IOException {
 		RecordKey key = decision.key();
 		if (decision.choice() == Choice.REJECT) {
 			return new RecordOutcome(key, Outcome.REJECTED, null);
@@ -165,20 +154,21 @@ public final class MasterContributionApplicationCoordinator {
 			ExchangeRecord current = requireCurrent(connection, decision);
 			requireFreshEvidence(decision, current);
 			if (!current.values().equals(proposed.values())) {
-				throw new SQLException("Master is no longer identical " + "to skipped proposal");
+				throw new SQLException("Master is no longer identical to skipped proposal");
 			}
 			localIds.put(key, requireLocalId(connection, key));
 			canonicalIds.put(key, current.recordId());
 			return new RecordOutcome(key, Outcome.SKIPPED, current.revisionId());
 		}
-		if ("QUESTION_IMAGE".equals(key.recordType())) {
+		String type = key.recordType();
+		if ("QUESTION_IMAGE".equals(type)) {
 
-			// Its parent Question has already inserted this image
-			// under the owner-specific permit. Do not write it again.
+			// The parent Question already performed the approved image
+			// insertion or replacement under its scoped region permit.
 			Long localId = localIds.get(key);
-			if (localId == null || decision.preliminaryStatus() != ReviewStatus.READY_NEW) {
-				throw new SQLException(
-						"New Question image was not transactionally " + "inserted by its approved parent");
+			if (localId == null || (decision.preliminaryStatus() != ReviewStatus.READY_NEW
+					&& decision.preliminaryStatus() != ReviewStatus.READY_UPDATE)) {
+				throw new SQLException("Question image was not applied by its approved parent");
 			}
 			ExchangeRecord actual = new SqlitePortableContentRepository(database)
 					.snapshot(connection, EntityType.QUESTION_IMAGE, localId).record();
@@ -189,7 +179,7 @@ public final class MasterContributionApplicationCoordinator {
 				expected.put("question_id", canonicalParent.toString());
 			}
 			if (!actual.values().equals(expected)) {
-				throw new SQLException("Applied Question image differs " + "from approved portable content");
+				throw new SQLException("Applied Question image differs from approved content");
 			}
 			canonicalIds.put(key, actual.recordId());
 			return new RecordOutcome(key, Outcome.APPLIED, actual.revisionId());
@@ -198,18 +188,26 @@ public final class MasterContributionApplicationCoordinator {
 			ExchangeRecord current = requireCurrent(connection, decision);
 			requireFreshEvidence(decision, current);
 		}
-		MasterContributionScalarWriter.Applied applied = new MasterContributionScalarWriter(database).apply(connection,
-				reviewId, examId, decision, proposed, localIds, canonicalIds, allowPdfRegions, decisions, proposals,
-				images);
+		MasterContributionScalarWriter.Applied applied;
+		if ("SOURCE_QUESTION".equals(type) || "SHARED_QUESTION_CONTEXT".equals(type)) {
+			applied = new MasterContributionGraphWriter(database).apply(connection, reviewId, examId, decision,
+					proposed, contexts);
+		} else {
+			applied = new MasterContributionScalarWriter(database).apply(connection, reviewId, examId, decision,
+					proposed, localIds, canonicalIds, allowPdfRegions, decisions, proposals, images);
+		}
 		localIds.put(key, applied.localId());
 		canonicalIds.put(key, applied.canonicalId());
 		return new RecordOutcome(key, Outcome.APPLIED, applied.revisionId());
 	}
 
 	private ApplicationResult executeReviewed(UUID reviewId, boolean allowPdfRegions,
-			List<PreparedImage> preparedImages) throws SQLException, IOException {
+			List<PreparedImage> preparedImages,
+			List<MasterContributionApprovedContextPreparer.PreparedContext> preparedContexts)
+			throws SQLException, IOException {
 		Objects.requireNonNull(reviewId, "reviewId");
 		Objects.requireNonNull(preparedImages, "preparedImages");
+		Objects.requireNonNull(preparedContexts, "preparedContexts");
 		RecordedReview review = new MasterContributionDecisionLedger(database).find(reviewId)
 				.orElseThrow(() -> new SQLException("Unknown contribution review: " + reviewId));
 		List<ExchangeRecord> incoming = new MasterContributionIntake(database).proposedChanges(review.packageId());
@@ -238,14 +236,14 @@ public final class MasterContributionApplicationCoordinator {
 			}
 			if (decision.choice() == Choice.QUEUE_APPLY) {
 				String type = decision.key().recordType();
-				boolean supported = "QUESTION".equals(type) || "ANSWER".equals(type) || "QUESTION_IMAGE".equals(type);
+				boolean supported = switch (type) {
+				case "SOURCE_QUESTION", "SHARED_QUESTION_CONTEXT", "QUESTION", "ANSWER", "QUESTION_IMAGE" -> true;
+				default -> false;
+				};
 				boolean supportedStatus = decision.preliminaryStatus() == ReviewStatus.READY_NEW
 						|| decision.preliminaryStatus() == ReviewStatus.READY_UPDATE;
 				if (!supported || !supportedStatus) {
-					throw new SQLException("Unsupported queued contribution record");
-				}
-				if ("QUESTION_IMAGE".equals(type) && decision.preliminaryStatus() != ReviewStatus.READY_NEW) {
-					throw new SQLException("Existing Question image replacement " + "requires a later import batch");
+					throw new SQLException("Unsupported queued contribution record: " + type);
 				}
 			}
 		}
@@ -256,12 +254,23 @@ public final class MasterContributionApplicationCoordinator {
 				throw new SQLException("Duplicate prepared Question image");
 			}
 		}
+		Map<RecordKey, MasterContributionApprovedContextPreparer.PreparedContext> contextsByKey = new HashMap<>();
+		for (var context : preparedContexts) {
+			RecordKey key = new RecordKey("SHARED_QUESTION_CONTEXT", context.proposal().recordId());
+			if (contextsByKey.putIfAbsent(key, context) != null) {
+				throw new SQLException("Duplicate prepared Shared Context");
+			}
+		}
 		List<RecordDecision> ordered = new ArrayList<>(review.decisions());
+
+		// Apply dependencies before Questions, and Answers after Questions.
 		ordered.sort(Comparator.comparingInt(decision -> switch (decision.key().recordType()) {
-		case "QUESTION" -> 0;
-		case "QUESTION_IMAGE" -> 1;
-		case "ANSWER" -> 2;
-		default -> 3;
+		case "SOURCE_QUESTION" -> 0;
+		case "SHARED_QUESTION_CONTEXT" -> 1;
+		case "QUESTION" -> 2;
+		case "QUESTION_IMAGE" -> 3;
+		case "ANSWER" -> 4;
+		default -> 5;
 		}));
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
@@ -274,26 +283,32 @@ public final class MasterContributionApplicationCoordinator {
 					return new ApplicationResult(original.reviewId(), original.packageId(), original.completedAt(),
 							original.outcomes(), true);
 				}
-
-				// A replay does not need its original archive.
-				// A new application with queued images does.
 				Set<RecordKey> expectedImages = new HashSet<>();
+				Set<RecordKey> expectedContexts = new HashSet<>();
 				for (RecordDecision decision : review.decisions()) {
-					if (decision.choice() == Choice.QUEUE_APPLY
-							&& "QUESTION_IMAGE".equals(decision.key().recordType())) {
+					if (decision.choice() != Choice.QUEUE_APPLY) {
+						continue;
+					}
+					if ("QUESTION_IMAGE".equals(decision.key().recordType())) {
 						expectedImages.add(decision.key());
+					}
+					if ("SHARED_QUESTION_CONTEXT".equals(decision.key().recordType())) {
+						expectedContexts.add(decision.key());
 					}
 				}
 				if (!expectedImages.equals(imagesByKey.keySet())) {
-					throw new SQLException("Approved image payload set differs " + "from reviewed decisions");
+					throw new SQLException("Prepared Question image set differs from review");
 				}
-				if (!allowPdfRegions && !expectedImages.isEmpty()) {
-					throw new SQLException("Image import requires verified archive " + "application");
+				if (!expectedContexts.equals(contextsByKey.keySet())) {
+					throw new SQLException("Prepared Shared Context set differs from review");
+				}
+				if (!allowPdfRegions && (!expectedImages.isEmpty() || !expectedContexts.isEmpty())) {
+					throw new SQLException("Reviewed binary graph requires verified archive");
 				}
 				Instant completedAt = Instant.now();
 
-				// This begins the authoritative SQLite write
-				// reservation and the reviewed application batch.
+				// Begin the authoritative application transaction. All
+				// outcomes, mappings and closure must commit together.
 				insertBatch(connection, review, completedAt);
 				UUID assignmentId = requireOneActiveReturn(connection, review.packageId());
 				long examId = requireAssignedExamLocalId(connection, review.packageId());
@@ -303,7 +318,7 @@ public final class MasterContributionApplicationCoordinator {
 				for (RecordDecision decision : ordered) {
 					RecordOutcome outcome = applyDecision(connection, reviewId, examId, decision,
 							proposedByKey.get(decision.key()), localIds, canonicalIds, allowPdfRegions, decisionsByKey,
-							proposedByKey, imagesByKey);
+							proposedByKey, imagesByKey, contextsByKey);
 					insertOutcome(connection, reviewId, outcome);
 					if (outcome.outcome() != Outcome.REJECTED) {
 						insertCanonicalMapping(connection, reviewId, decision.key(), canonicalIds.get(decision.key()),
@@ -314,14 +329,15 @@ public final class MasterContributionApplicationCoordinator {
 				outcomes.sort(Comparator.comparing((RecordOutcome outcome) -> outcome.key().recordType())
 						.thenComparing(outcome -> outcome.key().recordId().toString()));
 
-				// Both transient permits must be cleared before
-				// closing the assignment and releasing its Exam lock.
+				// No temporary write authorisation may survive closure.
 				try (PreparedStatement statement = connection.prepareStatement("""
 						SELECT
 						    (SELECT COUNT(*)
 						     FROM master_contribution_write_permits)
 						  + (SELECT COUNT(*)
 						     FROM master_contribution_region_permits)
+						  + (SELECT COUNT(*)
+						     FROM master_contribution_graph_permits)
 						"""); ResultSet result = statement.executeQuery()) {
 					if (!result.next() || result.getLong(1) != 0) {
 						throw new SQLException("Contribution write permit remains active");
