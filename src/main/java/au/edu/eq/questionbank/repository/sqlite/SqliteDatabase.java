@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 44;
+	private static final int LATEST_SCHEMA_VERSION = 45;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -894,6 +894,14 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v43-to-v44.sql", 44);
 			return 44;
 		}
+		if (version == 44) {
+
+			// Version 45 permits new embedded Question image rows only
+			// while the exact reviewed parent Question region permit
+			// is active. Existing image replacement remains forbidden.
+			executeMigration(connection, "/db/migration-v44-to-v45.sql", 45);
+			return 45;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -1268,6 +1276,21 @@ public final class SqliteDatabase {
 		}
 		if (version >= 43) {
 			verifyVersion43ContributorReceiptSchema(connection);
+		}
+		if (version >= 45) {
+			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
+					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql", "/db/migration-v41-to-v42.sql",
+					"/db/migration-v43-to-v44.sql", "/db/migration-v44-to-v45.sql");
+		} else if (version >= 44) {
+			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
+					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql", "/db/migration-v41-to-v42.sql",
+					"/db/migration-v43-to-v44.sql");
+		} else if (version >= 42) {
+			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
+					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql", "/db/migration-v41-to-v42.sql");
+		} else {
+			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
+					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql");
 		}
 	}
 

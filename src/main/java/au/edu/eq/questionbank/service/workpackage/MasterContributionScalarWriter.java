@@ -16,6 +16,7 @@ import au.edu.eq.questionbank.repository.identity.SqlitePortableContentRepositor
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.workpackage.MasterContributionApprovedImagePreparer.PreparedImage;
 import au.edu.eq.questionbank.service.workpackage.MasterContributionDecisionLedger.RecordDecision;
 import au.edu.eq.questionbank.service.workpackage.MasterContributionDecisionLedger.RecordKey;
 import au.edu.eq.questionbank.service.workpackage.MasterContributionReviewPlanner.ReviewStatus;
@@ -43,8 +44,9 @@ final class MasterContributionScalarWriter {
 	}
 
 	Applied apply(Connection connection, UUID reviewId, long examId, RecordDecision decision, ExchangeRecord proposed,
-			Map<RecordKey, Long> newLocalIds, Map<RecordKey, UUID> newCanonicalIds, boolean allowPdfRegions)
-			throws SQLException {
+			Map<RecordKey, Long> newLocalIds, Map<RecordKey, UUID> newCanonicalIds, boolean allowPdfRegions,
+			Map<RecordKey, RecordDecision> decisions, Map<RecordKey, ExchangeRecord> proposals,
+			Map<RecordKey, PreparedImage> images) throws SQLException {
 		Objects.requireNonNull(connection, "connection");
 		EntityType type = EntityType.valueOf(decision.key().recordType());
 		if (type != EntityType.QUESTION && type != EntityType.ANSWER) {
@@ -77,19 +79,21 @@ final class MasterContributionScalarWriter {
 		boolean regionsChanged = create ? !proposedRegions.isEmpty()
 				: !current.values().path(regionField).equals(proposedRegions);
 		boolean contentPartsChanged = false;
+		boolean imagesChanged = false;
 		if (type == EntityType.QUESTION) {
 			JsonNode parts = proposed.values().path("question_content_parts");
-			if (!parts.isArray()) {
-				throw new SQLException("Missing Question content-part collection");
+			JsonNode questionImages = proposed.values().path("question_images");
+			if (!parts.isArray() || !questionImages.isArray()) {
+				throw new SQLException("Missing Question content collection");
 			}
 			contentPartsChanged = create ? !parts.isEmpty()
 					: !current.values().path("question_content_parts").equals(parts);
+			imagesChanged = create ? !questionImages.isEmpty()
+					: !current.values().path("question_images").equals(questionImages);
 		}
-
-		// Mixed-content ordering, even without a changed PDF region,
-		// requires the archive-verified application path.
-		if ((regionsChanged || contentPartsChanged) && !allowPdfRegions) {
-			throw new SQLException("PDF-region or Question content-part changes " + "require verified return assets");
+		if ((regionsChanged || contentPartsChanged || imagesChanged) && !allowPdfRegions) {
+			throw new SQLException("PDF regions, content parts and embedded images "
+					+ "require the verified archive application path");
 		}
 		permit(connection, reviewId, decision, examId, create);
 		long localId;
@@ -105,14 +109,11 @@ final class MasterContributionScalarWriter {
 					updateAnswer(connection, currentId, proposed);
 				}
 			}
-			if (regionsChanged || contentPartsChanged) {
+			if (regionsChanged || contentPartsChanged || imagesChanged) {
 				new MasterContributionRegionWriter(database).replace(connection, reviewId, decision, examId, localId,
-						proposed);
+						proposed, decisions, proposals, images, newLocalIds, newCanonicalIds);
 			}
 		} finally {
-
-			// The child permit is released before the parent permit.
-			// Failure to release either causes transaction rollback.
 			clearPermit(connection);
 		}
 		ExchangeRecord actual = new SqlitePortableContentRepository(database).snapshot(connection, type, localId)
@@ -143,11 +144,25 @@ final class MasterContributionScalarWriter {
 		if ("ANSWER".equals(proposed.recordType())) {
 			String original = expected.path("question_id").asText();
 			UUID canonical = canonicalIds.get(new RecordKey("QUESTION", UUID.fromString(original)));
-
-			// A newly imported Question has a new master UUID.
-			// Rebase the Answer's expected parent before comparison.
 			if (canonical != null) {
 				expected.put("question_id", canonical.toString());
+			}
+		}
+		if ("QUESTION".equals(proposed.recordType())) {
+
+			// Portable content parts reference Question images by
+			// UUID, not by their contributor SQLite-local IDs.
+			// Rebase only image references that have received a
+			// new canonical master identity in this transaction.
+			for (JsonNode part : expected.path("question_content_parts")) {
+				if (!"IMAGE".equals(part.path("content_type").asText())) {
+					continue;
+				}
+				String original = part.path("image_id").asText();
+				UUID canonical = canonicalIds.get(new RecordKey("QUESTION_IMAGE", UUID.fromString(original)));
+				if (canonical != null) {
+					((ObjectNode) part).put("image_id", canonical.toString());
+				}
 			}
 		}
 		return expected;
@@ -183,13 +198,11 @@ final class MasterContributionScalarWriter {
 
 	private long insertQuestion(Connection connection, ExchangeRecord proposed, Map<RecordKey, Long> newLocalIds)
 			throws SQLException {
-		for (String child : List.of("question_images", "question_output_exclusions")) {
 
-			// New images and output exclusions still require separate
-			// reviewed import support. Ordered PDF content parts are
-			// now handled by the region writer.
-			requireEmptyChildren(proposed, child);
-		}
+		// Image rows are created separately under the exact reviewed
+		// parent region permit. Output-exclusion import is still
+		// unsupported.
+		requireEmptyChildren(proposed, "question_output_exclusions");
 		JsonNode values = proposed.values();
 		try (PreparedStatement statement = connection.prepareStatement("""
 				INSERT INTO questions (
@@ -324,7 +337,7 @@ final class MasterContributionScalarWriter {
 				proposedOther.remove(field);
 			}
 			if (allowPdfRegions) {
-				for (String field : List.of("question_regions", "question_content_parts")) {
+				for (String field : List.of("question_regions", "question_images", "question_content_parts")) {
 					currentOther.remove(field);
 					proposedOther.remove(field);
 				}
@@ -338,8 +351,8 @@ final class MasterContributionScalarWriter {
 			}
 		}
 
-		// Image bytes, parent references, unsupported graph changes
-		// and every other unapproved field must remain identical.
+		// Parent references, unapproved metadata, Shared Context
+		// changes and unrelated graph changes remain prohibited.
 		if (!currentOther.equals(proposedOther) || before.equals(after)) {
 			throw new SQLException("Reviewed change contains unsupported fields " + "or no permitted content change");
 		}

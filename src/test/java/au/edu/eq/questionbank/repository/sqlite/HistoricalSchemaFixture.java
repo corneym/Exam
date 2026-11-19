@@ -608,6 +608,10 @@ public final class HistoricalSchemaFixture {
 	 */
 	public static void removeVersion44Objects(Statement statement) throws SQLException {
 		Objects.requireNonNull(statement, "statement");
+
+		// Restore the v40 image insertion guard before removing the
+		// older v44 content-part permissions.
+		removeVersion45Objects(statement);
 		List<String> names = List.of("trg_master_capture_question_content_parts_insert",
 				"trg_master_capture_question_content_parts_update", "trg_master_capture_question_content_parts_delete");
 		String migration;
@@ -648,6 +652,51 @@ public final class HistoricalSchemaFixture {
 			statement.execute("DROP TRIGGER IF EXISTS " + name);
 			statement.execute(originals.get(name));
 		}
+	}
+
+	/**
+	 * Restores the v40 Question-image insertion guard in a disposable historical
+	 * schema fixture.
+	 *
+	 * <p>
+	 * The definition is taken from the original versioned migration rather than
+	 * reconstructed by hand. This method must never be called against a production
+	 * database.
+	 *
+	 * @param statement statement for the disposable fixture connection
+	 * @throws SQLException         if the original guard cannot be restored
+	 * @throws NullPointerException if statement is null
+	 */
+	public static void removeVersion45Objects(Statement statement) throws SQLException {
+		Objects.requireNonNull(statement, "statement");
+		String name = "trg_master_capture_question_images_insert";
+		String migration;
+		try {
+			migration = SqlResourceLoader.load("/db/migration-v39-to-v40.sql");
+		} catch (IOException failure) {
+			throw new SQLException("Cannot load original Question image guard", failure);
+		}
+		String original = null;
+		for (String fragment : SqlScriptExecutor.splitStatements(migration)) {
+			int start = fragment.lastIndexOf("CREATE TRIGGER ");
+			if (start < 0) {
+				continue;
+			}
+			String sql = fragment.substring(start).strip();
+			String heading = sql.lines().findFirst().orElse("");
+			if (!heading.equals("CREATE TRIGGER " + name)) {
+				continue;
+			}
+			if (original != null) {
+				throw new SQLException("Duplicate original Question image guard");
+			}
+			original = sql;
+		}
+		if (original == null) {
+			throw new SQLException("Original Question image insertion guard " + "was not found");
+		}
+		statement.execute("DROP TRIGGER IF EXISTS " + name);
+		statement.execute(original);
 	}
 
 	private static void dropAssignmentTriggers(Statement statement, String pattern) throws SQLException {

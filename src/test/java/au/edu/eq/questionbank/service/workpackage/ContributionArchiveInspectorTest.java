@@ -805,6 +805,89 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
+	void masterApplicationImportsNewImageWithCanonicalMapping() throws Exception {
+		Fixture fixture = fixture();
+		Path archive = publishNewContributorImage(fixture, "approved-new-image-application.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		Map<MasterContributionDecisionLedger.RecordKey, MasterContributionDecisionLedger.Choice> choices = new HashMap<>();
+		ExchangeRecord contributorImage = null;
+		for (ExchangeRecord proposal : intake.proposedChanges(packageId)) {
+			var key = new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId());
+			choices.put(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY);
+			if ("QUESTION_IMAGE".equals(proposal.recordType())) {
+				contributorImage = proposal;
+			}
+		}
+		assertNotNull(contributorImage);
+		assertEquals(2, choices.size());
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId, choices,
+				"Apply approved Question and new PNG");
+		var applied = new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId(), archive,
+				new ManagedDataLayout(directory.resolve("coordinator")));
+		assertEquals(2, applied.outcomes().size());
+		for (var outcome : applied.outcomes()) {
+			assertEquals(MasterContributionApplicationCoordinator.Outcome.APPLIED, outcome.outcome());
+			assertNotNull(outcome.resultingRevisionId());
+		}
+		long masterImageLocalId;
+		UUID canonicalImageId;
+		try (Connection connection = fixture.master().openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT canonical_record_id, local_id
+						FROM contribution_application_entity_mappings
+						WHERE review_id = ?
+						  AND record_type = 'QUESTION_IMAGE'
+						  AND record_id = ?
+						""")) {
+			statement.setString(1, review.reviewId().toString());
+			statement.setString(2, contributorImage.recordId().toString());
+			try (ResultSet result = statement.executeQuery()) {
+				assertTrue(result.next());
+				canonicalImageId = UUID.fromString(result.getString("canonical_record_id"));
+				masterImageLocalId = result.getLong("local_id");
+				assertTrue(masterImageLocalId > 0);
+				assertFalse(result.next());
+			}
+		}
+		var canonicalIdentity = new SqlitePortableIdentityRepository(fixture.master())
+				.findByLocalId(EntityType.QUESTION_IMAGE, masterImageLocalId).orElseThrow();
+		assertEquals(canonicalImageId, canonicalIdentity.portableId());
+		assertEquals(contributorImage.recordId(), new SqlitePortableIdentityRepository(fixture.contributor())
+				.findByPortableId(EntityType.QUESTION_IMAGE, contributorImage.recordId()).orElseThrow().portableId());
+		try (Connection connection = fixture.master().openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT image.image_png,
+						       part.image_id
+						FROM question_images image
+						JOIN question_content_parts part
+						  ON part.image_id = image.id
+						JOIN questions question
+						  ON question.id = image.question_id
+						WHERE question.question_code = '1'
+						""");
+				ResultSet result = statement.executeQuery()) {
+			assertTrue(result.next());
+			byte[] expected = Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC"
+					+ "AAAAC0lEQVR42mP8/x8AAwMCAO3Ry8UAAAAASUVORK5CYII=");
+			assertArrayEquals(expected, result.getBytes("image_png"));
+			assertEquals(masterImageLocalId, result.getLong("image_id"));
+			assertFalse(result.next());
+		}
+		assertEquals(WorkAssignmentLedger.State.COMPLETE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+
+		// Replaying a committed image review must not insert a
+		// second image and must not require the source archive.
+		var replay = new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId());
+		assertTrue(replay.duplicate());
+		assertEquals(applied.outcomes(), replay.outcomes());
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
+		fixture.contributor().verifyIntegrity();
+	}
+
+	@Test
 	void masterApplicationImportsNewQuestionAndAnswer() throws Exception {
 		Fixture fixture = fixture();
 		addNewContributorQuestionAndAnswer(fixture);
@@ -1133,6 +1216,51 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
+	void masterApplicationRejectsReplacementOfExistingImage() throws Exception {
+		Fixture fixture = fixture(true);
+
+		// A different, valid one-pixel PNG is submitted against
+		// an existing image, not as a newly created image.
+		byte[] replacement = Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+				+ "AAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==");
+		try (Connection connection = fixture.contributor().openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						UPDATE question_images
+						SET image_png = ?
+						WHERE question_id = (
+						    SELECT id
+						    FROM questions
+						    WHERE question_code = '1'
+						)
+						""")) {
+			statement.setBytes(1, replacement);
+			assertEquals(1, statement.executeUpdate());
+		}
+		Path archive = directory.resolve("existing-image-replacement.examwork");
+		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
+				.export(fixture.assignmentId(), archive);
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		Map<MasterContributionDecisionLedger.RecordKey, MasterContributionDecisionLedger.Choice> choices = new HashMap<>();
+		for (ExchangeRecord proposal : intake.proposedChanges(packageId)) {
+			choices.put(new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId()),
+					MasterContributionDecisionLedger.Choice.QUEUE_APPLY);
+		}
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId, choices,
+				"Review existing image replacement");
+		SQLException failure = assertThrows(SQLException.class,
+				() -> new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId(), archive,
+						new ManagedDataLayout(directory.resolve("coordinator"))));
+		assertTrue(failure.getMessage().contains("Existing Question image replacement"), failure.getMessage());
+		assertEquals(WorkAssignmentLedger.State.ACTIVE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		assertTrue(new MasterContributionApplicationCoordinator(fixture.master()).find(review.reviewId()).isEmpty());
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
+		fixture.contributor().verifyIntegrity();
+	}
+
+	@Test
 	void masterApplicationRejectsUnjustifiedIdenticalSkip() throws Exception {
 		Fixture fixture = fixture();
 		Path archive = publish(fixture, "Already accepted content", "apply-identical.examwork");
@@ -1304,6 +1432,61 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
+	void masterApplicationRollsBackNewImageAndQuestionOnContentFailure() throws Exception {
+		Fixture fixture = fixture();
+		Path archive = publishNewContributorImage(fixture, "new-image-rollback.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		Map<MasterContributionDecisionLedger.RecordKey, MasterContributionDecisionLedger.Choice> choices = new HashMap<>();
+		for (ExchangeRecord proposal : intake.proposedChanges(packageId)) {
+			choices.put(new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId()),
+					MasterContributionDecisionLedger.Choice.QUEUE_APPLY);
+		}
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId, choices,
+				"Rollback an approved PNG import on failure");
+
+		// The image has already been inserted by the time the
+		// Question content part is written. This forces an error
+		// after the binary database mutation has begun.
+		execute(fixture.master(), """
+				CREATE TRIGGER test_reject_new_image_content_part
+				BEFORE INSERT ON question_content_parts
+				BEGIN
+				    SELECT RAISE(
+				        ABORT,
+				        'Injected image content-part failure'
+				    );
+				END
+				""");
+		SQLException failure = assertThrows(SQLException.class,
+				() -> new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId(), archive,
+						new ManagedDataLayout(directory.resolve("coordinator"))));
+		assertTrue(failure.getMessage().contains("Injected image content-part failure"), failure.getMessage());
+		try (Connection connection = fixture.master().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("""
+						SELECT
+						    (SELECT COUNT(*) FROM question_images),
+						    (SELECT COUNT(*) FROM question_content_parts),
+						    (SELECT COUNT(*)
+						     FROM contribution_application_results),
+						    (SELECT COUNT(*)
+						     FROM contribution_application_entity_mappings)
+						""")) {
+			assertTrue(result.next());
+			assertEquals(0, result.getInt(1));
+			assertEquals(0, result.getInt(2));
+			assertEquals(0, result.getInt(3));
+			assertEquals(0, result.getInt(4));
+		}
+		assertEquals(WorkAssignmentLedger.State.ACTIVE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+		assertTrue(new MasterContributionApplicationCoordinator(fixture.master()).find(review.reviewId()).isEmpty());
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
 	void masterApplicationWithChangedPdfRollsBackAndStaysLocked() throws Exception {
 		Fixture fixture = fixture();
 		Path archive = publish(fixture, "Contributor PDF-dependent work", "pdf-conflict.examwork");
@@ -1410,6 +1593,35 @@ class ContributionArchiveInspectorTest {
 		assertTrue(failure.getMessage().contains("Contribution archive differs from durable intake evidence"));
 		assertEquals(WorkAssignmentLedger.State.ACTIVE,
 				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+	}
+
+	@Test
+	void masterAssignmentLockRejectsUnreviewedImageInsertion() throws Exception {
+		Fixture fixture = fixture();
+		SQLException failure = assertThrows(SQLException.class, () -> execute(fixture.master(), """
+				INSERT INTO question_images (
+				    question_id,
+				    image_png
+				)
+				VALUES (
+				    81,
+				    X'89504E470D0A1A0A'
+				)
+				"""));
+		assertTrue(failure.getMessage().contains("Assigned Exam image insertion"), failure.getMessage());
+		try (Connection connection = fixture.master().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("""
+						SELECT COUNT(*)
+						FROM question_images
+						""")) {
+			assertTrue(result.next());
+			assertEquals(0, result.getInt(1));
+		}
+		assertEquals(WorkAssignmentLedger.State.ACTIVE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
 	}
 
 	@Test
@@ -2232,22 +2444,16 @@ class ContributionArchiveInspectorTest {
 	void migrationToVersion43InstallsReceiptAcknowledgementLedger() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("v43-migration.db"));
 		database.initialiseSchema();
-
-		// The current schema is now v44.
-		assertEquals(44, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try (Statement statement = connection.createStatement()) {
-
-				// Remove v43 receipt structures and restore the
-				// v40 Question content-part triggers replaced by v44.
-				// This reconstructs a valid schema-v42 fixture.
 				HistoricalSchemaFixture.removeVersion43Objects(statement);
 				assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
 						UPDATE schema_version
 						SET version = 42
-						WHERE version = 44
-						"""));
+						WHERE version = %d
+						""".formatted(SqliteDatabase.latestSchemaVersion())));
 				connection.commit();
 			} catch (SQLException | RuntimeException failure) {
 				connection.rollback();
@@ -2255,15 +2461,9 @@ class ContributionArchiveInspectorTest {
 			}
 		}
 		assertEquals(42, database.schemaVersion());
-
-		// The downgraded schema must be internally consistent
-		// before migrations are replayed.
 		database.verifySchema();
-
-		// Initialisation must now run both:
-		// v42 -> v43, then v43 -> v44.
 		database.initialiseSchema();
-		assertEquals(44, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		database.verifySchema();
 		database.verifyIntegrity();
 	}
@@ -2272,7 +2472,7 @@ class ContributionArchiveInspectorTest {
 	void migrationToVersion44InstallsQuestionContentPartPermissions() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("v44-migration.db"));
 		database.initialiseSchema();
-		assertEquals(44, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try (Statement statement = connection.createStatement()) {
@@ -2280,8 +2480,8 @@ class ContributionArchiveInspectorTest {
 				assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
 						UPDATE schema_version
 						SET version = 43
-						WHERE version = 44
-						"""));
+						WHERE version = %d
+						""".formatted(SqliteDatabase.latestSchemaVersion())));
 				connection.commit();
 			} catch (SQLException | RuntimeException failure) {
 				connection.rollback();
@@ -2291,7 +2491,35 @@ class ContributionArchiveInspectorTest {
 		assertEquals(43, database.schemaVersion());
 		database.verifySchema();
 		database.initialiseSchema();
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
+		database.verifySchema();
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void migrationToVersion45InstallsApprovedImageInsertionGuard() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(directory.resolve("v45-migration.db"));
+		database.initialiseSchema();
+		assertEquals(45, database.schemaVersion());
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try (Statement statement = connection.createStatement()) {
+				HistoricalSchemaFixture.removeVersion45Objects(statement);
+				assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
+						UPDATE schema_version
+						SET version = 44
+						WHERE version = 45
+						"""));
+				connection.commit();
+			} catch (SQLException | RuntimeException failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
 		assertEquals(44, database.schemaVersion());
+		database.verifySchema();
+		database.initialiseSchema();
+		assertEquals(45, database.schemaVersion());
 		database.verifySchema();
 		database.verifyIntegrity();
 	}

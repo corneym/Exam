@@ -8,6 +8,7 @@ import java.sql.Types;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -18,7 +19,9 @@ import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.workpackage.MasterContributionApprovedImagePreparer.PreparedImage;
 import au.edu.eq.questionbank.service.workpackage.MasterContributionDecisionLedger.RecordDecision;
+import au.edu.eq.questionbank.service.workpackage.MasterContributionDecisionLedger.RecordKey;
 
 /**
  * Applies approved Question and Answer PDF regions and ordered Question content
@@ -43,28 +46,32 @@ final class MasterContributionRegionWriter {
 	}
 
 	void replace(Connection connection, UUID reviewId, RecordDecision decision, long examId, long ownerLocalId,
-			ExchangeRecord proposed) throws SQLException {
+			ExchangeRecord proposed, Map<RecordKey, RecordDecision> decisions, Map<RecordKey, ExchangeRecord> proposals,
+			Map<RecordKey, PreparedImage> images, Map<RecordKey, Long> localIds, Map<RecordKey, UUID> canonicalIds)
+			throws SQLException {
 		Objects.requireNonNull(connection, "connection");
 		Objects.requireNonNull(reviewId, "reviewId");
 		Objects.requireNonNull(decision, "decision");
 		Objects.requireNonNull(proposed, "proposed");
 		String type = decision.key().recordType();
 		if (!type.equals("QUESTION") && !type.equals("ANSWER")) {
-			throw new SQLException("Only Question and Answer regions are supported");
+			throw new SQLException("Only Question and Answer content is supported");
 		}
-
-		// Validate all proposed rows and every portable dependency
-		// before deleting any existing authoritative content.
 		List<Region> regions = validate(connection, type, examId, ownerLocalId, proposed);
-		List<ContentPart> contentParts = type.equals("QUESTION")
-				? validateQuestionParts(connection, ownerLocalId, proposed, regions)
-				: List.of();
 		acquirePermit(connection, reviewId, decision, examId, ownerLocalId);
 		try {
+			List<ContentPart> contentParts = List.of();
 			if (type.equals("QUESTION")) {
 
-				// Remove content-part references before replacing the
-				// region rows they may reference through foreign keys.
+				// Insert approved new images while the exact Question
+				// region permit is held. This permission cannot be
+				// reused for another Question or outside the review.
+				new MasterContributionImageWriter(database).insertApproved(connection, proposed, ownerLocalId,
+						decisions, proposals, images, localIds, canonicalIds);
+
+				// Resolve new image UUIDs after insertion but before
+				// removing any authoritative content-part rows.
+				contentParts = validateQuestionParts(connection, ownerLocalId, proposed, regions, localIds);
 				deleteQuestionParts(connection, ownerLocalId);
 			}
 			replaceRows(connection, type, ownerLocalId, regions);
@@ -159,6 +166,27 @@ final class MasterContributionRegionWriter {
 		return new SqlitePortableIdentityRepository(database).findByPortableId(connection, type, portableId)
 				.orElseThrow(() -> new SQLException("PDF-region source is missing: " + type + " " + portableId))
 				.localId();
+	}
+
+	private long referenceImage(Connection connection, JsonNode value, Map<RecordKey, Long> localIds)
+			throws SQLException {
+		if (value == null || !value.isTextual()) {
+			throw new SQLException("Question image reference must be a portable UUID");
+		}
+		UUID portableId;
+		try {
+			portableId = UUID.fromString(value.asText());
+			if (!portableId.toString().equals(value.asText())) {
+				throw new IllegalArgumentException("Noncanonical image UUID");
+			}
+		} catch (IllegalArgumentException failure) {
+			throw new SQLException("Invalid Question image portable UUID", failure);
+		}
+		Long inserted = localIds.get(new RecordKey("QUESTION_IMAGE", portableId));
+		if (inserted != null) {
+			return inserted;
+		}
+		return reference(connection, EntityType.QUESTION_IMAGE, value);
 	}
 
 	private void releasePermit(Connection connection) throws SQLException {
@@ -299,7 +327,7 @@ final class MasterContributionRegionWriter {
 	}
 
 	private List<ContentPart> validateQuestionParts(Connection connection, long questionLocalId,
-			ExchangeRecord proposed, List<Region> regions) throws SQLException {
+			ExchangeRecord proposed, List<Region> regions, Map<RecordKey, Long> localIds) throws SQLException {
 		JsonNode supplied = proposed.values().get("question_content_parts");
 		if (supplied == null || !supplied.isArray()) {
 			throw new SQLException("Missing approved Question content parts");
@@ -337,11 +365,11 @@ final class MasterContributionRegionWriter {
 				if (regionOrder == null || !regionOrder.isNull()) {
 					throw new SQLException("Image content part cannot reference " + "a PDF region");
 				}
-				long imageLocalId = reference(connection, EntityType.QUESTION_IMAGE, row.get("image_id"));
+				long imageLocalId = referenceImage(connection, row.get("image_id"), localIds);
 
-				// An existing Question image may be reordered.
-				// A new or foreign Question image is not imported
-				// merely because its UUID appeared in the archive.
+				// The inserted or existing image must belong to
+				// this exact Question. A portable UUID alone does
+				// not establish parent ownership.
 				try (PreparedStatement lookup = connection.prepareStatement("""
 						SELECT question_id
 						FROM question_images
