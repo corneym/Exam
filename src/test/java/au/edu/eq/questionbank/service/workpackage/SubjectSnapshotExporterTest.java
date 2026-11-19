@@ -20,6 +20,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
@@ -300,24 +301,6 @@ class SubjectSnapshotExporterTest {
 	}
 
 	@Test
-	void assignmentCompletionDoesNotRewriteBaseline() throws Exception {
-		Fixture fixture = createAssignmentFixture("assignment-completion");
-		Path archive = fixture.exportDirectory().resolve("completion.examwork");
-		WorkAssignmentLedger.Assignment issued = new WorkAssignmentIssuanceService(fixture.database(), fixture.layout())
-				.issue(assignmentRequest(archive, false));
-		WorkAssignmentLedger ledger = new WorkAssignmentLedger(fixture.database());
-		WorkAssignmentLedger.Baseline before = ledger.readBaseline(issued.assignmentId());
-		ledger.finish(issued.assignmentId(), WorkAssignmentLedger.State.COMPLETE);
-		WorkAssignmentLedger.Assignment completed = ledger.find(issued.assignmentId()).orElseThrow();
-		assertEquals(WorkAssignmentLedger.State.COMPLETE, completed.state());
-		WorkAssignmentLedger.Baseline after = ledger.readBaseline(issued.assignmentId());
-		assertArrayEquals(before.records(), after.records());
-		assertArrayEquals(before.assets(), after.assets());
-		assertThrows(IllegalStateException.class,
-				() -> ledger.finish(issued.assignmentId(), WorkAssignmentLedger.State.CANCELLED));
-	}
-
-	@Test
 	void assignmentExportDoesNotOverwriteExistingPackage() throws Exception {
 		Fixture fixture = createAssignmentFixture("assignment-overwrite");
 		Path archive = fixture.exportDirectory().resolve("existing-assignment.examwork");
@@ -393,6 +376,66 @@ class SubjectSnapshotExporterTest {
 	}
 
 	@Test
+	void cannotCloseWithoutReturnAfterContributionIntake() throws Exception {
+		Fixture fixture = createAssignmentFixture("received-return-closure");
+		Path archive = fixture.exportDirectory().resolve("received-return-closure.examwork");
+		WorkAssignmentLedger.Assignment issued = new WorkAssignmentIssuanceService(fixture.database(), fixture.layout())
+				.issue(assignmentRequest(archive, false));
+		String insert = """
+				INSERT INTO contribution_intake_packages (
+				    package_id,
+				    assignment_id,
+				    return_number,
+				    previous_package_id,
+				    baseline_snapshot_id,
+				    master_installation_id,
+				    contributor_id,
+				    origin_installation_id,
+				    archive_sha256,
+				    intake_status,
+				    received_at
+				)
+				VALUES (
+				    '11111111-1111-4111-8111-111111111111',
+				    '%s',
+				    1,
+				    NULL,
+				    '%s',
+				    '%s',
+				    '%s',
+				    '99999999-9999-4999-8999-999999999999',
+				    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+				    'READY_FOR_REVIEW',
+				    '2026-11-18T00:00:00Z'
+				)
+				""".formatted(issued.assignmentId(), issued.baselineSnapshotId(), issued.masterInstallationId(),
+				issued.contributorId());
+		execute(fixture.database(), insert);
+		WorkAssignmentLedger ledger = new WorkAssignmentLedger(fixture.database());
+		assertThrows(IllegalStateException.class,
+				() -> ledger.closeWithoutReturn(issued.assignmentId(), "No work received"));
+		assertEquals(WorkAssignmentLedger.State.ACTIVE, ledger.find(issued.assignmentId()).orElseThrow().state());
+		assertEquals(issued.assignmentId(),
+				ledger.findActiveForExam(issued.examPortableId()).orElseThrow().assignmentId());
+	}
+
+	@Test
+	void completedExamCannotReceiveAssignment() throws Exception {
+		Fixture fixture = createAssignmentFixture("completed-exam-issue");
+		execute(fixture.database(), """
+				UPDATE exams
+				SET capture_state = 'COMPLETE'
+				WHERE id = 31
+				""");
+		Path archive = fixture.exportDirectory().resolve("completed-exam.examwork");
+		SQLException failure = assertThrows(SQLException.class,
+				() -> new WorkAssignmentIssuanceService(fixture.database(), fixture.layout())
+						.issue(assignmentRequest(archive, false)));
+		assertTrue(failure.getMessage().contains("Completed Exam cannot be assigned"));
+		assertFalse(Files.exists(archive));
+	}
+
+	@Test
 	void contributorPreflightAcceptsValidWholeExamAssignment() throws Exception {
 		Fixture fixture = createAssignmentFixture("contributor-inspection");
 		Path archive = fixture.exportDirectory().resolve("contributor.examwork");
@@ -418,6 +461,25 @@ class SubjectSnapshotExporterTest {
 				() -> new WorkAssignmentPackageInspector().inspect(archive, ApplicationVersion.current(),
 						SqliteDatabase.latestSchemaVersion()));
 		assertTrue(failure.getMessage().contains("WORK_ASSIGNMENT"));
+	}
+
+	@Test
+	void coordinatorClosureDoesNotRewriteBaseline() throws Exception {
+		Fixture fixture = createAssignmentFixture("assignment-completion");
+		Path archive = fixture.exportDirectory().resolve("completion.examwork");
+		WorkAssignmentLedger.Assignment issued = new WorkAssignmentIssuanceService(fixture.database(), fixture.layout())
+				.issue(assignmentRequest(archive, false));
+		WorkAssignmentLedger ledger = new WorkAssignmentLedger(fixture.database());
+		WorkAssignmentLedger.Baseline before = ledger.readBaseline(issued.assignmentId());
+		WorkAssignmentLedger.Assignment closed = ledger.closeWithoutReturn(issued.assignmentId(),
+				"Contributor is no longer available");
+		assertEquals(WorkAssignmentLedger.State.CANCELLED, closed.state());
+		WorkAssignmentLedger.Baseline after = ledger.readBaseline(issued.assignmentId());
+		assertArrayEquals(before.records(), after.records());
+		assertArrayEquals(before.assets(), after.assets());
+		assertTrue(ledger.findActiveForExam(issued.examPortableId()).isEmpty());
+		assertThrows(IllegalStateException.class,
+				() -> ledger.closeWithoutReturn(issued.assignmentId(), "Duplicate closure"));
 	}
 
 	@Test
@@ -627,6 +689,9 @@ class SubjectSnapshotExporterTest {
 		assertEquals(WorkAssignmentLedger.State.ACTIVE, issued.state());
 		WorkAssignmentLedger ledger = new WorkAssignmentLedger(fixture.database());
 		WorkAssignmentLedger.Baseline baseline = ledger.readBaseline(issued.assignmentId());
+
+		// The published archive and the retained SQLite baseline
+		// must contain identical immutable records and asset references.
 		try (ZipFile zip = new ZipFile(archive.toFile())) {
 			ZipEntry recordsEntry = zip.getEntry("baseline/initial-records.jsonl");
 			ZipEntry assetsEntry = zip.getEntry(ExamWorkAssetIndex.INDEX_PATH);
@@ -640,17 +705,32 @@ class SubjectSnapshotExporterTest {
 			}
 		}
 
-		// The coordinator can still alter live master data.
+		// An active assignment protects the authoritative Exam.
+		SQLException blocked = assertThrows(SQLException.class, () -> execute(fixture.database(), """
+				UPDATE exams
+				SET exam_name = 'Changed by coordinator'
+				WHERE id = 31
+				"""));
+		assertTrue(blocked.getMessage().contains("Assigned Exam is read-only on the master"));
+		assertEquals(WorkAssignmentLedger.State.ACTIVE, ledger.find(issued.assignmentId()).orElseThrow().state());
+
+		// The coordinator explicitly closes the assignment.
+		WorkAssignmentLedger.Assignment closed = ledger.closeWithoutReturn(issued.assignmentId(),
+				"Contributor unavailable");
+		assertEquals(WorkAssignmentLedger.State.CANCELLED, closed.state());
+		assertTrue(ledger.findActiveForExam(issued.examPortableId()).isEmpty());
+
+		// The master can now be changed. This must not rewrite
+		// the baseline belonging to the cancelled assignment.
 		execute(fixture.database(), """
 				UPDATE questions
-				SET question_text = 'Changed by coordinator'
+				SET question_text = 'Changed after assignment closure'
 				WHERE id = 81
 				""");
-		Files.writeString(fixture.layout().resolve("subjects/Biology/exams/questions.pdf"), "Updated master source");
 		WorkAssignmentLedger.Baseline retained = ledger.readBaseline(issued.assignmentId());
 		assertArrayEquals(baseline.records(), retained.records());
 		assertArrayEquals(baseline.assets(), retained.assets());
-		assertEquals(WorkAssignmentLedger.State.ACTIVE, ledger.find(issued.assignmentId()).orElseThrow().state());
+		assertEquals(WorkAssignmentLedger.State.CANCELLED, ledger.find(issued.assignmentId()).orElseThrow().state());
 	}
 
 	/**
@@ -690,7 +770,7 @@ class SubjectSnapshotExporterTest {
 	}
 
 	@Test
-	void multipleAssignmentsForSameExamRemainIndependent() throws Exception {
+	void onlyOneActiveAssignmentAndReissueAfterClosure() throws Exception {
 		Fixture fixture = createAssignmentFixture("multiple-assignments");
 		Path firstArchive = fixture.exportDirectory().resolve("first.examwork");
 		Path secondArchive = fixture.exportDirectory().resolve("second.examwork");
@@ -699,16 +779,33 @@ class SubjectSnapshotExporterTest {
 				UUID.randomUUID(), "Contributor Two", false, secondArchive);
 		WorkAssignmentIssuanceService issuance = new WorkAssignmentIssuanceService(fixture.database(),
 				fixture.layout());
+		WorkAssignmentLedger ledger = new WorkAssignmentLedger(fixture.database());
 		WorkAssignmentLedger.Assignment firstIssued = issuance.issue(first);
+		WorkAssignmentLedger.Baseline firstBaseline = ledger.readBaseline(firstIssued.assignmentId());
+		IOException blocked = assertThrows(IOException.class, () -> issuance.issue(second));
+		assertTrue(blocked.getMessage().contains("already has an active work assignment"));
+		assertFalse(Files.exists(secondArchive));
+		assertEquals(firstIssued.assignmentId(),
+				ledger.findActiveForExam(firstIssued.examPortableId()).orElseThrow().assignmentId());
+		ledger.closeWithoutReturn(firstIssued.assignmentId(), "Reassigned to a different contributor");
+		assertTrue(ledger.findActiveForExam(firstIssued.examPortableId()).isEmpty());
+
+		// The second package must reflect the latest authoritative
+		// master data, rather than reusing the first baseline.
+		execute(fixture.database(), """
+				UPDATE questions
+				SET question_text = 'Coordinator revised the question'
+				WHERE id = 81
+				""");
 		WorkAssignmentLedger.Assignment secondIssued = issuance.issue(second);
+		WorkAssignmentLedger.Baseline secondBaseline = ledger.readBaseline(secondIssued.assignmentId());
 		assertEquals(firstIssued.examPortableId(), secondIssued.examPortableId());
 		assertFalse(firstIssued.assignmentId().equals(secondIssued.assignmentId()));
-		WorkAssignmentLedger ledger = new WorkAssignmentLedger(fixture.database());
-		assertEquals(2, ledger.findForExam(firstIssued.examPortableId()).size());
-		ledger.finish(firstIssued.assignmentId(), WorkAssignmentLedger.State.COMPLETE);
-		assertEquals(WorkAssignmentLedger.State.COMPLETE,
+		assertFalse(Arrays.equals(firstBaseline.records(), secondBaseline.records()));
+		assertEquals(WorkAssignmentLedger.State.CANCELLED,
 				ledger.find(firstIssued.assignmentId()).orElseThrow().state());
 		assertEquals(WorkAssignmentLedger.State.ACTIVE, ledger.find(secondIssued.assignmentId()).orElseThrow().state());
+		assertEquals(2, ledger.findForExam(firstIssued.examPortableId()).size());
 	}
 
 	/**
@@ -1007,12 +1104,12 @@ class SubjectSnapshotExporterTest {
 		Fixture fixture = createFixture(name);
 		seedCompleteSubject(fixture);
 
-		// The existing Subject export fixture has two Question
-		// Booklets and one AnswerFile, but does not explicitly
-		// declare its expected AnswerFile count.
+		// Assignment tests require an editable Exam. The generic
+		// Subject snapshot fixture deliberately seeds a COMPLETE Exam.
 		execute(fixture.database(), """
 				UPDATE exams
-				SET expected_question_booklet_count = 2,
+				SET capture_state = 'ACTIVE',
+				    expected_question_booklet_count = 2,
 				    expected_answer_file_count = 1
 				WHERE id = 31
 				""");

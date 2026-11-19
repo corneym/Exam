@@ -1,12 +1,16 @@
 package au.edu.eq.questionbank.repository.sqlite;
 
+import java.io.IOException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 
 /**
  * Removes newer schema objects when constructing historical SQLite databases
@@ -341,12 +345,8 @@ public final class HistoricalSchemaFixture {
 	}
 
 	/**
-	 * Removes schema v37 application evidence from a disposable historical
-	 * migration test database.
-	 *
-	 * <p>
-	 * Child results are removed before their parent application batches. Production
-	 * data must never be passed to this fixture helper.
+	 * Removes schema v37 application evidence and all newer structures from a
+	 * disposable historical migration test database.
 	 *
 	 * @param statement statement for the disposable test database
 	 * @throws SQLException if cleanup fails
@@ -355,12 +355,458 @@ public final class HistoricalSchemaFixture {
 		if (statement == null) {
 			throw new NullPointerException("statement");
 		}
+		removeVersion38Objects(statement);
 		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_application_results_no_delete");
 		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_application_results_no_update");
 		statement.execute("DROP TABLE IF EXISTS contribution_application_results");
 		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_application_batches_no_delete");
 		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_application_batches_no_update");
 		statement.execute("DROP TABLE IF EXISTS contribution_application_batches");
+	}
+
+	/**
+	 * Removes schema v38 assignment lifecycle structures from an isolated,
+	 * disposable historical migration fixture.
+	 *
+	 * <p>
+	 * This method must never be applied to production data. It removes the v38
+	 * triggers before dropping closure evidence and assignment claims, so older
+	 * migrations can be replayed.
+	 *
+	 * @param statement statement for the disposable test database
+	 * @throws SQLException         if lifecycle structures cannot be removed
+	 * @throws NullPointerException if statement is null
+	 */
+	public static void removeVersion38Objects(Statement statement) throws SQLException {
+		Objects.requireNonNull(statement, "statement");
+		removeVersion39Objects(statement);
+		List<String> triggerNames = new ArrayList<>();
+		try (PreparedStatement lookup = statement.getConnection().prepareStatement("""
+				SELECT name
+				FROM sqlite_master
+				WHERE type = 'trigger'
+				  AND name GLOB 'trg_master_assignment_*'
+				ORDER BY name
+				"""); ResultSet result = lookup.executeQuery()) {
+			while (result.next()) {
+				String name = result.getString(1);
+				if (!name.matches("trg_master_assignment_[a-z_]+")) {
+					throw new SQLException("Unexpected master assignment trigger: " + name);
+				}
+				triggerNames.add(name);
+			}
+		}
+		for (String name : triggerNames) {
+			statement.execute("DROP TRIGGER \"" + name + "\"");
+		}
+		statement.execute("DROP TABLE IF EXISTS exam_work_assignment_closures");
+		statement.execute("DROP TABLE IF EXISTS exam_work_assignment_exam_locks");
+	}
+
+	/**
+	 * Removes v39 master Exam structural guards from a disposable historical
+	 * migration test database.
+	 *
+	 * <p>
+	 * This method must never be applied to production data.
+	 *
+	 * @param statement statement for the disposable test database
+	 * @throws SQLException         if trigger removal fails
+	 * @throws NullPointerException if statement is null
+	 */
+	public static void removeVersion39Objects(Statement statement) throws SQLException {
+		Objects.requireNonNull(statement, "statement");
+		removeVersion40Objects(statement);
+		List<String> triggerNames = new ArrayList<>();
+		try (PreparedStatement lookup = statement.getConnection().prepareStatement("""
+				SELECT name
+				FROM sqlite_master
+				WHERE type = 'trigger'
+				  AND name GLOB 'trg_master_exam_structure_*'
+				ORDER BY name
+				"""); ResultSet result = lookup.executeQuery()) {
+			while (result.next()) {
+				String name = result.getString(1);
+				if (!name.matches("trg_master_exam_structure_[a-z_]+")) {
+					throw new SQLException("Unexpected master Exam structure trigger: " + name);
+				}
+				triggerNames.add(name);
+			}
+		}
+		for (String name : triggerNames) {
+			statement.execute("DROP TRIGGER \"" + name + "\"");
+		}
+	}
+
+	/**
+	 * Removes version 40 master capture and return-validation triggers from a
+	 * disposable historical schema test database.
+	 *
+	 * <p>
+	 * This method must never be used against production data.
+	 *
+	 * @param statement statement for the disposable database
+	 * @throws SQLException         if trigger discovery or removal fails
+	 * @throws NullPointerException if statement is null
+	 */
+	public static void removeVersion40Objects(Statement statement) throws SQLException {
+		Objects.requireNonNull(statement, "statement");
+		removeVersion41Objects(statement);
+		List<String> triggerNames = new ArrayList<>();
+		try (PreparedStatement lookup = statement.getConnection().prepareStatement("""
+				SELECT name
+				FROM sqlite_master
+				WHERE type = 'trigger'
+				  AND (
+				      name GLOB 'trg_master_capture_*'
+				      OR name GLOB 'trg_master_return_*'
+				  )
+				ORDER BY name
+				"""); ResultSet result = lookup.executeQuery()) {
+			while (result.next()) {
+				String name = result.getString(1);
+				if (!name.matches("trg_master_(capture|return)_[a-z_]+")) {
+					throw new SQLException("Unexpected version 40 trigger: " + name);
+				}
+				triggerNames.add(name);
+			}
+		}
+		for (String name : triggerNames) {
+			statement.execute("DROP TRIGGER \"" + name + "\"");
+		}
+	}
+
+	/**
+	 * Removes v41 scalar-application tables and triggers from a disposable
+	 * historical migration fixture.
+	 *
+	 * <p>
+	 * This operation is intended only as preparation for also removing v40 objects
+	 * and replaying historical migrations. It does not independently reconstruct
+	 * the four original v40 capture trigger definitions.
+	 *
+	 * @param statement statement for the disposable database
+	 * @throws SQLException         if schema cleanup fails
+	 * @throws NullPointerException if statement is null
+	 */
+	public static void removeVersion41Objects(Statement statement) throws SQLException {
+		Objects.requireNonNull(statement, "statement");
+		removeVersion42Objects(statement);
+		List<String> names = new ArrayList<>();
+		try (PreparedStatement lookup = statement.getConnection().prepareStatement("""
+				SELECT name
+				FROM sqlite_master
+				WHERE type = 'trigger'
+				  AND name GLOB 'trg_master_application_*'
+				ORDER BY name
+				"""); ResultSet result = lookup.executeQuery()) {
+			while (result.next()) {
+				String name = result.getString(1);
+				if (!name.matches("trg_master_application_[a-z_]+")) {
+					throw new SQLException("Unexpected v41 application trigger: " + name);
+				}
+				names.add(name);
+			}
+		}
+		for (String name : names) {
+			statement.execute("DROP TRIGGER \"" + name + "\"");
+		}
+		statement.execute("""
+				DROP TABLE IF EXISTS master_contribution_write_permits
+				""");
+		statement.execute("""
+				DROP TABLE IF EXISTS contribution_application_entity_mappings
+				""");
+	}
+
+	/**
+	 * Removes version 42 region-authorisation objects from a disposable historical
+	 * migration fixture.
+	 *
+	 * <p>
+	 * This is used before removing the v41 and older schemas. It does not
+	 * reconstruct the six original v40 capture triggers; callers requiring a
+	 * complete older schema must continue the historical cleanup chain.
+	 *
+	 * @param statement statement for the disposable database
+	 * @throws SQLException         if schema cleanup fails
+	 * @throws NullPointerException if statement is null
+	 */
+	public static void removeVersion42Objects(Statement statement) throws SQLException {
+		Objects.requireNonNull(statement, "statement");
+		removeVersion43Objects(statement);
+		List<String> triggerNames = new ArrayList<>();
+		try (PreparedStatement lookup = statement.getConnection().prepareStatement("""
+				SELECT name
+				FROM sqlite_master
+				WHERE type = 'trigger'
+				  AND name GLOB 'trg_master_region_*'
+				ORDER BY name
+				"""); ResultSet result = lookup.executeQuery()) {
+			while (result.next()) {
+				String name = result.getString(1);
+				if (!name.matches("trg_master_region_[a-z_]+")) {
+					throw new SQLException("Unexpected version 42 trigger: " + name);
+				}
+				triggerNames.add(name);
+			}
+		}
+		for (String name : triggerNames) {
+			statement.execute("DROP TRIGGER \"" + name + "\"");
+		}
+		statement.execute("""
+				DROP TABLE IF EXISTS master_contribution_region_permits
+				""");
+	}
+
+	/**
+	 * Removes receipt acknowledgement structures from a disposable historical
+	 * migration fixture.
+	 *
+	 * <p>
+	 * Production databases must never use this method because receipt
+	 * acknowledgements are permanent audit evidence.
+	 *
+	 * @param statement statement for a disposable test database
+	 * @throws SQLException         if schema cleanup fails
+	 * @throws NullPointerException if statement is null
+	 */
+	public static void removeVersion43Objects(Statement statement) throws SQLException {
+		Objects.requireNonNull(statement, "statement");
+		removeVersion44Objects(statement);
+		statement.execute("""
+				DROP TRIGGER IF EXISTS
+				    trg_contributor_receipt_ack_validate
+				""");
+		statement.execute("""
+				DROP TRIGGER IF EXISTS
+				    trg_contributor_receipt_ack_no_update
+				""");
+		statement.execute("""
+				DROP TRIGGER IF EXISTS
+				    trg_contributor_receipt_ack_no_delete
+				""");
+		statement.execute("""
+				DROP TABLE IF EXISTS
+				    contributor_receipt_acknowledgements
+				""");
+	}
+
+	/**
+	 * Restores the original v40 Question content-part guards in a disposable
+	 * historical migration fixture.
+	 *
+	 * <p>
+	 * The original definitions are recovered from the versioned migration resource,
+	 * ensuring exact compatibility with schema verification. This method must never
+	 * be called on production data.
+	 *
+	 * @param statement statement for a disposable test database
+	 * @throws SQLException         if the original trigger definitions cannot be
+	 *                              read or restored
+	 * @throws NullPointerException if statement is null
+	 */
+	public static void removeVersion44Objects(Statement statement) throws SQLException {
+		Objects.requireNonNull(statement, "statement");
+
+		// Restore the v40 image insertion guard before removing the
+		// older v44 content-part permissions.
+		removeVersion45Objects(statement);
+		List<String> names = List.of("trg_master_capture_question_content_parts_insert",
+				"trg_master_capture_question_content_parts_update", "trg_master_capture_question_content_parts_delete");
+		String migration;
+		try {
+			migration = SqlResourceLoader.load("/db/migration-v39-to-v40.sql");
+		} catch (IOException failure) {
+			throw new SQLException("Cannot load original master capture migration", failure);
+		}
+		Map<String, String> originals = new HashMap<>();
+		for (String fragment : SqlScriptExecutor.splitStatements(migration)) {
+
+			// Strip any preceding migration comments while
+			// preserving the original CREATE TRIGGER statement.
+			int start = fragment.lastIndexOf("CREATE TRIGGER ");
+			if (start < 0) {
+				continue;
+			}
+			String sql = fragment.substring(start).strip();
+			String heading = sql.lines().findFirst().orElse("");
+			if (!heading.startsWith("CREATE TRIGGER ")) {
+				continue;
+			}
+			String name = heading.substring("CREATE TRIGGER ".length()).strip();
+			if (!names.contains(name)) {
+				continue;
+			}
+			if (originals.putIfAbsent(name, sql) != null) {
+				throw new SQLException("Duplicate historical trigger definition: " + name);
+			}
+		}
+		if (originals.size() != names.size()) {
+			throw new SQLException("Incomplete historical Question content-part " + "trigger definitions");
+		}
+
+		// These operations remain inside the caller-owned
+		// historical fixture transaction.
+		for (String name : names) {
+			statement.execute("DROP TRIGGER IF EXISTS " + name);
+			statement.execute(originals.get(name));
+		}
+	}
+
+	/**
+	 * Restores the v40 Question-image insertion guard in a disposable historical
+	 * schema fixture.
+	 *
+	 * <p>
+	 * The definition is taken from the original versioned migration rather than
+	 * reconstructed by hand. This method must never be called against a production
+	 * database.
+	 *
+	 * @param statement statement for the disposable fixture connection
+	 * @throws SQLException         if the original guard cannot be restored
+	 * @throws NullPointerException if statement is null
+	 */
+	public static void removeVersion45Objects(Statement statement) throws SQLException {
+		Objects.requireNonNull(statement, "statement");
+		removeVersion46Objects(statement);
+		String name = "trg_master_capture_question_images_insert";
+		String migration;
+		try {
+			migration = SqlResourceLoader.load("/db/migration-v39-to-v40.sql");
+		} catch (IOException failure) {
+			throw new SQLException("Cannot load original Question image guard", failure);
+		}
+		String original = null;
+		for (String fragment : SqlScriptExecutor.splitStatements(migration)) {
+			int start = fragment.lastIndexOf("CREATE TRIGGER ");
+			if (start < 0) {
+				continue;
+			}
+			String sql = fragment.substring(start).strip();
+			String heading = sql.lines().findFirst().orElse("");
+			if (!heading.equals("CREATE TRIGGER " + name)) {
+				continue;
+			}
+			if (original != null) {
+				throw new SQLException("Duplicate original Question image guard");
+			}
+			original = sql;
+		}
+		if (original == null) {
+			throw new SQLException("Original Question image insertion guard " + "was not found");
+		}
+		statement.execute("DROP TRIGGER IF EXISTS " + name);
+		statement.execute(original);
+	}
+
+	/**
+	 * Removes v46 graph authorisation objects and restores the original v40 guards
+	 * in a disposable historical migration fixture.
+	 *
+	 * <p>
+	 * This method must never be used on production data.
+	 *
+	 * @param statement statement for the historical fixture
+	 * @throws SQLException         if schema restoration fails
+	 * @throws NullPointerException if statement is null
+	 */
+	public static void removeVersion46Objects(Statement statement) throws SQLException {
+		Objects.requireNonNull(statement, "statement");
+		removeVersion47Objects(statement);
+		List<String> originalNames = List.of("trg_master_capture_source_questions_insert",
+				"trg_master_capture_source_questions_update", "trg_master_capture_shared_question_contexts_insert",
+				"trg_master_capture_shared_question_contexts_update",
+				"trg_master_capture_shared_question_context_regions_insert",
+				"trg_master_capture_shared_question_context_regions_delete",
+				"trg_master_capture_shared_question_context_images_insert",
+				"trg_master_capture_shared_question_context_images_delete",
+				"trg_master_capture_shared_question_context_content_parts_insert",
+				"trg_master_capture_shared_question_context_content_parts_delete",
+				"trg_master_capture_question_images_update");
+		String migration;
+		try {
+			migration = SqlResourceLoader.load("/db/migration-v39-to-v40.sql");
+		} catch (IOException failure) {
+			throw new SQLException("Cannot load original master capture guards", failure);
+		}
+		Map<String, String> originals = new HashMap<>();
+		for (String fragment : SqlScriptExecutor.splitStatements(migration)) {
+			int start = fragment.lastIndexOf("CREATE TRIGGER ");
+			if (start < 0) {
+				continue;
+			}
+			String sql = fragment.substring(start).strip();
+			String heading = sql.lines().findFirst().orElse("");
+			if (!heading.startsWith("CREATE TRIGGER ")) {
+				continue;
+			}
+			String name = heading.substring("CREATE TRIGGER ".length()).strip();
+			if (originalNames.contains(name)) {
+				if (originals.putIfAbsent(name, sql) != null) {
+					throw new SQLException("Duplicate historical capture trigger: " + name);
+				}
+			}
+		}
+		if (originals.size() != originalNames.size()) {
+			throw new SQLException("Incomplete historical v46 trigger restoration");
+		}
+		for (String name : originalNames) {
+			statement.execute("DROP TRIGGER IF EXISTS " + name);
+			statement.execute(originals.get(name));
+		}
+		statement.execute("""
+				DROP TRIGGER IF EXISTS trg_master_graph_permit_validate
+				""");
+		statement.execute("""
+				DROP TRIGGER IF EXISTS trg_master_graph_permit_bind_owner
+				""");
+		statement.execute("""
+				DROP TABLE IF EXISTS master_contribution_graph_permits
+				""");
+	}
+
+	/**
+	 * Restores the original v39 Booklet applicability-review deletion guard in a
+	 * disposable historical schema fixture.
+	 *
+	 * <p>
+	 * This method must never be used against production data.
+	 *
+	 * @param statement statement for a disposable historical database
+	 * @throws SQLException         if the original trigger cannot be restored
+	 * @throws NullPointerException if statement is null
+	 */
+	public static void removeVersion47Objects(Statement statement) throws SQLException {
+		Objects.requireNonNull(statement, "statement");
+		String name = "trg_master_exam_structure_booklet_applicability_reviews_delete";
+		String migration;
+		try {
+			migration = SqlResourceLoader.load("/db/migration-v38-to-v39.sql");
+		} catch (IOException failure) {
+			throw new SQLException("Cannot load historical Booklet review guard", failure);
+		}
+		String original = null;
+		for (String fragment : SqlScriptExecutor.splitStatements(migration)) {
+			int start = fragment.lastIndexOf("CREATE TRIGGER ");
+			if (start < 0) {
+				continue;
+			}
+			String sql = fragment.substring(start).strip();
+			String heading = sql.lines().findFirst().orElse("");
+			if (!heading.equals("CREATE TRIGGER " + name)) {
+				continue;
+			}
+			if (original != null) {
+				throw new SQLException("Duplicate original Booklet review guard");
+			}
+			original = sql;
+		}
+		if (original == null) {
+			throw new SQLException("Original Booklet review guard was not found");
+		}
+		statement.execute("DROP TRIGGER IF EXISTS " + name);
+		statement.execute(original);
 	}
 
 	private static void dropAssignmentTriggers(Statement statement, String pattern) throws SQLException {

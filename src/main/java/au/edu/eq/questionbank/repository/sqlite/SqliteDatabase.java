@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 37;
+	private static final int LATEST_SCHEMA_VERSION = 47;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -845,6 +845,77 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v36-to-v37.sql", 37);
 			return 37;
 		}
+		if (version == 37) {
+
+			// Version 38 enforces one active assignment per Exam and
+			// introduces immutable, audited closure evidence.
+			executeMigration(connection, "/db/migration-v37-to-v38.sql", 38);
+			return 38;
+		}
+		if (version == 38) {
+
+			// Version 39 protects master Exam structure and source
+			// document relationships during active assignments.
+			executeMigration(connection, "/db/migration-v38-to-v39.sql", 39);
+			return 39;
+		}
+		if (version == 39) {
+
+			// Version 40 protects the master capture graph and verifies
+			// reconciled-return closure evidence.
+			executeMigration(connection, "/db/migration-v39-to-v40.sql", 40);
+			return 40;
+		}
+		if (version == 40) {
+
+			// Version 41 provides reviewed Question/Answer scalar permits.
+			executeMigration(connection, "/db/migration-v40-to-v41.sql", 41);
+			return 41;
+		}
+		if (version == 41) {
+
+			// Version 42 adds transaction-scoped, owner-specific PDF-region
+			// permits without changing managed PDF bytes.
+			executeMigration(connection, "/db/migration-v41-to-v42.sql", 42);
+			return 42;
+		}
+		if (version == 42) {
+
+			// Version 43 retains authenticated contributor receipt
+			// acknowledgements and accepted master state separately
+			// from the immutable assignment baseline and local work.
+			executeMigration(connection, "/db/migration-v42-to-v43.sql", 43);
+			return 43;
+		}
+		if (version == 43) {
+
+			// Version 44 permits reviewed Question content-part changes
+			// under the same transaction-scoped authority as PDF regions.
+			executeMigration(connection, "/db/migration-v43-to-v44.sql", 44);
+			return 44;
+		}
+		if (version == 44) {
+
+			// Version 45 permits new embedded Question image rows only
+			// while the exact reviewed parent Question region permit
+			// is active. Existing image replacement remains forbidden.
+			executeMigration(connection, "/db/migration-v44-to-v45.sql", 45);
+			return 45;
+		}
+		if (version == 45) {
+
+			// Version 46 permits transaction-scoped Source Question and
+			// Shared Context application, and reviewed Question PNG replacement.
+			executeMigration(connection, "/db/migration-v45-to-v46.sql", 46);
+			return 46;
+		}
+		if (version == 46) {
+
+			// Preserve automatic applicability-review invalidation while
+			// reviewed capture writes are authorised on the locked master.
+			executeMigration(connection, "/db/migration-v46-to-v47.sql", 47);
+			return 47;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -1201,6 +1272,44 @@ public final class SqliteDatabase {
 		}
 		if (version >= 37) {
 			verifyVersion37ContributionApplicationSchema(connection);
+		}
+		if (version >= 38) {
+			verifyVersion38AssignmentLifecycleSchema(connection);
+		}
+		if (version >= 39) {
+			verifyVersion39MasterExamStructureSchema(connection, version);
+		}
+		if (version == 40) {
+			verifyVersion40MasterCaptureSchema(connection);
+		}
+		if (version >= 41) {
+			verifyVersion41MasterContributionScalarSchema(connection, version);
+		}
+		if (version >= 42) {
+			verifyVersion42MasterRegionSchema(connection);
+		}
+		if (version >= 43) {
+			verifyVersion43ContributorReceiptSchema(connection);
+		}
+		if (version >= 46) {
+			verifyVersion46MasterGraphSchema(connection);
+			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
+					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql", "/db/migration-v41-to-v42.sql",
+					"/db/migration-v43-to-v44.sql", "/db/migration-v44-to-v45.sql", "/db/migration-v45-to-v46.sql");
+		} else if (version >= 45) {
+			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
+					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql", "/db/migration-v41-to-v42.sql",
+					"/db/migration-v43-to-v44.sql", "/db/migration-v44-to-v45.sql");
+		} else if (version >= 44) {
+			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
+					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql", "/db/migration-v41-to-v42.sql",
+					"/db/migration-v43-to-v44.sql");
+		} else if (version >= 42) {
+			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
+					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql", "/db/migration-v41-to-v42.sql");
+		} else if (version >= 41) {
+			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
+					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql");
 		}
 	}
 
@@ -1986,6 +2095,207 @@ public final class SqliteDatabase {
 		}
 		SqliteMigrationTriggerVerifier.verify(connection, "trg_contribution_application_", "contribution application",
 				"/db/migration-v36-to-v37.sql");
+	}
+
+	private void verifyVersion38AssignmentLifecycleSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "exam_work_assignment_exam_locks",
+				List.of(column("exam_portable_id", true, 1), column("assignment_id", true, 0)),
+				List.of(foreignKey("assignment_id", "exam_work_assignment_states", "assignment_id")),
+				List.of(List.of("assignment_id")));
+		verifyTableSchema(connection, "exam_work_assignment_closures",
+				List.of(column("assignment_id", true, 1), column("closed_state", true, 0),
+						column("closure_kind", true, 0), column("reason", true, 0), column("closed_at", true, 0),
+						column("return_package_id", false, 0)),
+				List.of(foreignKey("assignment_id", "exam_work_assignments", "assignment_id"),
+						foreignKey("return_package_id", "contribution_intake_packages", "package_id")),
+				List.of());
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_master_assignment_", "master assignment lifecycle",
+				"/db/migration-v37-to-v38.sql");
+
+		// An active state must have exactly its own Exam lock.
+		// Terminal states must not retain an Exam lock.
+		try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery("""
+				SELECT 1
+				FROM exam_work_assignment_states states
+				JOIN exam_work_assignments assignments
+				    ON assignments.assignment_id =
+				       states.assignment_id
+				LEFT JOIN exam_work_assignment_exam_locks locks
+				    ON locks.assignment_id =
+				       states.assignment_id
+				WHERE (
+				    states.state = 'ACTIVE'
+				    AND (
+				        locks.assignment_id IS NULL
+				        OR locks.exam_portable_id <>
+				           assignments.exam_portable_id
+				    )
+				)
+				OR (
+				    states.state <> 'ACTIVE'
+				    AND locks.assignment_id IS NOT NULL
+				)
+				LIMIT 1
+				""")) {
+			if (result.next()) {
+				throw new SQLException("Assignment lifecycle has inconsistent Exam locks");
+			}
+		}
+
+		// Each terminal transition must have matching closure evidence.
+		// No active assignment may already have a closure record.
+		try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery("""
+				SELECT 1
+				FROM exam_work_assignment_states states
+				LEFT JOIN exam_work_assignment_closures closures
+				    ON closures.assignment_id =
+				       states.assignment_id
+				WHERE (
+				    states.state = 'ACTIVE'
+				    AND closures.assignment_id IS NOT NULL
+				)
+				OR (
+				    states.state <> 'ACTIVE'
+				    AND (
+				        closures.assignment_id IS NULL
+				        OR closures.closed_state <> states.state
+				    )
+				)
+				LIMIT 1
+				""")) {
+			if (result.next()) {
+				throw new SQLException("Assignment lifecycle has inconsistent closure evidence");
+			}
+		}
+	}
+
+	private void verifyVersion39MasterExamStructureSchema(Connection connection, int version) throws SQLException {
+		if (version >= 47) {
+			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_exam_structure_", "master Exam structure",
+					"/db/migration-v38-to-v39.sql", "/db/migration-v46-to-v47.sql");
+		} else {
+			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_exam_structure_", "master Exam structure",
+					"/db/migration-v38-to-v39.sql");
+		}
+	}
+
+	private void verifyVersion40MasterCaptureSchema(Connection connection) throws SQLException {
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
+				"/db/migration-v39-to-v40.sql");
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_master_return_", "master return reconciliation",
+				"/db/migration-v39-to-v40.sql");
+	}
+
+	private void verifyVersion41MasterContributionScalarSchema(Connection connection, int version) throws SQLException {
+		verifyTableSchema(connection, "master_contribution_write_permits",
+				List.of(column("singleton_id", false, 1), column("review_id", true, 0), column("record_type", true, 0),
+						column("record_id", true, 0), column("operation", true, 0), column("exam_local_id", true, 0)),
+				List.of(foreignKey("review_id", "contribution_application_batches", "review_id"),
+						foreignKey("exam_local_id", "exams", "id")),
+				List.of());
+		verifyTableSchema(connection, "contribution_application_entity_mappings",
+				List.of(column("review_id", true, 1), column("record_type", true, 2), column("record_id", true, 3),
+						column("canonical_record_id", true, 0), column("local_id", true, 0)),
+				List.of(), List.of());
+		if (!hasExactCompositeForeignKey(connection, "master_contribution_write_permits",
+				List.of("review_id", "record_type", "record_id"), "contribution_review_decisions",
+				List.of("review_id", "record_type", "record_id"))) {
+			throw new SQLException("Master write permit review foreign key is missing");
+		}
+		if (!hasExactCompositeForeignKey(connection, "contribution_application_entity_mappings",
+				List.of("review_id", "record_type", "record_id"), "contribution_application_results",
+				List.of("review_id", "record_type", "record_id"))) {
+			throw new SQLException("Contribution canonical mapping foreign key is missing");
+		}
+
+		// Application permits and canonical mappings remain protected
+		// by the original v41 triggers in every subsequent schema version.
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_master_application_", "master contribution application",
+				"/db/migration-v40-to-v41.sql");
+
+		// Later migrations replace selected capture guards. Reconstruct
+		// the exact trigger definitions for the schema version being verified.
+		if (version >= 46) {
+			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
+					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql", "/db/migration-v41-to-v42.sql",
+					"/db/migration-v43-to-v44.sql", "/db/migration-v44-to-v45.sql", "/db/migration-v45-to-v46.sql");
+		} else if (version >= 45) {
+			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
+					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql", "/db/migration-v41-to-v42.sql",
+					"/db/migration-v43-to-v44.sql", "/db/migration-v44-to-v45.sql");
+		} else if (version >= 44) {
+			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
+					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql", "/db/migration-v41-to-v42.sql",
+					"/db/migration-v43-to-v44.sql");
+		} else if (version >= 42) {
+			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
+					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql", "/db/migration-v41-to-v42.sql");
+		} else {
+			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
+					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql");
+		}
+	}
+
+	private void verifyVersion42MasterRegionSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "master_contribution_region_permits",
+				List.of(column("singleton_id", false, 1), column("review_id", true, 0), column("record_type", true, 0),
+						column("record_id", true, 0), column("exam_local_id", true, 0),
+						column("owner_local_id", true, 0)),
+				List.of(foreignKey("exam_local_id", "exams", "id")), List.of());
+		if (!hasExactCompositeForeignKey(connection, "master_contribution_region_permits",
+				List.of("review_id", "record_type", "record_id"), "contribution_review_decisions",
+				List.of("review_id", "record_type", "record_id"))) {
+			throw new SQLException("Master PDF-region permit review foreign key is missing");
+		}
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_master_region_", "master PDF-region authorisation",
+				"/db/migration-v41-to-v42.sql");
+		try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery("""
+				SELECT COUNT(*)
+				FROM master_contribution_region_permits
+				""")) {
+			if (!result.next() || result.getLong(1) != 0) {
+				throw new SQLException("Unreleased master PDF-region permit");
+			}
+		}
+	}
+
+	private void verifyVersion43ContributorReceiptSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "contributor_receipt_acknowledgements",
+				List.of(column("receipt_package_id", true, 1), column("return_package_id", true, 0),
+						column("assignment_id", true, 0), column("review_id", true, 0),
+						column("master_installation_id", true, 0), column("archive_sha256", true, 0),
+						column("outcomes_jsonl", true, 0), column("master_records_jsonl", true, 0),
+						column("acknowledged_at", true, 0)),
+				List.of(foreignKey("return_package_id", "contributor_return_packages", "package_id"),
+						foreignKey("assignment_id", "contributor_assignment_sessions", "assignment_id")),
+				List.of(List.of("return_package_id")));
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_contributor_receipt_ack_",
+				"contributor receipt acknowledgement", "/db/migration-v42-to-v43.sql");
+	}
+
+	private void verifyVersion46MasterGraphSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "master_contribution_graph_permits",
+				List.of(column("singleton_id", false, 1), column("review_id", true, 0), column("record_type", true, 0),
+						column("record_id", true, 0), column("operation", true, 0), column("exam_local_id", true, 0),
+						column("owner_local_id", false, 0)),
+				List.of(foreignKey("review_id", "contribution_application_batches", "review_id"),
+						foreignKey("exam_local_id", "exams", "id")),
+				List.of());
+		if (!hasExactCompositeForeignKey(connection, "master_contribution_graph_permits",
+				List.of("review_id", "record_type", "record_id"), "contribution_review_decisions",
+				List.of("review_id", "record_type", "record_id"))) {
+			throw new SQLException("Master graph permit review foreign key is missing");
+		}
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_master_graph_", "master graph authorisation",
+				"/db/migration-v45-to-v46.sql");
+		try (Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery("""
+				SELECT COUNT(*)
+				FROM master_contribution_graph_permits
+				""")) {
+			if (!rows.next() || rows.getLong(1) != 0) {
+				throw new SQLException("Unreleased master graph write permit");
+			}
+		}
 	}
 
 	private record ForeignKeyColumn(int sequence, String fromColumn, String targetColumn) {

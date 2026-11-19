@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.service.workpackage;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
@@ -10,22 +11,26 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import au.edu.eq.questionbank.ManagedAssetPublicationLock;
+import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableContentRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
-import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
+import au.edu.eq.questionbank.service.workpackage.MasterContributionApprovedImagePreparer.PreparedImage;
 import au.edu.eq.questionbank.service.workpackage.MasterContributionDecisionLedger.Choice;
 import au.edu.eq.questionbank.service.workpackage.MasterContributionDecisionLedger.RecordDecision;
 import au.edu.eq.questionbank.service.workpackage.MasterContributionDecisionLedger.RecordKey;
@@ -33,19 +38,23 @@ import au.edu.eq.questionbank.service.workpackage.MasterContributionDecisionLedg
 import au.edu.eq.questionbank.service.workpackage.MasterContributionReviewPlanner.ReviewStatus;
 
 /**
- * Atomically applies the supported subset of coordinator-reviewed
- * contributions.
+ * Applies coordinator-reviewed contributions to a locked master Exam.
  *
  * <p>
- * The initial implementation supports only existing QUESTION records whose sole
- * content change is question_text. Other queued record changes are rejected
- * before publication. Rejected and identical-skip decisions can be recorded
- * alongside supported Question updates.
+ * The application follows the single-active-assignment workflow. Current master
+ * identities, revisions and content are checked against immutable review
+ * evidence inside the authoritative transaction. Unsupported or divergent
+ * changes fail closed; no three-way merge is attempted.
  *
  * <p>
- * Domain mutations and terminal result evidence use one SQLite transaction.
- * Recorded revision and content evidence are rechecked after obtaining the
- * SQLite writer reservation. No managed assets are published by this class.
+ * The archive-aware path supports reviewed Question/Answer content, Source
+ * Questions, Shared Context graphs, ordered regions and embedded PNGs. Reviewed
+ * changes, canonical UUID mappings, terminal outcomes and assignment closure
+ * commit atomically.
+ *
+ * <p>
+ * External managed-asset publication is not performed here. The caller holds
+ * the shared managed-data publication lock for binary dependencies.
  */
 public final class MasterContributionApplicationCoordinator {
 
@@ -62,85 +71,57 @@ public final class MasterContributionApplicationCoordinator {
 	}
 
 	/**
-	 * Executes a complete recorded review or returns an idempotent replay.
+	 * Applies a reviewed contribution that needs no external binary content, or
+	 * replays an already committed review.
 	 *
-	 * <p>
-	 * No partial terminal application is permitted. A HOLD choice or a queued
-	 * unsupported entity/change rejects the entire operation. Existing master
-	 * revisions must exactly match the recorded review's revision and content
-	 * digest. Every successful Question update produces a fresh master revision,
-	 * which is committed with the result evidence.
-	 *
-	 * @param reviewId previously recorded coordinator review identity
-	 * @return terminal outcomes and whether this was a repeated execution
-	 * @throws SQLException         if review evidence, current master revisions or
-	 *                              database constraints prevent atomic application
-	 * @throws IOException          if stored portable content cannot be processed
+	 * @param reviewId recorded coordinator review UUID
+	 * @return committed application result
+	 * @throws SQLException         if review or master evidence is invalid
+	 * @throws IOException          if portable content processing fails
 	 * @throws NullPointerException if reviewId is null
 	 */
 	public ApplicationResult execute(UUID reviewId) throws SQLException, IOException {
+		return executeReviewed(reviewId, false, List.of(), List.of());
+	}
+
+	/**
+	 * Applies a reviewed contribution with its original verified binary archive.
+	 *
+	 * <p>
+	 * The managed-asset publication lock covers archive verification, the
+	 * preparation of approved Question and Shared Context PNGs, and the complete
+	 * authoritative application transaction.
+	 *
+	 * <p>
+	 * New Source Questions, Shared Contexts, Question and Answer content, approved
+	 * Question PNG creation/replacement and supported PDF regions commit together
+	 * with terminal outcomes and assignment closure.
+	 *
+	 * @param reviewId immutable coordinator review UUID
+	 * @param archive  original received contribution archive
+	 * @param layout   authoritative master managed-data layout
+	 * @return committed terminal result, including replay status
+	 * @throws SQLException         if review, dependency or master state is invalid
+	 * @throws IOException          if archive or binary evidence is invalid
+	 * @throws NullPointerException if any argument is null
+	 */
+	public ApplicationResult execute(UUID reviewId, Path archive, ManagedDataLayout layout)
+			throws SQLException, IOException {
 		Objects.requireNonNull(reviewId, "reviewId");
+		Objects.requireNonNull(archive, "archive");
+		Objects.requireNonNull(layout, "layout");
 		RecordedReview review = new MasterContributionDecisionLedger(database).find(reviewId)
 				.orElseThrow(() -> new SQLException("Unknown contribution review: " + reviewId));
-		List<ExchangeRecord> incoming = new MasterContributionIntake(database).proposedChanges(review.packageId());
-		Map<RecordKey, ExchangeRecord> proposedByKey = new HashMap<>();
-		for (ExchangeRecord record : incoming) {
-			RecordKey key = new RecordKey(record.recordType(), record.recordId());
-			if (proposedByKey.putIfAbsent(key, record) != null) {
-				throw new SQLException("Duplicate received proposal identity");
-			}
+		if (find(reviewId).isPresent()) {
+			return execute(reviewId);
 		}
-		if (proposedByKey.size() != review.decisions().size()) {
-			throw new SQLException("Review no longer matches its complete received proposal set");
-		}
-
-		// Reject unsupported work before taking the SQLite write reservation.
-		for (RecordDecision decision : review.decisions()) {
-			ExchangeRecord proposed = proposedByKey.get(decision.key());
-			if (proposed == null || !proposed.revisionId().equals(decision.proposedRevisionId())
-					|| !Objects.equals(proposed.baselineRevisionId(), decision.baselineRevisionId())) {
-				throw new SQLException("Review and immutable proposal evidence disagree");
-			}
-			if (decision.choice() == Choice.HOLD) {
-				throw new SQLException("Held contribution decisions cannot be applied");
-			}
-			if (decision.choice() == Choice.QUEUE_APPLY && (!"QUESTION".equals(decision.key().recordType())
-					|| decision.preliminaryStatus() != ReviewStatus.READY_UPDATE)) {
-				throw new SQLException("Only existing Question updates are supported");
-			}
-		}
-		try (Connection connection = database.openConnection()) {
-			connection.setAutoCommit(false);
-			try {
-				Optional<ApplicationResult> existing = find(connection, reviewId);
-				if (existing.isPresent()) {
-					ApplicationResult previous = existing.orElseThrow();
-					connection.commit();
-					return new ApplicationResult(previous.reviewId(), previous.packageId(), previous.completedAt(),
-							previous.outcomes(), true);
-				}
-				Instant completedAt = Instant.now();
-
-				// This INSERT acquires the SQLite writer reservation.
-				// No concurrent writer can alter master records between
-				// the subsequent revision checks and the final COMMIT.
-				insertBatch(connection, review, completedAt);
-				List<RecordOutcome> outcomes = new ArrayList<>();
-				for (RecordDecision decision : review.decisions()) {
-					RecordOutcome outcome = applyDecision(connection, decision, proposedByKey.get(decision.key()));
-					insertOutcome(connection, reviewId, outcome);
-					outcomes.add(outcome);
-				}
-				connection.commit();
-				return new ApplicationResult(reviewId, review.packageId(), completedAt, outcomes, false);
-			} catch (SQLException | IOException | RuntimeException failure) {
-				try {
-					connection.rollback();
-				} catch (SQLException rollbackFailure) {
-					failure.addSuppressed(rollbackFailure);
-				}
-				throw failure;
-			}
+		try (var publicationLock = ManagedAssetPublicationLock.acquire(layout.dataRoot())) {
+			publicationLock.requireNoPendingPublications();
+			new MasterContributionAssetPreflight(database, layout).verify(review.packageId(), archive);
+			List<PreparedImage> images = new MasterContributionApprovedImagePreparer(database).prepare(review, archive);
+			List<MasterContributionApprovedContextPreparer.PreparedContext> contexts = new MasterContributionApprovedContextPreparer(
+					database).prepare(review, archive);
+			return executeReviewed(reviewId, true, images, contexts);
 		}
 	}
 
@@ -159,44 +140,221 @@ public final class MasterContributionApplicationCoordinator {
 		}
 	}
 
-	private RecordOutcome applyDecision(Connection connection, RecordDecision decision, ExchangeRecord proposed)
+	private RecordOutcome applyDecision(Connection connection, UUID reviewId, long examId, RecordDecision decision,
+			ExchangeRecord proposed, Map<RecordKey, Long> localIds, Map<RecordKey, UUID> canonicalIds,
+			boolean allowPdfRegions, Map<RecordKey, RecordDecision> decisions, Map<RecordKey, ExchangeRecord> proposals,
+			Map<RecordKey, PreparedImage> images,
+			Map<RecordKey, MasterContributionApprovedContextPreparer.PreparedContext> contexts)
 			throws SQLException, IOException {
+		RecordKey key = decision.key();
 		if (decision.choice() == Choice.REJECT) {
-			return new RecordOutcome(decision.key(), Outcome.REJECTED, null);
+			return new RecordOutcome(key, Outcome.REJECTED, null);
 		}
-		ExchangeRecord current = requireCurrent(connection, decision);
-		requireFreshEvidence(decision, current);
 		if (decision.choice() == Choice.SKIP_IDENTICAL) {
+			ExchangeRecord current = requireCurrent(connection, decision);
+			requireFreshEvidence(decision, current);
 			if (!current.values().equals(proposed.values())) {
 				throw new SQLException("Master is no longer identical to skipped proposal");
 			}
-			return new RecordOutcome(decision.key(), Outcome.SKIPPED, current.revisionId());
+			localIds.put(key, requireLocalId(connection, key));
+			canonicalIds.put(key, current.recordId());
+			return new RecordOutcome(key, Outcome.SKIPPED, current.revisionId());
 		}
+		String type = key.recordType();
+		if ("QUESTION_IMAGE".equals(type)) {
 
-		// Only the Question text is currently supported. Classification,
-		// content parts, Question images and all other fields must match.
-		requireTextOnlyChange(current, proposed);
-		long localId = requireLocalId(connection, decision.key());
-		try (PreparedStatement update = connection.prepareStatement("""
-				UPDATE questions
-				SET question_text = ?
-				WHERE id = ?
-				""")) {
-			update.setString(1, proposed.values().path("question_text").asText());
-			update.setLong(2, localId);
-			if (SqliteDirectChanges.executeUpdate(update) != 1) {
-				throw new SQLException("Question update did not affect exactly one row");
+			// The parent Question already performed the approved image
+			// insertion or replacement under its scoped region permit.
+			Long localId = localIds.get(key);
+			if (localId == null || (decision.preliminaryStatus() != ReviewStatus.READY_NEW
+					&& decision.preliminaryStatus() != ReviewStatus.READY_UPDATE)) {
+				throw new SQLException("Question image was not applied by its approved parent");
+			}
+			ExchangeRecord actual = new SqlitePortableContentRepository(database)
+					.snapshot(connection, EntityType.QUESTION_IMAGE, localId).record();
+			ObjectNode expected = ((ObjectNode) proposed.values()).deepCopy();
+			UUID originalParent = UUID.fromString(expected.path("question_id").asText());
+			UUID canonicalParent = canonicalIds.get(new RecordKey("QUESTION", originalParent));
+			if (canonicalParent != null) {
+				expected.put("question_id", canonicalParent.toString());
+			}
+			if (!actual.values().equals(expected)) {
+				throw new SQLException("Applied Question image differs from approved content");
+			}
+			canonicalIds.put(key, actual.recordId());
+			return new RecordOutcome(key, Outcome.APPLIED, actual.revisionId());
+		}
+		if (decision.preliminaryStatus() == ReviewStatus.READY_UPDATE) {
+			ExchangeRecord current = requireCurrent(connection, decision);
+			requireFreshEvidence(decision, current);
+		}
+		MasterContributionScalarWriter.Applied applied;
+		if ("SOURCE_QUESTION".equals(type) || "SHARED_QUESTION_CONTEXT".equals(type)) {
+			applied = new MasterContributionGraphWriter(database).apply(connection, reviewId, examId, decision,
+					proposed, contexts);
+		} else {
+			applied = new MasterContributionScalarWriter(database).apply(connection, reviewId, examId, decision,
+					proposed, localIds, canonicalIds, allowPdfRegions, decisions, proposals, images);
+		}
+		localIds.put(key, applied.localId());
+		canonicalIds.put(key, applied.canonicalId());
+		return new RecordOutcome(key, Outcome.APPLIED, applied.revisionId());
+	}
+
+	private ApplicationResult executeReviewed(UUID reviewId, boolean allowPdfRegions,
+			List<PreparedImage> preparedImages,
+			List<MasterContributionApprovedContextPreparer.PreparedContext> preparedContexts)
+			throws SQLException, IOException {
+		Objects.requireNonNull(reviewId, "reviewId");
+		Objects.requireNonNull(preparedImages, "preparedImages");
+		Objects.requireNonNull(preparedContexts, "preparedContexts");
+		RecordedReview review = new MasterContributionDecisionLedger(database).find(reviewId)
+				.orElseThrow(() -> new SQLException("Unknown contribution review: " + reviewId));
+		List<ExchangeRecord> incoming = new MasterContributionIntake(database).proposedChanges(review.packageId());
+		Map<RecordKey, ExchangeRecord> proposedByKey = new HashMap<>();
+		for (ExchangeRecord proposed : incoming) {
+			RecordKey key = new RecordKey(proposed.recordType(), proposed.recordId());
+			if (proposedByKey.putIfAbsent(key, proposed) != null) {
+				throw new SQLException("Duplicate received proposal identity");
 			}
 		}
-		ExchangeRecord applied = new SqlitePortableContentRepository(database)
-				.snapshot(connection, EntityType.QUESTION, localId).record();
-		if (!applied.values().equals(proposed.values())) {
-			throw new SQLException("Applied Question content differs from approved proposal");
+		if (proposedByKey.size() != review.decisions().size()) {
+			throw new SQLException("Review does not match complete proposal set");
 		}
-		if (applied.revisionId().equals(current.revisionId())) {
-			throw new SQLException("Question mutation did not advance master revision");
+		Map<RecordKey, RecordDecision> decisionsByKey = new HashMap<>();
+		for (RecordDecision decision : review.decisions()) {
+			if (decisionsByKey.putIfAbsent(decision.key(), decision) != null) {
+				throw new SQLException("Duplicate coordinator decision");
+			}
+			ExchangeRecord proposed = proposedByKey.get(decision.key());
+			if (proposed == null || !proposed.revisionId().equals(decision.proposedRevisionId())
+					|| !Objects.equals(proposed.baselineRevisionId(), decision.baselineRevisionId())) {
+				throw new SQLException("Review and immutable proposal evidence disagree");
+			}
+			if (decision.choice() == Choice.HOLD) {
+				throw new SQLException("Held decisions cannot be applied");
+			}
+			if (decision.choice() == Choice.QUEUE_APPLY) {
+				String type = decision.key().recordType();
+				boolean supported = switch (type) {
+				case "SOURCE_QUESTION", "SHARED_QUESTION_CONTEXT", "QUESTION", "ANSWER", "QUESTION_IMAGE" -> true;
+				default -> false;
+				};
+				boolean supportedStatus = decision.preliminaryStatus() == ReviewStatus.READY_NEW
+						|| decision.preliminaryStatus() == ReviewStatus.READY_UPDATE;
+				if (!supported || !supportedStatus) {
+					throw new SQLException("Unsupported queued contribution record: " + type);
+				}
+			}
 		}
-		return new RecordOutcome(decision.key(), Outcome.APPLIED, applied.revisionId());
+		Map<RecordKey, PreparedImage> imagesByKey = new HashMap<>();
+		for (PreparedImage image : preparedImages) {
+			RecordKey key = new RecordKey("QUESTION_IMAGE", image.imageId());
+			if (imagesByKey.putIfAbsent(key, image) != null) {
+				throw new SQLException("Duplicate prepared Question image");
+			}
+		}
+		Map<RecordKey, MasterContributionApprovedContextPreparer.PreparedContext> contextsByKey = new HashMap<>();
+		for (var context : preparedContexts) {
+			RecordKey key = new RecordKey("SHARED_QUESTION_CONTEXT", context.proposal().recordId());
+			if (contextsByKey.putIfAbsent(key, context) != null) {
+				throw new SQLException("Duplicate prepared Shared Context");
+			}
+		}
+		List<RecordDecision> ordered = new ArrayList<>(review.decisions());
+
+		// Apply dependencies before Questions, and Answers after Questions.
+		ordered.sort(Comparator.comparingInt(decision -> switch (decision.key().recordType()) {
+		case "SOURCE_QUESTION" -> 0;
+		case "SHARED_QUESTION_CONTEXT" -> 1;
+		case "QUESTION" -> 2;
+		case "QUESTION_IMAGE" -> 3;
+		case "ANSWER" -> 4;
+		default -> 5;
+		}));
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				Optional<ApplicationResult> previous = find(connection, reviewId);
+				if (previous.isPresent()) {
+					requireReconciledClosure(connection, review.packageId());
+					ApplicationResult original = previous.orElseThrow();
+					connection.commit();
+					return new ApplicationResult(original.reviewId(), original.packageId(), original.completedAt(),
+							original.outcomes(), true);
+				}
+				Set<RecordKey> expectedImages = new HashSet<>();
+				Set<RecordKey> expectedContexts = new HashSet<>();
+				for (RecordDecision decision : review.decisions()) {
+					if (decision.choice() != Choice.QUEUE_APPLY) {
+						continue;
+					}
+					if ("QUESTION_IMAGE".equals(decision.key().recordType())) {
+						expectedImages.add(decision.key());
+					}
+					if ("SHARED_QUESTION_CONTEXT".equals(decision.key().recordType())) {
+						expectedContexts.add(decision.key());
+					}
+				}
+				if (!expectedImages.equals(imagesByKey.keySet())) {
+					throw new SQLException("Prepared Question image set differs from review");
+				}
+				if (!expectedContexts.equals(contextsByKey.keySet())) {
+					throw new SQLException("Prepared Shared Context set differs from review");
+				}
+				if (!allowPdfRegions && (!expectedImages.isEmpty() || !expectedContexts.isEmpty())) {
+					throw new SQLException("Reviewed binary graph requires verified archive");
+				}
+				Instant completedAt = Instant.now();
+
+				// Begin the authoritative application transaction. All
+				// outcomes, mappings and closure must commit together.
+				insertBatch(connection, review, completedAt);
+				UUID assignmentId = requireOneActiveReturn(connection, review.packageId());
+				long examId = requireAssignedExamLocalId(connection, review.packageId());
+				Map<RecordKey, Long> localIds = new HashMap<>();
+				Map<RecordKey, UUID> canonicalIds = new HashMap<>();
+				List<RecordOutcome> outcomes = new ArrayList<>();
+				for (RecordDecision decision : ordered) {
+					RecordOutcome outcome = applyDecision(connection, reviewId, examId, decision,
+							proposedByKey.get(decision.key()), localIds, canonicalIds, allowPdfRegions, decisionsByKey,
+							proposedByKey, imagesByKey, contextsByKey);
+					insertOutcome(connection, reviewId, outcome);
+					if (outcome.outcome() != Outcome.REJECTED) {
+						insertCanonicalMapping(connection, reviewId, decision.key(), canonicalIds.get(decision.key()),
+								localIds.get(decision.key()));
+					}
+					outcomes.add(outcome);
+				}
+				outcomes.sort(Comparator.comparing((RecordOutcome outcome) -> outcome.key().recordType())
+						.thenComparing(outcome -> outcome.key().recordId().toString()));
+
+				// No temporary write authorisation may survive closure.
+				try (PreparedStatement statement = connection.prepareStatement("""
+						SELECT
+						    (SELECT COUNT(*)
+						     FROM master_contribution_write_permits)
+						  + (SELECT COUNT(*)
+						     FROM master_contribution_region_permits)
+						  + (SELECT COUNT(*)
+						     FROM master_contribution_graph_permits)
+						"""); ResultSet result = statement.executeQuery()) {
+					if (!result.next() || result.getLong(1) != 0) {
+						throw new SQLException("Contribution write permit remains active");
+					}
+				}
+				insertReconciledClosure(connection, assignmentId, review.packageId(), reviewId, completedAt);
+				connection.commit();
+				return new ApplicationResult(reviewId, review.packageId(), completedAt, outcomes, false);
+			} catch (SQLException | IOException | RuntimeException failure) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					failure.addSuppressed(rollbackFailure);
+				}
+				throw failure;
+			}
+		}
 	}
 
 	private Optional<ApplicationResult> find(Connection connection, UUID reviewId) throws SQLException {
@@ -254,6 +412,32 @@ public final class MasterContributionApplicationCoordinator {
 		}
 	}
 
+	private void insertCanonicalMapping(Connection connection, UUID reviewId, RecordKey key, UUID canonicalId,
+			Long localId) throws SQLException {
+		if (canonicalId == null || localId == null || localId < 1) {
+			throw new SQLException("Accepted contribution has no canonical master mapping");
+		}
+		try (PreparedStatement statement = connection.prepareStatement("""
+				INSERT INTO contribution_application_entity_mappings (
+				    review_id,
+				    record_type,
+				    record_id,
+				    canonical_record_id,
+				    local_id
+				)
+				VALUES (?, ?, ?, ?, ?)
+				""")) {
+			statement.setString(1, reviewId.toString());
+			statement.setString(2, key.recordType());
+			statement.setString(3, key.recordId().toString());
+			statement.setString(4, canonicalId.toString());
+			statement.setLong(5, localId);
+			if (statement.executeUpdate() != 1) {
+				throw new SQLException("Canonical contribution mapping was not recorded");
+			}
+		}
+	}
+
 	private void insertOutcome(Connection connection, UUID reviewId, RecordOutcome outcome) throws SQLException {
 		try (PreparedStatement insert = connection.prepareStatement("""
 				INSERT INTO contribution_application_results (
@@ -271,6 +455,29 @@ public final class MasterContributionApplicationCoordinator {
 		}
 	}
 
+	private void insertReconciledClosure(Connection connection, UUID assignmentId, UUID packageId, UUID reviewId,
+			Instant completedAt) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				INSERT INTO exam_work_assignment_closures (
+				    assignment_id,
+				    closed_state,
+				    closure_kind,
+				    reason,
+				    closed_at,
+				    return_package_id
+				)
+				VALUES (?, 'COMPLETE', 'RECONCILED_RETURN', ?, ?, ?)
+				""")) {
+			statement.setString(1, assignmentId.toString());
+			statement.setString(2, "Reconciled reviewed return " + reviewId);
+			statement.setString(3, completedAt.toString());
+			statement.setString(4, packageId.toString());
+			if (statement.executeUpdate() != 1) {
+				throw new SQLException("Reconciled assignment closure was not recorded");
+			}
+		}
+	}
+
 	private String recordDigest(ExchangeRecord record) throws IOException {
 		ByteArrayOutputStream output = new ByteArrayOutputStream();
 		new ExamWorkJsonlCodec().writeRecords(List.of(record), output);
@@ -278,6 +485,39 @@ public final class MasterContributionApplicationCoordinator {
 			return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(output.toByteArray()));
 		} catch (NoSuchAlgorithmException failure) {
 			throw new IllegalStateException("SHA-256 is unavailable", failure);
+		}
+	}
+
+	private long requireAssignedExamLocalId(Connection connection, UUID packageId) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT identity.local_id
+				FROM contribution_intake_packages packet
+				JOIN exam_work_assignments assignment
+				  ON assignment.assignment_id =
+				     packet.assignment_id
+				JOIN exam_work_assignment_exam_locks locked
+				  ON locked.assignment_id =
+				     assignment.assignment_id
+				 AND locked.exam_portable_id =
+				     assignment.exam_portable_id
+				JOIN portable_entity_identities identity
+				  ON identity.portable_id =
+				     assignment.exam_portable_id
+				 AND identity.entity_type = 'EXAM'
+				 AND identity.retired = 0
+				WHERE packet.package_id = ?
+				""")) {
+			statement.setString(1, packageId.toString());
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new SQLException("Received return has no locked master Exam");
+				}
+				long examId = result.getLong(1);
+				if (examId < 1 || result.next()) {
+					throw new SQLException("Invalid master Exam assignment identity");
+				}
+				return examId;
+			}
 		}
 	}
 
@@ -315,23 +555,66 @@ public final class MasterContributionApplicationCoordinator {
 				.orElseThrow(() -> new SQLException("Master portable entity is missing: " + key)).localId();
 	}
 
-	private void requireTextOnlyChange(ExchangeRecord current, ExchangeRecord proposed) throws SQLException {
-		if (!(current.values() instanceof ObjectNode currentValues)
-				|| !(proposed.values() instanceof ObjectNode proposedValues)) {
-			throw new SQLException("Question values are not portable JSON objects");
+	private UUID requireOneActiveReturn(Connection connection, UUID packageId) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT packet.assignment_id
+				FROM contribution_intake_packages packet
+				JOIN exam_work_assignment_states states
+				  ON states.assignment_id = packet.assignment_id
+				JOIN exam_work_assignments assignment
+				  ON assignment.assignment_id = packet.assignment_id
+				JOIN exam_work_assignment_exam_locks locks
+				  ON locks.assignment_id = packet.assignment_id
+				 AND locks.exam_portable_id =
+				     assignment.exam_portable_id
+				WHERE packet.package_id = ?
+				  AND packet.intake_status = 'READY_FOR_REVIEW'
+				  AND packet.return_number = 1
+				  AND packet.previous_package_id IS NULL
+				  AND states.state = 'ACTIVE'
+				  AND NOT EXISTS (
+				      SELECT 1
+				      FROM contribution_intake_packages competing
+				      WHERE competing.assignment_id = packet.assignment_id
+				        AND competing.package_id <> packet.package_id
+				  )
+				""")) {
+			statement.setString(1, packageId.toString());
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new SQLException("Return cannot be applied: the assignment is "
+							+ "closed, the return is held, or " + "another return remains unresolved");
+				}
+				UUID assignmentId = UUID.fromString(result.getString("assignment_id"));
+				if (result.next()) {
+					throw new SQLException("Duplicate active assignment reconciliation");
+				}
+				return assignmentId;
+			}
 		}
-		JsonNode proposedText = proposedValues.get("question_text");
-		JsonNode currentText = currentValues.get("question_text");
-		if (proposedText == null || !proposedText.isTextual() || currentText == null || !currentText.isTextual()
-				|| proposedText.equals(currentText)) {
-			throw new SQLException("Queued Question does not contain a text-only change");
-		}
-		ObjectNode originalOtherFields = currentValues.deepCopy();
-		ObjectNode proposedOtherFields = proposedValues.deepCopy();
-		originalOtherFields.remove("question_text");
-		proposedOtherFields.remove("question_text");
-		if (!originalOtherFields.equals(proposedOtherFields)) {
-			throw new SQLException("Queued Question includes unsupported content changes");
+	}
+
+	private void requireReconciledClosure(Connection connection, UUID packageId) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT 1
+				FROM contribution_intake_packages packet
+				JOIN exam_work_assignment_closures closure
+				  ON closure.assignment_id = packet.assignment_id
+				 AND closure.return_package_id = packet.package_id
+				JOIN exam_work_assignment_states states
+				  ON states.assignment_id = closure.assignment_id
+				WHERE packet.package_id = ?
+				  AND closure.closure_kind = 'RECONCILED_RETURN'
+				  AND closure.closed_state = 'COMPLETE'
+				  AND states.state = 'COMPLETE'
+				""")) {
+			statement.setString(1, packageId.toString());
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new SQLException(
+							"Previously applied review has no matching " + "reconciled assignment closure");
+				}
+			}
 		}
 	}
 
