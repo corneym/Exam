@@ -125,29 +125,43 @@ class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
 	@Test
 	void packageWorkflowMenusAreDiscoverable(FxRobot robot) {
 		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
-		Menu importMenu = menuBar.getMenus().stream().filter(menu -> "_Import".equals(menu.getText())).findFirst()
-				.orElseThrow();
-		Menu exportMenu = menuBar.getMenus().stream().filter(menu -> "E_xport".equals(menu.getText())).findFirst()
-				.orElseThrow();
+
 		Menu fileMenu = menuBar.getMenus().stream().filter(menu -> "_File".equals(menu.getText())).findFirst()
 				.orElseThrow();
-		MenuItem assignmentImport = importMenu.getItems().stream()
-				.filter(item -> "import-contributor-assignment".equals(item.getId())).findFirst().orElseThrow();
-		MenuItem snapshotExport = exportMenu.getItems().stream()
+
+		Menu importMenu = menuBar.getMenus().stream().filter(menu -> "_Import".equals(menu.getText())).findFirst()
+				.orElseThrow();
+
+		Menu exportMenu = menuBar.getMenus().stream().filter(menu -> "E_xport".equals(menu.getText())).findFirst()
+				.orElseThrow();
+
+		MenuItem packageImport = importMenu.getItems().stream()
+				.filter(item -> "import-subject-work-package".equals(item.getId())).findFirst().orElseThrow();
+
+		MenuItem subjectExport = exportMenu.getItems().stream()
 				.filter(item -> "export-subject-snapshot".equals(item.getId())).findFirst().orElseThrow();
+
 		MenuItem contributionExport = exportMenu.getItems().stream()
 				.filter(item -> "export-assignment-contribution".equals(item.getId())).findFirst().orElseThrow();
-		assertEquals("Import Contributor _Assignment...", assignmentImport.getText());
-		assertEquals("Export Working _Subject Snapshot...", snapshotExport.getText());
+
+		MenuItem receiptExport = exportMenu.getItems().stream()
+				.filter(item -> "export-import-receipt".equals(item.getId())).findFirst().orElseThrow();
+
+		assertEquals("Import _Subject / Work Package...", packageImport.getText());
+		assertEquals("Export Working _Subject Snapshot...", subjectExport.getText());
 		assertEquals("Export Assignment _Contribution...", contributionExport.getText());
+		assertEquals("Export _Import Receipt...", receiptExport.getText());
 
-		// An ordinary installation has no selected contributor assignment.
+		assertFalse(packageImport.isDisable());
+		assertFalse(subjectExport.isDisable());
+		assertFalse(receiptExport.isDisable());
 		assertTrue(contributionExport.isDisable());
-		assertFalse(snapshotExport.isDisable());
 
-		// Package exchange commands no longer clutter the File menu.
+		// The ordinary File menu must contain no developer-facing
+		// package comparison or redundant package import/export command.
 		assertFalse(fileMenu.getItems().stream().anyMatch(item -> item.getId() != null
 				&& (item.getId().contains("subject-snapshot") || item.getId().contains("contributor-assignment"))));
+
 		assertFalse(
 				fileMenu.getItems().stream().anyMatch(item -> "file-review-subject-snapshots".equals(item.getId())));
 	}

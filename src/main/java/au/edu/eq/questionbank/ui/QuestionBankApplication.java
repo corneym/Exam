@@ -1,15 +1,23 @@
 package au.edu.eq.questionbank.ui;
 
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -20,6 +28,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -27,6 +36,7 @@ import java.util.stream.Collectors;
 
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ApplicationPaths;
+import au.edu.eq.questionbank.ApplicationVersion;
 import au.edu.eq.questionbank.ConfigurationException;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.diagnostics.PerformanceCorpusCheckpointRecorder;
@@ -166,8 +176,18 @@ import au.edu.eq.questionbank.service.revision.RevisionGroupingMode;
 import au.edu.eq.questionbank.service.revision.RevisionPresentationPlanner;
 import au.edu.eq.questionbank.service.workpackage.ContributionExporter;
 import au.edu.eq.questionbank.service.workpackage.ContributorAssignmentDashboardContextResolver;
+import au.edu.eq.questionbank.service.workpackage.ExamWorkArchiveValidator;
+import au.edu.eq.questionbank.service.workpackage.ExamWorkJsonlCodec;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest;
+import au.edu.eq.questionbank.service.workpackage.ExchangeRecord;
+import au.edu.eq.questionbank.service.workpackage.MasterContributionApplicationCoordinator;
+import au.edu.eq.questionbank.service.workpackage.MasterContributionDecisionLedger;
+import au.edu.eq.questionbank.service.workpackage.MasterContributionIntake;
+import au.edu.eq.questionbank.service.workpackage.MasterContributionReceiptExporter;
+import au.edu.eq.questionbank.service.workpackage.MasterContributionReviewPlanner;
 import au.edu.eq.questionbank.service.workpackage.SqliteContributorAssignmentSessionRepository;
+import au.edu.eq.questionbank.service.workpackage.SubjectImportBackupGate;
+import au.edu.eq.questionbank.service.workpackage.SubjectImportSnapshotFingerprint;
 import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationPreviewService;
 import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationReview;
 import au.edu.eq.questionbank.service.workpackage.SubjectSnapshotExporter;
@@ -391,6 +411,7 @@ public class QuestionBankApplication extends Application {
 	private MenuItem contributionExportMenuItem;
 	private boolean contributionExportRunning;
 	private MenuItem subjectSnapshotExportMenuItem;
+	private boolean packageImportInProgress;
 
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
@@ -1293,6 +1314,21 @@ public class QuestionBankApplication extends Application {
 		questionCapturePane.discardCurrentSelectionForOwnershipLoss();
 	}
 
+	private void cleanupPreparedSubjectReview(PreparedSubjectReview prepared) {
+
+		try {
+			Files.deleteIfExists(prepared.masterArchive());
+			Files.deleteIfExists(prepared.directory());
+		} catch (IOException failure) {
+			showAlert(Alert.AlertType.ERROR, "Subject Review Cleanup",
+					"The temporary master review files could not be removed.",
+					failureMessage(failure) + "\n\nReview and remove this temporary directory "
+							+ "only after ensuring no import is running:\n" + prepared.directory());
+		} finally {
+			packageImportInProgress = false;
+		}
+	}
+
 	private void clearCaptureSelection(CaptureSelectionOwner owner) {
 		if (captureSelectionState.clear(owner)) {
 			pdfWorkspace.clearSelection();
@@ -1640,6 +1676,29 @@ public class QuestionBankApplication extends Application {
 
 		// Closing or dismissing the confirmation never performs structural correction.
 		return alert.showAndWait().orElse(cancelButton) == replaceButton;
+	}
+
+	private void confirmContributorAssignmentInstallation(Stage primaryStage, ApplicationConfig config, Path archive) {
+
+		ButtonType installButton = new ButtonType("Install Assignment", ButtonBar.ButtonData.OK_DONE);
+
+		Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+		confirmation.initOwner(primaryStage);
+		confirmation.setTitle("Import Contributor Assignment");
+		confirmation.setHeaderText("Install the supplied Exam and activate contributor mode?");
+
+		confirmation.setContentText("Package:\n" + archive.toAbsolutePath() + "\n\nContributor data directory:\n"
+				+ config.dataRoot() + "\n\nThe importer will install the assigned Exam, "
+				+ "PDFs, curriculum and immutable baseline." + "\n\nUse a separate contributor data directory, "
+				+ "not the authoritative coordinator database.");
+
+		confirmation.getButtonTypes().setAll(installButton, ButtonType.CANCEL);
+
+		if (confirmation.showAndWait().orElse(ButtonType.CANCEL) != installButton) {
+			return;
+		}
+
+		startContributorAssignmentInstallation(primaryStage, config, archive);
 	}
 
 	private boolean confirmCorpusDashboardExamCompletion() {
@@ -2170,21 +2229,32 @@ public class QuestionBankApplication extends Application {
 
 	private Menu createExportMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu exportMenu = createMenu("E_xport");
+
 		subjectSnapshotExportMenuItem = createMenuItem("Export Working _Subject Snapshot...",
 				() -> showExportWorkingSubjectSnapshot(primaryStage, config));
 		subjectSnapshotExportMenuItem.setId("export-subject-snapshot");
+
 		contributionExportMenuItem = createMenuItem("Export Assignment _Contribution...",
 				() -> showExportAssignmentContribution(primaryStage, config));
 		contributionExportMenuItem.setId("export-assignment-contribution");
+
+		MenuItem receiptExportItem = createMenuItem("Export _Import Receipt...",
+				() -> showExportImportReceipt(primaryStage, config));
+		receiptExportItem.setId("export-import-receipt");
+
 		revisionExportMenuItem = createMenuItem("_Revision HTML...",
 				() -> showRevisionExportDialog(primaryStage, config));
 		revisionExportMenuItem.setId("export-revision-html");
+
 		scormExportMenuItem = createMenuItem("Revision _SCORM...", () -> showScormExportDialog(primaryStage, config));
 		scormExportMenuItem.setId("export-revision-scorm");
-		exportMenu.getItems().setAll(subjectSnapshotExportMenuItem, contributionExportMenuItem, new SeparatorMenuItem(),
-				revisionExportMenuItem, scormExportMenuItem);
+
+		exportMenu.getItems().setAll(subjectSnapshotExportMenuItem, contributionExportMenuItem, receiptExportItem,
+				new SeparatorMenuItem(), revisionExportMenuItem, scormExportMenuItem);
+
 		subjectSnapshotExportMenuItem.setDisable(activeAssignmentContext != null);
 		contributionExportMenuItem.setDisable(activeAssignmentContext == null);
+
 		return exportMenu;
 	}
 
@@ -2234,10 +2304,13 @@ public class QuestionBankApplication extends Application {
 
 	private Menu createImportMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu importMenu = createMenu("_Import");
-		MenuItem assignmentItem = createMenuItem("Import Contributor _Assignment...",
-				() -> showImportContributorAssignment(primaryStage, config));
-		assignmentItem.setId("import-contributor-assignment");
-		importMenu.getItems().add(assignmentItem);
+
+		MenuItem packageItem = createMenuItem("Import _Subject / Work Package...",
+				() -> showImportSubjectWorkPackage(primaryStage, config));
+		packageItem.setId("import-subject-work-package");
+
+		importMenu.getItems().setAll(packageItem);
+
 		return importMenu;
 	}
 
@@ -2779,6 +2852,33 @@ public class QuestionBankApplication extends Application {
 					+ " is recorded as having a shared context, but no shared context could be found");
 		}
 		return matchingContext;
+	}
+
+	private long findMasterSubjectId(ApplicationConfig config, String subjectName) throws SQLException {
+
+		try (Connection connection = new SqliteDatabase(config.databasePath()).openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT id
+						FROM subjects
+						WHERE subject_name = ?
+						""")) {
+
+			statement.setString(1, subjectName);
+
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new SQLException("The coordinator database has no Subject named " + subjectName
+							+ ". Create the Subject before importing " + "a snapshot of its records.");
+				}
+
+				long id = result.getLong(1);
+				if (result.next()) {
+					throw new SQLException("The coordinator Subject identity is ambiguous.");
+				}
+
+				return id;
+			}
+		}
 	}
 
 	private void finishContributorAssignmentInstallation(long request) {
@@ -3816,6 +3916,84 @@ public class QuestionBankApplication extends Application {
 		setViewerMode(true);
 	}
 
+	private void presentCoordinatorContributionReview(Stage primaryStage, ApplicationConfig config, Path archive,
+			ContributionReviewData data) {
+
+		MasterContributionReviewDialog dialog = new MasterContributionReviewDialog(primaryStage, data.plan(),
+				data.baseline(), data.proposals(), data.assignment().examPortableId());
+
+		dialog.showAndWait();
+
+		if (!dialog.approved()) {
+			packageImportInProgress = false;
+			return;
+		}
+
+		Map<MasterContributionDecisionLedger.RecordKey, MasterContributionDecisionLedger.Choice> decisions = dialog
+				.decisions();
+
+		TextInputDialog reason = new TextInputDialog();
+		reason.initOwner(primaryStage);
+		reason.setTitle("Record Coordinator Review");
+		reason.setHeaderText("Explain the approved reconciliation decisions");
+		reason.setContentText("Review rationale:");
+
+		Optional<String> note = reason.showAndWait();
+
+		if (note.isEmpty()) {
+			packageImportInProgress = false;
+			return;
+		}
+
+		String explanation = note.get().strip();
+		if (explanation.isEmpty() || explanation.length() > 4000) {
+			packageImportInProgress = false;
+			showAlert(Alert.AlertType.ERROR, "Coordinator Review", "A valid review rationale is required.",
+					"Enter between 1 and 4000 characters.");
+			return;
+		}
+
+		DirectoryChooser backupChooser = new DirectoryChooser();
+		backupChooser.setTitle("Select Destination for Verified Full Backup");
+
+		File backupDirectory = backupChooser.showDialog(primaryStage);
+		if (backupDirectory == null) {
+			packageImportInProgress = false;
+			return;
+		}
+
+		long applyCount = decisions.values().stream()
+				.filter(choice -> choice == MasterContributionDecisionLedger.Choice.QUEUE_APPLY).count();
+		long skipCount = decisions.values().stream()
+				.filter(choice -> choice == MasterContributionDecisionLedger.Choice.SKIP_IDENTICAL).count();
+		long rejectCount = decisions.values().stream()
+				.filter(choice -> choice == MasterContributionDecisionLedger.Choice.REJECT).count();
+
+		Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+		confirmation.initOwner(primaryStage);
+		confirmation.setTitle("Apply Coordinator Reconciliation");
+		confirmation.setHeaderText("Commit reviewed changes and close this assignment?");
+
+		confirmation.setContentText("Assignment: " + data.assignment().assignmentId() + "\nPackage: "
+				+ data.receipt().received().packageId() + "\nQueue Apply: " + applyCount + "\nSkip Identical: "
+				+ skipCount + "\nReject: " + rejectCount + "\nFull backup destination: "
+				+ backupDirectory.getAbsolutePath() + "\n\nA verified full backup is required before "
+				+ "any contribution application." + "\n\nSuccessful reconciliation closes the assignment "
+				+ "and releases the master Exam lock." + "\nFurther contributor work requires a new assignment.");
+
+		ButtonType applyButton = new ButtonType("Apply Reviewed Contribution", ButtonBar.ButtonData.OK_DONE);
+
+		confirmation.getButtonTypes().setAll(applyButton, ButtonType.CANCEL);
+
+		if (confirmation.showAndWait().orElse(ButtonType.CANCEL) != applyButton) {
+			packageImportInProgress = false;
+			return;
+		}
+
+		startCoordinatorContributionApplication(primaryStage, config, archive, data.receipt().received().packageId(),
+				decisions, explanation, backupDirectory.toPath());
+	}
+
 	private Stage primaryStage() {
 		Window window = primaryWindow();
 		if (window instanceof Stage stage) {
@@ -4667,6 +4845,27 @@ public class QuestionBankApplication extends Application {
 		applicationBody.setCenter(workspaceSplitPane);
 	}
 
+	private String sha256Package(Path archive) throws IOException {
+		MessageDigest digest;
+
+		try {
+			digest = MessageDigest.getInstance("SHA-256");
+		} catch (NoSuchAlgorithmException failure) {
+			throw new IllegalStateException("SHA-256 is unavailable", failure);
+		}
+
+		try (InputStream input = Files.newInputStream(archive)) {
+			byte[] buffer = new byte[8192];
+			int count;
+
+			while ((count = input.read(buffer)) != -1) {
+				digest.update(buffer, 0, count);
+			}
+		}
+
+		return HexFormat.of().formatHex(digest.digest());
+	}
+
 	private void showAbout() {
 		String version = applicationVersion();
 		Alert alert = new Alert(Alert.AlertType.INFORMATION);
@@ -5317,6 +5516,100 @@ public class QuestionBankApplication extends Application {
 		startAssignmentContributionExport(primaryStage, config, assignmentId, destination);
 	}
 
+	private void showExportImportReceipt(Stage primaryStage, ApplicationConfig config) {
+
+		if (activeAssignmentContext != null || packageImportInProgress || contributionExportRunning
+				|| applicationBusyOverlay.isBusy()) {
+			return;
+		}
+
+		TextInputDialog reviewInput = new TextInputDialog();
+		reviewInput.initOwner(primaryStage);
+		reviewInput.setTitle("Export Import Receipt");
+		reviewInput.setHeaderText("Enter the Review ID of a committed coordinator reconciliation");
+		reviewInput.setContentText("Review UUID:");
+
+		Optional<String> entered = reviewInput.showAndWait();
+		if (entered.isEmpty()) {
+			return;
+		}
+
+		UUID reviewId;
+		try {
+			reviewId = UUID.fromString(entered.get().strip());
+		} catch (IllegalArgumentException failure) {
+			showAlert(Alert.AlertType.ERROR, "Export Import Receipt", "The Review ID is not a valid UUID.",
+					entered.get());
+			return;
+		}
+
+		FileChooser chooser = new FileChooser();
+		chooser.setTitle("Save Import Receipt");
+		chooser.setInitialFileName("import-receipt-" + reviewId + ".examwork");
+		chooser.getExtensionFilters()
+				.add(new FileChooser.ExtensionFilter("ExamWork receipt (*.examwork)", "*.examwork"));
+
+		File selected = chooser.showSaveDialog(primaryStage);
+		if (selected == null) {
+			return;
+		}
+
+		Path destination = selected.toPath().toAbsolutePath().normalize();
+
+		if (Files.exists(destination, LinkOption.NOFOLLOW_LINKS)
+				|| destination.startsWith(config.dataRoot().toAbsolutePath().normalize())) {
+
+			showAlert(Alert.AlertType.ERROR, "Export Import Receipt",
+					"Choose a new file outside the managed data directory.",
+					"Existing files and authoritative managed data " + "must not be overwritten.");
+			return;
+		}
+
+		Task<ReceiptExportData> task = new ApplicationBackgroundTask<>(() -> {
+			SqliteDatabase database = new SqliteDatabase(config.databasePath());
+
+			// Receipt contents come from the actual committed outcomes,
+			// not from a speculative or uncommitted review.
+			ExamWorkManifest manifest = new MasterContributionReceiptExporter(database).export(reviewId, destination);
+
+			return new ReceiptExportData(manifest, destination, sha256Package(destination));
+		});
+
+		Alert progress = new Alert(Alert.AlertType.INFORMATION);
+		progress.initOwner(primaryStage);
+		progress.setTitle("Exporting Import Receipt");
+		progress.setHeaderText("Verifying committed outcomes and producing the receipt");
+		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
+		progress.getButtonTypes().setAll(new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE));
+
+		task.setOnSucceeded(_ -> {
+			progress.close();
+			ReceiptExportData result = task.getValue();
+
+			showAlert(Alert.AlertType.INFORMATION, "Import Receipt Exported",
+					"The committed reconciliation receipt is ready.",
+					"Package: " + result.manifest().packageId() + "\nDestination: " + result.destination()
+							+ "\n\nSHA-256:\n" + result.sha256() + "\n\nProvide the contributor with the receipt file."
+							+ "\nConfirm its SHA-256 independently of " + "the package itself.");
+		});
+
+		task.setOnFailed(_ -> {
+			progress.close();
+			showAlert(Alert.AlertType.ERROR, "Import Receipt Export Failed",
+					"A verified receipt could not be exported.",
+					failureMessage(task.getException()) + "\n\nThe completed reconciliation has not "
+							+ "been rolled back. Retain the Review ID " + "and retry receipt export separately.");
+		});
+
+		task.setOnCancelled(_ -> progress.close());
+
+		Thread worker = new Thread(task, "examwork-import-receipt-export");
+		worker.setDaemon(true);
+
+		progress.show();
+		worker.start();
+	}
+
 	/**
 	 * Exports the accepted Working Subject as an independently validated snapshot.
 	 *
@@ -5396,35 +5689,117 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void showImportContributorAssignment(Stage primaryStage, ApplicationConfig config) {
+
 		if (contributorAssignmentInstallationRequest != 0 || contributorAssignmentIssuanceRunning
 				|| applicationBusyOverlay.isBusy()) {
 			return;
 		}
+
 		if (!allowWorkingSubjectChange()) {
 			return;
 		}
+
 		FileChooser chooser = new FileChooser();
 		chooser.setTitle("Import Contributor Assignment");
 		chooser.getExtensionFilters()
 				.add(new FileChooser.ExtensionFilter("ExamWork assignment (*.examwork)", "*.examwork"));
+
 		File selected = chooser.showOpenDialog(primaryStage);
 		if (selected == null) {
 			return;
 		}
-		ButtonType installButton = new ButtonType("Install Assignment", ButtonBar.ButtonData.OK_DONE);
-		Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
-		confirmation.initOwner(primaryStage);
-		confirmation.setTitle("Import Contributor Assignment");
-		confirmation.setHeaderText("Install the supplied Exam and activate contributor mode?");
-		confirmation.setContentText("Package:\n" + selected.getAbsolutePath() + "\n\nContributor data directory:\n"
-				+ config.dataRoot() + "\n\nThe importer will install the assigned Exam, "
-				+ "PDFs, curriculum and baseline into this directory. " + "Use a separate contributor data directory, "
-				+ "not your authoritative coordinator data.");
-		confirmation.getButtonTypes().setAll(installButton, ButtonType.CANCEL);
-		if (confirmation.showAndWait().orElse(ButtonType.CANCEL) != installButton) {
+
+		confirmContributorAssignmentInstallation(primaryStage, config, selected.toPath());
+	}
+
+	private void showImportSubjectWorkPackage(Stage primaryStage, ApplicationConfig config) {
+
+		if (packageImportInProgress || contributorAssignmentInstallationRequest != 0
+				|| contributorAssignmentIssuanceRunning || contributionExportRunning
+				|| applicationBusyOverlay.isBusy()) {
 			return;
 		}
-		startContributorAssignmentInstallation(primaryStage, config, selected.toPath());
+
+		if (!allowWorkingSubjectChange()) {
+			return;
+		}
+
+		FileChooser chooser = new FileChooser();
+		chooser.setTitle("Import Subject / Work Package");
+		chooser.getExtensionFilters()
+				.add(new FileChooser.ExtensionFilter("ExamWork packages (*.examwork)", "*.examwork"));
+
+		File selected = chooser.showOpenDialog(primaryStage);
+		if (selected == null) {
+			return;
+		}
+
+		Path archive = selected.toPath().toAbsolutePath().normalize();
+		packageImportInProgress = true;
+
+		Task<ExamWorkManifest> task = new ApplicationBackgroundTask<>(() -> {
+			SqliteDatabase database = new SqliteDatabase(config.databasePath());
+
+			// Routing occurs only after the common archive validator has
+			// checked the complete manifest and declared archive contents.
+			return new ExamWorkArchiveValidator().validate(archive, ApplicationVersion.current(),
+					database.schemaVersion());
+		});
+
+		Alert progress = new Alert(Alert.AlertType.INFORMATION);
+		progress.initOwner(primaryStage);
+		progress.setTitle("Inspecting Work Package");
+		progress.setHeaderText("Validating the selected exchange archive");
+		progress.setContentText("No Subject, Exam or contributor records are being changed.");
+		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
+		progress.getButtonTypes().setAll(new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE));
+
+		task.setOnSucceeded(_ -> {
+			progress.close();
+
+			try {
+				switch (task.getValue().packageType()) {
+				case SUBJECT_SNAPSHOT -> startLiveSubjectSnapshotReview(primaryStage, config, archive);
+
+				case WORK_ASSIGNMENT -> {
+					packageImportInProgress = false;
+					confirmContributorAssignmentInstallation(primaryStage, config, archive);
+				}
+
+				case CONTRIBUTION -> startCoordinatorContributionReview(primaryStage, config, archive);
+
+				case IMPORT_RECEIPT -> {
+					packageImportInProgress = false;
+					showAlert(Alert.AlertType.INFORMATION, "Import Receipt",
+							"Receipt acknowledgement is not yet available.",
+							"The archive has been validated but no data " + "has been changed. Contributor receipt "
+									+ "acknowledgement is implemented " + "in the next batch.");
+				}
+				}
+			} catch (RuntimeException failure) {
+				packageImportInProgress = false;
+				showAlert(Alert.AlertType.ERROR, "Import Subject / Work Package",
+						"The selected workflow could not be started.", failureMessage(failure));
+			}
+		});
+
+		task.setOnFailed(_ -> {
+			packageImportInProgress = false;
+			progress.close();
+			showAlert(Alert.AlertType.ERROR, "Invalid Work Package", "The selected package could not be validated.",
+					failureMessage(task.getException()));
+		});
+
+		task.setOnCancelled(_ -> {
+			packageImportInProgress = false;
+			progress.close();
+		});
+
+		Thread worker = new Thread(task, "examwork-package-inspection");
+		worker.setDaemon(true);
+
+		progress.show();
+		worker.start();
 	}
 
 	private void showLatestPerformanceReport() {
@@ -6273,6 +6648,212 @@ public class QuestionBankApplication extends Application {
 		worker.start();
 	}
 
+	private void startCoordinatorContributionApplication(Stage primaryStage, ApplicationConfig config, Path archive,
+			UUID packageId,
+			Map<MasterContributionDecisionLedger.RecordKey, MasterContributionDecisionLedger.Choice> decisions,
+			String note, Path backupDirectory) {
+
+		AtomicReference<UUID> recordedReviewId = new AtomicReference<>();
+
+		Task<ContributionApplicationData> task = new ApplicationBackgroundTask<>(() -> {
+
+			SqliteDatabase database = new SqliteDatabase(config.databasePath());
+
+			SubjectImportBackupGate backupGate = new SubjectImportBackupGate(config);
+
+			// No review or master mutation proceeds unless a complete,
+			// validated recovery backup has been published.
+			var certificate = backupGate.createVerifiedFullBackup(packageId, backupDirectory);
+
+			var review = new MasterContributionDecisionLedger(database).record(packageId, decisions, note);
+
+			recordedReviewId.set(review.reviewId());
+
+			backupGate.requireIntact(packageId, certificate);
+
+			// Application rechecks immutable intake, archive bytes,
+			// current master state and all supported graph dependencies.
+			// Terminal outcomes and assignment closure share one transaction.
+			var result = new MasterContributionApplicationCoordinator(database).execute(review.reviewId(), archive,
+					new ManagedDataLayout(config.dataRoot()));
+
+			return new ContributionApplicationData(result, certificate.backupPath());
+		});
+
+		Alert progress = new Alert(Alert.AlertType.INFORMATION);
+		progress.initOwner(primaryStage);
+		progress.setTitle("Applying Reviewed Contribution");
+		progress.setHeaderText("Preparing a verified backup and committing master changes");
+		progress.setContentText("The operation cannot be cancelled after publication begins."
+				+ "\nA failed validation must leave the master " + "without an unapproved overwrite.");
+		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
+		progress.getButtonTypes().setAll(new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE));
+
+		task.setOnSucceeded(_ -> {
+			packageImportInProgress = false;
+			progress.close();
+
+			ContributionApplicationData data = task.getValue();
+			var application = data.application();
+
+			long applied = application.outcomes().stream()
+					.filter(outcome -> outcome.outcome() == MasterContributionApplicationCoordinator.Outcome.APPLIED)
+					.count();
+			long skipped = application.outcomes().stream()
+					.filter(outcome -> outcome.outcome() == MasterContributionApplicationCoordinator.Outcome.SKIPPED)
+					.count();
+			long rejected = application.outcomes().stream()
+					.filter(outcome -> outcome.outcome() == MasterContributionApplicationCoordinator.Outcome.REJECTED)
+					.count();
+
+			try {
+				refreshCorpusDashboardHome(-1L);
+			} catch (RuntimeException failure) {
+				showAlert(Alert.AlertType.WARNING, "Dashboard Refresh",
+						"Reconciliation committed, but the Dashboard refresh failed.",
+						"Restart the application to load the authoritative " + "state.\n" + failureMessage(failure));
+			}
+
+			showAlert(Alert.AlertType.INFORMATION, "Contribution Reconciled",
+					"The reviewed contribution has been committed.",
+					"Review ID: " + application.reviewId() + "\nPackage ID: " + application.packageId() + "\nApplied: "
+							+ applied + "\nSkipped: " + skipped + "\nRejected: " + rejected + "\nVerified backup: "
+							+ data.backupPath() + "\n\nThe assignment is now closed."
+							+ "\nUse Export → Export Import Receipt " + "with this Review ID.");
+		});
+
+		task.setOnFailed(_ -> {
+			packageImportInProgress = false;
+			progress.close();
+
+			String reviewId = recordedReviewId.get() == null ? "Not recorded" : recordedReviewId.get().toString();
+
+			showAlert(Alert.AlertType.ERROR, "Contribution Application Failed",
+					"The reviewed contribution could not be completed.",
+					failureMessage(task.getException()) + "\n\nRecorded Review ID: " + reviewId
+							+ "\nThe incoming package and any retained review " + "evidence must be preserved."
+							+ "\nDo not overwrite or delete recovery files " + "to force a retry.");
+		});
+
+		task.setOnCancelled(_ -> {
+			packageImportInProgress = false;
+			progress.close();
+		});
+
+		Thread worker = new Thread(task, "examwork-coordinator-contribution-application");
+		worker.setDaemon(true);
+
+		progress.show();
+		worker.start();
+	}
+
+	private void startCoordinatorContributionReview(Stage primaryStage, ApplicationConfig config, Path archive) {
+
+		if (activeAssignmentContext != null) {
+			packageImportInProgress = false;
+			showAlert(Alert.AlertType.ERROR, "Coordinator Contribution", "Exit contributor assignment mode first.",
+					"Contribution reconciliation requires the authoritative " + "coordinator installation.");
+			return;
+		}
+
+		Task<ContributionReviewData> task = new ApplicationBackgroundTask<>(() -> {
+			SqliteDatabase database = new SqliteDatabase(config.databasePath());
+
+			MasterContributionIntake intake = new MasterContributionIntake(database);
+
+			// Intake validates and durably records the package, but does
+			// not authorise or apply any proposed contributor changes.
+			MasterContributionIntake.Receipt receipt = intake.receive(archive);
+
+			if (receipt.duplicate()
+					|| receipt.received().status() != MasterContributionIntake.IntakeStatus.READY_FOR_REVIEW) {
+				return new ContributionReviewData(receipt, null, null, List.of(), List.of());
+			}
+
+			UUID packageId = receipt.received().packageId();
+
+			var plan = new MasterContributionReviewPlanner(database).plan(packageId);
+
+			WorkAssignmentLedger ledger = new WorkAssignmentLedger(database);
+
+			var assignment = ledger.find(receipt.received().assignmentId())
+					.orElseThrow(() -> new SQLException("Issued assignment is missing."));
+
+			List<ExchangeRecord> baseline = new ExamWorkJsonlCodec()
+					.readRecords(new ByteArrayInputStream(ledger.readBaseline(assignment.assignmentId()).records()));
+
+			List<ExchangeRecord> proposals = intake.proposedChanges(packageId);
+
+			return new ContributionReviewData(receipt, plan, assignment, baseline, proposals);
+		});
+
+		Alert progress = new Alert(Alert.AlertType.INFORMATION);
+		progress.initOwner(primaryStage);
+		progress.setTitle("Receiving Contributor Work");
+		progress.setHeaderText("Validating and recording the incoming contribution");
+		progress.setContentText(
+				"The master Exam remains locked. Received proposals " + "will not be applied during intake.");
+		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
+		progress.getButtonTypes().setAll(new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE));
+
+		task.setOnSucceeded(_ -> {
+			progress.close();
+
+			try {
+				ContributionReviewData data = task.getValue();
+				var receipt = data.receipt();
+
+				if (receipt.duplicate()) {
+					packageImportInProgress = false;
+
+					showAlert(Alert.AlertType.INFORMATION, "Contribution Already Received",
+							"The identical contribution package was previously recorded.",
+							"Package: " + receipt.received().packageId() + "\nAssignment: "
+									+ receipt.received().assignmentId()
+									+ "\n\nNo proposals were applied a second time.");
+					return;
+				}
+
+				if (receipt.received().status() != MasterContributionIntake.IntakeStatus.READY_FOR_REVIEW) {
+					packageImportInProgress = false;
+
+					showAlert(Alert.AlertType.WARNING, "Contribution Held",
+							"The contribution was retained but cannot be applied.",
+							"Package: " + receipt.received().packageId() + "\nStatus: " + receipt.received().status()
+									+ "\n\nThis may be a late, competing or " + "out-of-order return."
+									+ "\nThe master Exam has not been modified.");
+					return;
+				}
+
+				presentCoordinatorContributionReview(primaryStage, config, archive, data);
+
+			} catch (RuntimeException failure) {
+				packageImportInProgress = false;
+				showAlert(Alert.AlertType.ERROR, "Contribution Review",
+						"The received contribution could not be displayed.", failureMessage(failure));
+			}
+		});
+
+		task.setOnFailed(_ -> {
+			packageImportInProgress = false;
+			progress.close();
+			showAlert(Alert.AlertType.ERROR, "Contribution Intake Failed",
+					"The contributor return could not be received.", failureMessage(task.getException())
+							+ "\n\nNo automatic overwrite or conflict resolution " + "has been attempted.");
+		});
+
+		task.setOnCancelled(_ -> {
+			packageImportInProgress = false;
+			progress.close();
+		});
+
+		Thread worker = new Thread(task, "examwork-coordinator-contribution-intake");
+		worker.setDaemon(true);
+
+		progress.show();
+		worker.start();
+	}
+
 	private void startCorpusDashboardQuestionCorrection(Question question, Runnable returnHandler,
 			boolean bookletScoped) {
 
@@ -6511,6 +7092,104 @@ public class QuestionBankApplication extends Application {
 		Thread thread = new Thread(task, "legacy-question-capture-refresh");
 		thread.setDaemon(true);
 		thread.start();
+	}
+
+	private void startLiveSubjectSnapshotReview(Stage primaryStage, ApplicationConfig config, Path incomingArchive) {
+
+		if (activeAssignmentContext != null) {
+			packageImportInProgress = false;
+			showAlert(Alert.AlertType.WARNING, "Import Subject Snapshot", "Exit contributor assignment mode first.",
+					"An ordinary Subject snapshot must not alter or activate "
+							+ "an installed contributor assignment.");
+			return;
+		}
+
+		Task<PreparedSubjectReview> task = new ApplicationBackgroundTask<>(() -> {
+			var fingerprint = new SubjectImportSnapshotFingerprint().inspect(incomingArchive);
+
+			long masterSubjectId = findMasterSubjectId(config, fingerprint.subjectName());
+
+			Path directory = Files.createTempDirectory(config.dataRoot(), ".examwork-master-review-");
+			Path masterArchive = directory.resolve("master.examwork");
+
+			try {
+				// The authoritative master is exported privately by the
+				// application. The user supplies only the incoming package.
+				new SubjectSnapshotExporter(new SqliteDatabase(config.databasePath()),
+						new ManagedDataLayout(config.dataRoot())).export(masterSubjectId, masterArchive);
+
+				var preview = new SubjectReconciliationPreviewService().preview(masterArchive, incomingArchive);
+
+				return new PreparedSubjectReview(directory, masterArchive, preview);
+
+			} catch (Exception failure) {
+				try {
+					Files.deleteIfExists(masterArchive);
+					Files.deleteIfExists(directory);
+				} catch (IOException cleanupFailure) {
+					failure.addSuppressed(cleanupFailure);
+				}
+				throw failure;
+			}
+		});
+
+		Alert progress = new Alert(Alert.AlertType.INFORMATION);
+		progress.initOwner(primaryStage);
+		progress.setTitle("Comparing Subject Package");
+		progress.setHeaderText("Comparing the incoming Subject with the current master");
+		progress.setContentText("Preparing a read-only master snapshot and validating "
+				+ "the incoming records. No changes will be imported.");
+		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
+		progress.getButtonTypes().setAll(new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE));
+
+		task.setOnSucceeded(_ -> {
+			progress.close();
+
+			PreparedSubjectReview prepared = task.getValue();
+			boolean handedOff = false;
+
+			try {
+				SubjectReconciliationReview review = new SubjectReconciliationReview(prepared.preview());
+
+				SubjectReconciliationReviewDialog dialog = new SubjectReconciliationReviewDialog(primaryStage, review,
+						config.dataRoot());
+
+				dialog.showAndWait();
+
+				if (dialog.importRequested()) {
+					SubjectImportReviewWorkflow workflow = new SubjectImportReviewWorkflow(primaryStage, config,
+							dialog.review(), prepared.masterArchive(), incomingArchive,
+							() -> refreshCorpusDashboardHome(-1L), () -> cleanupPreparedSubjectReview(prepared));
+
+					// Once handed off, the approval workflow owns the
+					// temporary master snapshot until its last operation.
+					handedOff = true;
+					workflow.run();
+				}
+			} finally {
+				if (!handedOff) {
+					cleanupPreparedSubjectReview(prepared);
+				}
+			}
+		});
+
+		task.setOnFailed(_ -> {
+			packageImportInProgress = false;
+			progress.close();
+			showAlert(Alert.AlertType.ERROR, "Subject Import Preview", "The incoming Subject could not be compared.",
+					failureMessage(task.getException()));
+		});
+
+		task.setOnCancelled(_ -> {
+			packageImportInProgress = false;
+			progress.close();
+		});
+
+		Thread worker = new Thread(task, "examwork-live-master-subject-preview");
+		worker.setDaemon(true);
+
+		progress.show();
+		worker.start();
 	}
 
 	private void startQuestionSplitFromSearch(Stage primaryStage, QuestionSearchDialog searchDialog, Question question,
@@ -7030,6 +7709,22 @@ public class QuestionBankApplication extends Application {
 		// Question-booklet View is inspection only. It must not activate this booklet
 		// for capture or change ExamMetadataPane capture state.
 		viewExamAssetPdf(booklet.getSourceDocument().getRelativePath(), "Question booklet", config);
+	}
+
+	private record ReceiptExportData(ExamWorkManifest manifest, Path destination, String sha256) {
+	}
+
+	private record ContributionApplicationData(MasterContributionApplicationCoordinator.ApplicationResult application,
+			Path backupPath) {
+	}
+
+	private record ContributionReviewData(MasterContributionIntake.Receipt receipt,
+			MasterContributionReviewPlanner.ReviewPlan plan, WorkAssignmentLedger.Assignment assignment,
+			List<ExchangeRecord> baseline, List<ExchangeRecord> proposals) {
+	}
+
+	private record PreparedSubjectReview(Path directory, Path masterArchive,
+			SubjectReconciliationPreviewService.Result preview) {
 	}
 
 	private enum BackupFailureDecision {
