@@ -38,8 +38,8 @@ import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
-import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.audit.ExamCorpusStatus;
 import au.edu.eq.questionbank.service.workpackage.SqliteContributorAssignmentSessionRepository;
@@ -49,7 +49,6 @@ import au.edu.eq.questionbank.service.workpackage.WorkAssignmentIssuanceService;
 import au.edu.eq.questionbank.ui.capture.AnswerCapturePane;
 import au.edu.eq.questionbank.ui.capture.QuestionCapturePane;
 import au.edu.eq.questionbank.ui.curriculum.CurriculumSelectorPane;
-
 import javafx.application.Platform;
 import javafx.concurrent.Task;
 import javafx.concurrent.Worker;
@@ -60,6 +59,9 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
+import javafx.scene.control.Menu;
+import javafx.scene.control.MenuBar;
+import javafx.scene.control.MenuItem;
 import javafx.scene.control.TableView;
 import javafx.stage.Stage;
 import javafx.stage.Window;
@@ -74,6 +76,290 @@ class ContributorAssignmentDashboardWorkflowTest {
 	private ApplicationConfig contributor;
 	private Stage primaryStage;
 	private Path assignmentArchive;
+
+	private static void awaitBarrier(CountDownLatch entered, CountDownLatch release) {
+		entered.countDown();
+		try {
+			if (!release.await(30, TimeUnit.SECONDS)) {
+				throw new IllegalStateException("Timed out waiting for test release");
+			}
+		} catch (InterruptedException exception) {
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException("Test worker interrupted", exception);
+		}
+	}
+
+	@Test
+	void cancelledHiddenInstallationReleasesApplication(FxRobot robot) throws Exception {
+		awaitAssignedDashboard(robot);
+		CountDownLatch entered = new CountDownLatch(1);
+		CountDownLatch release = new CountDownLatch(1);
+		Task<WorkAssignmentInstallationCoordinator.Result> installer = new ApplicationBackgroundTask<>(() -> {
+			awaitBarrier(entered, release);
+			throw new AssertionError("Cancelled installer must not continue");
+		});
+		try {
+			startInstallation(robot, installer);
+			assertTrue(entered.await(10, TimeUnit.SECONDS));
+			hideInstallationProgress(robot);
+			robot.interact(() -> assertTrue(installer.cancel()));
+			WaitForAsyncUtils.waitForFxEvents();
+			robot.interact(() -> assertEquals(Worker.State.CANCELLED, installer.getState()));
+			assertControlsReleased(robot);
+		} finally {
+			release.countDown();
+		}
+	}
+
+	@Test
+	void contributionExportAvailabilityTracksAssignmentMode(FxRobot robot) throws Exception {
+		awaitAssignedDashboard(robot);
+		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
+		Menu exportMenu = menuBar.getMenus().stream().filter(menu -> "E_xport".equals(menu.getText())).findFirst()
+				.orElseThrow();
+		MenuItem contribution = exportMenu.getItems().stream()
+				.filter(item -> "export-assignment-contribution".equals(item.getId())).findFirst().orElseThrow();
+		MenuItem snapshot = exportMenu.getItems().stream()
+				.filter(item -> "export-subject-snapshot".equals(item.getId())).findFirst().orElseThrow();
+
+		// Active contributor mode exposes the scoped return operation.
+		assertFalse(contribution.isDisable());
+		assertTrue(snapshot.isDisable());
+		Button exit = robot.lookup("#corpus-dashboard-exit-assignment").queryButton();
+		robot.interact(exit::fire);
+
+		// Exiting mode must not erase the installed assignment, and ordinary
+		// Subject snapshot export becomes available again.
+		assertTrue(contribution.isDisable());
+		assertFalse(snapshot.isDisable());
+		SqliteContributorAssignmentSessionRepository sessions = new SqliteContributorAssignmentSessionRepository(
+				new SqliteDatabase(contributor.databasePath()));
+		assertTrue(sessions.active().isEmpty());
+		assertTrue(sessions.find(assignmentId).isPresent());
+		ComboBox<?> assignments = robot.lookup("#corpus-dashboard-assignment-selector").queryAs(ComboBox.class);
+		Button switchButton = robot.lookup("#corpus-dashboard-switch-assignment").queryButton();
+		robot.interact(() -> assignments.getSelectionModel().selectFirst());
+		robot.interact(switchButton::fire);
+		awaitAssignedDashboard(robot);
+
+		// Re-entry restores the same assignment and its return eligibility.
+		assertEquals(assignmentId, sessions.active().orElseThrow().assignmentId());
+		assertFalse(contribution.isDisable());
+		assertTrue(snapshot.isDisable());
+	}
+
+	@Test
+	void failedCaptureRefreshReleasesInstallationOwnership(FxRobot robot) throws Exception {
+		awaitAssignedDashboard(robot);
+		robot.interact(() -> setField("workingSubjectQuestionSnapshotLoader", (Supplier<List<Question>>) () -> {
+			throw new IllegalStateException("Controlled capture refresh failure");
+		}));
+		startInstallation(robot, realInstaller());
+		acknowledgeDialog(robot, "Contributor Assignment Installed", "The assignment was installed, but");
+		assertControlsReleased(robot);
+		robot.interact(() -> assertTrue(primaryStage.getScene().getRoot().lookup("#corpus-dashboard-exams") == null));
+		assertEquals(assignmentId, sessions().active().orElseThrow().assignmentId());
+	}
+
+	@Test
+	void failedDashboardRefreshReleasesInstallationOwnership(FxRobot robot) throws Exception {
+		awaitAssignedDashboard(robot);
+		QuestionRepository repository = field("questionRepository", QuestionRepository.class);
+		robot.interact(
+				() -> setField("questionRepository", Proxy.newProxyInstance(QuestionRepository.class.getClassLoader(),
+						new Class<?>[] { QuestionRepository.class }, (_, method, arguments) -> {
+							if (method.getName().equals("findAll")) {
+								throw new IllegalStateException("Controlled Dashboard refresh failure");
+							}
+							return method.invoke(repository, arguments);
+						})));
+		startInstallation(robot, realInstaller());
+		acknowledgeDialog(robot, "Contributor Assignment Installed", "The assignment was installed, but");
+		assertControlsReleased(robot);
+		robot.interact(() -> assertTrue(primaryStage.getScene().getRoot().lookup("#corpus-dashboard-exams") == null));
+		assertEquals(assignmentId, sessions().active().orElseThrow().assignmentId());
+	}
+
+	@Test
+	void failedHiddenInstallationReleasesApplicationAndAllowsRetry(FxRobot robot) throws Exception {
+		awaitAssignedDashboard(robot);
+		CountDownLatch entered = new CountDownLatch(1);
+		CountDownLatch release = new CountDownLatch(1);
+		Task<WorkAssignmentInstallationCoordinator.Result> installer = new ApplicationBackgroundTask<>(() -> {
+			awaitBarrier(entered, release);
+			throw new IllegalStateException("Controlled installation failure");
+		});
+		try {
+			startInstallation(robot, installer);
+			assertTrue(entered.await(10, TimeUnit.SECONDS));
+			hideInstallationProgress(robot);
+			robot.interact(() -> assertTrue(busyOverlay().isBusy()));
+			release.countDown();
+			acknowledgeDialog(robot, "Import Contributor Assignment", "The assignment could not be installed.");
+			assertControlsReleased(robot);
+			startInstallation(robot, realInstaller());
+			acknowledgeDialog(robot, "Contributor Assignment Installed", "The previously installed assignment");
+			assertControlsReleased(robot);
+		} finally {
+			release.countDown();
+		}
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void hiddenInstallationBlocksCaptureAndContextUntilDashboardPublication(FxRobot robot) throws Exception {
+		awaitAssignedDashboard(robot);
+		robot.interact(robot.lookup("#corpus-dashboard-exit-assignment").queryButton()::fire);
+		awaitAssignedDashboard(robot);
+		Subject originalSubject = field("workingSubject", Subject.class);
+		Subject otherSubject = new Subject(999, "Physics");
+		ComboBox<Subject> subjects = robot.lookup("#curriculum-subject").queryAs(ComboBox.class);
+		Button switchAssignment = robot.lookup("#corpus-dashboard-switch-assignment").queryButton();
+		robot.interact(() -> {
+			subjects.getItems().add(otherSubject);
+			ComboBox<?> assignments = robot.lookup("#corpus-dashboard-assignment-selector").queryAs(ComboBox.class);
+			assignments.getSelectionModel().selectFirst();
+			TableView<?> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+			booklets.getSelectionModel().selectFirst();
+		});
+		assertFalse(switchAssignment.isDisabled());
+		QuestionRepository repository = field("questionRepository", QuestionRepository.class);
+		Question question = repository.findAll().getFirst();
+		Question answeredQuestion = repository.findAll().getFirst();
+		answeredQuestion.setAnswer(new Answer(1, "A", List.of()));
+		CountDownLatch installerEntered = new CountDownLatch(1);
+		CountDownLatch releaseInstaller = new CountDownLatch(1);
+		CountDownLatch captureEntered = new CountDownLatch(1);
+		CountDownLatch releaseCapture = new CountDownLatch(1);
+		CountDownLatch dashboardEntered = new CountDownLatch(1);
+		CountDownLatch releaseDashboard = new CountDownLatch(1);
+		Supplier<List<Question>> captureLoader = field("workingSubjectQuestionSnapshotLoader", Supplier.class);
+		robot.interact(() -> {
+			setField("workingSubjectQuestionSnapshotLoader", (Supplier<List<Question>>) () -> {
+				awaitBarrier(captureEntered, releaseCapture);
+				return captureLoader.get();
+			});
+			setField("questionRepository", Proxy.newProxyInstance(QuestionRepository.class.getClassLoader(),
+					new Class<?>[] { QuestionRepository.class }, (_, method, arguments) -> {
+						if (method.getName().equals("findAll")) {
+							awaitBarrier(dashboardEntered, releaseDashboard);
+						}
+						return method.invoke(repository, arguments);
+					}));
+		});
+		Task<WorkAssignmentInstallationCoordinator.Result> installer = new ApplicationBackgroundTask<>(() -> {
+			awaitBarrier(installerEntered, releaseInstaller);
+			return new WorkAssignmentInstallationCoordinator(contributor).install(assignmentArchive);
+		});
+		try {
+			startInstallation(robot, installer);
+			assertTrue(installerEntered.await(10, TimeUnit.SECONDS));
+			hideInstallationProgress(robot);
+			robot.interact(() -> {
+				assertTrue(busyOverlay().isBusy());
+				assertTrue(subjects.isDisabled());
+				assertTrue(switchAssignment.isDisabled());
+				Button captureQuestion = robot.lookup("#corpus-dashboard-capture-questions").queryButton();
+				Button captureAnswer = robot.lookup("#corpus-dashboard-capture-answers").queryButton();
+				assertTrue(captureQuestion.isDisabled());
+				assertTrue(captureAnswer.isDisabled());
+				captureQuestion.fire();
+				captureAnswer.fire();
+				switchAssignment.fire();
+
+				// Exercise context guards as well as disabled controls: selection-model
+				// changes and queued callbacks must not bypass the busy ownership.
+				subjects.getSelectionModel().select(otherSubject);
+				invoke("changeContributorAssignment", new Class<?>[] { UUID.class }, assignmentId);
+				invoke("showCorpusDashboardQuestionCorrection", new Class<?>[] { Question.class }, question);
+				invoke("startDashboardAnswerCapture", new Class<?>[] { Question.class, Runnable.class }, question,
+						(Runnable) () -> {
+						});
+				assertFalse(field("answerCapturePane", AnswerCapturePane.class).editAnswer(answeredQuestion, () -> {
+				}));
+				invoke("hideWorkspaceBusy", new Class<?>[0]);
+				assertTrue(busyOverlay().isBusy());
+				assertEquals(originalSubject, field("workingSubject", Subject.class));
+				assertFalse(field("captureSelectionState", CaptureSelectionState.class).hasPendingSelection());
+				assertFalse(field("questionCapturePane", QuestionCapturePane.class).hasAcceptedRegions());
+				assertFalse(field("answerCapturePane", AnswerCapturePane.class).isEditingAnswer());
+				assertFalse(field("answerCapturePane", AnswerCapturePane.class).hasAcceptedRegions());
+			});
+			assertTrue(sessions().active().isEmpty());
+			Task<WorkAssignmentInstallationCoordinator.Result> duplicate = new ApplicationBackgroundTask<>(() -> {
+				throw new AssertionError("Duplicate installation must not start");
+			});
+			startInstallation(robot, duplicate);
+			robot.interact(() -> assertEquals(Worker.State.READY, duplicate.getState()));
+			releaseInstaller.countDown();
+			assertTrue(captureEntered.await(10, TimeUnit.SECONDS));
+			robot.interact(() -> assertTrue(busyOverlay().isBusy()));
+			releaseCapture.countDown();
+			assertTrue(dashboardEntered.await(10, TimeUnit.SECONDS));
+			robot.interact(() -> {
+				assertTrue(busyOverlay().isBusy());
+				assertTrue(switchAssignment.isDisabled());
+			});
+			releaseDashboard.countDown();
+			acknowledgeDialog(robot, "Contributor Assignment Installed", "The previously installed assignment");
+			awaitAssignedDashboard(robot);
+			assertControlsReleased(robot);
+			assertEquals(assignmentId, sessions().active().orElseThrow().assignmentId());
+			assertEquals(1, sessions().findAll().size());
+		} finally {
+			releaseInstaller.countDown();
+			releaseCapture.countDown();
+			releaseDashboard.countDown();
+		}
+	}
+
+	@Test
+	void installationActivatesAssignmentFromDifferentSubject(FxRobot robot) throws Exception {
+		awaitAssignedDashboard(robot);
+		robot.interact(robot.lookup("#corpus-dashboard-exit-assignment").queryButton()::fire);
+		Subject physics = new SqliteCurriculumWriter(new SqliteDatabase(contributor.databasePath()))
+				.insertSubject("Physics");
+		robot.interact(() -> {
+			CurriculumSelectorPane selector = field("curriculumSelectorPane", CurriculumSelectorPane.class);
+			selector.refreshSubjects();
+			selector.selectSubject(physics);
+		});
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
+			AtomicBoolean ready = new AtomicBoolean();
+			robot.interact(
+					() -> ready.set(primaryStage.getScene().getRoot().lookup("#corpus-dashboard-no-exams") != null));
+			return ready.get();
+		});
+		assertEquals(physics, field("workingSubject", Subject.class));
+		startInstallation(robot, realInstaller());
+		acknowledgeDialog(robot, "Contributor Assignment Installed", "The previously installed assignment");
+		awaitAssignedDashboard(robot);
+		assertControlsReleased(robot);
+		robot.interact(() -> assertEquals("Biology", field("workingSubject", Subject.class).getName()));
+		assertEquals(assignmentId, sessions().active().orElseThrow().assignmentId());
+	}
+
+	@Test
+	void installationRechecksPendingCaptureAtTaskBoundary(FxRobot robot) throws Exception {
+		awaitAssignedDashboard(robot);
+		Task<WorkAssignmentInstallationCoordinator.Result> installer = realInstaller();
+		robot.interact(() -> {
+			field("captureSelectionState", CaptureSelectionState.class).claim(CaptureSelectionOwner.QUESTION);
+
+			// The confirmation/file picker runs a nested event loop. Recheck pending
+			// work at the actual task boundary, not only before opening those dialogs.
+			Platform.runLater(() -> invoke("startContributorAssignmentInstallation",
+					new Class<?>[] { Stage.class, Task.class }, primaryStage, installer));
+		});
+		acknowledgeDialog(robot, "Working Subject", "Capture work is in progress");
+		robot.interact(() -> {
+			assertEquals(Worker.State.READY, installer.getState());
+			assertTrue(field("captureSelectionState", CaptureSelectionState.class)
+					.isOwnedBy(CaptureSelectionOwner.QUESTION));
+			field("captureSelectionState", CaptureSelectionState.class).clearAll();
+		});
+		assertControlsReleased(robot);
+	}
 
 	@Test
 	@SuppressWarnings("unchecked")
@@ -192,239 +478,38 @@ class ContributorAssignmentDashboardWorkflowTest {
 		assertEquals(1, sessions.findAll().size());
 	}
 
-	@Test
-	@SuppressWarnings("unchecked")
-	void hiddenInstallationBlocksCaptureAndContextUntilDashboardPublication(FxRobot robot) throws Exception {
-		awaitAssignedDashboard(robot);
-		robot.interact(robot.lookup("#corpus-dashboard-exit-assignment").queryButton()::fire);
-		awaitAssignedDashboard(robot);
-		Subject originalSubject = field("workingSubject", Subject.class);
-		Subject otherSubject = new Subject(999, "Physics");
-		ComboBox<Subject> subjects = robot.lookup("#curriculum-subject").queryAs(ComboBox.class);
-		Button switchAssignment = robot.lookup("#corpus-dashboard-switch-assignment").queryButton();
-		robot.interact(() -> {
-			subjects.getItems().add(otherSubject);
-			ComboBox<?> assignments = robot.lookup("#corpus-dashboard-assignment-selector").queryAs(ComboBox.class);
-			assignments.getSelectionModel().selectFirst();
-			TableView<?> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
-			booklets.getSelectionModel().selectFirst();
-		});
-		assertFalse(switchAssignment.isDisabled());
-		QuestionRepository repository = field("questionRepository", QuestionRepository.class);
-		Question question = repository.findAll().getFirst();
-		Question answeredQuestion = repository.findAll().getFirst();
-		answeredQuestion.setAnswer(new Answer(1, "A", List.of()));
-		CountDownLatch installerEntered = new CountDownLatch(1);
-		CountDownLatch releaseInstaller = new CountDownLatch(1);
-		CountDownLatch captureEntered = new CountDownLatch(1);
-		CountDownLatch releaseCapture = new CountDownLatch(1);
-		CountDownLatch dashboardEntered = new CountDownLatch(1);
-		CountDownLatch releaseDashboard = new CountDownLatch(1);
-		Supplier<List<Question>> captureLoader = field("workingSubjectQuestionSnapshotLoader", Supplier.class);
-		robot.interact(() -> {
-			setField("workingSubjectQuestionSnapshotLoader", (Supplier<List<Question>>) () -> {
-				awaitBarrier(captureEntered, releaseCapture);
-				return captureLoader.get();
-			});
-			setField("questionRepository", Proxy.newProxyInstance(QuestionRepository.class.getClassLoader(),
-					new Class<?>[] { QuestionRepository.class }, (_, method, arguments) -> {
-						if (method.getName().equals("findAll")) {
-							awaitBarrier(dashboardEntered, releaseDashboard);
-						}
-						return method.invoke(repository, arguments);
-					}));
-		});
-		Task<WorkAssignmentInstallationCoordinator.Result> installer = new ApplicationBackgroundTask<>(() -> {
-			awaitBarrier(installerEntered, releaseInstaller);
-			return new WorkAssignmentInstallationCoordinator(contributor).install(assignmentArchive);
-		});
-		try {
-			startInstallation(robot, installer);
-			assertTrue(installerEntered.await(10, TimeUnit.SECONDS));
-			hideInstallationProgress(robot);
-			robot.interact(() -> {
-				assertTrue(busyOverlay().isBusy());
-				assertTrue(subjects.isDisabled());
-				assertTrue(switchAssignment.isDisabled());
-				Button captureQuestion = robot.lookup("#corpus-dashboard-capture-questions").queryButton();
-				Button captureAnswer = robot.lookup("#corpus-dashboard-capture-answers").queryButton();
-				assertTrue(captureQuestion.isDisabled());
-				assertTrue(captureAnswer.isDisabled());
-				captureQuestion.fire();
-				captureAnswer.fire();
-				switchAssignment.fire();
+	@Start
+	void start(Stage stage) throws Exception {
+		primaryStage = stage;
+		Path root = Files.createTempDirectory("contributor-dashboard-workflow-");
+		ApplicationConfig coordinator = ApplicationConfig.fromDataRoot(root.resolve("coordinator"));
+		contributor = ApplicationConfig.fromDataRoot(root.resolve("contributor"));
+		Files.createDirectories(coordinator.dataRoot());
+		Files.createDirectories(contributor.dataRoot());
+		SqliteDatabase master = new SqliteDatabase(coordinator.databasePath());
+		SqliteDatabase worker = new SqliteDatabase(contributor.databasePath());
+		master.initialiseSchema();
+		worker.initialiseSchema();
+		prepareMaster(master, coordinator.dataRoot());
+		Exam exam = new Exam(31, new Subject(1, "Biology"), new ExamProvider(21, "QCAA"), 2025, "External Assessment");
+		assignmentId = UUID.randomUUID();
+		assignmentArchive = root.resolve("biology-assignment.examwork");
+		var request = new WorkAssignmentExporter.Request(exam, assignmentId, UUID.randomUUID(), "Test Contributor",
+				false, assignmentArchive);
+		new WorkAssignmentIssuanceService(master, new ManagedDataLayout(coordinator.dataRoot())).issue(request);
+		new WorkAssignmentInstallationCoordinator(contributor).install(assignmentArchive);
+		application = new QuestionBankApplication();
+		startDesktopApplication(application);
+	}
 
-				// Exercise context guards as well as disabled controls: selection-model
-				// changes and queued callbacks must not bypass the busy ownership.
-				subjects.getSelectionModel().select(otherSubject);
-				invoke("changeContributorAssignment", new Class<?>[] { UUID.class }, assignmentId);
-				invoke("showCorpusDashboardQuestionCorrection", new Class<?>[] { Question.class }, question);
-				invoke("startDashboardAnswerCapture", new Class<?>[] { Question.class, Runnable.class }, question,
-						(Runnable) () -> {
-						});
-				assertFalse(field("answerCapturePane", AnswerCapturePane.class).editAnswer(answeredQuestion, () -> {
-				}));
-				invoke("hideWorkspaceBusy", new Class<?>[0]);
-				assertTrue(busyOverlay().isBusy());
-				assertEquals(originalSubject, field("workingSubject", Subject.class));
-				assertFalse(field("captureSelectionState", CaptureSelectionState.class).hasPendingSelection());
-				assertFalse(field("questionCapturePane", QuestionCapturePane.class).hasAcceptedRegions());
-				assertFalse(field("answerCapturePane", AnswerCapturePane.class).isEditingAnswer());
-				assertFalse(field("answerCapturePane", AnswerCapturePane.class).hasAcceptedRegions());
-			});
-			assertTrue(sessions().active().isEmpty());
-			Task<WorkAssignmentInstallationCoordinator.Result> duplicate = new ApplicationBackgroundTask<>(() -> {
-				throw new AssertionError("Duplicate installation must not start");
-			});
-			startInstallation(robot, duplicate);
-			robot.interact(() -> assertEquals(Worker.State.READY, duplicate.getState()));
-			releaseInstaller.countDown();
-			assertTrue(captureEntered.await(10, TimeUnit.SECONDS));
-			robot.interact(() -> assertTrue(busyOverlay().isBusy()));
-			releaseCapture.countDown();
-			assertTrue(dashboardEntered.await(10, TimeUnit.SECONDS));
-			robot.interact(() -> {
-				assertTrue(busyOverlay().isBusy());
-				assertTrue(switchAssignment.isDisabled());
-			});
-			releaseDashboard.countDown();
-			acknowledgeDialog(robot, "Contributor Assignment Installed", "The previously installed assignment");
-			awaitAssignedDashboard(robot);
-			assertControlsReleased(robot);
-			assertEquals(assignmentId, sessions().active().orElseThrow().assignmentId());
-			assertEquals(1, sessions().findAll().size());
-		} finally {
-			releaseInstaller.countDown();
-			releaseCapture.countDown();
-			releaseDashboard.countDown();
+	@AfterEach
+	void stopApplication() throws Exception {
+		if (application != null) {
+			WaitForAsyncUtils.asyncFx(() -> {
+				application.stop();
+				return null;
+			}).get();
 		}
-	}
-
-	@Test
-	void failedHiddenInstallationReleasesApplicationAndAllowsRetry(FxRobot robot) throws Exception {
-		awaitAssignedDashboard(robot);
-		CountDownLatch entered = new CountDownLatch(1);
-		CountDownLatch release = new CountDownLatch(1);
-		Task<WorkAssignmentInstallationCoordinator.Result> installer = new ApplicationBackgroundTask<>(() -> {
-			awaitBarrier(entered, release);
-			throw new IllegalStateException("Controlled installation failure");
-		});
-		try {
-			startInstallation(robot, installer);
-			assertTrue(entered.await(10, TimeUnit.SECONDS));
-			hideInstallationProgress(robot);
-			robot.interact(() -> assertTrue(busyOverlay().isBusy()));
-			release.countDown();
-			acknowledgeDialog(robot, "Import Contributor Assignment", "The assignment could not be installed.");
-			assertControlsReleased(robot);
-			startInstallation(robot, realInstaller());
-			acknowledgeDialog(robot, "Contributor Assignment Installed", "The previously installed assignment");
-			assertControlsReleased(robot);
-		} finally {
-			release.countDown();
-		}
-	}
-
-	@Test
-	void cancelledHiddenInstallationReleasesApplication(FxRobot robot) throws Exception {
-		awaitAssignedDashboard(robot);
-		CountDownLatch entered = new CountDownLatch(1);
-		CountDownLatch release = new CountDownLatch(1);
-		Task<WorkAssignmentInstallationCoordinator.Result> installer = new ApplicationBackgroundTask<>(() -> {
-			awaitBarrier(entered, release);
-			throw new AssertionError("Cancelled installer must not continue");
-		});
-		try {
-			startInstallation(robot, installer);
-			assertTrue(entered.await(10, TimeUnit.SECONDS));
-			hideInstallationProgress(robot);
-			robot.interact(() -> assertTrue(installer.cancel()));
-			WaitForAsyncUtils.waitForFxEvents();
-			robot.interact(() -> assertEquals(Worker.State.CANCELLED, installer.getState()));
-			assertControlsReleased(robot);
-		} finally {
-			release.countDown();
-		}
-	}
-
-	@Test
-	void failedCaptureRefreshReleasesInstallationOwnership(FxRobot robot) throws Exception {
-		awaitAssignedDashboard(robot);
-		robot.interact(() -> setField("workingSubjectQuestionSnapshotLoader", (Supplier<List<Question>>) () -> {
-			throw new IllegalStateException("Controlled capture refresh failure");
-		}));
-		startInstallation(robot, realInstaller());
-		acknowledgeDialog(robot, "Contributor Assignment Installed", "The assignment was installed, but");
-		assertControlsReleased(robot);
-		robot.interact(() -> assertTrue(primaryStage.getScene().getRoot().lookup("#corpus-dashboard-exams") == null));
-		assertEquals(assignmentId, sessions().active().orElseThrow().assignmentId());
-	}
-
-	@Test
-	void failedDashboardRefreshReleasesInstallationOwnership(FxRobot robot) throws Exception {
-		awaitAssignedDashboard(robot);
-		QuestionRepository repository = field("questionRepository", QuestionRepository.class);
-		robot.interact(
-				() -> setField("questionRepository", Proxy.newProxyInstance(QuestionRepository.class.getClassLoader(),
-						new Class<?>[] { QuestionRepository.class }, (_, method, arguments) -> {
-							if (method.getName().equals("findAll")) {
-								throw new IllegalStateException("Controlled Dashboard refresh failure");
-							}
-							return method.invoke(repository, arguments);
-						})));
-		startInstallation(robot, realInstaller());
-		acknowledgeDialog(robot, "Contributor Assignment Installed", "The assignment was installed, but");
-		assertControlsReleased(robot);
-		robot.interact(() -> assertTrue(primaryStage.getScene().getRoot().lookup("#corpus-dashboard-exams") == null));
-		assertEquals(assignmentId, sessions().active().orElseThrow().assignmentId());
-	}
-
-	@Test
-	void installationActivatesAssignmentFromDifferentSubject(FxRobot robot) throws Exception {
-		awaitAssignedDashboard(robot);
-		robot.interact(robot.lookup("#corpus-dashboard-exit-assignment").queryButton()::fire);
-		Subject physics = new SqliteCurriculumWriter(new SqliteDatabase(contributor.databasePath()))
-				.insertSubject("Physics");
-		robot.interact(() -> {
-			CurriculumSelectorPane selector = field("curriculumSelectorPane", CurriculumSelectorPane.class);
-			selector.refreshSubjects();
-			selector.selectSubject(physics);
-		});
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
-			AtomicBoolean ready = new AtomicBoolean();
-			robot.interact(
-					() -> ready.set(primaryStage.getScene().getRoot().lookup("#corpus-dashboard-no-exams") != null));
-			return ready.get();
-		});
-		assertEquals(physics, field("workingSubject", Subject.class));
-		startInstallation(robot, realInstaller());
-		acknowledgeDialog(robot, "Contributor Assignment Installed", "The previously installed assignment");
-		awaitAssignedDashboard(robot);
-		assertControlsReleased(robot);
-		robot.interact(() -> assertEquals("Biology", field("workingSubject", Subject.class).getName()));
-		assertEquals(assignmentId, sessions().active().orElseThrow().assignmentId());
-	}
-
-	@Test
-	void installationRechecksPendingCaptureAtTaskBoundary(FxRobot robot) throws Exception {
-		awaitAssignedDashboard(robot);
-		Task<WorkAssignmentInstallationCoordinator.Result> installer = realInstaller();
-		robot.interact(() -> {
-			field("captureSelectionState", CaptureSelectionState.class).claim(CaptureSelectionOwner.QUESTION);
-
-			// The confirmation/file picker runs a nested event loop. Recheck pending
-			// work at the actual task boundary, not only before opening those dialogs.
-			Platform.runLater(() -> invoke("startContributorAssignmentInstallation",
-					new Class<?>[] { Stage.class, Task.class }, primaryStage, installer));
-		});
-		acknowledgeDialog(robot, "Working Subject", "Capture work is in progress");
-		robot.interact(() -> {
-			assertEquals(Worker.State.READY, installer.getState());
-			assertTrue(field("captureSelectionState", CaptureSelectionState.class)
-					.isOwnedBy(CaptureSelectionOwner.QUESTION));
-			field("captureSelectionState", CaptureSelectionState.class).clearAll();
-		});
-		assertControlsReleased(robot);
 	}
 
 	@Test
@@ -453,16 +538,17 @@ class ContributorAssignmentDashboardWorkflowTest {
 		});
 	}
 
-	private static void awaitBarrier(CountDownLatch entered, CountDownLatch release) {
-		entered.countDown();
-		try {
-			if (!release.await(30, TimeUnit.SECONDS)) {
-				throw new IllegalStateException("Timed out waiting for test release");
-			}
-		} catch (InterruptedException exception) {
-			Thread.currentThread().interrupt();
-			throw new IllegalStateException("Test worker interrupted", exception);
-		}
+	private void awaitAssignedDashboard(FxRobot robot) throws Exception {
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
+			AtomicBoolean ready = new AtomicBoolean(false);
+			robot.interact(() -> {
+				var node = primaryStage.getScene().getRoot().lookup("#corpus-dashboard-exams");
+				if (node instanceof TableView<?> table) {
+					ready.set(table.getItems().size() == 1);
+				}
+			});
+			return ready.get();
+		});
 	}
 
 	private DialogPane awaitDialog(FxRobot robot, String title) throws Exception {
@@ -512,77 +598,6 @@ class ContributorAssignmentDashboardWorkflowTest {
 		} catch (ReflectiveOperationException exception) {
 			throw new IllegalStateException(exception);
 		}
-	}
-
-	private Task<WorkAssignmentInstallationCoordinator.Result> realInstaller() {
-		return new ApplicationBackgroundTask<>(
-				() -> new WorkAssignmentInstallationCoordinator(contributor).install(assignmentArchive));
-	}
-
-	private SqliteContributorAssignmentSessionRepository sessions() {
-		return new SqliteContributorAssignmentSessionRepository(new SqliteDatabase(contributor.databasePath()));
-	}
-
-	private void setField(String name, Object value) {
-		try {
-			Field field = QuestionBankApplication.class.getDeclaredField(name);
-			field.setAccessible(true);
-			field.set(application, value);
-		} catch (ReflectiveOperationException exception) {
-			throw new IllegalStateException(exception);
-		}
-	}
-
-	private void startInstallation(FxRobot robot, Task<WorkAssignmentInstallationCoordinator.Result> task) {
-		robot.interact(() -> invoke("startContributorAssignmentInstallation",
-				new Class<?>[] { Stage.class, Task.class }, primaryStage, task));
-	}
-
-	@Start
-	void start(Stage stage) throws Exception {
-		primaryStage = stage;
-		Path root = Files.createTempDirectory("contributor-dashboard-workflow-");
-		ApplicationConfig coordinator = ApplicationConfig.fromDataRoot(root.resolve("coordinator"));
-		contributor = ApplicationConfig.fromDataRoot(root.resolve("contributor"));
-		Files.createDirectories(coordinator.dataRoot());
-		Files.createDirectories(contributor.dataRoot());
-		SqliteDatabase master = new SqliteDatabase(coordinator.databasePath());
-		SqliteDatabase worker = new SqliteDatabase(contributor.databasePath());
-		master.initialiseSchema();
-		worker.initialiseSchema();
-		prepareMaster(master, coordinator.dataRoot());
-		Exam exam = new Exam(31, new Subject(1, "Biology"), new ExamProvider(21, "QCAA"), 2025, "External Assessment");
-		assignmentId = UUID.randomUUID();
-		assignmentArchive = root.resolve("biology-assignment.examwork");
-		var request = new WorkAssignmentExporter.Request(exam, assignmentId, UUID.randomUUID(), "Test Contributor",
-				false, assignmentArchive);
-		new WorkAssignmentIssuanceService(master, new ManagedDataLayout(coordinator.dataRoot())).issue(request);
-		new WorkAssignmentInstallationCoordinator(contributor).install(assignmentArchive);
-		application = new QuestionBankApplication();
-		startDesktopApplication(application);
-	}
-
-	@AfterEach
-	void stopApplication() throws Exception {
-		if (application != null) {
-			WaitForAsyncUtils.asyncFx(() -> {
-				application.stop();
-				return null;
-			}).get();
-		}
-	}
-
-	private void awaitAssignedDashboard(FxRobot robot) throws Exception {
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
-			AtomicBoolean ready = new AtomicBoolean(false);
-			robot.interact(() -> {
-				var node = primaryStage.getScene().getRoot().lookup("#corpus-dashboard-exams");
-				if (node instanceof TableView<?> table) {
-					ready.set(table.getItems().size() == 1);
-				}
-			});
-			return ready.get();
-		});
 	}
 
 	private void prepareMaster(SqliteDatabase database, Path dataRoot) throws Exception {
@@ -667,10 +682,34 @@ class ContributorAssignmentDashboardWorkflowTest {
 		}
 	}
 
+	private Task<WorkAssignmentInstallationCoordinator.Result> realInstaller() {
+		return new ApplicationBackgroundTask<>(
+				() -> new WorkAssignmentInstallationCoordinator(contributor).install(assignmentArchive));
+	}
+
+	private SqliteContributorAssignmentSessionRepository sessions() {
+		return new SqliteContributorAssignmentSessionRepository(new SqliteDatabase(contributor.databasePath()));
+	}
+
+	private void setField(String name, Object value) {
+		try {
+			Field field = QuestionBankApplication.class.getDeclaredField(name);
+			field.setAccessible(true);
+			field.set(application, value);
+		} catch (ReflectiveOperationException exception) {
+			throw new IllegalStateException(exception);
+		}
+	}
+
 	private void startDesktopApplication(QuestionBankApplication instance) throws Exception {
 		Method startup = QuestionBankApplication.class.getDeclaredMethod("startApplication", Stage.class,
 				ApplicationConfig.class);
 		startup.setAccessible(true);
 		startup.invoke(instance, primaryStage, contributor);
+	}
+
+	private void startInstallation(FxRobot robot, Task<WorkAssignmentInstallationCoordinator.Result> task) {
+		robot.interact(() -> invoke("startContributorAssignmentInstallation",
+				new Class<?>[] { Stage.class, Task.class }, primaryStage, task));
 	}
 }

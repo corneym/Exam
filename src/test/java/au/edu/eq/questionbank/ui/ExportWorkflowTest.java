@@ -32,6 +32,7 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
+import javafx.scene.control.Menu;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.MenuItem;
 import javafx.stage.Stage;
@@ -119,6 +120,36 @@ class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Failure must be recorded at both layers without
 		// changing ordinary menu restoration behaviour.
 		assertExportDiagnostics(csv, "revision.scorm.export", "revision.scorm.export.work", false);
+	}
+
+	@Test
+	void packageWorkflowMenusAreDiscoverable(FxRobot robot) {
+		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
+		Menu importMenu = menuBar.getMenus().stream().filter(menu -> "_Import".equals(menu.getText())).findFirst()
+				.orElseThrow();
+		Menu exportMenu = menuBar.getMenus().stream().filter(menu -> "E_xport".equals(menu.getText())).findFirst()
+				.orElseThrow();
+		Menu fileMenu = menuBar.getMenus().stream().filter(menu -> "_File".equals(menu.getText())).findFirst()
+				.orElseThrow();
+		MenuItem assignmentImport = importMenu.getItems().stream()
+				.filter(item -> "import-contributor-assignment".equals(item.getId())).findFirst().orElseThrow();
+		MenuItem snapshotExport = exportMenu.getItems().stream()
+				.filter(item -> "export-subject-snapshot".equals(item.getId())).findFirst().orElseThrow();
+		MenuItem contributionExport = exportMenu.getItems().stream()
+				.filter(item -> "export-assignment-contribution".equals(item.getId())).findFirst().orElseThrow();
+		assertEquals("Import Contributor _Assignment...", assignmentImport.getText());
+		assertEquals("Export Working _Subject Snapshot...", snapshotExport.getText());
+		assertEquals("Export Assignment _Contribution...", contributionExport.getText());
+
+		// An ordinary installation has no selected contributor assignment.
+		assertTrue(contributionExport.isDisable());
+		assertFalse(snapshotExport.isDisable());
+
+		// Package exchange commands no longer clutter the File menu.
+		assertFalse(fileMenu.getItems().stream().anyMatch(item -> item.getId() != null
+				&& (item.getId().contains("subject-snapshot") || item.getId().contains("contributor-assignment"))));
+		assertFalse(
+				fileMenu.getItems().stream().anyMatch(item -> "file-review-subject-snapshots".equals(item.getId())));
 	}
 
 	@Test

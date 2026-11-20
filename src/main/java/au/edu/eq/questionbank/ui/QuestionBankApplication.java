@@ -3,10 +3,12 @@ package au.edu.eq.questionbank.ui;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -162,6 +164,7 @@ import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 import au.edu.eq.questionbank.service.revision.RevisionCorpusBuilder;
 import au.edu.eq.questionbank.service.revision.RevisionGroupingMode;
 import au.edu.eq.questionbank.service.revision.RevisionPresentationPlanner;
+import au.edu.eq.questionbank.service.workpackage.ContributionExporter;
 import au.edu.eq.questionbank.service.workpackage.ContributorAssignmentDashboardContextResolver;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest;
 import au.edu.eq.questionbank.service.workpackage.SqliteContributorAssignmentSessionRepository;
@@ -385,6 +388,9 @@ public class QuestionBankApplication extends Application {
 	private final HBox assignmentToolbar = new HBox(SECTION_SPACING);
 	private boolean contributorAssignmentIssuanceRunning;
 	private long contributorAssignmentInstallationRequest;
+	private MenuItem contributionExportMenuItem;
+	private boolean contributionExportRunning;
+	private MenuItem subjectSnapshotExportMenuItem;
 
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
@@ -1372,6 +1378,34 @@ public class QuestionBankApplication extends Application {
 		setViewerMode(false);
 	}
 
+	private void completeContributorAssignmentInstallation(long request,
+			WorkAssignmentInstallationCoordinator.Result result, Throwable failure) {
+		if (!applicationBusyOverlay.owns(request)) {
+			return;
+		}
+		finishContributorAssignmentInstallation(request);
+		if (failure != null) {
+			corpusDashboardPane = null;
+			corpusDashboardHost.getChildren().setAll(new Label(
+					"The installed assignment could not be displayed. Restart the application to refresh it."));
+
+			// Persistence succeeded; distinguish a presentation failure from a failed
+			// import.
+			showAlert(Alert.AlertType.ERROR, "Contributor Assignment Installed",
+					"The assignment was installed, but the Dashboard could not be refreshed.",
+					failureMessage(failure) + "\n\nRestart the application to restore the active assignment.");
+			return;
+		}
+		String message = result.replay()
+				? "The previously installed assignment was selected without replacing captured work."
+				: "The assignment and its source assets were installed successfully.";
+		if (result.cleanupPending()) {
+			message += "\n\nTemporary installation cleanup is pending. It will be retried by the installer.";
+		}
+		showAlert(Alert.AlertType.INFORMATION, "Contributor Assignment Installed", message, "Assignment ID: "
+				+ result.assignmentId() + "\n\nThe Corpus Dashboard is now scoped to the assigned Subject and Exam.");
+	}
+
 	private void completeExitWithoutBackup(Runnable readyAction) {
 		ShutdownResult result = shutdownCoordinator.exitWithoutBackup();
 		if (result.exitAllowed()) {
@@ -2136,12 +2170,21 @@ public class QuestionBankApplication extends Application {
 
 	private Menu createExportMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu exportMenu = createMenu("E_xport");
+		subjectSnapshotExportMenuItem = createMenuItem("Export Working _Subject Snapshot...",
+				() -> showExportWorkingSubjectSnapshot(primaryStage, config));
+		subjectSnapshotExportMenuItem.setId("export-subject-snapshot");
+		contributionExportMenuItem = createMenuItem("Export Assignment _Contribution...",
+				() -> showExportAssignmentContribution(primaryStage, config));
+		contributionExportMenuItem.setId("export-assignment-contribution");
 		revisionExportMenuItem = createMenuItem("_Revision HTML...",
 				() -> showRevisionExportDialog(primaryStage, config));
 		revisionExportMenuItem.setId("export-revision-html");
 		scormExportMenuItem = createMenuItem("Revision _SCORM...", () -> showScormExportDialog(primaryStage, config));
 		scormExportMenuItem.setId("export-revision-scorm");
-		exportMenu.getItems().addAll(revisionExportMenuItem, scormExportMenuItem);
+		exportMenu.getItems().setAll(subjectSnapshotExportMenuItem, contributionExportMenuItem, new SeparatorMenuItem(),
+				revisionExportMenuItem, scormExportMenuItem);
+		subjectSnapshotExportMenuItem.setDisable(activeAssignmentContext != null);
+		contributionExportMenuItem.setDisable(activeAssignmentContext == null);
 		return exportMenu;
 	}
 
@@ -2165,22 +2208,12 @@ public class QuestionBankApplication extends Application {
 		return progressAlert;
 	}
 
-	/** Builds the primary File menu, including read-only Subject comparison. */
+	/** Builds the primary File menu for documents and application maintenance. */
 	private Menu createFileMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu fileMenu = createMenu("_File");
 		Menu openMenu = createMenu("_Open");
 		openMenu.getItems().add(createMenuItem("_PDF...", () -> openViewerPdf(primaryStage, config)));
-		MenuItem exportSubjectItem = createMenuItem("Export Working _Subject snapshot...",
-				() -> showExportWorkingSubjectSnapshot(primaryStage, config));
-		exportSubjectItem.setId("file-export-subject-snapshot");
-		MenuItem reconciliationItem = createMenuItem("_Review Subject snapshots...",
-				() -> showSubjectReconciliationReview(primaryStage, config));
-		reconciliationItem.setId("file-review-subject-snapshots");
-		MenuItem importAssignmentItem = createMenuItem("Import Contributor _Assignment...",
-				() -> showImportContributorAssignment(primaryStage, config));
-		importAssignmentItem.setId("file-import-contributor-assignment");
-		fileMenu.getItems().addAll(openMenu, createMenuItem("_Close PDF", this::closeViewerPdf),
-				new SeparatorMenuItem(), importAssignmentItem, exportSubjectItem, reconciliationItem,
+		fileMenu.getItems().setAll(openMenu, createMenuItem("_Close PDF", this::closeViewerPdf),
 				new SeparatorMenuItem(), createMenuItem("_Backup Now...", () -> backupNow(primaryStage, config)),
 				createMenuItem("_Restore Backup...", () -> restoreBackup(primaryStage, config)),
 				new SeparatorMenuItem(), createMenuItem("Op_tions...", () -> showOptions(primaryStage, config)),
@@ -2199,6 +2232,15 @@ public class QuestionBankApplication extends Application {
 		return helpMenu;
 	}
 
+	private Menu createImportMenu(Stage primaryStage, ApplicationConfig config) {
+		Menu importMenu = createMenu("_Import");
+		MenuItem assignmentItem = createMenuItem("Import Contributor _Assignment...",
+				() -> showImportContributorAssignment(primaryStage, config));
+		assignmentItem.setId("import-contributor-assignment");
+		importMenu.getItems().add(assignmentItem);
+		return importMenu;
+	}
+
 	private Menu createMenu(String text) {
 		Menu menu = new Menu(text);
 		menu.setMnemonicParsing(true);
@@ -2207,9 +2249,9 @@ public class QuestionBankApplication extends Application {
 
 	private MenuBar createMenuBar(Stage primaryStage, ApplicationConfig config) {
 		MenuBar menuBar = new MenuBar();
-		menuBar.getMenus().addAll(createFileMenu(primaryStage, config), createCurriculumMenu(primaryStage, config),
-				createQuestionMenu(primaryStage, config), createExportMenu(primaryStage, config),
-				createHelpMenu(config));
+		menuBar.getMenus().setAll(createFileMenu(primaryStage, config), createCurriculumMenu(primaryStage, config),
+				createQuestionMenu(primaryStage, config), createImportMenu(primaryStage, config),
+				createExportMenu(primaryStage, config), createHelpMenu(config));
 		return menuBar;
 	}
 
@@ -2737,6 +2779,13 @@ public class QuestionBankApplication extends Application {
 					+ " is recorded as having a shared context, but no shared context could be found");
 		}
 		return matchingContext;
+	}
+
+	private void finishContributorAssignmentInstallation(long request) {
+		if (contributorAssignmentInstallationRequest == request) {
+			contributorAssignmentInstallationRequest = 0;
+		}
+		applicationBusyOverlay.finish(request);
 	}
 
 	private void finishCorpusDashboardLifecycleChange(CorpusDashboardPane initiatingDashboard) {
@@ -3386,21 +3435,6 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void loadCorpusDashboardHome(Subject dashboardSubject, long generation, long preferredQuestionId,
-			Runnable completionHandler) {
-		Objects.requireNonNull(completionHandler, "completionHandler");
-		loadCorpusDashboardHome(dashboardSubject, generation, preferredQuestionId, failure -> {
-			try {
-				if (failure != null && !(failure instanceof CancellationException)) {
-					showAlert(Alert.AlertType.ERROR, "Corpus Dashboard", "The Corpus Dashboard could not be refreshed.",
-							failureMessage(failure));
-				}
-			} finally {
-				completionHandler.run();
-			}
-		});
-	}
-
-	private void loadCorpusDashboardHome(Subject dashboardSubject, long generation, long preferredQuestionId,
 			Consumer<Throwable> completionHandler) {
 		Objects.requireNonNull(completionHandler, "completionHandler");
 
@@ -3487,6 +3521,21 @@ public class QuestionBankApplication extends Application {
 			refreshOperation.close();
 			throw failure;
 		}
+	}
+
+	private void loadCorpusDashboardHome(Subject dashboardSubject, long generation, long preferredQuestionId,
+			Runnable completionHandler) {
+		Objects.requireNonNull(completionHandler, "completionHandler");
+		loadCorpusDashboardHome(dashboardSubject, generation, preferredQuestionId, failure -> {
+			try {
+				if (failure != null && !(failure instanceof CancellationException)) {
+					showAlert(Alert.AlertType.ERROR, "Corpus Dashboard", "The Corpus Dashboard could not be refreshed.",
+							failureMessage(failure));
+				}
+			} finally {
+				completionHandler.run();
+			}
+		});
 	}
 
 	private CorpusDashboardSnapshot loadCorpusDashboardSnapshot(ApplicationConfig config,
@@ -4688,6 +4737,15 @@ public class QuestionBankApplication extends Application {
 		applicationBody.setCenter(corpusDashboardHomePane);
 	}
 
+	private void showCorpusDashboardLoading(Subject subject) {
+
+		// Never expose the previous Subject's rows if replacement loading fails.
+		corpusDashboardPane = null;
+		Label loading = new Label("Loading " + subject.getName() + " corpus...");
+		loading.setId("corpus-dashboard-loading");
+		corpusDashboardHost.getChildren().setAll(loading);
+	}
+
 	private void showCorpusDashboardNoSubject() {
 		corpusDashboardPane = null;
 		Label message = new Label("Select or add a Subject to view its corpus.");
@@ -4696,15 +4754,6 @@ public class QuestionBankApplication extends Application {
 		// A Subject is application context, not a prerequisite dialog. The empty home
 		// remains usable so the existing + Subject action is always available.
 		corpusDashboardHost.getChildren().setAll(message);
-	}
-
-	private void showCorpusDashboardLoading(Subject subject) {
-
-		// Never expose the previous Subject's rows if replacement loading fails.
-		corpusDashboardPane = null;
-		Label loading = new Label("Loading " + subject.getName() + " corpus...");
-		loading.setId("corpus-dashboard-loading");
-		corpusDashboardHost.getChildren().setAll(loading);
 	}
 
 	private void showCorpusDashboardQuestionCorrection(Question question) {
@@ -5213,6 +5262,61 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void showExportAssignmentContribution(Stage primaryStage, ApplicationConfig config) {
+		if (activeAssignmentContext == null) {
+			showAlert(Alert.AlertType.WARNING, "Export Assignment Contribution", "No contributor assignment is active.",
+					"Activate an installed assignment before exporting its work.");
+			return;
+		}
+		if (contributionExportRunning || contributorAssignmentInstallationRequest != 0
+				|| contributorAssignmentIssuanceRunning || applicationBusyOverlay.isBusy()) {
+			return;
+		}
+		if (!allowWorkingSubjectChange()) {
+			return;
+		}
+		UUID assignmentId = activeAssignmentContext.session().assignmentId();
+		long examId = activeAssignmentContext.session().examLocalId();
+		FileChooser chooser = new FileChooser();
+		chooser.setTitle("Export Assignment Contribution");
+		chooser.setInitialFileName("Exam-" + examId + "-contribution-"
+				+ LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")) + ".examwork");
+		chooser.getExtensionFilters()
+				.add(new FileChooser.ExtensionFilter("ExamWork contribution (*.examwork)", "*.examwork"));
+		File selected = chooser.showSaveDialog(primaryStage);
+		if (selected == null) {
+			return;
+		}
+		Path destination = selected.toPath().toAbsolutePath().normalize();
+		Path dataRoot = config.dataRoot().toAbsolutePath().normalize();
+		if (destination.startsWith(dataRoot)) {
+			showAlert(Alert.AlertType.ERROR, "Export Assignment Contribution",
+					"Choose a location outside the managed data directory.",
+					"Contribution packages are exchange files, not authoritative " + "application data.");
+			return;
+		}
+		if (Files.exists(destination, LinkOption.NOFOLLOW_LINKS)) {
+			showAlert(Alert.AlertType.ERROR, "Export Assignment Contribution", "The destination already exists.",
+					"Choose a new filename. Existing contribution archives " + "will not be overwritten.");
+			return;
+		}
+		Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+		confirmation.initOwner(primaryStage);
+		confirmation.setTitle("Export Assignment Contribution");
+		confirmation.setHeaderText("Export saved changes from this assignment?");
+		confirmation.setContentText("Assignment: " + assignmentId + "\nExam: " + examId + "\nDestination: "
+				+ destination + "\n\nOnly new or modified contributor work relative to "
+				+ "the issued baseline will be exported." + "\n\nExport does not close the contributor assignment "
+				+ "or discard local work." + "\n\nThe coordinator's accepted reconciliation closes "
+				+ "the master assignment. Further collection then requires " + "a newly issued assignment.");
+		ButtonType exportButton = new ButtonType("Export Contribution", ButtonBar.ButtonData.OK_DONE);
+		confirmation.getButtonTypes().setAll(exportButton, ButtonType.CANCEL);
+		if (confirmation.showAndWait().orElse(ButtonType.CANCEL) != exportButton) {
+			return;
+		}
+		startAssignmentContributionExport(primaryStage, config, assignmentId, destination);
+	}
+
 	/**
 	 * Exports the accepted Working Subject as an independently validated snapshot.
 	 *
@@ -5221,6 +5325,12 @@ public class QuestionBankApplication extends Application {
 	 * The output is created only outside authoritative managed data directories.
 	 */
 	private void showExportWorkingSubjectSnapshot(Stage primaryStage, ApplicationConfig config) {
+		if (activeAssignmentContext != null) {
+			showAlert(Alert.AlertType.WARNING, "Export Subject Snapshot", "An assignment is active.",
+					"Use Export Assignment Contribution for assigned work. "
+							+ "Exit assignment mode to export an ordinary " + "Working Subject snapshot.");
+			return;
+		}
 		Subject subject = workingSubject;
 		if (subject == null) {
 			showAlert(Alert.AlertType.WARNING, "Export Subject Snapshot", "No Working Subject is selected.",
@@ -5266,9 +5376,8 @@ public class QuestionBankApplication extends Application {
 		});
 		task.setOnFailed(_ -> {
 			progress.close();
-			Throwable failure = task.getException();
 			showAlert(Alert.AlertType.ERROR, "Export Subject Snapshot", "The Subject snapshot could not be exported.",
-					failure == null ? "Unknown error" : failure.getMessage());
+					failureMessage(task.getException()));
 		});
 		task.setOnCancelled(_ -> progress.close());
 		Thread worker = new Thread(task, "examwork-subject-snapshot-export");
@@ -6001,6 +6110,62 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void startAssignmentContributionExport(Stage primaryStage, ApplicationConfig config, UUID assignmentId,
+			Path destination) {
+		if (contributionExportRunning) {
+			return;
+		}
+		contributionExportRunning = true;
+		updateContributorAssignmentActions();
+		Task<ExamWorkManifest> task = new ApplicationBackgroundTask<>(() -> {
+			ContributionExporter exporter = new ContributionExporter(new SqliteDatabase(config.databasePath()),
+					new ManagedDataLayout(config.dataRoot()));
+
+			// The exporter owns its consistent database snapshot,
+			// immutable return identity, archive validation and return ledger.
+			return exporter.export(assignmentId, destination);
+		});
+		Alert progress = new Alert(Alert.AlertType.INFORMATION);
+		progress.initOwner(primaryStage);
+		progress.setTitle("Export Assignment Contribution");
+		progress.setHeaderText("Preparing validated assignment changes");
+		progress.setContentText(
+				"The return is prepared from saved contributor work. " + "No master database is modified.");
+		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
+
+		// Hide does not interrupt archive publication or ledger registration.
+		progress.getButtonTypes().setAll(new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE));
+		task.setOnSucceeded(_ -> {
+			contributionExportRunning = false;
+			updateContributorAssignmentActions();
+			progress.close();
+			ExamWorkManifest manifest = task.getValue();
+			showAlert(Alert.AlertType.INFORMATION, "Assignment Contribution Exported",
+					"The contribution package was created and validated.",
+					"Assignment: " + manifest.assignmentId() + "\nPackage: " + manifest.packageId() + "\nDestination: "
+							+ destination + "\n\nTransfer this package to the coordinator."
+							+ "\nLocal contributor work has been preserved.");
+		});
+		task.setOnFailed(_ -> {
+			contributionExportRunning = false;
+			updateContributorAssignmentActions();
+			progress.close();
+			showAlert(Alert.AlertType.ERROR, "Export Assignment Contribution",
+					"The assignment contribution could not be exported.",
+					failureMessage(task.getException()) + "\n\nThe assignment remains available. "
+							+ "Correct the reported problem before retrying.");
+		});
+		task.setOnCancelled(_ -> {
+			contributionExportRunning = false;
+			updateContributorAssignmentActions();
+			progress.close();
+		});
+		Thread worker = new Thread(task, "examwork-assignment-contribution-export");
+		worker.setDaemon(true);
+		progress.show();
+		worker.start();
+	}
+
 	private void startContributorAssignmentInstallation(Stage primaryStage, ApplicationConfig config, Path archive) {
 		Task<WorkAssignmentInstallationCoordinator.Result> task = new ApplicationBackgroundTask<>(
 				() -> new WorkAssignmentInstallationCoordinator(config).install(archive));
@@ -6057,41 +6222,6 @@ public class QuestionBankApplication extends Application {
 			progress.close();
 			throw failure;
 		}
-	}
-
-	private void completeContributorAssignmentInstallation(long request,
-			WorkAssignmentInstallationCoordinator.Result result, Throwable failure) {
-		if (!applicationBusyOverlay.owns(request)) {
-			return;
-		}
-		finishContributorAssignmentInstallation(request);
-		if (failure != null) {
-			corpusDashboardPane = null;
-			corpusDashboardHost.getChildren().setAll(new Label(
-					"The installed assignment could not be displayed. Restart the application to refresh it."));
-
-			// Persistence succeeded; distinguish a presentation failure from a failed
-			// import.
-			showAlert(Alert.AlertType.ERROR, "Contributor Assignment Installed",
-					"The assignment was installed, but the Dashboard could not be refreshed.",
-					failureMessage(failure) + "\n\nRestart the application to restore the active assignment.");
-			return;
-		}
-		String message = result.replay()
-				? "The previously installed assignment was selected without replacing captured work."
-				: "The assignment and its source assets were installed successfully.";
-		if (result.cleanupPending()) {
-			message += "\n\nTemporary installation cleanup is pending. It will be retried by the installer.";
-		}
-		showAlert(Alert.AlertType.INFORMATION, "Contributor Assignment Installed", message, "Assignment ID: "
-				+ result.assignmentId() + "\n\nThe Corpus Dashboard is now scoped to the assigned Subject and Exam.");
-	}
-
-	private void finishContributorAssignmentInstallation(long request) {
-		if (contributorAssignmentInstallationRequest == request) {
-			contributorAssignmentInstallationRequest = 0;
-		}
-		applicationBusyOverlay.finish(request);
 	}
 
 	private void startContributorAssignmentIssuance(Stage primaryStage, ApplicationConfig config,
@@ -6766,8 +6896,14 @@ public class QuestionBankApplication extends Application {
 		var selected = assignmentSelector.getValue();
 		boolean sameAssignment = selected != null && activeAssignmentContext != null
 				&& selected.assignmentId().equals(activeAssignmentContext.session().assignmentId());
-		assignmentSwitchButton.setDisable(selected == null || sameAssignment);
-		assignmentExitButton.setDisable(activeAssignmentContext == null);
+		assignmentSwitchButton.setDisable(selected == null || sameAssignment || contributionExportRunning);
+		assignmentExitButton.setDisable(activeAssignmentContext == null || contributionExportRunning);
+		if (contributionExportMenuItem != null) {
+			contributionExportMenuItem.setDisable(activeAssignmentContext == null || contributionExportRunning);
+		}
+		if (subjectSnapshotExportMenuItem != null) {
+			subjectSnapshotExportMenuItem.setDisable(activeAssignmentContext != null || contributionExportRunning);
+		}
 	}
 
 	private void useExamAssetsBookletForCapture(ExamBooklet booklet, ApplicationConfig config) {
