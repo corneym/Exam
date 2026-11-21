@@ -161,4 +161,5 @@ public final class ContributionDeltaPlanner {
 			originalVersions = List.copyOf(Objects.requireNonNull(originalVersions, "originalVersions"));
 		}
 	}
+
 }
