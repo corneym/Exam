@@ -15,21 +15,18 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest.ScopeLevel;
 
 /**
- * Maintains append-only publication history for contributor returns.
+ * Records durable publication evidence for contributor returns.
  *
  * <p>
- * Every return belongs to one installed assignment, retains its original
- * baseline identity, and links to the preceding return package when one exists.
+ * An assignment may publish one contribution package. Identical replay of that
+ * same package identity and digest remains idempotent, but a second package for
+ * the assignment is refused. Existing historical return evidence is retained
+ * without alteration.
  *
  * <p>
- * Recording a return never changes the installed assignment, its immutable
- * baseline, the selected assignment, or captured work. A repeated package ID is
- * accepted only when its recorded identity, parent and archive digest all
- * agree.
- *
- * <p>
- * The package-private publication method must be called only after an archive
- * has been validated and published successfully.
+ * Recording the return does not delete captured work or modify its original
+ * assignment baseline. The presence of a recorded return means the assignment
+ * is locally SUBMITTED and is no longer available for capture.
  */
 public final class SqliteContributionReturnLedger {
 
@@ -80,26 +77,19 @@ public final class SqliteContributionReturnLedger {
 	}
 
 	/**
-	 * Records a previously validated and successfully published contribution
-	 * archive.
+	 * Records an already validated and published contribution package.
 	 *
 	 * <p>
-	 * The supplied manifest and SHA-256 digest must describe the same published
-	 * archive. Archive validation, file publication and digest calculation are the
-	 * exporter's responsibility.
-	 *
-	 * <p>
-	 * The first return has no previous package. Each subsequent return must
-	 * identify the latest recorded return for the same assignment. Replaying an
-	 * already recorded package with the same digest and parent is idempotent.
+	 * The first submission must have no predecessor. An identical package replay is
+	 * idempotent; a different subsequent package is rejected.
 	 *
 	 * @param manifest          validated contribution manifest
-	 * @param previousPackageId previous return package, or null for the first
-	 *                          return
-	 * @param archiveSha256     digest of the published archive bytes
-	 * @return persisted return evidence
-	 * @throws SQLException             if assignment identity, lineage, publication
-	 *                                  evidence or persistence is invalid
+	 * @param previousPackageId must be null for the only permitted submission
+	 * @param archiveSha256     SHA-256 of the published archive bytes
+	 * @return durable published-return evidence
+	 * @throws SQLException             if identity, provenance, duplicate or
+	 *                                  lineage checks fail, or persistence cannot
+	 *                                  complete
 	 * @throws IllegalArgumentException if the digest is invalid
 	 * @throws NullPointerException     if required arguments are null
 	 */

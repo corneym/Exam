@@ -46,7 +46,6 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	private final BiFunction<Long, CurriculumNode, Question> classificationUpdater;
 	private boolean persistedClassificationChange;
 	private final QuestionSearchPane searchPane;
-
 	private final ObjectProperty<Predicate<Question>> readOnlyQuestionPredicate = new SimpleObjectProperty<>(
 			_ -> false);
 
@@ -204,31 +203,26 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 
 	private void configureActionButtonBindings(Button editQuestionButton, Button splitQuestionButton,
 			Button editMetadataButton, Button recaptureSharedContextButton, Button editAnswerButton) {
-
 		editQuestionButton.disableProperty()
 				.bind(Bindings.createBooleanBinding(
 						() -> searchPane.getSelectedQuestion() == null || searchPane.isSelectedQuestionReadOnly(),
 						searchPane.selectedResultProperty(), readOnlyQuestionPredicate));
-
 		splitQuestionButton.disableProperty().bind(Bindings.createBooleanBinding(() -> {
 			Question selected = searchPane.getSelectedQuestion();
 			return searchPane.isSelectedQuestionReadOnly() || searchPane.isClassificationDirty() || selected == null
 					|| selected.hasSourceQuestion() || selected.hasSharedContext();
 		}, searchPane.selectedResultProperty(), searchPane.classificationDirtyProperty(), readOnlyQuestionPredicate));
-
 		editMetadataButton.disableProperty()
 				.bind(Bindings.createBooleanBinding(
 						() -> searchPane.getSelectedQuestion() == null || searchPane.isSelectedQuestionReadOnly()
 								|| searchPane.isClassificationDirty(),
 						searchPane.selectedResultProperty(), searchPane.classificationDirtyProperty(),
 						readOnlyQuestionPredicate));
-
 		recaptureSharedContextButton.disableProperty().bind(Bindings.createBooleanBinding(() -> {
 			Question selected = searchPane.getSelectedQuestion();
 			return searchPane.isSelectedQuestionReadOnly() || searchPane.isClassificationDirty() || selected == null
 					|| (!selected.hasSharedContext() && !selected.hasSourceQuestion());
 		}, searchPane.selectedResultProperty(), searchPane.classificationDirtyProperty(), readOnlyQuestionPredicate));
-
 		editAnswerButton.disableProperty().bind(Bindings.createBooleanBinding(() -> {
 			Question selected = searchPane.getSelectedQuestion();
 			return searchPane.isSelectedQuestionReadOnly() || searchPane.isClassificationDirty() || selected == null
@@ -364,11 +358,9 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	private void configureResultConversion() {
 		setResultConverter(buttonType -> {
 			Question selected = searchPane.getSelectedQuestion();
-
 			if (selected == null || searchPane.isSelectedQuestionReadOnly()) {
 				return null;
 			}
-
 			if (buttonType == editQuestionButtonType) {
 				return new EditRequest(selected, EditTarget.QUESTION);
 			}
@@ -398,18 +390,15 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 
 		// Inline Save commits only the Descriptor refinement and leaves Search open on
 		// the refreshed Question.
-
 		searchPane.setClassificationSaveHandler(() -> {
 			if (searchPane.isSelectedQuestionReadOnly()) {
 				throw new IllegalStateException("This Question is read-only and cannot be reclassified.");
 			}
-
 			Question updated = savePendingClassification();
 			if (updated != null) {
 				searchPane.refreshAfterEdit(updated.getId());
 			}
 		});
-
 	}
 
 	private void configureSizePersistence() {

@@ -49,15 +49,15 @@ public final class SqliteContributorAssignmentSessionRepository {
 	}
 
 	/**
-	 * Finds the currently selected contributor assignment.
+	 * Finds the selected assignment only when it remains eligible for capture.
 	 *
 	 * <p>
-	 * Returns empty when ordinary application mode is selected.
+	 * Submitted assignments and locally removed unchanged assignments are excluded.
+	 * Their installation and baseline evidence remain stored.
 	 *
-	 * @return active assignment, or empty
-	 * @throws SQLException if stored session data cannot be read
+	 * @return selected active assignment, or empty when none is available
+	 * @throws SQLException if contributor session state cannot be read
 	 */
-
 	public Optional<Session> active() throws SQLException {
 		try (Connection connection = database.openConnection();
 				PreparedStatement statement = connection.prepareStatement("""
@@ -78,17 +78,13 @@ public final class SqliteContributorAssignmentSessionRepository {
 						  )
 						""");
 				ResultSet result = statement.executeQuery()) {
-
 			if (!result.next()) {
 				return Optional.empty();
 			}
-
 			Session session = readSession(result);
-
 			if (result.next()) {
 				throw new SQLException("Multiple active contributor assignments");
 			}
-
 			return Optional.of(session);
 		}
 	}
@@ -242,7 +238,6 @@ public final class SqliteContributorAssignmentSessionRepository {
 			try {
 				Session session = find(connection, assignmentId).orElseThrow(
 						() -> new IllegalArgumentException("Unknown contributor assignment: " + assignmentId));
-
 				try (PreparedStatement check = connection.prepareStatement("""
 						SELECT CASE
 						    WHEN EXISTS (
@@ -261,7 +256,6 @@ public final class SqliteContributorAssignmentSessionRepository {
 						""")) {
 					check.setString(1, assignmentId.toString());
 					check.setString(2, assignmentId.toString());
-
 					try (ResultSet result = check.executeQuery()) {
 						if (!result.next() || result.getInt(1) != 0) {
 							throw new IllegalStateException("This contributor assignment is submitted or removed "
@@ -269,7 +263,6 @@ public final class SqliteContributorAssignmentSessionRepository {
 						}
 					}
 				}
-
 				try (PreparedStatement statement = connection.prepareStatement("""
 						UPDATE contributor_assignment_selection
 						SET assignment_id = ?,

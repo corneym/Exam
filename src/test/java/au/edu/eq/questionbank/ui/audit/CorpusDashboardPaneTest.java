@@ -1385,6 +1385,37 @@ class CorpusDashboardPaneTest {
 
 	@Test
 	@SuppressWarnings("unchecked")
+	void lockedCoordinatorExamRemainsInspectableButCannotBeModified(FxRobot robot) {
+		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		Button manage = robot.lookup("#corpus-dashboard-manage-exam-assets").queryButton();
+		Button issue = robot.lookup("#corpus-dashboard-create-contributor-assignment").queryButton();
+		Button close = robot.lookup("#corpus-dashboard-close-assignment").queryButton();
+		Button inspect = robot.lookup("#corpus-dashboard-inspect-exam-questions").queryButton();
+		Button capture = robot.lookup("#corpus-dashboard-capture-questions").queryButton();
+		Button lifecycle = robot.lookup("#corpus-dashboard-exam-lifecycle").queryButton();
+		robot.interact(() -> {
+			exams.getSelectionModel().select(fixture.activeExamStatus);
+			booklets.getSelectionModel().select(fixture.activePaperStatus);
+			pane.setReadOnlyContext(java.util.Map.of(fixture.activeExam.getId(), "Test Contributor"), false);
+		});
+		assertTrue(manage.isDisabled());
+		assertTrue(issue.isDisabled());
+		assertTrue(capture.isDisabled());
+		assertTrue(lifecycle.isDisabled());
+		assertFalse(close.isDisabled());
+		assertFalse(inspect.isDisabled());
+		Label selectedLabel = robot.lookup("#corpus-dashboard-selected-exam").queryAs(Label.class);
+		assertTrue(selectedLabel.getText().contains("ASSIGNED to Test Contributor"));
+		robot.interact(() -> pane.setReadOnlyContext(java.util.Map.of(), false));
+		assertFalse(manage.isDisabled());
+		assertFalse(issue.isDisabled());
+		assertTrue(close.isDisabled());
+		assertFalse(capture.isDisabled());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
 	void manageExamAssetsRequiresSelectedExam(FxRobot robot) {
 		AtomicReference<Exam> routedExam = new AtomicReference<>();
 		AtomicReference<ExamBooklet> routedBooklet = new AtomicReference<>();

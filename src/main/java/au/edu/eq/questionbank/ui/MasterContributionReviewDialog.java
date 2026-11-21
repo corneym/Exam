@@ -121,25 +121,18 @@ final class MasterContributionReviewDialog extends Dialog<Void> {
 		holdButton.setId("contribution-review-hold");
 		approveButton.setId("contribution-review-approve");
 		suggestedButton.setId("contribution-review-suggested");
-
 		applyButton.setTooltip(new Tooltip("Accept this supported new contribution record for application "
 				+ "to the coordinator's Exam after final confirmation."));
-
 		skipButton.setTooltip(new Tooltip("Record that this proposal is already identical to the authoritative "
 				+ "master record. No Question content is changed."));
-
 		rejectButton.setTooltip(new Tooltip("Decline this proposed record. The rejected contribution remains "
 				+ "recorded in the reconciliation history."));
-
 		holdButton.setTooltip(new Tooltip("Leave this proposal unresolved. The assignment cannot be closed "
 				+ "until every proposal has a final decision."));
-
 		suggestedButton.setTooltip(new Tooltip("Choose recommended decisions for supported undecided records. "
 				+ "Inspect the resulting decisions before approving."));
-
 		approveButton.setTooltip(new Tooltip("Continue only when every proposal has been decided. "
 				+ "A verified full backup and final confirmation follow."));
-
 		applyButton.setOnAction(_ -> choose(Choice.QUEUE_APPLY));
 		skipButton.setOnAction(_ -> choose(Choice.SKIP_IDENTICAL));
 		rejectButton.setOnAction(_ -> choose(Choice.REJECT));

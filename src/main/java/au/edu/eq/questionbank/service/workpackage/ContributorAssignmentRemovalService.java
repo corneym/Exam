@@ -1,4 +1,3 @@
-
 package au.edu.eq.questionbank.service.workpackage;
 
 import java.io.IOException;
@@ -54,14 +53,11 @@ public final class ContributorAssignmentRemovalService {
 	 */
 	public void reactivate(UUID assignmentId) throws SQLException, IOException {
 		Objects.requireNonNull(assignmentId, "assignmentId");
-
 		if (visibility.find(assignmentId).orElseThrow(() -> new IllegalArgumentException(
 				"Unknown contributor assignment: " + assignmentId)) != State.REMOVED) {
 			throw new IllegalStateException("Only a previously removed assignment can be reactivated.");
 		}
-
 		requireNoSavedChanges(assignmentId);
-
 		try (Connection connection = database.openConnection();
 				PreparedStatement statement = connection.prepareStatement("""
 						DELETE FROM contributor_assignment_hidden
@@ -94,17 +90,13 @@ public final class ContributorAssignmentRemovalService {
 	 */
 	public void removeUnchanged(UUID assignmentId) throws SQLException, IOException {
 		Objects.requireNonNull(assignmentId, "assignmentId");
-
 		if (visibility.find(assignmentId).orElseThrow(() -> new IllegalArgumentException(
 				"Unknown contributor assignment: " + assignmentId)) != State.ACTIVE) {
 			throw new IllegalStateException("Only an active, unsubmitted assignment may be removed.");
 		}
-
 		requireNoSavedChanges(assignmentId);
-
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
-
 			try {
 				try (PreparedStatement insert = connection.prepareStatement("""
 						INSERT INTO contributor_assignment_hidden (
@@ -126,12 +118,10 @@ public final class ContributorAssignmentRemovalService {
 						""")) {
 					insert.setString(1, Instant.now().toString());
 					insert.setString(2, assignmentId.toString());
-
 					if (insert.executeUpdate() != 1) {
 						throw new IllegalStateException("The assignment is no longer eligible for removal.");
 					}
 				}
-
 				try (PreparedStatement clear = connection.prepareStatement("""
 						UPDATE contributor_assignment_selection
 						SET assignment_id = NULL,
@@ -143,7 +133,6 @@ public final class ContributorAssignmentRemovalService {
 					clear.setString(2, assignmentId.toString());
 					clear.executeUpdate();
 				}
-
 				connection.commit();
 			} catch (SQLException | RuntimeException failure) {
 				try {
@@ -159,11 +148,9 @@ public final class ContributorAssignmentRemovalService {
 	private void requireNoSavedChanges(UUID assignmentId) throws SQLException, IOException {
 		Path directory = Files.createTempDirectory("examwork-assignment-removal-");
 		Path snapshotPath = directory.resolve("contributor-snapshot.db");
-
 		try {
 			database.createConsistentSnapshot(snapshotPath);
 			var snapshot = new ContributionSnapshotReader(snapshotPath).read(assignmentId);
-
 			if (!snapshot.delta().candidates().isEmpty()) {
 				throw new IllegalStateException("This assignment contains saved work and cannot be removed. "
 						+ "Export the contribution and send it to the coordinator.");

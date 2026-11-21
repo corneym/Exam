@@ -428,6 +428,34 @@ class QuestionSearchDialogTest {
 	}
 
 	@Test
+	void readOnlyQuestionDisablesEditingWithoutDisablingInspection(FxRobot robot) throws TimeoutException {
+		Subject subject = new Subject(100, "Chemistry");
+		Question question = scopeTestQuestion(subject, 1000);
+		AtomicInteger searchLoads = new AtomicInteger();
+		QuestionSearchDialog[] holder = new QuestionSearchDialog[1];
+		robot.interact(() -> {
+			holder[0] = createScopeTestDialog(subject, List.of(question), QuestionSearchNarrowing.unrestricted(),
+					searchLoads);
+			holder[0].setReadOnlyQuestionPredicate(candidate -> candidate.getId() == question.getId());
+			holder[0].show();
+		});
+		QuestionSearchDialog dialog = holder[0];
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> !results.getItems().isEmpty());
+		robot.interact(() -> results.getSelectionModel().selectFirst());
+		assertTrue(robot.lookup("#question-search-edit-question").queryButton().isDisabled());
+		assertTrue(robot.lookup("#question-search-split-question").queryButton().isDisabled());
+		assertTrue(robot.lookup("#question-search-edit-metadata").queryButton().isDisabled());
+		assertTrue(robot.lookup("#question-search-recapture-shared-context").queryButton().isDisabled());
+		assertTrue(robot.lookup("#question-search-edit-answer").queryButton().isDisabled());
+		assertTrue(robot.lookup("#question-search-save-classification").queryButton().isDisabled());
+		assertTrue(robot.lookup("#question-search-output-include").queryButton().isDisabled());
+		assertTrue(robot.lookup("#question-search-output-exclude").queryButton().isDisabled());
+		assertFalse(results.isDisabled());
+		robot.interact(dialog::close);
+	}
+
+	@Test
 	void resizedDimensionsSurviveHideAndReshow(FxRobot robot) {
 		InMemoryCurriculumRepository curriculumRepository = new InMemoryCurriculumRepository();
 

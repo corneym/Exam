@@ -679,35 +679,30 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	/**
-	 * Applies the authoritative read-only presentation for this Dashboard.
+	 * Applies authoritative read-only presentation to the Dashboard.
 	 *
 	 * <p>
-	 * The map identifies active coordinator assignment locks. The Subject flag
-	 * identifies an imported or otherwise externally authoritative Subject. Neither
-	 * restriction prevents searching or inspecting Questions.
+	 * Active coordinator assignments are recorded by Exam ID. Imported Subjects are
+	 * read-only throughout their entire Exam hierarchy. Searching, inspection,
+	 * filtering and navigation remain available.
 	 *
 	 * @param lockedExams     active Exam IDs mapped to contributor names
-	 * @param subjectReadOnly whether this Subject is externally authoritative
-	 * @throws NullPointerException     if the map or one of its entries is null
-	 * @throws IllegalArgumentException if an Exam ID or contributor name is invalid
+	 * @param subjectReadOnly whether the Subject is externally authoritative
+	 * @throws NullPointerException     if the map contains null values
+	 * @throws IllegalArgumentException if an Exam ID or name is invalid
 	 */
 	public void setReadOnlyContext(Map<Long, String> lockedExams, boolean subjectReadOnly) {
 		Objects.requireNonNull(lockedExams, "lockedExams");
-
 		for (Map.Entry<Long, String> entry : lockedExams.entrySet()) {
 			Long examId = Objects.requireNonNull(entry.getKey(), "examId");
 			String contributor = Objects.requireNonNull(entry.getValue(), "contributor");
-
 			if (examId < 1 || contributor.isBlank()) {
 				throw new IllegalArgumentException("Invalid assigned Exam details");
 			}
 		}
-
 		coordinatorExamLocks = Map.copyOf(lockedExams);
 		importedSubjectReadOnly = subjectReadOnly;
-
 		addCurriculumButton.setDisable(importedSubjectReadOnly || assignmentExamId != null);
-
 		updateAddExamActionState();
 		refreshCurriculumMappingSummary();
 		refreshExamRowStyles();
@@ -717,11 +712,18 @@ public final class CorpusDashboardPane extends VBox {
 		updateExamLifecycleActionState();
 		updateBulkActionState();
 		updateQuestionActionState();
-
+		List<Question> outstanding = missingDescriptorQuestionsShown();
 		assignQuestionWorkDescriptorsButton
 				.setDisable(importedSubjectReadOnly || assignmentExamId != null || isSelectedExamReadOnly()
-						|| missingDescriptorQuestionsShown().stream().anyMatch(this::isQuestionReadOnly)
-						|| missingDescriptorQuestionsShown().isEmpty());
+						|| outstanding.isEmpty() || outstanding.stream().anyMatch(this::isQuestionReadOnly));
+		ExamCorpusStatus selected = examTable.getSelectionModel().getSelectedItem();
+		if (selected != null) {
+			Exam exam = selected.exam();
+			String description = "%s %d — %s".formatted(exam.getProvider().getName(), exam.getYear(), exam.getName());
+			String contributor = coordinatorExamLocks.get(exam.getId());
+			selectedExamLabel
+					.setText(contributor == null ? description : description + " — ASSIGNED to " + contributor);
+		}
 	}
 
 	void replaceData(List<ExamCorpusStatus> updatedStatuses, List<Question> updatedQuestions) {
@@ -941,11 +943,9 @@ public final class CorpusDashboardPane extends VBox {
 		examEmptyStateRow.setId("corpus-dashboard-exam-empty-state");
 		examEmptyStateRow.setAlignment(Pos.CENTER_LEFT);
 		examEmptyStateScroll = createHorizontalScrollRow("corpus-dashboard-empty-exam-scroll", examEmptyStateRow);
-
 		HBox selectedExamTitleRow = new HBox(SPACING, selectedExamLabel, declaredExamStateLabel, manageExamAssetsButton,
 				createContributorAssignmentButton, closeContributorAssignmentButton, inspectExamQuestionsButton,
 				examLifecycleButton);
-
 		selectedExamTitleRow.setAlignment(Pos.CENTER_LEFT);
 		HBox.setHgrow(selectedExamLabel, Priority.ALWAYS);
 		ScrollPane examActionsScroll = createHorizontalScrollRow("corpus-dashboard-exam-actions-scroll",
@@ -1365,14 +1365,12 @@ public final class CorpusDashboardPane extends VBox {
 			// Issuance is always Exam-wide, never booklet-specific.
 			createContributorAssignmentHandler.accept(selected.exam());
 		});
-
 		closeContributorAssignmentButton.setOnAction(_ -> {
 			ExamCorpusStatus selected = examTable.getSelectionModel().getSelectedItem();
 			if (selected != null && !closeContributorAssignmentButton.isDisabled()) {
 				closeContributorAssignmentHandler.accept(selected.exam());
 			}
 		});
-
 		assignDescriptorsButton.setOnAction(_ -> assignSelectedBookletDescriptors());
 		assignQuestionWorkDescriptorsButton.setOnAction(_ -> assignQuestionWorkDescriptors());
 		inspectBookletQuestionsButton.setOnAction(_ -> inspectSelectedBookletQuestions());
@@ -1440,7 +1438,6 @@ public final class CorpusDashboardPane extends VBox {
 		selectedBookletLabel.setId("corpus-dashboard-selected-booklet");
 		bookletWarningLabel.setId("corpus-dashboard-booklet-warning");
 		mcqExplanationCoverageLabel.setId("corpus-dashboard-mcq-coverage");
-
 	}
 
 	private void configureExamLifecycleProgressControls() {
@@ -1696,12 +1693,10 @@ public final class CorpusDashboardPane extends VBox {
 				setAlignment(Pos.CENTER);
 				checkBox.setOnAction(_ -> {
 					BookletCorpusStatus status = getTableRow() == null ? null : getTableRow().getItem();
-
 					if (status == null || applicabilityReviewChangeInProgress || assignmentExamId != null
 							|| isExamReadOnly(status.booklet().getExam().getId())) {
 						return;
 					}
-
 					boolean recorded = reviewedBookletIds.contains(status.booklet().getId());
 					if (!recorded && !ExamApplicabilityReview.eligibleForReview(status)) {
 						return;
@@ -1728,7 +1723,6 @@ public final class CorpusDashboardPane extends VBox {
 				boolean eligible = ExamApplicabilityReview.eligibleForReview(status);
 				checkBox.setId("corpus-dashboard-applicability-reviewed-" + bookletId);
 				checkBox.setSelected(recorded && eligible);
-
 				checkBox.setDisable(applicabilityReviewChangeInProgress || assignmentExamId != null
 						|| isExamReadOnly(status.booklet().getExam().getId()) || (!recorded && !eligible));
 				String explanation;
@@ -2220,10 +2214,8 @@ public final class CorpusDashboardPane extends VBox {
 			curriculumMappingSummaryLabel.setText("No curriculum has been added.");
 			return;
 		}
-
 		mapCurriculumButton
 				.setDisable(importedSubjectReadOnly || assignmentExamId != null || mappingCoverages.isEmpty());
-
 		if (mappingCoverages.isEmpty()) {
 
 			// Curriculum exists, but no historical-to-current pair currently requires
@@ -2329,7 +2321,6 @@ public final class CorpusDashboardPane extends VBox {
 		// where the same row index could represent another Question.
 		questionTable.getSelectionModel().clearSelection();
 		questionResultCountLabel.setText(String.format("Showing %d Questions", workItems.size()));
-
 		List<Question> missingDescriptors = missingDescriptorQuestionsShown();
 		assignQuestionWorkDescriptorsButton.setDisable(importedSubjectReadOnly || assignmentExamId != null
 				|| isSelectedExamReadOnly() || missingDescriptors.isEmpty()
@@ -2457,14 +2448,10 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private void showSelectedExam(ExamCorpusStatus status, Long preferredBookletId) {
-
 		String description = String.format("%s %d — %s", status.exam().getProvider().getName(), status.exam().getYear(),
 				status.exam().getName());
-
 		String contributor = coordinatorExamLocks.get(status.exam().getId());
-
 		selectedExamLabel.setText(contributor == null ? description : description + " — ASSIGNED to " + contributor);
-
 		declaredExamStateLabel.setText("Declared state: " + status.declaredCaptureState().name());
 		ExamAssetExpectations expectations = status.assetExpectations();
 		selectedExamCountsLabel.setText(String.format(
@@ -2539,14 +2526,12 @@ public final class CorpusDashboardPane extends VBox {
 	private void updateAddExamActionState() {
 
 		// All required Exam structure is issued by the coordinator.
-
 		if (assignmentExamId != null || importedSubjectReadOnly) {
 			addExamButton.setDisable(true);
 			noExamsLabel.setText(assignmentExamId != null ? "The assigned Exam is supplied by the coordinator."
 					: "This Subject is an imported read-only snapshot.");
 			return;
 		}
-
 		addExamButton.setDisable(!curriculumAvailable);
 		if (!curriculumAvailable) {
 			noExamsLabel.setText("Add curriculum before adding an Exam.");
@@ -2566,24 +2551,19 @@ public final class CorpusDashboardPane extends VBox {
 
 	private void updateBulkActionState() {
 		boolean readOnly = importedSubjectReadOnly || assignmentExamId != null || isSelectedExamReadOnly();
-
 		boolean unknownVisible = questionTable.getItems().stream()
 				.anyMatch(item -> item.question().getResponseType() == QuestionResponseType.UNKNOWN
 						&& !isQuestionReadOnly(item.question()));
-
 		selectAllUnknownButton.setDisable(readOnly || !unknownVisible);
-
 		List<Question> selected = selectedQuestionsForBulkUpdate();
 		boolean validSelection = !readOnly && !selected.isEmpty()
 				&& selected.stream().noneMatch(this::isQuestionReadOnly);
-
 		setSelectedMultipleChoiceButton.setDisable(!validSelection);
 		setSelectedWrittenResponseButton.setDisable(!validSelection);
 	}
 
 	private void updateCaptureActionState() {
 		BookletCorpusStatus selected = bookletTable.getSelectionModel().getSelectedItem();
-
 		if (importedSubjectReadOnly || isSelectedExamReadOnly()) {
 			assignDescriptorsButton.setDisable(true);
 			captureQuestionsButton.setDisable(true);
@@ -2611,17 +2591,12 @@ public final class CorpusDashboardPane extends VBox {
 
 	private void updateExamAssetsActionState() {
 		ExamCorpusStatus selectedExam = examTable.getSelectionModel().getSelectedItem();
-
 		boolean selected = selectedExam != null;
 		boolean locked = selected && isSelectedExamReadOnly();
 		boolean coordinatorContext = assignmentExamId == null;
-
 		manageExamAssetsButton.setDisable(!selected || !coordinatorContext || locked);
-
 		createContributorAssignmentButton.setDisable(!selected || !coordinatorContext || locked);
-
 		boolean hasActiveLock = selected && coordinatorExamLocks.containsKey(selectedExam.exam().getId());
-
 		closeContributorAssignmentButton.setDisable(!coordinatorContext || importedSubjectReadOnly || !hasActiveLock);
 	}
 
@@ -2647,7 +2622,6 @@ public final class CorpusDashboardPane extends VBox {
 			examLifecycleButton.setTooltip(new Tooltip("Only the coordinator changes Exam lifecycle state."));
 			return;
 		}
-
 		ExamCorpusStatus selectedExam = examTable.getSelectionModel().getSelectedItem();
 		if (selectedExam != null && isSelectedExamReadOnly()) {
 			examLifecycleButton.setDisable(true);
@@ -2655,7 +2629,6 @@ public final class CorpusDashboardPane extends VBox {
 					+ "Its authoritative lifecycle cannot be changed here."));
 			return;
 		}
-
 		if (selected == null) {
 			examLifecycleButton.setText("Mark Complete");
 			examLifecycleButton.setDisable(true);
@@ -2691,18 +2664,13 @@ public final class CorpusDashboardPane extends VBox {
 
 	private void updateExamRowState(TableRow<?> row) {
 		ExamCorpusStatus status = row.isEmpty() || !(row.getItem() instanceof ExamCorpusStatus exam) ? null : exam;
-
 		boolean assigned = status != null && coordinatorExamLocks.containsKey(status.exam().getId());
-
 		boolean clear = status != null && !assigned && status.isReadyForCompletion()
 				&& isExamApplicabilityReviewed(status);
-
 		boolean attention = status != null && !assigned && !clear;
-
 		row.pseudoClassStateChanged(EXAM_ROW_ASSIGNED, assigned);
 		row.pseudoClassStateChanged(EXAM_ROW_ATTENTION, attention);
 		row.pseudoClassStateChanged(EXAM_ROW_CLEAR, clear);
-
 		row.setTooltip(assigned ? new Tooltip(
 				"ASSIGNED to " + coordinatorExamLocks.get(status.exam().getId()) + ". This Exam is locked for editing.")
 				: null);
@@ -2710,14 +2678,12 @@ public final class CorpusDashboardPane extends VBox {
 
 	private void updateQuestionActionState() {
 		QuestionCorpusWorkItem selected = singleSelectedQuestionWorkItem();
-
 		if (importedSubjectReadOnly || assignmentExamId != null || isSelectedExamReadOnly()
 				|| (selected != null && isQuestionReadOnly(selected.question()))) {
 			completeSelectedQuestionButton.setDisable(true);
 			completeSelectedAnswerButton.setDisable(true);
 			return;
 		}
-
 		boolean missingExplanation = selected != null && isMissingMcqExplanation(selected.question());
 		if (missingExplanation) {
 			completeSelectedAnswerButton.setText("Capture Explanation");
