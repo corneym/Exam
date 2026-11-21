@@ -3,6 +3,7 @@ package au.edu.eq.questionbank.ui;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.Field;
@@ -11,6 +12,7 @@ import java.lang.reflect.Proxy;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
 import java.util.UUID;
@@ -49,7 +51,6 @@ import au.edu.eq.questionbank.service.workpackage.WorkAssignmentInstallationCoor
 import au.edu.eq.questionbank.service.workpackage.WorkAssignmentIssuanceService;
 import au.edu.eq.questionbank.ui.capture.AnswerCapturePane;
 import au.edu.eq.questionbank.ui.capture.QuestionCapturePane;
-import au.edu.eq.questionbank.ui.curriculum.CurriculumSelectorPane;
 import javafx.application.Platform;
 import javafx.concurrent.Task;
 import javafx.concurrent.Worker;
@@ -449,32 +450,60 @@ class ContributorAssignmentDashboardWorkflowTest {
 	}
 
 	@Test
+	@SuppressWarnings("unchecked")
 	void reimportRestoresAssignedSubjectAfterAttemptedSwitch(FxRobot robot) throws Exception {
+
 		awaitAssignedDashboard(robot);
 
-		// An active assignment owns its Working Subject. A user cannot leave
-		// that context merely by selecting another Subject in the Dashboard.
 		Subject biology = field("workingSubject", Subject.class);
-		Subject physics = new SqliteCurriculumWriter(new SqliteDatabase(contributor.databasePath()))
-				.insertSubject("Physics");
+
+		assertEquals("Biology", biology.getName());
+
+		// An active contributor assignment must prevent structural
+		// Subject creation. This SQLite rejection is expected.
+		SqliteDatabase database = new SqliteDatabase(contributor.databasePath());
+
+		assertThrows(SQLException.class, () -> new SqliteCurriculumWriter(database).insertSubject("Physics"));
+
+		// Test attempted context switching without inserting an
+		// unauthorised Subject into the database.
+		Subject unavailablePhysics = new Subject(999, "Physics");
+
+		ComboBox<Subject> subjects = robot.lookup("#curriculum-subject").queryAs(ComboBox.class);
+
 		robot.interact(() -> {
-			CurriculumSelectorPane selector = field("curriculumSelectorPane", CurriculumSelectorPane.class);
-			selector.refreshSubjects();
-			selector.selectSubject(physics);
+			subjects.getItems().add(unavailablePhysics);
+			subjects.getSelectionModel().select(unavailablePhysics);
 		});
-		WaitForAsyncUtils.waitForFxEvents();
-		robot.interact(() -> assertEquals(biology, field("workingSubject", Subject.class)));
+
+		// The application's Subject guard must restore Biology.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
+			AtomicBoolean restored = new AtomicBoolean();
+
+			robot.interact(() -> restored.set(
+					biology.equals(field("workingSubject", Subject.class)) && biology.equals(subjects.getValue())));
+
+			return restored.get();
+		});
+
 		assertEquals(assignmentId, sessions().active().orElseThrow().assignmentId());
 
-		// Reimporting the same original package remains idempotent and
-		// restores the selected assignment without duplicating records.
+		// Reimporting the existing package must remain idempotent.
 		startInstallation(robot, realInstaller());
+
 		acknowledgeDialog(robot, "Contributor Assignment Installed", "The previously installed assignment");
+
 		awaitAssignedDashboard(robot);
 		assertControlsReleased(robot);
+
 		robot.interact(() -> assertEquals("Biology", field("workingSubject", Subject.class).getName()));
+
 		assertEquals(assignmentId, sessions().active().orElseThrow().assignmentId());
+
 		assertEquals(1, sessions().findAll().size());
+
+		database.verifySchema();
+		database.verifyIntegrity();
 	}
 
 	@Start

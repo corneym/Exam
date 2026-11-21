@@ -3104,7 +3104,13 @@ public class QuestionBankApplication extends Application {
 
 		// Moving application Subject may invalidate an active Exam from the old
 		// Subject, so this lightweight visible context changes immediately.
+
 		refreshActiveExamContext();
+
+		// Whole-Subject export is available only for a selected locally
+		// authoritative Subject. Recalculate the menu's enabled state
+		// whenever Working Subject changes.
+		updateContributorAssignmentActions();
 	}
 
 	private void hideWorkspaceBusy() {

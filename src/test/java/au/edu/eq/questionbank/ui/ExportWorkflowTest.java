@@ -123,34 +123,71 @@ class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
-	void packageWorkflowMenusAreDiscoverable(FxRobot robot) {
+	@SuppressWarnings("unchecked")
+	void packageWorkflowMenusAreDiscoverable(FxRobot robot) throws Exception {
+
 		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
+
 		Menu fileMenu = menuBar.getMenus().stream().filter(menu -> "_File".equals(menu.getText())).findFirst()
 				.orElseThrow();
+
 		Menu importMenu = menuBar.getMenus().stream().filter(menu -> "_Import".equals(menu.getText())).findFirst()
 				.orElseThrow();
+
 		Menu exportMenu = menuBar.getMenus().stream().filter(menu -> "E_xport".equals(menu.getText())).findFirst()
 				.orElseThrow();
+
 		MenuItem packageImport = importMenu.getItems().stream()
 				.filter(item -> "import-subject-work-package".equals(item.getId())).findFirst().orElseThrow();
+
 		MenuItem subjectExport = exportMenu.getItems().stream()
 				.filter(item -> "export-subject-snapshot".equals(item.getId())).findFirst().orElseThrow();
+
 		MenuItem contributionExport = exportMenu.getItems().stream()
 				.filter(item -> "export-assignment-contribution".equals(item.getId())).findFirst().orElseThrow();
+
 		assertEquals("Import _Subject / Work Package...", packageImport.getText());
+
 		assertEquals("Export Working _Subject Snapshot...", subjectExport.getText());
+
 		assertEquals("Export Assignment _Contribution...", contributionExport.getText());
+
 		assertFalse(packageImport.isDisable());
-		assertFalse(subjectExport.isDisable());
+
+		// No assignment exists in the ordinary application fixture.
 		assertTrue(contributionExport.isDisable());
 
-		// Receipt export and developer-only package comparison have been
-		// deliberately removed from the ordinary application interface.
+		// Legacy receipt export is deliberately absent.
 		assertFalse(exportMenu.getItems().stream().anyMatch(item -> "export-import-receipt".equals(item.getId())));
+
+		// Do not duplicate package commands under File.
 		assertFalse(fileMenu.getItems().stream().anyMatch(item -> item.getId() != null
 				&& (item.getId().contains("subject-snapshot") || item.getId().contains("contributor-assignment"))));
+
 		assertFalse(
 				fileMenu.getItems().stream().anyMatch(item -> "file-review-subject-snapshots".equals(item.getId())));
+
+		ComboBox<Subject> subjectPicker = robot.lookup("#curriculum-subject").queryAs(ComboBox.class);
+
+		// Snapshot export is unavailable until a Working Subject
+		// has been chosen.
+		if (subjectPicker.getValue() == null) {
+			assertTrue(subjectExport.isDisable());
+		}
+
+		Subject chemistry = subjectPicker.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
+				.findFirst().orElseThrow();
+
+		// Chemistry belongs to this local installation, so its
+		// complete Subject snapshot can be exported.
+		robot.interact(() -> subjectPicker.getSelectionModel().select(chemistry));
+
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> !subjectExport.isDisable()));
+
+		assertTrue(evaluateOnFx(robot, () -> !subjectExport.isDisable()));
+
+		// Selecting a Subject does not create a contributor assignment.
+		assertTrue(contributionExport.isDisable());
 	}
 
 	@Test
