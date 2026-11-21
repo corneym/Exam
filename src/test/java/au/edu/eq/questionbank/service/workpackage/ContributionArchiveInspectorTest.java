@@ -449,6 +449,64 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
+	void contributorCannotExportReplacementOfIssuedImage() throws Exception {
+		Fixture fixture = fixture(true);
+		byte[] originalImage = Base64.getDecoder().decode(
+				"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC" + "AAAAC0lEQVR42mP8/x8AAwMCAO3Ry8UAAAAASUVORK5CYII=");
+		byte[] replacement = Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+				+ "AAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==");
+		var identities = new SqlitePortableIdentityRepository(fixture.master());
+		var originalIdentity = identities.findByLocalId(EntityType.QUESTION_IMAGE, 151L).orElseThrow();
+
+		// Simulate an out-of-band database modification, bypassing
+		// ordinary contributor capture and correction services.
+		try (Connection connection = fixture.contributor().openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						UPDATE question_images
+						SET image_png = ?
+						WHERE question_id = (
+						    SELECT id
+						    FROM questions
+						    WHERE question_code = '1'
+						)
+						""")) {
+			statement.setBytes(1, replacement);
+			assertEquals(1, statement.executeUpdate());
+		}
+		Path archive = directory.resolve("prohibited-issued-image-replacement.examwork");
+		PackageFormatException failure = assertThrows(PackageFormatException.class,
+				() -> new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
+						.export(fixture.assignmentId(), archive));
+		assertTrue(failure.getMessage().contains("Existing coordinator-owned records cannot be modified"),
+				failure.getMessage());
+
+		// Rejected content must not become a published contribution
+		// or cause the contributor assignment to be submitted.
+		assertFalse(Files.exists(archive));
+		assertTrue(
+				new SqliteContributionReturnLedger(fixture.contributor()).findLatest(fixture.assignmentId()).isEmpty());
+		try (Connection connection = fixture.master().openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT image_png
+						FROM question_images
+						WHERE id = 151
+						""");
+				ResultSet rows = statement.executeQuery()) {
+			assertTrue(rows.next());
+			assertArrayEquals(originalImage, rows.getBytes(1));
+			assertFalse(rows.next());
+		}
+		var retainedIdentity = identities.findByLocalId(EntityType.QUESTION_IMAGE, 151L).orElseThrow();
+		assertEquals(originalIdentity.portableId(), retainedIdentity.portableId());
+		assertEquals(originalIdentity.revisionId(), retainedIdentity.revisionId());
+		assertEquals(WorkAssignmentLedger.State.ACTIVE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
+		fixture.contributor().verifyIntegrity();
+	}
+
+	@Test
 	void contributorInstallationUsesPortableIdentityIndependentOfLocalPrimaryKey() throws Exception {
 		Fixture fixture = fixture();
 		var masterIdentities = new SqlitePortableIdentityRepository(fixture.master());
@@ -1531,67 +1589,8 @@ class ContributionArchiveInspectorTest {
 
 	@Test
 	void masterApplicationRequiresVerifiedArchiveForContentParts() throws Exception {
-		Fixture fixture = fixture(true);
-
-		// Change only the image's content order.
-		// No Question text or PDF-region edit is necessary.
-		execute(fixture.contributor(), """
-				UPDATE question_content_parts
-				SET content_order = 1
-				WHERE content_type = 'IMAGE'
-				""");
-		Path archive = directory.resolve("unverified-content-order.examwork");
-		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
-				.export(fixture.assignmentId(), archive);
-		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
-		UUID packageId = intake.receive(archive).received().packageId();
-		ExchangeRecord proposal = intake.proposedChanges(packageId).getFirst();
-		var key = new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId());
-		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
-				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY), "Review order-only content change");
-		assertThrows(SQLException.class,
-				() -> new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId()));
-		assertEquals(WorkAssignmentLedger.State.ACTIVE,
-				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
-		assertEquals("Biology question", masterQuestionText(fixture.master()));
-		assertEquals("Verified contributor change", questionTextForCode(fixture.master(), "2"));
-	}
-
-	@Test
-	void masterApplicationRequiresVerifiedArchiveForExistingImageReplacement() throws Exception {
-		Fixture fixture = fixture(true);
-		byte[] originalImage;
-		try (Connection connection = fixture.master().openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
-						SELECT image_png
-						FROM question_images
-						WHERE id = 151
-						""");
-				ResultSet rows = statement.executeQuery()) {
-			assertTrue(rows.next());
-			originalImage = rows.getBytes(1);
-			assertFalse(rows.next());
-		}
-
-		// The contributor legitimately replaces an existing image.
-		byte[] replacement = Base64.getDecoder().decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
-				+ "AAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==");
-		try (Connection connection = fixture.contributor().openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
-						UPDATE question_images
-						SET image_png = ?
-						WHERE question_id = (
-						    SELECT id
-						    FROM questions
-						    WHERE question_code = '1'
-						)
-						""")) {
-			statement.setBytes(1, replacement);
-			assertEquals(1, statement.executeUpdate());
-		}
-		Path archive = directory.resolve("unverified-existing-image-replacement.examwork");
-		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
-				.export(fixture.assignmentId(), archive);
+		Fixture fixture = fixture();
+		Path archive = publishNewContributorImage(fixture, "verified-new-content-parts.examwork");
 		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
 		UUID packageId = intake.receive(archive).received().packageId();
 		Map<MasterContributionDecisionLedger.RecordKey, MasterContributionDecisionLedger.Choice> choices = new HashMap<>();
@@ -1601,34 +1600,53 @@ class ContributionArchiveInspectorTest {
 		}
 		assertEquals(2, choices.size());
 		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId, choices,
-				"Approve existing PNG replacement requiring archive");
+				"Approve new Question with ordered image content");
 		var coordinator = new MasterContributionApplicationCoordinator(fixture.master());
 
-		// An approved replacement is supported, but this archive-free
-		// execution path has no verified PNG payload.
+		// The scalar-only path cannot apply image content without
+		// verified binary evidence from the received archive.
 		SQLException failure = assertThrows(SQLException.class, () -> coordinator.execute(review.reviewId()));
 		assertTrue(failure.getMessage().contains("Prepared Question image set differs from review"),
 				failure.getMessage());
-
-		// The failure must leave the master image and the assignment intact.
-		try (Connection connection = fixture.master().openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
-						SELECT image_png
-						FROM question_images
-						WHERE id = 151
-						""");
-				ResultSet rows = statement.executeQuery()) {
-			assertTrue(rows.next());
-			assertArrayEquals(originalImage, rows.getBytes(1));
-			assertFalse(rows.next());
-		}
+		assertTrue(coordinator.find(review.reviewId()).isEmpty());
+		assertNull(questionTextForCode(fixture.master(), "2"));
 		assertEquals(WorkAssignmentLedger.State.ACTIVE,
 				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
-		assertTrue(coordinator.find(review.reviewId()).isEmpty());
-		assertEquals(2, intake.proposedChanges(packageId).size());
+
+		// The same review can succeed with its verified archive.
+		var result = coordinator.execute(review.reviewId(), archive,
+				new ManagedDataLayout(directory.resolve("coordinator")));
+		assertFalse(result.duplicate());
+		assertEquals(2, result.outcomes().size());
+		assertTrue(result.outcomes().stream()
+				.allMatch(outcome -> outcome.outcome() == MasterContributionApplicationCoordinator.Outcome.APPLIED));
+		try (Connection connection = fixture.master().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet rows = statement.executeQuery("""
+						SELECT
+						    question.question_code,
+						    part.content_order,
+						    part.content_type,
+						    part.region_order,
+						    part.image_id
+						FROM question_content_parts part
+						JOIN questions question
+						  ON question.id = part.question_id
+						""")) {
+			assertTrue(rows.next());
+			assertEquals("2", rows.getString("question_code"));
+			assertEquals(0, rows.getInt("content_order"));
+			assertEquals("IMAGE", rows.getString("content_type"));
+			assertNull(rows.getObject("region_order"));
+			assertNotNull(rows.getObject("image_id"));
+			assertFalse(rows.next());
+		}
+		assertEquals("Biology question", questionTextForCode(fixture.master(), "1"));
+		assertEquals("Contributor Question with image", questionTextForCode(fixture.master(), "2"));
+		assertEquals(WorkAssignmentLedger.State.COMPLETE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
 		fixture.master().verifySchema();
 		fixture.master().verifyIntegrity();
-		fixture.contributor().verifyIntegrity();
 	}
 
 	@Test
@@ -2273,23 +2291,14 @@ class ContributionArchiveInspectorTest {
 	void masterEmbeddedPreflightRejectsInvalidContributorPngBytes() throws Exception {
 		Fixture fixture = fixture(true);
 
-		// The contributor's local database has been corrupted
-		// with non-PNG bytes. The SHA-256 and archive manifest will
-		// still be internally consistent because export hashes the
-		// exact stored BLOB.
-		execute(fixture.contributor(), """
-				UPDATE question_images
-				SET image_png = X'0102030405060708090A'
-				WHERE question_id = (
-				    SELECT id
-				    FROM questions
-				    WHERE question_code = '1'
-				)
-				""");
-		Path archive = publish(fixture, "Question with invalid contributor image", "preflight-invalid-png.examwork");
+		// Create a new contributor-owned Question and image.
+		// The image is deliberately invalid, but its archive hashes
+		// will accurately represent the supplied bytes.
+		byte[] invalidPng = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+		Path archive = publishNewContributorImage(fixture, "preflight-invalid-png.examwork", invalidPng);
 
-		// The archive is structurally valid; the new preflight
-		// must check more than its internally consistent hashes.
+		// The archive is structurally valid. Binary preflight must
+		// independently reject the invalid PNG signature.
 		assertArchiveWellFormed(archive, fixture.master());
 		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
 		UUID packageId = intake.receive(archive).received().packageId();
@@ -2297,8 +2306,92 @@ class ContributionArchiveInspectorTest {
 				new ManagedDataLayout(directory.resolve("coordinator")));
 		IOException failure = assertThrows(IOException.class, () -> preflight.verify(packageId, archive));
 		assertTrue(failure.getMessage().contains("invalid PNG signature"), failure.getMessage());
-		assertEquals("Biology question", masterQuestionText(fixture.master()));
+		assertEquals("Biology question", questionTextForCode(fixture.master(), "1"));
+		assertNull(questionTextForCode(fixture.master(), "2"));
+
+		// Only the original coordinator-owned image may exist.
+		try (Connection connection = fixture.master().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet rows = statement.executeQuery("""
+						SELECT id
+						FROM question_images
+						""")) {
+			assertTrue(rows.next());
+			assertEquals(151L, rows.getLong("id"));
+			assertFalse(rows.next());
+		}
 		assertEquals(WorkAssignmentLedger.State.ACTIVE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
+		fixture.contributor().verifyIntegrity();
+	}
+
+	@Test
+	void masterImportsNewImageWithoutChangingIssuedImageIdentity() throws Exception {
+		Fixture fixture = fixture(true);
+		byte[] originalPng = Base64.getDecoder().decode(
+				"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC" + "AAAAC0lEQVR42mP8/x8AAwMCAO3Ry8UAAAAASUVORK5CYII=");
+		byte[] newPng = Base64.getDecoder().decode(
+				"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1Pe" + "AAAADElEQVR4nGOQ67kEAAJIAX1YW9a6AAAAAElFTkSuQmCC");
+		var identities = new SqlitePortableIdentityRepository(fixture.master());
+		var originalIdentity = identities.findByLocalId(EntityType.QUESTION_IMAGE, 151L).orElseThrow();
+		Path archive = publishNewContributorImage(fixture, "new-image-with-issued-image-preserved.examwork", newPng);
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		Map<MasterContributionDecisionLedger.RecordKey, MasterContributionDecisionLedger.Choice> choices = new HashMap<>();
+		for (ExchangeRecord proposal : intake.proposedChanges(packageId)) {
+			assertNull(proposal.baselineRevisionId());
+			choices.put(new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId()),
+					MasterContributionDecisionLedger.Choice.QUEUE_APPLY);
+		}
+		assertEquals(2, choices.size());
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId, choices,
+				"Approve new image without modifying issued image");
+		var result = new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId(), archive,
+				new ManagedDataLayout(directory.resolve("coordinator")));
+		assertFalse(result.duplicate());
+		assertEquals(2, result.outcomes().size());
+		assertTrue(result.outcomes().stream()
+				.allMatch(outcome -> outcome.outcome() == MasterContributionApplicationCoordinator.Outcome.APPLIED));
+		long newImageId;
+		try (Connection connection = fixture.master().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet rows = statement.executeQuery("""
+						SELECT
+						    question.question_code,
+						    image.id,
+						    image.image_png
+						FROM question_images image
+						JOIN questions question
+						  ON question.id = image.question_id
+						ORDER BY question.question_code
+						""")) {
+
+			// Question 1 retains its original image.
+			assertTrue(rows.next());
+			assertEquals("1", rows.getString("question_code"));
+			assertEquals(151L, rows.getLong("id"));
+			assertArrayEquals(originalPng, rows.getBytes("image_png"));
+
+			// Question 2 receives its own newly captured image.
+			assertTrue(rows.next());
+			assertEquals("2", rows.getString("question_code"));
+			newImageId = rows.getLong("id");
+			assertNotEquals(151L, newImageId);
+			assertArrayEquals(newPng, rows.getBytes("image_png"));
+			assertFalse(rows.next());
+		}
+		var retainedIdentity = identities.findByLocalId(EntityType.QUESTION_IMAGE, 151L).orElseThrow();
+		var newIdentity = identities.findByLocalId(EntityType.QUESTION_IMAGE, newImageId).orElseThrow();
+
+		// The issued image must retain both its identity and revision.
+		assertEquals(originalIdentity.portableId(), retainedIdentity.portableId());
+		assertEquals(originalIdentity.revisionId(), retainedIdentity.revisionId());
+		assertNotEquals(originalIdentity.portableId(), newIdentity.portableId());
+		assertEquals("Biology question", questionTextForCode(fixture.master(), "1"));
+		assertEquals("Contributor Question with image", questionTextForCode(fixture.master(), "2"));
+		assertEquals(WorkAssignmentLedger.State.COMPLETE,
 				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
 		fixture.master().verifySchema();
 		fixture.master().verifyIntegrity();
@@ -2686,86 +2779,6 @@ class ContributionArchiveInspectorTest {
 		}
 		assertEquals("Biology question", questionTextForCode(fixture.master(), "1"));
 		assertEquals(WorkAssignmentLedger.State.ACTIVE,
-				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
-		fixture.master().verifySchema();
-		fixture.master().verifyIntegrity();
-	}
-
-	@Test
-	void masterReplacesReviewedQuestionPngWithoutChangingImageIdentity() throws Exception {
-		Fixture fixture = fixture(true);
-		byte[] replacement = Base64.getDecoder().decode(
-				"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1Pe" + "AAAADElEQVR4nGOQ67kEAAJIAX1YW9a6AAAAAElFTkSuQmCC");
-		UUID originalPortableId;
-		try (Connection connection = fixture.master().openConnection()) {
-			connection.setAutoCommit(false);
-			try {
-				originalPortableId = new SqlitePortableIdentityRepository(fixture.master())
-						.findByLocalId(connection, EntityType.QUESTION_IMAGE, 151).orElseThrow().portableId();
-				connection.commit();
-			} catch (SQLException | RuntimeException failure) {
-				connection.rollback();
-				throw failure;
-			}
-		}
-		try (Connection connection = fixture.contributor().openConnection()) {
-			connection.setAutoCommit(false);
-			try (PreparedStatement statement = connection.prepareStatement("""
-					UPDATE question_images
-					SET image_png = ?
-					WHERE question_id = (
-					    SELECT id
-					    FROM questions
-					    WHERE question_code = '1'
-					)
-					""")) {
-				statement.setBytes(1, replacement);
-				assertEquals(1, statement.executeUpdate());
-				connection.commit();
-			} catch (SQLException | RuntimeException failure) {
-				connection.rollback();
-				throw failure;
-			}
-		}
-		Path archive = directory.resolve("existing-image-update.examwork");
-		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
-				.export(fixture.assignmentId(), archive);
-		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
-		UUID packageId = intake.receive(archive).received().packageId();
-		Map<MasterContributionDecisionLedger.RecordKey, MasterContributionDecisionLedger.Choice> choices = new HashMap<>();
-		for (ExchangeRecord proposal : intake.proposedChanges(packageId)) {
-			choices.put(new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId()),
-					MasterContributionDecisionLedger.Choice.QUEUE_APPLY);
-		}
-		assertEquals(2, choices.size());
-		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId, choices,
-				"Approve replacement of existing Question PNG");
-		var result = new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId(), archive,
-				new ManagedDataLayout(directory.resolve("coordinator")));
-		assertFalse(result.duplicate());
-		try (Connection connection = fixture.master().openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
-						SELECT image_png
-						FROM question_images
-						WHERE id = 151
-						""")) {
-			try (ResultSet rows = statement.executeQuery()) {
-				assertTrue(rows.next());
-				assertArrayEquals(replacement, rows.getBytes(1));
-				assertFalse(rows.next());
-			}
-			connection.setAutoCommit(false);
-			try {
-				UUID actualPortableId = new SqlitePortableIdentityRepository(fixture.master())
-						.findByLocalId(connection, EntityType.QUESTION_IMAGE, 151).orElseThrow().portableId();
-				assertEquals(originalPortableId, actualPortableId);
-				connection.commit();
-			} catch (SQLException | RuntimeException failure) {
-				connection.rollback();
-				throw failure;
-			}
-		}
-		assertEquals(WorkAssignmentLedger.State.COMPLETE,
 				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
 		fixture.master().verifySchema();
 		fixture.master().verifyIntegrity();
@@ -3891,12 +3904,16 @@ class ContributionArchiveInspectorTest {
 	private Path publishNewContributorImage(Fixture fixture, String filename) throws Exception {
 		byte[] png = Base64.getDecoder().decode(
 				"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC" + "AAAAC0lEQVR42mP8/x8AAwMCAO3Ry8UAAAAASUVORK5CYII=");
+		return publishNewContributorImage(fixture, filename, png);
+	}
+
+	private Path publishNewContributorImage(Fixture fixture, String filename, byte[] png) throws Exception {
 		try (Connection connection = fixture.contributor().openConnection()) {
 			connection.setAutoCommit(false);
 			try {
 
-				// A new Image must belong to a new contributor Question,
-				// not the coordinator's immutable Question 1.
+				// Create a contributor-owned Question without modifying
+				// the coordinator's immutable issued Question.
 				try (Statement statement = connection.createStatement()) {
 					assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
 							INSERT INTO questions (
@@ -3905,10 +3922,15 @@ class ContributionArchiveInspectorTest {
 							    shared_context_capture_required,
 							    response_type, source_capture_required
 							)
-							SELECT booklet_id, classification_node_id,
-							       '2', 'Contributor Question with image', marks,
-							       shared_context_capture_required,
-							       response_type, source_capture_required
+							SELECT
+							    booklet_id,
+							    classification_node_id,
+							    '2',
+							    'Contributor Question with image',
+							    marks,
+							    shared_context_capture_required,
+							    response_type,
+							    source_capture_required
 							FROM questions
 							WHERE question_code = '1'
 							"""));
@@ -3923,6 +3945,9 @@ class ContributionArchiveInspectorTest {
 					questionId = result.getLong(1);
 					assertFalse(result.next());
 				}
+
+				// Preserve the supplied bytes exactly, including deliberately
+				// invalid bytes used by binary-validation regression tests.
 				try (PreparedStatement insert = connection.prepareStatement("""
 						INSERT INTO question_images (
 						    question_id, image_png
