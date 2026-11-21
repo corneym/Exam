@@ -1660,45 +1660,67 @@ class ContributionArchiveInspectorTest {
 
 		Fixture fixture = fixture();
 
-		// Construct new contributor work rather than modifying issued Q1.
+		// Create a new contributor-owned Question 2.
+		// The issued Question 1 must remain unchanged.
 		execute(fixture.contributor(), """
 				INSERT INTO questions (
-				    booklet_id, classification_node_id,
-				    question_code, question_text, marks,
+				    booklet_id,
+				    classification_node_id,
+				    question_code,
+				    question_text,
+				    marks,
 				    shared_context_capture_required,
-				    response_type, source_capture_required
+				    response_type,
+				    source_capture_required
 				)
-				SELECT booklet_id, classification_node_id,
-				       '2', 'Content that must roll back', marks,
-				       shared_context_capture_required,
-				       response_type, source_capture_required
+				SELECT
+				    booklet_id,
+				    classification_node_id,
+				    '2',
+				    'Content that must roll back',
+				    marks,
+				    shared_context_capture_required,
+				    response_type,
+				    source_capture_required
 				FROM questions
 				WHERE question_code = '1'
 				""");
 
+		// Add the PDF region to Question 2, never Question 1.
 		execute(fixture.contributor(), """
 				INSERT INTO question_regions (
-				    question_id, region_order, booklet_id,
-				    page_number, x, y, width, height
+				    question_id,
+				    region_order,
+				    booklet_id,
+				    page_number,
+				    x, y, width, height
 				)
-				SELECT id, 0, booklet_id, 1,
-				       0.1, 0.1, 0.4, 0.4
+				SELECT
+				    id, 0, booklet_id, 1,
+				    0.1, 0.1, 0.4, 0.4
 				FROM questions
 				WHERE question_code = '2'
 				""");
 
 		execute(fixture.contributor(), """
 				INSERT INTO question_content_parts (
-				    question_id, content_order,
-				    content_type, region_order, image_id
+				    question_id,
+				    content_order,
+				    content_type,
+				    region_order,
+				    image_id
 				)
-				SELECT id, 0, 'PDF_REGION', 0, NULL
+				SELECT
+				    id, 0, 'PDF_REGION', 0, NULL
 				FROM questions
 				WHERE question_code = '2'
 				""");
 
+		assertEquals("Biology question", masterQuestionText(fixture.contributor()));
+
 		Path archive = directory.resolve("mixed-content-rollback.examwork");
 
+		// Export directly. The old publish() helper must not be used.
 		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
 				.export(fixture.assignmentId(), archive);
 
@@ -1706,7 +1728,13 @@ class ContributionArchiveInspectorTest {
 
 		UUID packageId = intake.receive(archive).received().packageId();
 
-		ExchangeRecord proposal = intake.proposedChanges(packageId).getFirst();
+		List<ExchangeRecord> proposed = intake.proposedChanges(packageId);
+
+		assertEquals(1, proposed.size());
+		assertEquals("QUESTION", proposed.getFirst().recordType());
+		assertNull(proposed.getFirst().baselineRevisionId());
+
+		ExchangeRecord proposal = proposed.getFirst();
 
 		var key = new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId());
 
@@ -1714,8 +1742,7 @@ class ContributionArchiveInspectorTest {
 				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY),
 				"Test atomic rollback of new Question content");
 
-		// Fail after the Question and region insertion begins, but before
-		// mixed-content publication can commit.
+		// Inject a failure during the new Question's content insertion.
 		execute(fixture.master(), """
 				CREATE TRIGGER test_reject_contribution_content_part
 				BEFORE INSERT ON question_content_parts
@@ -1730,24 +1757,35 @@ class ContributionArchiveInspectorTest {
 		assertThrows(SQLException.class, () -> new MasterContributionApplicationCoordinator(fixture.master())
 				.execute(review.reviewId(), archive, new ManagedDataLayout(directory.resolve("coordinator"))));
 
+		// The original coordinator-owned Question is unchanged.
 		assertEquals("Biology question", masterQuestionText(fixture.master()));
 
-		assertNull(questionTextForCode(fixture.master(), "2"));
-
+		// The new Question and its content must not be partially committed.
 		try (Connection connection = fixture.master().openConnection();
 				Statement statement = connection.createStatement();
 				ResultSet rows = statement.executeQuery("""
 						SELECT
-						    (SELECT COUNT(*) FROM question_regions)
-						  + (SELECT COUNT(*) FROM question_content_parts)
+						    (SELECT COUNT(*)
+						     FROM questions
+						     WHERE question_code = '2'),
+						    (SELECT COUNT(*)
+						     FROM question_regions),
+						    (SELECT COUNT(*)
+						     FROM question_content_parts),
+						    (SELECT COUNT(*)
+						     FROM contribution_application_results)
 						""")) {
 
 			assertTrue(rows.next());
 			assertEquals(0, rows.getInt(1));
+			assertEquals(0, rows.getInt(2));
+			assertEquals(0, rows.getInt(3));
+			assertEquals(0, rows.getInt(4));
 		}
 
 		assertTrue(new MasterContributionApplicationCoordinator(fixture.master()).find(review.reviewId()).isEmpty());
 
+		// Failed application must not close or unlock the assignment.
 		assertEquals(WorkAssignmentLedger.State.ACTIVE,
 				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
 
@@ -2765,26 +2803,43 @@ class ContributionArchiveInspectorTest {
 
 	@Test
 	void masterReviewProtectsBaselineQuestionAgainstDeletion() throws Exception {
+
 		Fixture fixture = fixture();
+
 		Path archive = publish(fixture, "Contributor revision", "review-missing-master.examwork");
+
 		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+
 		UUID packageId = intake.receive(archive).received().packageId();
 
-		// Neither the Answer nor its parent Question may be deleted
-		// from the master while a contributor holds this assignment.
+		// The coordinator's issued Question and Answer remain protected
+		// for the entire active assignment.
 		assertThrows(SQLException.class, () -> execute(fixture.master(), """
 				DELETE FROM answers
 				WHERE question_id = 81
 				"""));
+
 		assertThrows(SQLException.class, () -> execute(fixture.master(), """
 				DELETE FROM questions
 				WHERE id = 81
 				"""));
+
 		var plan = new MasterContributionReviewPlanner(fixture.master()).plan(packageId);
+
 		assertEquals(1, plan.assessments().size());
 
-		assertEquals(MasterContributionReviewPlanner.ReviewStatus.READY_NEW, plan.assessments().getFirst().status());
-		assertNull(plan.assessments().getFirst().baselineRevisionId());
+		var assessment = plan.assessments().getFirst();
+
+		// The contribution contains a new Question 2.
+		// It does not propose an update to baseline Question 1.
+		assertEquals(MasterContributionReviewPlanner.ReviewStatus.READY_NEW, assessment.status());
+
+		assertEquals("QUESTION", assessment.recordType());
+		assertNull(assessment.baselineRevisionId());
+		assertNull(assessment.masterRevisionId());
+
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+
 		fixture.master().verifyIntegrity();
 	}
 
