@@ -452,25 +452,19 @@ class ContributorAssignmentDashboardWorkflowTest {
 	@Test
 	@SuppressWarnings("unchecked")
 	void reimportRestoresAssignedSubjectAfterAttemptedSwitch(FxRobot robot) throws Exception {
-
 		awaitAssignedDashboard(robot);
-
 		Subject biology = field("workingSubject", Subject.class);
-
 		assertEquals("Biology", biology.getName());
 
 		// An active contributor assignment must prevent structural
 		// Subject creation. This SQLite rejection is expected.
 		SqliteDatabase database = new SqliteDatabase(contributor.databasePath());
-
 		assertThrows(SQLException.class, () -> new SqliteCurriculumWriter(database).insertSubject("Physics"));
 
 		// Test attempted context switching without inserting an
 		// unauthorised Subject into the database.
 		Subject unavailablePhysics = new Subject(999, "Physics");
-
 		ComboBox<Subject> subjects = robot.lookup("#curriculum-subject").queryAs(ComboBox.class);
-
 		robot.interact(() -> {
 			subjects.getItems().add(unavailablePhysics);
 			subjects.getSelectionModel().select(unavailablePhysics);
@@ -479,29 +473,20 @@ class ContributorAssignmentDashboardWorkflowTest {
 		// The application's Subject guard must restore Biology.
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
 			AtomicBoolean restored = new AtomicBoolean();
-
 			robot.interact(() -> restored.set(
 					biology.equals(field("workingSubject", Subject.class)) && biology.equals(subjects.getValue())));
-
 			return restored.get();
 		});
-
 		assertEquals(assignmentId, sessions().active().orElseThrow().assignmentId());
 
 		// Reimporting the existing package must remain idempotent.
 		startInstallation(robot, realInstaller());
-
 		acknowledgeDialog(robot, "Contributor Assignment Installed", "The previously installed assignment");
-
 		awaitAssignedDashboard(robot);
 		assertControlsReleased(robot);
-
 		robot.interact(() -> assertEquals("Biology", field("workingSubject", Subject.class).getName()));
-
 		assertEquals(assignmentId, sessions().active().orElseThrow().assignmentId());
-
 		assertEquals(1, sessions().findAll().size());
-
 		database.verifySchema();
 		database.verifyIntegrity();
 	}
