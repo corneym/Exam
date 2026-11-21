@@ -258,8 +258,6 @@ class ContributionArchiveInspectorTest {
 	@Test
 	void approvedSharedContextPreparationRejectsDifferentReturnArchive() throws Exception {
 		Fixture fixture = fixture();
-
-		// Establish an original received return and its durable review.
 		Path original = publish(fixture, "Original contributor response", "original-context-lineage.examwork");
 		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
 		UUID packageId = intake.receive(original).received().packageId();
@@ -271,13 +269,19 @@ class ContributionArchiveInspectorTest {
 		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId, choices,
 				"Original contribution review");
 
-		// A later return may have valid lineage but is not the
-		// original archive recorded by this review.
-		Path later = publish(fixture, "Later contributor response", "later-context-lineage.examwork");
+		// Construct a different but structurally valid archive for the same
+		// package identity. No second contributor export is performed.
+		ExchangeRecord proposed = intake.proposedChanges(packageId).getFirst();
+		ObjectNode alteredValues = ((ObjectNode) proposed.values()).deepCopy();
+		alteredValues.put("question_text", "Substituted unapproved contributor response");
+		Path substituted = repackage(original, "records/contribution-changes.jsonl",
+				encode(List.of(withValues(proposed, alteredValues))));
+		assertArchiveWellFormed(substituted, fixture.master());
 		assertThrows(IOException.class,
-				() -> new MasterContributionApprovedContextPreparer(fixture.master()).prepare(review, later));
+				() -> new MasterContributionApprovedContextPreparer(fixture.master()).prepare(review, substituted));
 		assertEquals(WorkAssignmentLedger.State.ACTIVE,
 				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
 	}
 
 	@Test
@@ -1860,30 +1864,36 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
-	void masterDecisionsRejectHeldLineageForApplication() throws Exception {
+	void masterDecisionsRejectCancelledAssignmentReturn() throws Exception {
 		Fixture fixture = fixture();
-		publish(fixture, "First revision", "held-first.examwork");
-		Path secondArchive = publish(fixture, "Second revision", "held-second.examwork");
+		Path archive = publish(fixture, "Contributor Question returned after cancellation",
+				"cancelled-return.examwork");
+		WorkAssignmentLedger assignments = new WorkAssignmentLedger(fixture.master());
+		assignments.closeWithoutReturn(fixture.assignmentId(),
+				"Coordinator cancelled assignment before receiving work");
 		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
-
-		// Return 2 is received before return 1.
-		UUID packageId = intake.receive(secondArchive).received().packageId();
-		var proposal = intake.proposedChanges(packageId).getFirst();
+		var received = intake.receive(archive);
+		assertEquals(MasterContributionIntake.IntakeStatus.HELD_LINEAGE, received.received().status());
+		UUID packageId = received.received().packageId();
+		ExchangeRecord proposal = intake.proposedChanges(packageId).getFirst();
 		var key = new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId());
-		MasterContributionDecisionLedger ledger = new MasterContributionDecisionLedger(fixture.master());
-		assertThrows(IllegalArgumentException.class,
-				() -> ledger.record(packageId, Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY),
-						"Attempt to queue an unresolved return"));
+		MasterContributionDecisionLedger decisions = new MasterContributionDecisionLedger(fixture.master());
 
-		// A held return can be retained without falsely accepting it.
-		var recorded = ledger.record(packageId, Map.of(key, MasterContributionDecisionLedger.Choice.HOLD),
-				"Awaiting previous return");
-		assertEquals(MasterContributionDecisionLedger.Choice.HOLD, recorded.decisions().getFirst().choice());
+		// Cancelled assignments cannot be reopened by choosing QUEUE_APPLY.
+		assertThrows(IllegalArgumentException.class,
+				() -> decisions.record(packageId, Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY),
+						"Invalid attempt to apply cancelled assignment"));
+
+		// HOLD records the evidence without authorising changes.
+		var held = decisions.record(packageId, Map.of(key, MasterContributionDecisionLedger.Choice.HOLD),
+				"Preserve late contribution as rejected lineage");
+		assertEquals(MasterContributionDecisionLedger.Choice.HOLD, held.decisions().getFirst().choice());
 		assertEquals(MasterContributionReviewPlanner.ReviewStatus.HELD_LINEAGE,
-				recorded.decisions().getFirst().preliminaryStatus());
-		assertNull(recorded.decisions().getFirst().resultRevisionId());
-		assertEquals(recorded, ledger.find(recorded.reviewId()).orElseThrow());
+				held.decisions().getFirst().preliminaryStatus());
+		assertNull(held.decisions().getFirst().resultRevisionId());
+		assertEquals(held, decisions.find(held.reviewId()).orElseThrow());
 		assertEquals("Biology question", masterQuestionText(fixture.master()));
+		assertNull(questionTextForCode(fixture.master(), "2"));
 	}
 
 	@Test
@@ -2034,6 +2044,34 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
+	void masterIntakeAcceptsOneReturnAndRecognisesExactReplay() throws Exception {
+		Fixture fixture = fixture();
+		Path archive = publish(fixture, "Only contributor submission", "one-return.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		var first = intake.receive(archive);
+		assertFalse(first.duplicate());
+		assertEquals(MasterContributionIntake.IntakeStatus.READY_FOR_REVIEW, first.received().status());
+		assertEquals(1, first.received().returnNumber());
+		assertNull(first.received().previousPackageId());
+		assertEquals(1, intake.proposedChanges(first.received().packageId()).size());
+
+		// A duplicate transfer of the same archive is idempotent.
+		var replay = intake.receive(archive);
+		assertTrue(replay.duplicate());
+		assertEquals(first.received(), replay.received());
+
+		// A new return from the same assignment is prohibited locally.
+		assertThrows(IllegalStateException.class,
+				() -> new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
+						.export(fixture.assignmentId(), directory.resolve("second-return.examwork")));
+		assertEquals(first.received(), intake.find(first.received().packageId()).orElseThrow());
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+		assertNull(questionTextForCode(fixture.master(), "2"));
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
 	void masterIntakeEvidenceCannotBeUpdatedOrDeleted() throws Exception {
 		Fixture fixture = fixture();
 		Path archive = publish(fixture, "Immutable contribution", "immutable-return.examwork");
@@ -2057,26 +2095,27 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
-	void masterIntakeHoldsOutOfOrderReturnsWithoutLaterAutoPromotion() throws Exception {
+	void masterIntakeKeepsCancelledReturnHeldAcrossReplays() throws Exception {
 		Fixture fixture = fixture();
-		Path firstArchive = publish(fixture, "Contributor first return", "first-return.examwork");
-		Path secondArchive = publish(fixture, "Contributor second return", "second-return.examwork");
+		Path archive = publish(fixture, "Contributor return after cancellation", "late-first-return.examwork");
+		new WorkAssignmentLedger(fixture.master()).closeWithoutReturn(fixture.assignmentId(),
+				"Assignment cancelled before package arrival");
 		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
-		var second = intake.receive(secondArchive);
-		assertFalse(second.duplicate());
-		assertEquals(MasterContributionIntake.IntakeStatus.HELD_LINEAGE, second.received().status());
-		var first = intake.receive(firstArchive);
-		assertEquals(MasterContributionIntake.IntakeStatus.READY_FOR_REVIEW, first.received().status());
-		assertEquals(first.received().packageId(), second.received().previousPackageId());
-
-		// Replaying a previously held package must not silently change its state.
-		var repeated = intake.receive(secondArchive);
-		assertTrue(repeated.duplicate());
-		assertEquals(MasterContributionIntake.IntakeStatus.HELD_LINEAGE, repeated.received().status());
-		Path thirdArchive = publish(fixture, "Contributor third return", "third-return.examwork");
-		var third = intake.receive(thirdArchive);
-		assertEquals(MasterContributionIntake.IntakeStatus.HELD_LINEAGE, third.received().status());
-		assertEquals(second.received().packageId(), third.received().previousPackageId());
+		var first = intake.receive(archive);
+		assertFalse(first.duplicate());
+		assertEquals(MasterContributionIntake.IntakeStatus.HELD_LINEAGE, first.received().status());
+		var replay = intake.receive(archive);
+		assertTrue(replay.duplicate());
+		assertEquals(first.received(), replay.received());
+		assertEquals(MasterContributionIntake.IntakeStatus.HELD_LINEAGE,
+				intake.find(first.received().packageId()).orElseThrow().status());
+		var review = new MasterContributionReviewPlanner(fixture.master()).plan(first.received().packageId());
+		assertEquals(MasterContributionReviewPlanner.ReviewStatus.HELD_LINEAGE,
+				review.assessments().getFirst().status());
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+		assertNull(questionTextForCode(fixture.master(), "2"));
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
 	}
 
 	@Test
@@ -2096,37 +2135,6 @@ class ContributionArchiveInspectorTest {
 		assertThrows(PackageFormatException.class, () -> intake.receive(reused));
 		assertEquals(recorded.received(), intake.find(recorded.received().packageId()).orElseThrow());
 		assertEquals(1, intake.proposedChanges(recorded.received().packageId()).size());
-	}
-
-	@Test
-	void masterIntakeRetainsSubsequentReturnAsHeldEvidence() throws Exception {
-		Fixture fixture = fixture();
-		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
-		Path firstArchive = publish(fixture, "Contributor version one", "return-1.examwork");
-		var first = intake.receive(firstArchive);
-		assertFalse(first.duplicate());
-		assertEquals(MasterContributionIntake.IntakeStatus.READY_FOR_REVIEW, first.received().status());
-		assertEquals(1, first.received().returnNumber());
-		assertEquals(1, intake.proposedChanges(first.received().packageId()).size());
-
-		// A second return from the original assignment remains
-		// historical evidence; it is not another actionable package.
-		Path secondArchive = publish(fixture, "Contributor version two", "return-2.examwork");
-		var second = intake.receive(secondArchive);
-		assertFalse(second.duplicate());
-		assertEquals(MasterContributionIntake.IntakeStatus.HELD_LINEAGE, second.received().status());
-		assertEquals(first.received().packageId(), second.received().previousPackageId());
-		assertEquals(2, second.received().returnNumber());
-		assertEquals(1, intake.proposedChanges(second.received().packageId()).size());
-		assertEquals(second.received(), intake.find(second.received().packageId()).orElseThrow());
-		var replay = intake.receive(firstArchive);
-		assertTrue(replay.duplicate());
-		assertEquals(first.received(), replay.received());
-
-		// Neither receipt has modified the authoritative master.
-		assertEquals("Biology question", masterQuestionText(fixture.master()));
-		fixture.master().verifySchema();
-		fixture.master().verifyIntegrity();
 	}
 
 	@Test
@@ -2494,25 +2502,28 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
-	void masterReviewKeepsOutOfOrderReturnHeld() throws Exception {
+	void masterReviewKeepsCancelledAssignmentReturnHeld() throws Exception {
 		Fixture fixture = fixture();
-		Path firstArchive = publish(fixture, "First revision", "review-first.examwork");
-		Path secondArchive = publish(fixture, "Second revision", "review-second.examwork");
+		Path archive = publish(fixture, "Late contributor Question", "review-late-return.examwork");
+		new WorkAssignmentLedger(fixture.master()).closeWithoutReturn(fixture.assignmentId(),
+				"Cancelled before contribution was received");
 		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
-		var second = intake.receive(secondArchive);
-		assertEquals(MasterContributionIntake.IntakeStatus.HELD_LINEAGE, second.received().status());
+		var received = intake.receive(archive);
+		assertEquals(MasterContributionIntake.IntakeStatus.HELD_LINEAGE, received.received().status());
 		MasterContributionReviewPlanner planner = new MasterContributionReviewPlanner(fixture.master());
-		var before = planner.plan(second.received().packageId());
+		var firstReview = planner.plan(received.received().packageId());
 		assertEquals(MasterContributionReviewPlanner.ReviewStatus.HELD_LINEAGE,
-				before.assessments().getFirst().status());
+				firstReview.assessments().getFirst().status());
 
-		// The delayed first return cannot automatically release return 2.
-		intake.receive(firstArchive);
-		var after = planner.plan(second.received().packageId());
+		// Repeated inspection must not promote a cancelled return.
+		var repeated = intake.receive(archive);
+		assertTrue(repeated.duplicate());
+		var secondReview = planner.plan(received.received().packageId());
 		assertEquals(MasterContributionReviewPlanner.ReviewStatus.HELD_LINEAGE,
-				after.assessments().getFirst().status());
+				secondReview.assessments().getFirst().status());
 		assertEquals(MasterContributionIntake.IntakeStatus.HELD_LINEAGE,
-				intake.find(second.received().packageId()).orElseThrow().status());
+				intake.find(received.received().packageId()).orElseThrow().status());
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
 	}
 
 	@Test
