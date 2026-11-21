@@ -1363,8 +1363,10 @@ class ContributionArchiveInspectorTest {
 				() -> new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId()));
 		assertEquals(WorkAssignmentLedger.State.ACTIVE,
 				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+
 		assertEquals("Biology question", masterQuestionText(fixture.master()));
-		fixture.master().verifyIntegrity();
+		assertEquals("Verified contributor change", questionTextForCode(fixture.master(), "2"));
+
 	}
 
 	@Test
@@ -2496,8 +2498,11 @@ class ContributionArchiveInspectorTest {
 				"""));
 		var plan = new MasterContributionReviewPlanner(fixture.master()).plan(packageId);
 		var assessment = plan.assessments().getFirst();
-		assertEquals(MasterContributionReviewPlanner.ReviewStatus.READY_UPDATE, assessment.status());
-		assertEquals(assessment.baselineRevisionId(), assessment.masterRevisionId());
+
+		assertEquals(MasterContributionReviewPlanner.ReviewStatus.READY_NEW, assessment.status());
+		assertNull(assessment.baselineRevisionId());
+		assertNull(assessment.masterRevisionId());
+
 		assertEquals("Biology question", masterQuestionText(fixture.master()));
 	}
 
@@ -2539,9 +2544,12 @@ class ContributionArchiveInspectorTest {
 				"""));
 		var plan = new MasterContributionReviewPlanner(fixture.master()).plan(packageId);
 		var assessment = plan.assessments().getFirst();
-		assertEquals(MasterContributionReviewPlanner.ReviewStatus.READY_UPDATE, assessment.status());
-		assertEquals(assessment.baselineRevisionId(), assessment.masterRevisionId());
-		assertNotNull(assessment.masterRecordSha256());
+
+		assertEquals(MasterContributionReviewPlanner.ReviewStatus.READY_NEW, assessment.status());
+		assertNull(assessment.baselineRevisionId());
+		assertNull(assessment.masterRevisionId());
+		assertNull(assessment.masterRecordSha256());
+
 		assertEquals("Biology question", masterQuestionText(fixture.master()));
 	}
 
@@ -2564,7 +2572,9 @@ class ContributionArchiveInspectorTest {
 				"""));
 		var plan = new MasterContributionReviewPlanner(fixture.master()).plan(packageId);
 		assertEquals(1, plan.assessments().size());
-		assertEquals(MasterContributionReviewPlanner.ReviewStatus.READY_UPDATE, plan.assessments().getFirst().status());
+
+		assertEquals(MasterContributionReviewPlanner.ReviewStatus.READY_NEW, plan.assessments().getFirst().status());
+		assertNull(plan.assessments().getFirst().baselineRevisionId());
 		fixture.master().verifyIntegrity();
 	}
 
