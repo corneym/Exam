@@ -11,6 +11,7 @@ import java.util.StringJoiner;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.function.ToLongFunction;
 
@@ -37,9 +38,11 @@ import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
 import javafx.beans.property.BooleanProperty;
+import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.ReadOnlyBooleanProperty;
 import javafx.beans.property.ReadOnlyObjectProperty;
 import javafx.beans.property.SimpleBooleanProperty;
+import javafx.beans.property.SimpleObjectProperty;
 import javafx.concurrent.Task;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.geometry.HPos;
@@ -198,6 +201,9 @@ public class QuestionSearchPane extends BorderPane {
 	private final ComboBox<FilterOption<QuestionResponseType>> responseTypeFilterBox = new ComboBox<>();
 	private final ComboBox<FilterOption<Integer>> yearFromFilterBox = new ComboBox<>();
 	private final ComboBox<FilterOption<Integer>> yearToFilterBox = new ComboBox<>();
+
+	private final ObjectProperty<Predicate<Question>> readOnlyQuestionPredicate = new SimpleObjectProperty<>(
+			_ -> false);
 
 	// The Dialog owns persistence and supplies the action that commits the pending
 	// Descriptor refinement.
@@ -384,6 +390,11 @@ public class QuestionSearchPane extends BorderPane {
 		return classificationDirty.get();
 	}
 
+	boolean isSelectedQuestionReadOnly() {
+		Question question = getSelectedQuestion();
+		return question != null && readOnlyQuestionPredicate.get().test(question);
+	}
+
 	/**
 	 * Repeats the most specific active search and reselects the edited question if
 	 * it still matches. Has no effect after disposal.
@@ -507,6 +518,16 @@ public class QuestionSearchPane extends BorderPane {
 		// the previous generation. Do not filter the displayed
 		// ListView directly.
 		refreshAutomaticSearch();
+	}
+
+	void setReadOnlyQuestionPredicate(Predicate<Question> predicate) {
+		if (classificationDirty.get()) {
+			throw new IllegalStateException("Resolve the pending classification before changing editing permissions");
+		}
+
+		readOnlyQuestionPredicate.set(Objects.requireNonNull(predicate, "predicate"));
+
+		updateOutputApplicabilityActionState();
 	}
 
 	private void activateAllQuestionsScope() {
@@ -1134,7 +1155,11 @@ public class QuestionSearchPane extends BorderPane {
 
 		// Save becomes meaningful only when the selected Descriptor differs from the
 		// persisted Question classification.
-		saveClassificationButton.disableProperty().bind(classificationDirty.not());
+
+		saveClassificationButton.disableProperty()
+				.bind(Bindings.createBooleanBinding(() -> !classificationDirty.get() || isSelectedQuestionReadOnly(),
+						classificationDirty, resultsList.getSelectionModel().selectedItemProperty(),
+						readOnlyQuestionPredicate));
 		selectedClassificationPane.setVisible(false);
 		selectedClassificationPane.setManaged(false);
 	}
@@ -1962,8 +1987,11 @@ public class QuestionSearchPane extends BorderPane {
 
 	private Void persistOutputApplicabilityChange(Question question, CurriculumNode currentNode, boolean excluded) {
 
-		// Persist only the selected Question/current-node exception. Curriculum
-		// mappings and the Question's stored classification remain unchanged.
+		if (readOnlyQuestionPredicate.get().test(question)) {
+			throw new IllegalStateException("This Question is read-only while its Exam is assigned "
+					+ "or its Subject is externally authoritative.");
+		}
+
 		outputApplicabilityRepository.setExcluded(question, currentNode, excluded);
 		return null;
 	}
@@ -1980,7 +2008,8 @@ public class QuestionSearchPane extends BorderPane {
 
 			// Descriptor selection becomes editable only for a stored Subtopic with
 			// valid child Descriptors.
-			selectedDescriptorBox.setDisable(!path.descriptorRefinementAvailable());
+
+			selectedDescriptorBox.setDisable(!path.descriptorRefinementAvailable() || isSelectedQuestionReadOnly());
 			classificationDirty.set(false);
 		} finally {
 			updatingSelectedClassification = false;
@@ -2959,16 +2988,18 @@ public class QuestionSearchPane extends BorderPane {
 
 	private void updateOutputApplicabilityActionState() {
 		QuestionOutputApplicabilityRow selected = outputApplicabilityList.getSelectionModel().getSelectedItem();
+
 		boolean saving = activeOutputApplicabilityUpdateTask != null;
 		boolean editingClassification = classificationDirty.get();
+		boolean readOnly = isSelectedQuestionReadOnly();
 
-		// Prevent another placement from being selected while its current state is
-		// being persisted. Ordinary inspection remains available otherwise.
 		outputApplicabilityList.setDisable(saving);
+
 		includeOutputApplicabilityButton
-				.setDisable(saving || editingClassification || selected == null || !selected.excluded());
+				.setDisable(saving || editingClassification || readOnly || selected == null || !selected.excluded());
+
 		excludeOutputApplicabilityButton
-				.setDisable(saving || editingClassification || selected == null || selected.excluded());
+				.setDisable(saving || editingClassification || readOnly || selected == null || selected.excluded());
 	}
 
 	private void updateOutputApplicabilityStatus() {

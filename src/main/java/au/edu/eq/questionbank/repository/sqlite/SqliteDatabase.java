@@ -23,7 +23,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 47;
+	private static final int LATEST_SCHEMA_VERSION = 48;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -916,6 +916,13 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v46-to-v47.sql", 47);
 			return 47;
 		}
+		if (version == 47) {
+
+			// Schema v48 introduces Subject import authority and contributor
+			// assignment visibility without changing existing domain records.
+			executeMigration(connection, "/db/migration-v47-to-v48.sql", 48);
+			return 48;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -1310,6 +1317,9 @@ public final class SqliteDatabase {
 		} else if (version >= 41) {
 			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
 					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql");
+		}
+		if (version >= 48) {
+			verifyVersion48OperatingContextSchema(connection);
 		}
 	}
 
@@ -2296,6 +2306,21 @@ public final class SqliteDatabase {
 				throw new SQLException("Unreleased master graph write permit");
 			}
 		}
+	}
+
+	private void verifyVersion48OperatingContextSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "imported_subject_authorities",
+				List.of(column("subject_local_id", false, 1), column("origin_installation_id", true, 0),
+						column("origin_subject_portable_id", true, 0), column("latest_package_id", true, 0),
+						column("archive_sha256", true, 0), column("imported_at", true, 0)),
+				List.of(foreignKey("subject_local_id", "subjects", "id"),
+						foreignKey("latest_package_id", "subject_import_packages", "package_id")),
+				List.of(List.of("origin_installation_id", "origin_subject_portable_id")));
+		verifyTableSchema(connection, "contributor_assignment_hidden",
+				List.of(column("assignment_id", true, 1), column("removed_at", true, 0)),
+				List.of(foreignKey("assignment_id", "contributor_assignment_sessions", "assignment_id")), List.of());
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_operating_context_", "operating-context authority",
+				"/db/migration-v47-to-v48.sql");
 	}
 
 	private record ForeignKeyColumn(int sequence, String fromColumn, String targetColumn) {

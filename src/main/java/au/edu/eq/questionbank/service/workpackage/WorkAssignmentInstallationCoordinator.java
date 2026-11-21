@@ -14,10 +14,11 @@ import java.util.Objects;
 import java.util.UUID;
 
 import au.edu.eq.questionbank.ApplicationConfig;
-import au.edu.eq.questionbank.ManagedAssetPublicationLock;
 import au.edu.eq.questionbank.ApplicationVersion;
+import au.edu.eq.questionbank.ManagedAssetPublicationLock;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
+import au.edu.eq.questionbank.repository.sqlite.SqliteContributorAssignmentVisibilityRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.workpackage.SqliteContributorAssignmentSessionRepository.LocalIds;
 import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationReview.Key;
@@ -121,10 +122,23 @@ public final class WorkAssignmentInstallationCoordinator {
 				var installed = existing.orElseThrow();
 				requireReplayMatch(installed.packageId(), installed.archiveSha256(), inspection);
 
-				// Re-import is also an explicit request to enter
-				// the previously stored assignment.
+				var state = new SqliteContributorAssignmentVisibilityRepository(database).find(assignmentId)
+						.orElseThrow(() -> new SQLException("Installed assignment visibility is unavailable"));
+
+				if (state == SqliteContributorAssignmentVisibilityRepository.State.SUBMITTED) {
+					throw new IOException("This assignment has already been submitted. "
+							+ "It cannot be reopened by importing the original work package.");
+				}
+
+				if (state == SqliteContributorAssignmentVisibilityRepository.State.REMOVED) {
+					// Reuse the original installation and its assets. Do not overwrite
+					// captured data or manufacture a new assignment identity.
+					new ContributorAssignmentRemovalService(database).reactivate(assignmentId);
+				}
+
 				sessions.select(assignmentId);
 				return new Result(assignmentId, packageId, true, false);
+
 			}
 			return installNew(source, inspection, lock);
 		}

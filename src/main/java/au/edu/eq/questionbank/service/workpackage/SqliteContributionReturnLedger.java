@@ -137,11 +137,15 @@ public final class SqliteContributionReturnLedger {
 					return stored;
 				}
 				Optional<PublishedReturn> latest = findLatest(connection, manifest.assignmentId());
-				UUID expectedPrevious = latest.map(PublishedReturn::packageId).orElse(null);
-				if (!Objects.equals(previousPackageId, expectedPrevious)) {
-					throw new SQLException("Missing or out-of-order contribution " + "return lineage");
+				if (latest.isPresent()) {
+					throw new SQLException("A contribution has already been published for this assignment. "
+							+ "A second contribution is not permitted.");
 				}
-				int returnNumber = latest.isPresent() ? Math.addExact(latest.orElseThrow().returnNumber(), 1) : 1;
+				if (previousPackageId != null) {
+					throw new SQLException(
+							"The first and only assignment contribution cannot have a previous package.");
+				}
+				int returnNumber = 1;
 				Instant recordedAt = Instant.now();
 				try (PreparedStatement statement = connection.prepareStatement("""
 						INSERT INTO contributor_return_packages (

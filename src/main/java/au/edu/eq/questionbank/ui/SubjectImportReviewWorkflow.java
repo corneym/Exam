@@ -60,7 +60,6 @@ public final class SubjectImportReviewWorkflow {
 	 */
 	public SubjectImportReviewWorkflow(Window owner, ApplicationConfig config, SubjectReconciliationReview review,
 			Path masterArchive, Path incomingArchive, Runnable refreshAfterImport) {
-
 		this(owner, config, review, masterArchive, incomingArchive, refreshAfterImport, () -> {
 		});
 	}
@@ -84,7 +83,6 @@ public final class SubjectImportReviewWorkflow {
 	 */
 	public SubjectImportReviewWorkflow(Window owner, ApplicationConfig config, SubjectReconciliationReview review,
 			Path masterArchive, Path incomingArchive, Runnable refreshAfterImport, Runnable cleanupAfterImport) {
-
 		this.owner = Objects.requireNonNull(owner, "owner");
 		this.config = Objects.requireNonNull(config, "config");
 		this.review = Objects.requireNonNull(review, "review");
@@ -112,43 +110,34 @@ public final class SubjectImportReviewWorkflow {
 	/** Presents explicit approval and starts import only after confirmation. */
 	public void run() {
 		boolean importStarted = false;
-
 		try {
 			if (!review.snapshot().complete() || !review.snapshot().dependencySafe()) {
 				error("Review must be complete and dependency-safe before import");
 				return;
 			}
-
 			var master = new SubjectImportSnapshotFingerprint().inspect(masterArchive);
 			var incoming = new SubjectImportSnapshotFingerprint().inspect(incomingArchive);
-
 			Map<Key, ConflictResolution> resolutions = resolveConflicts();
 			if (resolutions == null) {
 				return;
 			}
-
 			SubjectImportApprovalPlan plan = SubjectImportApprovalPlan.prepare(review, master, incoming, resolutions);
-
 			long masterSubjectId = findExistingMasterSubject(master.subjectName());
-
 			DirectoryChooser chooser = new DirectoryChooser();
 			chooser.setTitle("Select full-backup destination for approved Subject import");
 			var folder = chooser.showDialog(owner);
 			if (folder == null) {
 				return;
 			}
-
 			TextInputDialog reason = new TextInputDialog();
 			reason.initOwner(owner);
 			reason.setTitle("Record Subject import authorisation");
 			reason.setHeaderText("Coordinator approval note for " + master.subjectName());
 			reason.setContentText("Audit reason:");
-
 			var note = reason.showAndWait();
 			if (note.isEmpty() || note.get().isBlank()) {
 				return;
 			}
-
 			Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
 			confirmation.initOwner(owner);
 			confirmation.setTitle("Confirm approved Subject import");
@@ -157,21 +146,17 @@ public final class SubjectImportReviewWorkflow {
 					+ plan.actions().stream().filter(action -> action.decision() == Decision.ACCEPT).count()
 					+ "\nBackup destination: " + folder + "\n\nThe application will revalidate master state "
 					+ "before importing." + "\nExisting master files will not be overwritten.");
-
 			ButtonType importType = new ButtonType("Import approved changes");
 			confirmation.getButtonTypes().setAll(importType, ButtonType.CANCEL);
-
 			if (confirmation.showAndWait().orElse(ButtonType.CANCEL) != importType) {
 				return;
 			}
-
 			startImport(masterSubjectId, plan, folder.toPath(), note.get());
 			importStarted = true;
-
 		} catch (IOException | SQLException | IllegalArgumentException | IllegalStateException failure) {
 			error(failure.getMessage());
-
 		} finally {
+
 			// Before asynchronous publication starts, cancellation owns
 			// immediate cleanup. After it starts, terminal task handlers own it.
 			if (!importStarted) {
@@ -256,7 +241,6 @@ public final class SubjectImportReviewWorkflow {
 
 	/** Runs validated import off the JavaFX application thread. */
 	private void startImport(long masterSubjectId, SubjectImportApprovalPlan plan, Path backupDirectory, String note) {
-
 		Task<SubjectImportCoordinator.Result> task = new Task<>() {
 
 			@Override
@@ -265,20 +249,16 @@ public final class SubjectImportReviewWorkflow {
 						backupDirectory, note);
 			}
 		};
-
 		Alert progress = new Alert(Alert.AlertType.INFORMATION);
 		progress.initOwner(owner);
 		progress.setTitle("Publishing approved Subject import");
 		progress.setHeaderText("Verifying backup and committing approved Subject data");
 		progress.setContentText("Publication cannot be cancelled once started.");
-
 		progress.getButtonTypes().clear();
 		progress.setOnCloseRequest(event -> event.consume());
-
 		task.setOnSucceeded(_ -> {
 			dismissCompletedProgress(progress);
 			var result = task.getValue();
-
 			try {
 				if (result.applied()) {
 					refreshAfterImport.run();
@@ -286,7 +266,6 @@ public final class SubjectImportReviewWorkflow {
 			} finally {
 				cleanupAfterImport.run();
 			}
-
 			Alert success = new Alert(Alert.AlertType.INFORMATION);
 			success.initOwner(owner);
 			success.setTitle("Subject import result");
@@ -295,23 +274,18 @@ public final class SubjectImportReviewWorkflow {
 					+ result.backupArchivePath());
 			success.showAndWait();
 		});
-
 		task.setOnFailed(_ -> {
 			dismissCompletedProgress(progress);
 			cleanupAfterImport.run();
-
 			Throwable failure = task.getException();
 			error(failure == null ? "Unknown import failure" : failure.getMessage());
 		});
-
 		task.setOnCancelled(_ -> {
 			dismissCompletedProgress(progress);
 			cleanupAfterImport.run();
 		});
-
 		Thread worker = new Thread(task, "examwork-subject-import");
 		worker.setDaemon(true);
-
 		progress.show();
 		worker.start();
 	}

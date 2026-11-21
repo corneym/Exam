@@ -15,22 +15,16 @@ class MasterContributionReviewDialogTest {
 	@Test
 	void onlySupportedReadyRecordsCanBeQueued() {
 		UUID revision = UUID.randomUUID();
-
 		RecordAssessment newQuestion = new RecordAssessment("QUESTION", UUID.randomUUID(), null, revision, null, null,
 				ReviewStatus.READY_NEW);
-
 		RecordAssessment updatedSourceQuestion = new RecordAssessment("SOURCE_QUESTION", UUID.randomUUID(), revision,
 				UUID.randomUUID(), revision, "0".repeat(64), ReviewStatus.READY_UPDATE);
-
 		RecordAssessment proposedSyllabus = new RecordAssessment("SYLLABUS_VERSION", UUID.randomUUID(), null, revision,
 				null, null, ReviewStatus.READY_NEW);
-
 		RecordAssessment staleQuestion = new RecordAssessment("QUESTION", UUID.randomUUID(), revision,
 				UUID.randomUUID(), UUID.randomUUID(), "1".repeat(64), ReviewStatus.HELD_STALE_MASTER);
-
 		RecordAssessment identicalQuestion = new RecordAssessment("QUESTION", UUID.randomUUID(), revision,
 				UUID.randomUUID(), revision, "2".repeat(64), ReviewStatus.SKIP_IDENTICAL);
-
 		assertTrue(MasterContributionReviewDialog.canQueue(newQuestion));
 		assertTrue(MasterContributionReviewDialog.canQueue(updatedSourceQuestion));
 
@@ -44,5 +38,4 @@ class MasterContributionReviewDialogTest {
 		// An identical record must be skipped, not rewritten.
 		assertFalse(MasterContributionReviewDialog.canQueue(identicalQuestion));
 	}
-
 }

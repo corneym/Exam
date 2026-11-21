@@ -886,7 +886,7 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// The Exam menu no longer exists. All its former replacement
 		// actions are superseded by Exam/Assets Delete and Add.
-		assertEquals(List.of("_File", "_Curriculum", "_Questions", "E_xport", "_Help"),
+		assertEquals(List.of("_File", "_Curriculum", "_Questions", "_Import", "E_xport", "_Help"),
 				menuBar.getMenus().stream().map(Menu::getText).toList());
 		Menu questionMenu = menuBar.getMenus().stream().filter(menu -> "_Questions".equals(menu.getText())).findFirst()
 				.orElseThrow();

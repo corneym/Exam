@@ -105,8 +105,13 @@ public final class ContributionExporter {
 		Path target = requireDestination(destination);
 		SqliteContributionReturnLedger ledger = new SqliteContributionReturnLedger(database);
 		var latest = ledger.findLatest(assignmentId);
-		UUID previousPackageId = latest.map(SqliteContributionReturnLedger.PublishedReturn::packageId).orElse(null);
-		int returnNumber = latest.isPresent() ? Math.addExact(latest.orElseThrow().returnNumber(), 1) : 1;
+		if (latest.isPresent()) {
+			throw new IllegalStateException("This assignment has already been submitted. "
+					+ "Resend the original contribution package if necessary. "
+					+ "Further work requires a new assignment.");
+		}
+		UUID previousPackageId = null;
+		int returnNumber = 1;
 		Path stagingDirectory = Files.createTempDirectory(target.getParent(), ".examwork-contribution-");
 		try {
 			Path snapshotPath = stagingDirectory.resolve("contributor-snapshot.db");
