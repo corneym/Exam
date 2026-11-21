@@ -19,6 +19,7 @@ import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SourceQuestion;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 
@@ -528,6 +529,9 @@ public final class SqliteQuestionWriter {
 		if (booklet == null) {
 			throw new NullPointerException("booklet");
 		}
+
+		new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.QUESTION, questionId);
+
 		try (PreparedStatement statement = connection.prepareStatement("""
 				UPDATE questions
 				SET source_capture_required = ?
@@ -1136,6 +1140,27 @@ public final class SqliteQuestionWriter {
 
 	private int updateSourceQuestionSharedContexts(Connection connection, SourceQuestion sourceQuestion,
 			SharedQuestionContext sharedContext) throws SQLException {
+
+		SqliteContributorBaselineWriteGuard guard = new SqliteContributorBaselineWriteGuard();
+
+		// A shared-context link can update several Questions at once.
+		// Check every affected Question before modifying any of them.
+		try (PreparedStatement candidates = connection.prepareStatement("""
+				SELECT id
+				FROM questions
+				WHERE source_question_id = ?
+				  AND shared_context_id IS NULL
+				ORDER BY id
+				""")) {
+			candidates.setLong(1, sourceQuestion.getId());
+
+			try (ResultSet result = candidates.executeQuery()) {
+				while (result.next()) {
+					guard.requireMutable(connection, EntityType.QUESTION, result.getLong("id"));
+				}
+			}
+		}
+
 		try (PreparedStatement statement = connection.prepareStatement("""
 				UPDATE questions
 				SET shared_context_id = ?
@@ -1204,6 +1229,8 @@ public final class SqliteQuestionWriter {
 
 	private void verifyQuestionBooklet(Connection connection, long questionId, ExamBooklet booklet)
 			throws SQLException {
+
+		new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.QUESTION, questionId);
 		try (PreparedStatement statement = connection.prepareStatement("""
 				SELECT booklet_id
 				FROM questions
@@ -1223,6 +1250,9 @@ public final class SqliteQuestionWriter {
 
 	private void verifyQuestionCanAcceptContent(Connection connection, long questionId, ExamBooklet booklet)
 			throws SQLException {
+
+		new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.QUESTION, questionId);
+
 		try (PreparedStatement statement = connection.prepareStatement("""
 				SELECT
 				    q.booklet_id,
@@ -1250,6 +1280,9 @@ public final class SqliteQuestionWriter {
 
 	private void verifyQuestionCanAcceptRegions(Connection connection, long questionId, ExamBooklet booklet)
 			throws SQLException {
+
+		new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.QUESTION, questionId);
+
 		try (PreparedStatement statement = connection.prepareStatement("""
 				SELECT
 				    q.booklet_id,

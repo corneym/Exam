@@ -201,6 +201,8 @@ public final class CorpusDashboardPane extends VBox {
 	private Map<Long, String> coordinatorExamLocks = Map.of();
 	private boolean importedSubjectReadOnly;
 
+	private Set<Long> contributorBaselineQuestionIds = Set.of();
+
 	/**
 	 * Creates a Subject-scoped operational Dashboard from one persistence snapshot.
 	 * <p>
@@ -504,6 +506,32 @@ public final class CorpusDashboardPane extends VBox {
 	 */
 	public void setCloseContributorAssignmentHandler(Consumer<Exam> handler) {
 		closeContributorAssignmentHandler = Objects.requireNonNull(handler, "handler");
+	}
+
+	/**
+	 * Supplies the existing Questions included in the selected assignment baseline.
+	 *
+	 * <p>
+	 * These Questions remain available for inspection but cannot be corrected by
+	 * the contributor. Questions created after assignment installation are not
+	 * included and retain their permitted capture actions.
+	 *
+	 * @param questionIds local IDs of coordinator-issued Questions
+	 * @throws NullPointerException     if the set or an element is null
+	 * @throws IllegalArgumentException if an ID is not positive
+	 */
+	public void setContributorBaselineQuestionIds(Set<Long> questionIds) {
+		Objects.requireNonNull(questionIds, "questionIds");
+
+		for (Long id : questionIds) {
+			Objects.requireNonNull(id, "questionIds element");
+			if (id < 1) {
+				throw new IllegalArgumentException("Question IDs must be positive");
+			}
+		}
+
+		contributorBaselineQuestionIds = Set.copyOf(questionIds);
+		refreshQuestionWork();
 	}
 
 	/**
@@ -1897,42 +1925,39 @@ public final class CorpusDashboardPane extends VBox {
 		if (selected == null) {
 			return null;
 		}
+
 		QuestionCorpusFilter filter = new QuestionCorpusFilter(workingSubject.getId(), null, null,
 				selected.booklet().getId(), QuestionCorpusCompletionFilter.INCOMPLETE,
 				QuestionCorpusProblem.MISSING_ANSWER);
-		return QuestionCorpusQueue.build(questions, filter).stream()
 
-				// Do not send the user to Answer capture while Question content, Shared
-				// Context or response type still requires earlier correction.
+		return QuestionCorpusQueue.build(questions, filter).stream()
+				.filter(item -> !isQuestionReadOnly(item.question()))
 				.filter(item -> item.status().questionContentCaptured() && item.status().sharedContextResolved()
 						&& item.status().responseTypeResolved())
 				.map(QuestionCorpusWorkItem::question).findFirst().orElse(null);
 	}
 
 	private Question firstMissingMcqExplanationQuestion(BookletCorpusStatus bookletStatus) {
+
 		if (bookletStatus == null || !bookletStatus.mcqExplanationCoverage().explanationCapable()) {
 			return null;
 		}
 
-		// Booklet capture must begin at the first outstanding Question in natural
-		// source
-		// order and must never cross into another booklet.
 		return questions.stream().filter(question -> question.getBooklet().getId() == bookletStatus.booklet().getId())
-				.filter(this::isMissingMcqExplanation).sorted(QuestionSourceOrder.comparator()).findFirst()
-				.orElse(null);
+				.filter(question -> !isQuestionReadOnly(question)).filter(this::isMissingMcqExplanation)
+				.sorted(QuestionSourceOrder.comparator()).findFirst().orElse(null);
 	}
 
 	private Question firstQuestionCaptureWorkQuestion(BookletCorpusStatus selected) {
 		if (selected == null) {
 			return null;
 		}
+
 		QuestionCorpusFilter filter = new QuestionCorpusFilter(workingSubject.getId(), null, null,
 				selected.booklet().getId(), QuestionCorpusCompletionFilter.INCOMPLETE, null);
 
-		// Question-side capture consists of existing Questions whose body content or
-		// Shared Context still requires resolution. Answer-only work does not belong to
-		// this action.
 		return QuestionCorpusQueue.build(questions, filter).stream()
+				.filter(item -> !isQuestionReadOnly(item.question()))
 				.filter(item -> item.status().hasProblem(QuestionCorpusProblem.MISSING_QUESTION_CONTENT)
 						|| item.status().hasProblem(QuestionCorpusProblem.UNRESOLVED_SHARED_CONTEXT))
 				.map(QuestionCorpusWorkItem::question).findFirst().orElse(null);
@@ -2029,7 +2054,12 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private boolean isQuestionReadOnly(Question question) {
-		return question != null && isExamReadOnly(question.getExam().getId());
+		if (question == null) {
+			return false;
+		}
+
+		return isExamReadOnly(question.getExam().getId())
+				|| (assignmentExamId != null && contributorBaselineQuestionIds.contains(question.getId()));
 	}
 
 	private boolean isSelectedExamReadOnly() {
@@ -2564,6 +2594,7 @@ public final class CorpusDashboardPane extends VBox {
 
 	private void updateCaptureActionState() {
 		BookletCorpusStatus selected = bookletTable.getSelectionModel().getSelectedItem();
+
 		if (importedSubjectReadOnly || isSelectedExamReadOnly()) {
 			assignDescriptorsButton.setDisable(true);
 			captureQuestionsButton.setDisable(true);
@@ -2572,19 +2603,20 @@ public final class CorpusDashboardPane extends VBox {
 			return;
 		}
 
-		// Descriptor refinement corrects existing Question metadata.
-		// It remains available for COMPLETE Exams.
-		assignDescriptorsButton.setDisable(selected == null || selected.questionsWithoutDescriptorCount() == 0);
+		// Workers cannot bulk-correct the classifications of issued Questions.
+		// They can classify new work in the ordinary capture workspace.
+		assignDescriptorsButton.setDisable(
+				assignmentExamId != null || selected == null || selected.questionsWithoutDescriptorCount() == 0);
+
 		Question existingQuestionWork = firstQuestionCaptureWorkQuestion(selected);
 
-		// Existing Question correction is permitted for COMPLETE Exams,
-		// while creating a new Question requires an ACTIVE Exam.
 		boolean questionCaptureAvailable = selected != null && selected.questionPdfAvailable()
 				&& (existingQuestionWork != null || !selected.booklet().getExam().isComplete());
+
 		captureQuestionsButton.setDisable(!questionCaptureAvailable);
+
 		captureAnswersButton.setDisable(selected == null || firstMissingAnswerQuestion() == null);
 
-		// Explanation correction remains available for COMPLETE Exams.
 		captureMcqExplanationsButton
 				.setDisable(selected == null || firstMissingMcqExplanationQuestion(selected) == null);
 	}
@@ -2678,13 +2710,16 @@ public final class CorpusDashboardPane extends VBox {
 
 	private void updateQuestionActionState() {
 		QuestionCorpusWorkItem selected = singleSelectedQuestionWorkItem();
-		if (importedSubjectReadOnly || assignmentExamId != null || isSelectedExamReadOnly()
+
+		if (importedSubjectReadOnly || isSelectedExamReadOnly()
 				|| (selected != null && isQuestionReadOnly(selected.question()))) {
 			completeSelectedQuestionButton.setDisable(true);
 			completeSelectedAnswerButton.setDisable(true);
 			return;
 		}
+
 		boolean missingExplanation = selected != null && isMissingMcqExplanation(selected.question());
+
 		if (missingExplanation) {
 			completeSelectedAnswerButton.setText("Capture Explanation");
 			completeSelectedAnswerButton
@@ -2697,9 +2732,6 @@ public final class CorpusDashboardPane extends VBox {
 			completeSelectedAnswerButton.setDisable(!canCompleteSelectedAnswer(selected));
 		}
 
-		// Question-side correction remains independently available if the same
-		// persisted
-		// Question also has Question-content work.
 		completeSelectedQuestionButton.setDisable(!canCompleteSelectedQuestion(selected));
 	}
 

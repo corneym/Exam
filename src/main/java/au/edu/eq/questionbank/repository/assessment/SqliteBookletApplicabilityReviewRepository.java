@@ -7,6 +7,7 @@ import java.sql.SQLException;
 import java.util.HashSet;
 import java.util.Set;
 
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 /**
@@ -99,6 +100,9 @@ public final class SqliteBookletApplicabilityReviewRepository implements Booklet
 	public void setReviewed(long bookletId, boolean reviewed) {
 		requireId(bookletId, "bookletId");
 		try (Connection connection = database.openConnection()) {
+
+			new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.EXAM_BOOKLET, bookletId);
+
 			if (reviewed) {
 				try (PreparedStatement statement = connection.prepareStatement("""
 						INSERT OR IGNORE INTO booklet_applicability_reviews

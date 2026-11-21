@@ -42,18 +42,35 @@ class SqliteAssignmentScopeTriggersTest {
 	@Test
 	void explicitlyPermittedLegacySyllabusCanClassify() throws Exception {
 		SqliteDatabase database = fixture(true);
+
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+
+			// Capture a new contributor Question before changing classification.
+			statement.execute("""
+					INSERT INTO questions (
+					    id, booklet_id, classification_node_id,
+					    question_code, question_text, marks,
+					    shared_context_capture_required
+					)
+					VALUES (
+					    4, 61, 104,
+					    '4', 'New contributor Question', 2, 0
+					)
+					""");
+
 			statement.execute("""
 					UPDATE questions
 					SET classification_node_id = 106
-					WHERE id = 1
+					WHERE id = 4
 					""");
+
 			assertBlocked(statement, """
 					UPDATE questions
 					SET classification_node_id = 201
-					WHERE id = 1
+					WHERE id = 4
 					""");
 		}
+
 		database.verifyIntegrity();
 	}
 
@@ -302,6 +319,16 @@ class SqliteAssignmentScopeTriggersTest {
 					)
 					VALUES (4, 101)
 					""");
+
+			statement.execute("""
+					UPDATE questions
+					SET question_text = 'Corrected new contributor work'
+					WHERE id = 4
+					""");
+
+			// The Booklet's authoritative applicability-review confirmation is
+			// not a contributor capture operation. It is verified separately through
+			// the restricted review repository.
 			statement.execute("""
 					UPDATE questions
 					SET question_text = 'Reclassified work'

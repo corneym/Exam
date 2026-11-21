@@ -581,6 +581,46 @@ class CorpusDashboardPaneTest {
 	}
 
 	@Test
+	void contributorCanCaptureAnswersOnlyForNewQuestions(FxRobot robot) {
+		Question baseline = fixture.question(910, fixture.activePaper, "Q9", QuestionResponseType.WRITTEN_RESPONSE,
+				true, false);
+
+		Question worker = fixture.question(911, fixture.activePaper, "Q10", QuestionResponseType.WRITTEN_RESPONSE, true,
+				false);
+
+		AtomicReference<Question> routed = new AtomicReference<>();
+
+		Button captureAnswers = robot.lookup("#corpus-dashboard-capture-answers").queryButton();
+
+		Button assignDescriptors = robot.lookup("#corpus-dashboard-assign-descriptors").queryButton();
+
+		Button inspect = robot.lookup("#corpus-dashboard-inspect-exam-questions").queryButton();
+
+		robot.interact(() -> {
+			pane.setAnswerCaptureHandler(routed::set);
+			pane.replaceData(List.of(fixture.activeExamStatus), List.of(baseline));
+
+			pane.setAssignmentExamScope(fixture.activeExam.getId());
+			pane.setContributorBaselineQuestionIds(Set.of(baseline.getId()));
+		});
+
+		assertTrue(captureAnswers.isDisabled(), "An issued Question must not be routed to worker Answer capture");
+
+		assertTrue(assignDescriptors.isDisabled(), "Workers cannot bulk-reclassify issued Questions");
+
+		assertFalse(inspect.isDisabled(), "Workers must retain ordinary Question inspection");
+
+		robot.interact(() -> pane.replaceData(List.of(fixture.activeExamStatus), List.of(baseline, worker)));
+
+		assertFalse(captureAnswers.isDisabled(), "New contributor Questions must remain eligible for Answer capture");
+
+		robot.interact(captureAnswers::fire);
+
+		assertEquals(worker.getId(), routed.get().getId(),
+				"Answer capture must skip the coordinator-owned baseline Question");
+	}
+
+	@Test
 	@SuppressWarnings("unchecked")
 	void coordinatorCanIssueOnlyFromSelectedExam(FxRobot robot) {
 		Button createAssignment = robot.lookup("#corpus-dashboard-create-contributor-assignment").queryButton();

@@ -16,6 +16,7 @@ import java.util.TreeSet;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 /**
@@ -122,6 +123,9 @@ public final class SqliteQuestionOutputApplicabilityRepository implements Questi
 		validateQuestion(question);
 		validateCurrentNode(question, currentNode);
 		try (Connection connection = database.openConnection()) {
+
+			new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.QUESTION, question.getId());
+
 			if (excluded) {
 				insertExclusion(connection, question, currentNode);
 			} else {

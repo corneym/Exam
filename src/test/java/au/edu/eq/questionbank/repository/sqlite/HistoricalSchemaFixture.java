@@ -779,6 +779,9 @@ public final class HistoricalSchemaFixture {
 	 */
 	public static void removeVersion47Objects(Statement statement) throws SQLException {
 		Objects.requireNonNull(statement, "statement");
+
+		removeVersion48Objects(statement);
+
 		String name = "trg_master_exam_structure_booklet_applicability_reviews_delete";
 		String migration;
 		try {
@@ -807,6 +810,52 @@ public final class HistoricalSchemaFixture {
 		}
 		statement.execute("DROP TRIGGER IF EXISTS " + name);
 		statement.execute(original);
+	}
+
+	/**
+	 * Removes schema v48 operating-context structures from a disposable historical
+	 * migration test database.
+	 *
+	 * <p>
+	 * The operating-context triggers are dropped before their referenced tables.
+	 * The authority and visibility tables are then removed before older fixture
+	 * cleanup drops Subject import and contributor session tables.
+	 *
+	 * <p>
+	 * This method must never be applied to production data.
+	 *
+	 * @param statement statement on the disposable test database connection
+	 * @throws SQLException         if a trigger or table cannot be removed
+	 * @throws NullPointerException if statement is null
+	 */
+	public static void removeVersion48Objects(Statement statement) throws SQLException {
+		Objects.requireNonNull(statement, "statement");
+
+		// Drop triggers first: SQLite may otherwise reject historical table
+		// reconstruction when a trigger references a subsequently dropped table.
+		statement.execute("""
+				DROP TRIGGER IF EXISTS
+				    trg_operating_context_hidden_after_return
+				""");
+
+		statement.execute("""
+				DROP TRIGGER IF EXISTS
+				    trg_operating_context_authority_no_delete
+				""");
+
+		statement.execute("""
+				DROP TRIGGER IF EXISTS
+				    trg_operating_context_authority_origin_immutable
+				""");
+
+		// Remove these before their v27/v29 referenced parent tables.
+		statement.execute("""
+				DROP TABLE IF EXISTS imported_subject_authorities
+				""");
+
+		statement.execute("""
+				DROP TABLE IF EXISTS contributor_assignment_hidden
+				""");
 	}
 
 	private static void dropAssignmentTriggers(Statement statement, String pattern) throws SQLException {

@@ -14,6 +14,7 @@ import au.edu.eq.questionbank.model.ImageSharedContextContentPart;
 import au.edu.eq.questionbank.model.SharedContextContentPart;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 
@@ -103,6 +104,9 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 			connection.setAutoCommit(false);
 			try {
 
+				new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.SHARED_QUESTION_CONTEXT,
+						context.getId());
+
 				// Retain context identity so existing Question relationships
 				// continue referencing this context after correction.
 				try (PreparedStatement statement = connection.prepareStatement("""
@@ -165,6 +169,10 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
+
+				new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.SHARED_QUESTION_CONTEXT,
+						context.getId());
+
 				try (PreparedStatement statement = connection.prepareStatement("""
 						UPDATE shared_question_contexts
 						SET context_label = ?
@@ -277,6 +285,25 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 				}
 			}
 		}
+
+		try (PreparedStatement check = connection.prepareStatement("""
+				SELECT 1
+				FROM shared_question_contexts
+				WHERE id = ?
+				  AND booklet_id = ?
+				""")) {
+			check.setLong(1, contextId);
+			check.setLong(2, bookletId);
+
+			try (ResultSet result = check.executeQuery()) {
+				if (!result.next()) {
+					return false;
+				}
+			}
+		}
+
+		new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.SHARED_QUESTION_CONTEXT,
+				contextId);
 
 		// Release mixed-content references before deleting the records
 		// to which they refer. The caller owns the transaction.

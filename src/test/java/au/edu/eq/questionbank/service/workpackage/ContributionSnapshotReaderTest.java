@@ -22,9 +22,16 @@ import org.junit.jupiter.api.io.TempDir;
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.TestPdf;
+import au.edu.eq.questionbank.model.Answer;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamProvider;
+import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
+import au.edu.eq.questionbank.repository.assessment.SqliteBookletApplicabilityReviewRepository;
+import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
+import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
+import au.edu.eq.questionbank.repository.assessment.SqliteQuestionWriter;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.SqliteContributorAssignmentVisibilityRepository;
@@ -34,6 +41,79 @@ public class ContributionSnapshotReaderTest {
 
 	@TempDir
 	Path directory;
+
+	@Test
+	void baselineQuestionAndAnswerAreRejectedAtSaveTime() throws Exception {
+		Fixture fixture = fixture();
+		SqliteDatabase database = fixture.contributorDatabase();
+
+		var snapshot = snapshot(fixture, "guard-baseline.db");
+		ExchangeRecord issued = findRecord(snapshot.baselineRecords(), "QUESTION");
+		ExchangeRecord issuedAnswer = findRecord(snapshot.baselineRecords(), "ANSWER");
+
+		long questionId = localId(database, "QUESTION", issued.recordId());
+		long answerId = localId(database, "ANSWER", issuedAnswer.recordId());
+
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		Question question = repository.findById(questionId).orElseThrow();
+
+		var questionWriter = new SqliteQuestionWriter(database);
+		var answerWriter = new SqliteAnswerWriter(database, new SqliteExamWriter(database));
+
+		assertThrows(IllegalStateException.class, () -> questionWriter.updateClassification(questionId,
+				question.getBooklet(), question.getClassification()));
+
+		assertThrows(IllegalStateException.class,
+				() -> answerWriter.updateAnswer(question, answerId, "Unauthorised edit", List.of()));
+
+		assertThrows(IllegalStateException.class,
+				() -> answerWriter.insertAnswer(question, "Unauthorised new Answer", List.of()));
+
+		assertThrows(IllegalStateException.class, () -> new SqliteBookletApplicabilityReviewRepository(database)
+				.setReviewed(question.getBooklet().getId(), true));
+
+		Question unchanged = repository.findById(questionId).orElseThrow();
+
+		assertEquals(question.getQuestionText(), unchanged.getQuestionText());
+		assertEquals(question.getClassification(), unchanged.getClassification());
+		assertEquals(question.getAnswer().getAnswerText(), unchanged.getAnswer().getAnswerText());
+
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void damagedContributorBaselineFailsClosedAtSaveTime() throws Exception {
+		Fixture fixture = fixture();
+		SqliteDatabase database = fixture.contributorDatabase();
+
+		var snapshot = snapshot(fixture, "baseline-integrity.db");
+		ExchangeRecord issued = findRecord(snapshot.baselineRecords(), "QUESTION");
+
+		long questionId = localId(database, "QUESTION", issued.recordId());
+
+		Question question = new SqliteQuestionRepository(database).findById(questionId).orElseThrow();
+
+		// Deliberately corrupt the stored baseline digest. An ordinary save must
+		// refuse to proceed rather than assuming the Question is worker-owned.
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						UPDATE contributor_assignment_sessions
+						SET records_sha256 = ?
+						WHERE assignment_id = ?
+						""")) {
+			statement.setString(1, "0".repeat(64));
+			statement.setString(2, fixture.assignmentId().toString());
+			assertEquals(1, statement.executeUpdate());
+		}
+
+		assertThrows(SQLException.class, () -> new SqliteQuestionWriter(database).updateClassification(questionId,
+				question.getBooklet(), question.getClassification()));
+
+		Question unchanged = new SqliteQuestionRepository(database).findById(questionId).orElseThrow();
+
+		assertEquals(question.getClassification(), unchanged.getClassification());
+		assertEquals(question.getQuestionText(), unchanged.getQuestionText());
+	}
 
 	@Test
 	void exportsOneFinalNewQuestionContributionAndRetainsBaseline() throws Exception {
@@ -247,6 +327,69 @@ public class ContributionSnapshotReaderTest {
 		assertEquals("Captured after snapshot",
 				refreshed.delta().candidates().getFirst().values().path("question_text").asText());
 		assertEquals(before.baselineRecords(), refreshed.baselineRecords());
+	}
+
+	@Test
+	void workerCanEditOwnNewQuestionAndAnswerOnlyWhileAssigned() throws Exception {
+		Fixture fixture = fixture();
+		SqliteDatabase database = fixture.contributorDatabase();
+
+		var snapshot = snapshot(fixture, "guard-new-work.db");
+		ExchangeRecord issued = findRecord(snapshot.baselineRecords(), "QUESTION");
+
+		long bookletId = localId(database, "EXAM_BOOKLET",
+				UUID.fromString(issued.values().path("booklet_id").asText()));
+
+		long classificationId = localId(database, "CURRICULUM_NODE",
+				UUID.fromString(issued.values().path("classification_node_id").asText()));
+
+		// Simulate a new Question captured within the assigned Exam.
+		executeOne(database, """
+				INSERT INTO questions (
+				    booklet_id,
+				    classification_node_id,
+				    question_code,
+				    question_text,
+				    marks,
+				    shared_context_capture_required
+				)
+				VALUES (?, ?, '2', 'Worker new Question', 2, 0)
+				""", bookletId, classificationId);
+
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+
+		Question newQuestion = repository.findAll().stream()
+				.filter(question -> "Worker new Question".equals(question.getQuestionText())).findFirst().orElseThrow();
+
+		SqliteQuestionWriter questionWriter = new SqliteQuestionWriter(database);
+
+		// Changing a new Question's classification through its normal writer
+		// must remain possible while the assignment is selected.
+		questionWriter.updateClassification(newQuestion.getId(), newQuestion.getBooklet(),
+				newQuestion.getClassification());
+
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, new SqliteExamWriter(database));
+
+		Answer answer = answerWriter.insertAnswer(newQuestion, "First worker Answer", List.of());
+
+		Answer corrected = answerWriter.updateAnswer(newQuestion, answer.getId(), "Corrected worker Answer", List.of());
+
+		assertEquals("Corrected worker Answer", corrected.getAnswerText());
+
+		// Leaving assignment context never grants authority over the installed
+		// contributor Subject, even for records created locally.
+		new SqliteContributorAssignmentSessionRepository(database).clearActive();
+
+		assertThrows(IllegalStateException.class, () -> questionWriter.updateClassification(newQuestion.getId(),
+				newQuestion.getBooklet(), newQuestion.getClassification()));
+
+		assertThrows(IllegalStateException.class, () -> answerWriter.updateAnswer(newQuestion, answer.getId(),
+				"Edit after leaving assignment", List.of()));
+
+		assertEquals("Corrected worker Answer",
+				repository.findById(newQuestion.getId()).orElseThrow().getAnswer().getAnswerText());
+
+		database.verifyIntegrity();
 	}
 
 	private byte[] archiveEntryBytes(Path archive, String entryName) throws IOException {

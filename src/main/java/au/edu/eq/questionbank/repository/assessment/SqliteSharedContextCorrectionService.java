@@ -14,6 +14,7 @@ import au.edu.eq.questionbank.model.SharedContextStatus;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceQuestion;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 /**
@@ -127,6 +128,8 @@ public final class SqliteSharedContextCorrectionService {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
+
+				new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.QUESTION, questionId);
 
 				// Structural corrections are prohibited for a completed Exam.
 				examWriter.requireExamActive(connection, selected.getBooklet().getExam().getId());

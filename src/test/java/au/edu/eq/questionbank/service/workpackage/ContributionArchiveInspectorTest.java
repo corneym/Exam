@@ -2156,41 +2156,110 @@ class ContributionArchiveInspectorTest {
 	@Test
 	void masterReceiptExportsAcceptedCanonicalMapping() throws Exception {
 		Fixture fixture = fixture();
-		Path contribution = publish(fixture, "Accepted receipt contribution", "accepted-for-receipt.examwork");
+
+		// Only newly captured Question and Answer records can be submitted.
+		// The original issued Question and Answer must remain unchanged.
+		addNewContributorQuestionAndAnswer(fixture);
+
+		Path contribution = directory.resolve("accepted-for-receipt.examwork");
+
+		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
+				.export(fixture.assignmentId(), contribution);
+
 		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+
 		UUID packageId = intake.receive(contribution).received().packageId();
-		ExchangeRecord proposed = intake.proposedChanges(packageId).getFirst();
-		var key = new MasterContributionDecisionLedger.RecordKey(proposed.recordType(), proposed.recordId());
-		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
-				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY),
-				"Accept contribution and issue receipt");
+
+		List<ExchangeRecord> proposed = intake.proposedChanges(packageId);
+		assertEquals(2, proposed.size());
+
+		Map<MasterContributionDecisionLedger.RecordKey, MasterContributionDecisionLedger.Choice> choices = new HashMap<>();
+
+		for (ExchangeRecord record : proposed) {
+			choices.put(new MasterContributionDecisionLedger.RecordKey(record.recordType(), record.recordId()),
+					MasterContributionDecisionLedger.Choice.QUEUE_APPLY);
+		}
+
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId, choices,
+				"Accept newly captured Question and Answer");
+
 		var application = new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId());
+
+		assertEquals(2, application.outcomes().size());
+
+		assertTrue(application.outcomes().stream()
+				.allMatch(outcome -> outcome.outcome() == MasterContributionApplicationCoordinator.Outcome.APPLIED));
+
 		Path destination = directory.resolve("accepted-receipt.examwork");
+
 		ExamWorkManifest receipt = new MasterContributionReceiptExporter(fixture.master()).export(review.reviewId(),
 				destination);
+
 		assertEquals(ExamWorkPackageType.IMPORT_RECEIPT, receipt.packageType());
+
 		assertEquals(fixture.assignmentId(), receipt.assignmentId());
 		assertEquals(application.completedAt(), receipt.createdAt());
+
 		assertArchiveWellFormed(destination, fixture.master());
+
 		List<ExchangeRecord> records = new ExamWorkJsonlCodec()
 				.readRecords(new ByteArrayInputStream(readEntry(destination, "receipts/import-results.jsonl")));
-		assertEquals(2, records.size());
+
+		// One receipt context and one outcome per submitted record.
+		assertEquals(3, records.size());
+
 		ExchangeRecord context = records.stream().filter(record -> record.recordType().equals("IMPORT_RECEIPT_CONTEXT"))
 				.findFirst().orElseThrow();
+
 		assertEquals(review.reviewId().toString(), context.values().path("review_id").asText());
+
 		assertEquals(packageId.toString(), context.values().path("contribution_package_id").asText());
+
 		assertEquals(receipt.packageId().toString(), context.values().path("receipt_package_id").asText());
-		ExchangeRecord outcome = records.stream()
-				.filter(record -> record.recordType().equals("IMPORT_RECEIPT_QUESTION")).findFirst().orElseThrow();
-		assertEquals(proposed.recordId(), outcome.recordId());
-		assertEquals("APPLIED", outcome.values().path("outcome").asText());
-		assertEquals("QUEUE_APPLY", outcome.values().path("decision").asText());
-		assertEquals(application.outcomes().getFirst().resultingRevisionId().toString(),
-				outcome.values().path("resulting_revision_id").asText());
-		assertFalse(outcome.values().path("canonical_record_id").asText().isBlank());
+
+		assertEquals(2, context.values().path("record_count").asInt());
+
+		for (ExchangeRecord proposedRecord : proposed) {
+			ExchangeRecord outcome = records.stream()
+					.filter(record -> record.recordType().equals("IMPORT_RECEIPT_" + proposedRecord.recordType()))
+					.filter(record -> record.recordId().equals(proposedRecord.recordId())).findFirst().orElseThrow();
+
+			assertEquals("APPLIED", outcome.values().path("outcome").asText());
+
+			assertEquals("QUEUE_APPLY", outcome.values().path("decision").asText());
+
+			assertFalse(outcome.values().path("canonical_record_id").asText().isBlank());
+
+			assertFalse(outcome.values().path("resulting_revision_id").asText().isBlank());
+		}
+
+		// The original coordinator-owned Question is not updated.
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+
+		// The returned Question and Answer have been added.
+		try (Connection connection = fixture.master().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("""
+						SELECT question.question_text,
+						       answer.answer_text
+						FROM questions question
+						JOIN answers answer
+						  ON answer.question_id = question.id
+						WHERE question.question_code = '2'
+						""")) {
+
+			assertTrue(result.next());
+
+			assertEquals("New contributor question", result.getString("question_text"));
+
+			assertEquals("New contributor answer", result.getString("answer_text"));
+
+			assertFalse(result.next());
+		}
+
 		assertEquals(WorkAssignmentLedger.State.COMPLETE,
 				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
-		assertEquals("Accepted receipt contribution", masterQuestionText(fixture.master()));
+
 		fixture.master().verifySchema();
 		fixture.master().verifyIntegrity();
 	}

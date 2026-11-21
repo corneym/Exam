@@ -128,6 +128,8 @@ import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumMappingRevie
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumSourcePdfRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.IncompatibleDatabaseException;
 import au.edu.eq.questionbank.repository.sqlite.SqliteContributorAssignmentVisibilityRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteCoordinatorExamLockRepository;
@@ -3527,6 +3529,24 @@ public class QuestionBankApplication extends Application {
 		};
 	}
 
+	private Set<Long> loadContributorBaselineQuestionIds(UUID assignmentId) throws SQLException, IOException {
+
+		Objects.requireNonNull(assignmentId, "assignmentId");
+
+		byte[] baseline = contributorAssignments.readBaseline(assignmentId).records();
+
+		List<ExchangeRecord> records = new ExamWorkJsonlCodec().readRecords(new ByteArrayInputStream(baseline));
+
+		Set<UUID> issuedQuestionIds = records.stream().filter(record -> "QUESTION".equals(record.recordType()))
+				.map(ExchangeRecord::recordId).collect(Collectors.toUnmodifiableSet());
+
+		SqliteDatabase database = new SqliteDatabase(applicationConfig.databasePath());
+
+		return new SqlitePortableIdentityRepository(database).findAllByLocalId(EntityType.QUESTION).entrySet().stream()
+				.filter(entry -> issuedQuestionIds.contains(entry.getValue().portableId())).map(Map.Entry::getKey)
+				.collect(Collectors.toUnmodifiableSet());
+	}
+
 	private void loadCorpusDashboardHome(Subject dashboardSubject, long generation, long preferredQuestionId) {
 		loadCorpusDashboardHome(dashboardSubject, generation, preferredQuestionId, () -> {
 
@@ -5125,8 +5145,17 @@ public class QuestionBankApplication extends Application {
 			boolean installedContributorSubject = contributorAssignments != null && contributorAssignments.findAll()
 					.stream().anyMatch(session -> session.subjectLocalId() == dashboardSubject.getId());
 			boolean readOnly = imported || (activeAssignmentContext == null && installedContributorSubject);
+
 			dashboard.setReadOnlyContext(assignedExams, readOnly);
-		} catch (SQLException failure) {
+
+			if (activeAssignmentContext != null) {
+				UUID assignmentId = activeAssignmentContext.session().assignmentId();
+
+				dashboard.setAssignmentExamScope(activeAssignmentContext.session().examLocalId());
+
+				dashboard.setContributorBaselineQuestionIds(loadContributorBaselineQuestionIds(assignmentId));
+			}
+		} catch (SQLException | IOException failure) {
 
 			// Never expose an editable replacement Dashboard when authority cannot
 			// be established. Any earlier Dashboard is restricted as well.
@@ -5139,11 +5168,6 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 
-		// The assignment is selected at Exam level, not Booklet level.
-		// This also restricts Subject-wide Question Work headline counts.
-		if (activeAssignmentContext != null) {
-			dashboard.setAssignmentExamScope(activeAssignmentContext.session().examLocalId());
-		}
 		corpusDashboardPane = dashboard;
 		corpusDashboardHost.getChildren().setAll(dashboard);
 	}
@@ -7782,6 +7806,10 @@ public class QuestionBankApplication extends Application {
 		viewExamAssetPdf(booklet.getSourceDocument().getRelativePath(), "Question booklet", config);
 	}
 
+	private enum BackupFailureDecision {
+		RETRY, EXIT_WITHOUT_BACKUP, CANCEL_EXIT
+	}
+
 	private record ReceiptExportData(ExamWorkManifest manifest, Path destination, String sha256) {
 	}
 
@@ -7794,12 +7822,14 @@ public class QuestionBankApplication extends Application {
 			List<ExchangeRecord> baseline, List<ExchangeRecord> proposals) {
 	}
 
-	private record PreparedSubjectReview(Path directory, Path masterArchive,
-			SubjectReconciliationPreviewService.Result preview) {
+	@FunctionalInterface
+	private interface ExamAssetsPersistenceAction {
+
+		void run() throws SQLException;
 	}
 
-	private enum BackupFailureDecision {
-		RETRY, EXIT_WITHOUT_BACKUP, CANCEL_EXIT
+	private record PreparedSubjectReview(Path directory, Path masterArchive,
+			SubjectReconciliationPreviewService.Result preview) {
 	}
 
 	private record DashboardAnswerCaptureSnapshot(List<Question> questions, AnswerFile answerFile) {
@@ -7848,12 +7878,6 @@ public class QuestionBankApplication extends Application {
 			// the JavaFX application thread.
 			mappingCoverages = List.copyOf(mappingCoverages);
 		}
-	}
-
-	@FunctionalInterface
-	private interface ExamAssetsPersistenceAction {
-
-		void run() throws SQLException;
 	}
 
 	private record PendingLegacyQuestionImport(Subject subject, SyllabusVersion syllabusVersion,
