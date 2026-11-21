@@ -71,18 +71,33 @@ class ContributionArchiveInspectorTest {
 		}
 		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId, choices,
 				"Approve original returned image");
+		var preparer = new MasterContributionApprovedImagePreparer(fixture.master());
+		assertEquals(1, preparer.prepare(review, original).size());
 
-		// The contributor publishes another archive after the
-		// coordinator recorded the reviewed first return.
-		// It must not become a substitute source of PNG bytes.
-		Path later = directory.resolve("later-image-return.examwork");
-		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
-				.export(fixture.assignmentId(), later);
-		IOException failure = assertThrows(IOException.class,
-				() -> new MasterContributionApprovedImagePreparer(fixture.master()).prepare(review, later));
+		// Construct a substituted archive without attempting
+		// a prohibited second contributor submission.
+		List<ExchangeRecord> alteredRecords = new ArrayList<>();
+		for (ExchangeRecord proposal : intake.proposedChanges(packageId)) {
+			if ("QUESTION".equals(proposal.recordType())) {
+				ObjectNode altered = ((ObjectNode) proposal.values()).deepCopy();
+				altered.put("question_text", "Substituted Question content");
+				alteredRecords.add(withValues(proposal, altered));
+			} else {
+				alteredRecords.add(proposal);
+			}
+		}
+		Path substituted = repackage(original, "records/contribution-changes.jsonl", encode(alteredRecords));
+
+		// Verify that the substituted archive is independently valid,
+		// but is not the archive recorded by the original intake.
+		assertArchiveWellFormed(substituted, fixture.master());
+		new ContributionArchiveInspector(fixture.master()).inspect(substituted);
+		IOException failure = assertThrows(IOException.class, () -> preparer.prepare(review, substituted));
 		assertTrue(failure.getMessage().contains("Image archive differs from durable"), failure.getMessage());
+		assertNull(questionTextForCode(fixture.master(), "2"));
 		assertEquals(WorkAssignmentLedger.State.ACTIVE,
 				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		fixture.master().verifySchema();
 		fixture.master().verifyIntegrity();
 	}
 
@@ -600,7 +615,17 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
-	void knownMasterViewPreservesPostReturnEditsAndWorksWithoutArchive() throws Exception {
+	void knownMasterViewRejectsUnacknowledgedReceiptIdentity() throws Exception {
+		Fixture fixture = fixture();
+		var service = new ContributorKnownMasterRebaseService(fixture.contributor());
+		SQLException failure = assertThrows(SQLException.class, () -> service.view(UUID.randomUUID()));
+		assertTrue(failure.getMessage().contains("Receipt has not been acknowledged"));
+		assertEquals("Biology question", masterQuestionText(fixture.contributor()));
+		fixture.contributor().verifyIntegrity();
+	}
+
+	@Test
+	void knownMasterViewRetainsAcknowledgementWithoutArchive() throws Exception {
 		Fixture fixture = fixture();
 		Path receipt = exportAppliedReceipt(fixture, "Accepted authoritative revision", "known-master-view.examwork");
 		String trustedDigest = HexFormat.of().formatHex(digest(Files.readAllBytes(receipt)));
@@ -613,32 +638,28 @@ class ContributionArchiveInspectorTest {
 		assertEquals(ContributorKnownMasterRebaseService.Status.KNOWN_MASTER_RECORDED,
 				initial.entries().getFirst().status());
 
-		// The acknowledgement must survive an independent
-		// local edit and loss of the original receipt archive.
-		execute(fixture.contributor(), """
-				UPDATE questions
-				SET question_text = 'Unreturned work after acknowledgement'
-				WHERE question_code = '1'
-				""");
+		// Historical acknowledgement evidence must remain available
+		// after the original receipt archive is no longer present.
 		Files.delete(receipt);
-		var afterEdit = service.view(initial.acknowledgement().receiptPackageId());
-		assertEquals(ContributorKnownMasterRebaseService.Status.PRESERVE_LATER_LOCAL_REVISION,
-				afterEdit.entries().getFirst().status());
+		assertFalse(Files.exists(receipt));
+		var reopened = new ContributorKnownMasterRebaseService(fixture.contributor());
+		var retained = reopened.view(initial.acknowledgement().receiptPackageId());
+		assertEquals(initial.acknowledgement(), retained.acknowledgement());
+		assertEquals(1, retained.entries().size());
+		assertFalse(retained.supersededByNewerAssignment());
+		assertEquals(ContributorKnownMasterRebaseService.Status.KNOWN_MASTER_RECORDED,
+				retained.entries().getFirst().status());
 		assertEquals("Accepted authoritative revision",
-				afterEdit.entries().getFirst().masterRecord().values().path("question_text").asText());
-		assertEquals("Unreturned work after acknowledgement", masterQuestionText(fixture.contributor()));
-		assertArrayEquals(baseline, sessions.readBaseline(fixture.assignmentId()).records());
-		fixture.contributor().verifyIntegrity();
-	}
+				retained.entries().getFirst().masterRecord().values().path("question_text").asText());
 
-	@Test
-	void knownMasterViewRejectsUnacknowledgedReceiptIdentity() throws Exception {
-		Fixture fixture = fixture();
-		var service = new ContributorKnownMasterRebaseService(fixture.contributor());
-		SQLException failure = assertThrows(SQLException.class, () -> service.view(UUID.randomUUID()));
-		assertTrue(failure.getMessage().contains("Receipt has not been acknowledged"));
-		assertEquals("Biology question", masterQuestionText(fixture.contributor()));
+		// Reading retained evidence must not change either
+		// the issued baseline or the submitted contributor work.
+		assertEquals("Biology question", questionTextForCode(fixture.contributor(), "1"));
+		assertEquals("Accepted authoritative revision", questionTextForCode(fixture.contributor(), "2"));
+		assertArrayEquals(baseline, sessions.readBaseline(fixture.assignmentId()).records());
+		fixture.contributor().verifySchema();
 		fixture.contributor().verifyIntegrity();
+		fixture.master().verifyIntegrity();
 	}
 
 	@Test
@@ -1005,6 +1026,9 @@ class ContributionArchiveInspectorTest {
 	@Test
 	void masterApplicationImportsVerifiedAnswerRegion() throws Exception {
 		Fixture fixture = fixture();
+
+		// Capture a new contributor-owned Question and Answer.
+		addNewContributorQuestionAndAnswer(fixture);
 		execute(fixture.contributor(), """
 				INSERT INTO answer_regions (
 				    answer_id,
@@ -1024,46 +1048,110 @@ class ContributionArchiveInspectorTest {
 				  ON question.id = answer.question_id
 				JOIN exam_booklets booklet
 				  ON booklet.id = question.booklet_id
-				WHERE question.question_code = '1'
+				WHERE question.question_code = '2'
 				""");
 		Path archive = directory.resolve("answer-region-return.examwork");
 		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
 				.export(fixture.assignmentId(), archive);
 		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
 		UUID packageId = intake.receive(archive).received().packageId();
-		ExchangeRecord proposed = intake.proposedChanges(packageId).getFirst();
-		assertEquals("ANSWER", proposed.recordType());
-		var key = new MasterContributionDecisionLedger.RecordKey(proposed.recordType(), proposed.recordId());
-		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
-				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY), "Accept verified Answer PDF region");
-		var result = new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId(), archive,
+		Map<MasterContributionDecisionLedger.RecordKey, MasterContributionDecisionLedger.Choice> choices = new HashMap<>();
+		for (ExchangeRecord proposed : intake.proposedChanges(packageId)) {
+			choices.put(new MasterContributionDecisionLedger.RecordKey(proposed.recordType(), proposed.recordId()),
+					MasterContributionDecisionLedger.Choice.QUEUE_APPLY);
+		}
+		assertEquals(2, choices.size());
+		assertTrue(choices.keySet().stream().anyMatch(key -> "QUESTION".equals(key.recordType())));
+		assertTrue(choices.keySet().stream().anyMatch(key -> "ANSWER".equals(key.recordType())));
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId, choices,
+				"Accept verified new Answer PDF region");
+		var coordinator = new MasterContributionApplicationCoordinator(fixture.master());
+
+		// The archive-free path cannot apply the PDF region.
+		assertThrows(SQLException.class, () -> coordinator.execute(review.reviewId()));
+		assertTrue(coordinator.find(review.reviewId()).isEmpty());
+		assertNull(questionTextForCode(fixture.master(), "2"));
+		assertEquals(WorkAssignmentLedger.State.ACTIVE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		var result = coordinator.execute(review.reviewId(), archive,
 				new ManagedDataLayout(directory.resolve("coordinator")));
-		assertEquals(MasterContributionApplicationCoordinator.Outcome.APPLIED, result.outcomes().getFirst().outcome());
+		assertFalse(result.duplicate());
+		assertEquals(2, result.outcomes().size());
+		assertTrue(result.outcomes().stream()
+				.allMatch(outcome -> outcome.outcome() == MasterContributionApplicationCoordinator.Outcome.APPLIED));
+
+		// Resolve the imported Answer through its Question rather
+		// than assuming contributor and coordinator local IDs agree.
 		try (Connection connection = fixture.master().openConnection();
 				Statement statement = connection.createStatement();
 				ResultSet rows = statement.executeQuery("""
 						SELECT
-						    region_order,
-						    answer_file_id,
-						    page_number
-						FROM answer_regions
-						WHERE answer_id = 91
+						    question.question_code,
+						    answer.answer_text,
+						    region.region_order,
+						    region.answer_file_id,
+						    region.page_number,
+						    region.x,
+						    region.y,
+						    region.width,
+						    region.height
+						FROM answer_regions region
+						JOIN answers answer
+						  ON answer.id = region.answer_id
+						JOIN questions question
+						  ON question.id = answer.question_id
 						""")) {
 			assertTrue(rows.next());
+			assertEquals("2", rows.getString("question_code"));
+			assertEquals("New contributor answer", rows.getString("answer_text"));
 			assertEquals(0, rows.getInt("region_order"));
 			assertEquals(71, rows.getLong("answer_file_id"));
 			assertEquals(1, rows.getInt("page_number"));
+			assertEquals(0.15, rows.getDouble("x"), 0.000001);
+			assertEquals(0.25, rows.getDouble("y"), 0.000001);
+			assertEquals(0.35, rows.getDouble("width"), 0.000001);
+			assertEquals(0.45, rows.getDouble("height"), 0.000001);
+
+			// No region was added to the original issued Answer.
 			assertFalse(rows.next());
 		}
+		assertEquals("Biology question", questionTextForCode(fixture.master(), "1"));
+		assertEquals("New contributor question", questionTextForCode(fixture.master(), "2"));
 		assertEquals(WorkAssignmentLedger.State.COMPLETE,
 				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
 		fixture.master().verifySchema();
 		fixture.master().verifyIntegrity();
+		fixture.contributor().verifyIntegrity();
 	}
 
 	@Test
 	void masterApplicationImportsVerifiedQuestionRegion() throws Exception {
 		Fixture fixture = fixture();
+
+		// Create a new Question without changing the issued Question.
+		execute(fixture.contributor(), """
+				INSERT INTO questions (
+				    booklet_id,
+				    classification_node_id,
+				    question_code,
+				    question_text,
+				    marks,
+				    shared_context_capture_required,
+				    response_type,
+				    source_capture_required
+				)
+				SELECT
+				    booklet_id,
+				    classification_node_id,
+				    '2',
+				    'New Question with PDF region',
+				    marks,
+				    shared_context_capture_required,
+				    response_type,
+				    source_capture_required
+				FROM questions
+				WHERE question_code = '1'
+				""");
 		execute(fixture.contributor(), """
 				INSERT INTO question_regions (
 				    question_id,
@@ -1079,25 +1167,51 @@ class ContributionArchiveInspectorTest {
 				    1,
 				    0.1, 0.2, 0.3, 0.4
 				FROM questions
-				WHERE question_code = '1'
+				WHERE question_code = '2'
+				""");
+
+		// Include explicit ordered content referencing the new region.
+		execute(fixture.contributor(), """
+				INSERT INTO question_content_parts (
+				    question_id,
+				    content_order,
+				    content_type,
+				    region_order,
+				    image_id
+				)
+				SELECT
+				    id,
+				    0,
+				    'PDF_REGION',
+				    0,
+				    NULL
+				FROM questions
+				WHERE question_code = '2'
 				""");
 		Path archive = directory.resolve("question-region-return.examwork");
 		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
 				.export(fixture.assignmentId(), archive);
 		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
 		UUID packageId = intake.receive(archive).received().packageId();
-		ExchangeRecord proposed = intake.proposedChanges(packageId).getFirst();
+		List<ExchangeRecord> proposals = intake.proposedChanges(packageId);
+		assertEquals(1, proposals.size());
+		ExchangeRecord proposed = proposals.getFirst();
+		assertEquals("QUESTION", proposed.recordType());
+		assertNull(proposed.baselineRevisionId());
 		var key = new MasterContributionDecisionLedger.RecordKey(proposed.recordType(), proposed.recordId());
 		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
 				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY),
-				"Accept verified Question PDF region");
+				"Accept verified new Question PDF region");
 		MasterContributionApplicationCoordinator coordinator = new MasterContributionApplicationCoordinator(
 				fixture.master());
 
-		// The original scalar-only entry point must not bypass
-		// archive verification or unlock the assigned Exam.
+		// Archive verification is mandatory before PDF regions
+		// and their content parts may be imported.
 		assertThrows(SQLException.class, () -> coordinator.execute(review.reviewId()));
 		assertTrue(coordinator.find(review.reviewId()).isEmpty());
+		assertNull(questionTextForCode(fixture.master(), "2"));
+		assertEquals(WorkAssignmentLedger.State.ACTIVE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
 		var applied = coordinator.execute(review.reviewId(), archive,
 				new ManagedDataLayout(directory.resolve("coordinator")));
 		assertFalse(applied.duplicate());
@@ -1106,14 +1220,20 @@ class ContributionArchiveInspectorTest {
 				Statement statement = connection.createStatement();
 				ResultSet rows = statement.executeQuery("""
 						SELECT
-						    region_order,
-						    booklet_id,
-						    page_number,
-						    x, y, width, height
-						FROM question_regions
-						WHERE question_id = 81
+						    question.question_code,
+						    region.region_order,
+						    region.booklet_id,
+						    region.page_number,
+						    region.x,
+						    region.y,
+						    region.width,
+						    region.height
+						FROM question_regions region
+						JOIN questions question
+						  ON question.id = region.question_id
 						""")) {
 			assertTrue(rows.next());
+			assertEquals("2", rows.getString("question_code"));
 			assertEquals(0, rows.getInt("region_order"));
 			assertEquals(61, rows.getLong("booklet_id"));
 			assertEquals(1, rows.getInt("page_number"));
@@ -1123,11 +1243,37 @@ class ContributionArchiveInspectorTest {
 			assertEquals(0.4, rows.getDouble("height"), 0.000001);
 			assertFalse(rows.next());
 		}
+		try (Connection connection = fixture.master().openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet rows = statement.executeQuery("""
+						SELECT
+						    question.question_code,
+						    part.content_order,
+						    part.content_type,
+						    part.region_order,
+						    part.image_id
+						FROM question_content_parts part
+						JOIN questions question
+						  ON question.id = part.question_id
+						""")) {
+			assertTrue(rows.next());
+			assertEquals("2", rows.getString("question_code"));
+			assertEquals(0, rows.getInt("content_order"));
+			assertEquals("PDF_REGION", rows.getString("content_type"));
+			assertEquals(0, rows.getInt("region_order"));
+			assertNull(rows.getObject("image_id"));
+			assertFalse(rows.next());
+		}
+		assertEquals("Biology question", questionTextForCode(fixture.master(), "1"));
+		assertEquals("New Question with PDF region", questionTextForCode(fixture.master(), "2"));
 		assertEquals(WorkAssignmentLedger.State.COMPLETE,
 				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
-		assertEquals(applied.outcomes(), coordinator.execute(review.reviewId()).outcomes());
+		var replay = coordinator.execute(review.reviewId());
+		assertTrue(replay.duplicate());
+		assertEquals(applied.outcomes(), replay.outcomes());
 		fixture.master().verifySchema();
 		fixture.master().verifyIntegrity();
+		fixture.contributor().verifyIntegrity();
 	}
 
 	@Test
