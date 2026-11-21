@@ -779,9 +779,7 @@ public final class HistoricalSchemaFixture {
 	 */
 	public static void removeVersion47Objects(Statement statement) throws SQLException {
 		Objects.requireNonNull(statement, "statement");
-
 		removeVersion48Objects(statement);
-
 		String name = "trg_master_exam_structure_booklet_applicability_reviews_delete";
 		String migration;
 		try {
@@ -837,12 +835,10 @@ public final class HistoricalSchemaFixture {
 				DROP TRIGGER IF EXISTS
 				    trg_operating_context_hidden_after_return
 				""");
-
 		statement.execute("""
 				DROP TRIGGER IF EXISTS
 				    trg_operating_context_authority_no_delete
 				""");
-
 		statement.execute("""
 				DROP TRIGGER IF EXISTS
 				    trg_operating_context_authority_origin_immutable
@@ -852,7 +848,6 @@ public final class HistoricalSchemaFixture {
 		statement.execute("""
 				DROP TABLE IF EXISTS imported_subject_authorities
 				""");
-
 		statement.execute("""
 				DROP TABLE IF EXISTS contributor_assignment_hidden
 				""");

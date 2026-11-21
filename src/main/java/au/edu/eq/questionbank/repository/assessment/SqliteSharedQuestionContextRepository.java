@@ -103,7 +103,6 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
-
 				new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.SHARED_QUESTION_CONTEXT,
 						context.getId());
 
@@ -169,10 +168,8 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
-
 				new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.SHARED_QUESTION_CONTEXT,
 						context.getId());
-
 				try (PreparedStatement statement = connection.prepareStatement("""
 						UPDATE shared_question_contexts
 						SET context_label = ?
@@ -285,7 +282,6 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 				}
 			}
 		}
-
 		try (PreparedStatement check = connection.prepareStatement("""
 				SELECT 1
 				FROM shared_question_contexts
@@ -294,14 +290,12 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 				""")) {
 			check.setLong(1, contextId);
 			check.setLong(2, bookletId);
-
 			try (ResultSet result = check.executeQuery()) {
 				if (!result.next()) {
 					return false;
 				}
 			}
 		}
-
 		new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.SHARED_QUESTION_CONTEXT,
 				contextId);
 

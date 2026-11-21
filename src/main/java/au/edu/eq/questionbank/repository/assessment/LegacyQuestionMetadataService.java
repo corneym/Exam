@@ -103,10 +103,8 @@ public final class LegacyQuestionMetadataService {
 				// Recheck persisted UNKNOWN state so a stale selection rolls back the whole
 				// batch.
 				for (Question question : questions) {
-
 					new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.QUESTION,
 							question.getId());
-
 					statement.setString(1, responseType.name());
 					statement.setLong(2, question.getId());
 					statement.setString(3, QuestionResponseType.UNKNOWN.name());
@@ -528,7 +526,6 @@ public final class LegacyQuestionMetadataService {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
-
 				new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.QUESTION, questionId);
 
 				// Base transition decisions on persisted state rather than the supplied

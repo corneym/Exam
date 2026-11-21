@@ -59,32 +59,6 @@ class ContributionArchiveInspectorTest {
 	Path directory;
 
 	@Test
-	void acceptsCumulativeReturnsWithoutCoordinatorAcknowledgement() throws Exception {
-		Fixture fixture = fixture();
-		Path firstArchive = publish(fixture, "First contributor edit", "first.examwork");
-		ContributionArchiveInspector inspector = new ContributionArchiveInspector(fixture.master());
-		var first = inspector.inspect(firstArchive);
-		assertEquals(1, first.returnNumber());
-		assertNull(first.previousPackageId());
-		assertEquals(1, first.changes().size());
-		assertTrue(first.proposedRecords().size() > first.changes().size());
-		assertEquals(fixture.assignmentId(), first.assignment().assignmentId());
-		assertTrue(first.archiveSha256().matches("[0-9a-f]{64}"));
-
-		// The coordinator has neither accepted nor acknowledged return 1.
-		Path secondArchive = publish(fixture, "Second contributor edit", "second.examwork");
-		var second = inspector.inspect(secondArchive);
-		assertEquals(2, second.returnNumber());
-		assertEquals(first.manifest().packageId(), second.previousPackageId());
-		assertEquals(1, second.changes().size());
-		assertEquals(first.assignment(), second.assignment());
-		assertArrayEquals(new WorkAssignmentLedger(fixture.master()).readBaseline(fixture.assignmentId()).records(),
-				readEntry(secondArchive, "baseline/initial-records.jsonl"));
-		fixture.master().verifySchema();
-		fixture.master().verifyIntegrity();
-	}
-
-	@Test
 	void approvedImagePreparationRejectsAnotherReceivedArchive() throws Exception {
 		Fixture fixture = fixture();
 		Path original = publishNewContributorImage(fixture, "original-image-return.examwork");
@@ -850,47 +824,6 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
-	void masterApplicationCommitsQuestionTextAndRevision() throws Exception {
-		Fixture fixture = fixture();
-		Path archive = publish(fixture, "Applied contributor text", "apply-question.examwork");
-		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
-		UUID packageId = intake.receive(archive).received().packageId();
-		ExchangeRecord proposal = intake.proposedChanges(packageId).getFirst();
-		var key = new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId());
-		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
-				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY), "Accept reviewed Question text");
-		assertEquals("Biology question", masterQuestionText(fixture.master()));
-		MasterContributionApplicationCoordinator coordinator = new MasterContributionApplicationCoordinator(
-				fixture.master());
-		var applied = coordinator.execute(review.reviewId());
-		assertFalse(applied.duplicate());
-		assertEquals(packageId, applied.packageId());
-		assertEquals(1, applied.outcomes().size());
-		var outcome = applied.outcomes().getFirst();
-		assertEquals(MasterContributionApplicationCoordinator.Outcome.APPLIED, outcome.outcome());
-		assertNotNull(outcome.resultingRevisionId());
-		assertFalse(outcome.resultingRevisionId().equals(review.decisions().getFirst().masterRevisionId()));
-		assertEquals("Applied contributor text", masterQuestionText(fixture.master()));
-		WorkAssignmentLedger ledger = new WorkAssignmentLedger(fixture.master());
-		var assignment = ledger.find(fixture.assignmentId()).orElseThrow();
-
-		// Application completion ends the assignment, not the Exam's
-		// independent capture-completeness status.
-		assertEquals(WorkAssignmentLedger.State.COMPLETE, assignment.state());
-		assertTrue(ledger.findActiveForExam(assignment.examPortableId()).isEmpty());
-		assertEquals(applied, coordinator.find(review.reviewId()).orElseThrow());
-
-		// Replaying the same approved return cannot create another
-		// application, alter master data or close an assignment twice.
-		var replay = coordinator.execute(review.reviewId());
-		assertTrue(replay.duplicate());
-		assertEquals(applied.outcomes(), replay.outcomes());
-		assertEquals(applied.completedAt(), replay.completedAt());
-		fixture.master().verifySchema();
-		fixture.master().verifyIntegrity();
-	}
-
-	@Test
 	void masterApplicationHistoryIsImmutable() throws Exception {
 		Fixture fixture = fixture();
 		Path archive = publish(fixture, "Rejected content", "apply-immutable.examwork");
@@ -1286,6 +1219,48 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
+	void masterApplicationInsertsNewContributorQuestionAndClosesAssignment() throws Exception {
+		Fixture fixture = fixture();
+		Path archive = publish(fixture, "Applied contributor text", "apply-new-question.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		UUID packageId = intake.receive(archive).received().packageId();
+		ExchangeRecord proposal = intake.proposedChanges(packageId).getFirst();
+		assertEquals("QUESTION", proposal.recordType());
+		assertNull(proposal.baselineRevisionId());
+		var key = new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId());
+		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId,
+				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY), "Accept new contributor Question");
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+		MasterContributionApplicationCoordinator coordinator = new MasterContributionApplicationCoordinator(
+				fixture.master());
+		var applied = coordinator.execute(review.reviewId());
+		assertFalse(applied.duplicate());
+		assertEquals(packageId, applied.packageId());
+		assertEquals(1, applied.outcomes().size());
+		var outcome = applied.outcomes().getFirst();
+		assertEquals(MasterContributionApplicationCoordinator.Outcome.APPLIED, outcome.outcome());
+		assertNotNull(outcome.resultingRevisionId());
+
+		// Coordinator-owned Question 1 is unchanged. New Question 2 is inserted.
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+		assertEquals("Applied contributor text", questionTextForCode(fixture.master(), "2"));
+		WorkAssignmentLedger ledger = new WorkAssignmentLedger(fixture.master());
+		var assignment = ledger.find(fixture.assignmentId()).orElseThrow();
+		assertEquals(WorkAssignmentLedger.State.COMPLETE, assignment.state());
+		assertTrue(ledger.findActiveForExam(assignment.examPortableId()).isEmpty());
+		assertEquals(applied, coordinator.find(review.reviewId()).orElseThrow());
+
+		// Replaying an approved application must be idempotent.
+		var replay = coordinator.execute(review.reviewId());
+		assertTrue(replay.duplicate());
+		assertEquals(applied.outcomes(), replay.outcomes());
+		assertEquals(applied.completedAt(), replay.completedAt());
+		assertEquals("Applied contributor text", questionTextForCode(fixture.master(), "2"));
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
 	void masterApplicationPreventsCoordinatorEditBetweenReviewAndApply() throws Exception {
 		Fixture fixture = fixture();
 		Path archive = publish(fixture, "Contributor proposal", "apply-stale.examwork");
@@ -1309,7 +1284,8 @@ class ContributionArchiveInspectorTest {
 				fixture.master());
 		var result = coordinator.execute(review.reviewId());
 		assertFalse(result.duplicate());
-		assertEquals("Contributor proposal", masterQuestionText(fixture.master()));
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+		assertEquals("Contributor proposal", questionTextForCode(fixture.master(), "2"));
 		assertEquals(WorkAssignmentLedger.State.COMPLETE,
 				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
 		fixture.master().verifyIntegrity();
@@ -1858,29 +1834,29 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
-	void masterDecisionsQueueSafeUpdateWithoutApplyingIt() throws Exception {
+	void masterDecisionsQueueNewQuestionWithoutApplyingIt() throws Exception {
 		Fixture fixture = fixture();
-		Path archive = publish(fixture, "Contributor revision", "decision-ready.examwork");
+		Path archive = publish(fixture, "Contributor revision", "decision-new-question.examwork");
 		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
 		UUID packageId = intake.receive(archive).received().packageId();
-		var proposal = intake.proposedChanges(packageId).getFirst();
+		ExchangeRecord proposal = intake.proposedChanges(packageId).getFirst();
 		var key = new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId());
 		MasterContributionDecisionLedger ledger = new MasterContributionDecisionLedger(fixture.master());
 		var recorded = ledger.record(packageId, Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY),
-				"Reviewed against issued baseline");
+				"Approve a new contributor Question");
 		assertEquals(packageId, recorded.packageId());
 		assertEquals(1, recorded.decisions().size());
 		var decision = recorded.decisions().getFirst();
 		assertEquals(MasterContributionDecisionLedger.Choice.QUEUE_APPLY, decision.choice());
-		assertEquals(MasterContributionReviewPlanner.ReviewStatus.READY_UPDATE, decision.preliminaryStatus());
-		assertEquals(decision.baselineRevisionId(), decision.masterRevisionId());
+		assertEquals(MasterContributionReviewPlanner.ReviewStatus.READY_NEW, decision.preliminaryStatus());
+		assertNull(decision.baselineRevisionId());
+		assertNull(decision.masterRevisionId());
 		assertNull(decision.resultRevisionId());
-
-		// The entire decision and its observed revision survive rereading.
 		assertEquals(recorded, ledger.find(recorded.reviewId()).orElseThrow());
 
-		// QUEUE_APPLY is not a write operation.
+		// Recording the approval does not insert the proposed Question.
 		assertEquals("Biology question", masterQuestionText(fixture.master()));
+		assertNull(questionTextForCode(fixture.master(), "2"));
 	}
 
 	@Test
@@ -2160,76 +2136,49 @@ class ContributionArchiveInspectorTest {
 		// Only newly captured Question and Answer records can be submitted.
 		// The original issued Question and Answer must remain unchanged.
 		addNewContributorQuestionAndAnswer(fixture);
-
 		Path contribution = directory.resolve("accepted-for-receipt.examwork");
-
 		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
 				.export(fixture.assignmentId(), contribution);
-
 		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
-
 		UUID packageId = intake.receive(contribution).received().packageId();
-
 		List<ExchangeRecord> proposed = intake.proposedChanges(packageId);
 		assertEquals(2, proposed.size());
-
 		Map<MasterContributionDecisionLedger.RecordKey, MasterContributionDecisionLedger.Choice> choices = new HashMap<>();
-
 		for (ExchangeRecord record : proposed) {
 			choices.put(new MasterContributionDecisionLedger.RecordKey(record.recordType(), record.recordId()),
 					MasterContributionDecisionLedger.Choice.QUEUE_APPLY);
 		}
-
 		var review = new MasterContributionDecisionLedger(fixture.master()).record(packageId, choices,
 				"Accept newly captured Question and Answer");
-
 		var application = new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId());
-
 		assertEquals(2, application.outcomes().size());
-
 		assertTrue(application.outcomes().stream()
 				.allMatch(outcome -> outcome.outcome() == MasterContributionApplicationCoordinator.Outcome.APPLIED));
-
 		Path destination = directory.resolve("accepted-receipt.examwork");
-
 		ExamWorkManifest receipt = new MasterContributionReceiptExporter(fixture.master()).export(review.reviewId(),
 				destination);
-
 		assertEquals(ExamWorkPackageType.IMPORT_RECEIPT, receipt.packageType());
-
 		assertEquals(fixture.assignmentId(), receipt.assignmentId());
 		assertEquals(application.completedAt(), receipt.createdAt());
-
 		assertArchiveWellFormed(destination, fixture.master());
-
 		List<ExchangeRecord> records = new ExamWorkJsonlCodec()
 				.readRecords(new ByteArrayInputStream(readEntry(destination, "receipts/import-results.jsonl")));
 
 		// One receipt context and one outcome per submitted record.
 		assertEquals(3, records.size());
-
 		ExchangeRecord context = records.stream().filter(record -> record.recordType().equals("IMPORT_RECEIPT_CONTEXT"))
 				.findFirst().orElseThrow();
-
 		assertEquals(review.reviewId().toString(), context.values().path("review_id").asText());
-
 		assertEquals(packageId.toString(), context.values().path("contribution_package_id").asText());
-
 		assertEquals(receipt.packageId().toString(), context.values().path("receipt_package_id").asText());
-
 		assertEquals(2, context.values().path("record_count").asInt());
-
 		for (ExchangeRecord proposedRecord : proposed) {
 			ExchangeRecord outcome = records.stream()
 					.filter(record -> record.recordType().equals("IMPORT_RECEIPT_" + proposedRecord.recordType()))
 					.filter(record -> record.recordId().equals(proposedRecord.recordId())).findFirst().orElseThrow();
-
 			assertEquals("APPLIED", outcome.values().path("outcome").asText());
-
 			assertEquals("QUEUE_APPLY", outcome.values().path("decision").asText());
-
 			assertFalse(outcome.values().path("canonical_record_id").asText().isBlank());
-
 			assertFalse(outcome.values().path("resulting_revision_id").asText().isBlank());
 		}
 
@@ -2247,19 +2196,13 @@ class ContributionArchiveInspectorTest {
 						  ON answer.question_id = question.id
 						WHERE question.question_code = '2'
 						""")) {
-
 			assertTrue(result.next());
-
 			assertEquals("New contributor question", result.getString("question_text"));
-
 			assertEquals("New contributor answer", result.getString("answer_text"));
-
 			assertFalse(result.next());
 		}
-
 		assertEquals(WorkAssignmentLedger.State.COMPLETE,
 				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
-
 		fixture.master().verifySchema();
 		fixture.master().verifyIntegrity();
 	}
@@ -2615,6 +2558,27 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
+	void masterReviewRecognisesNewContributorQuestion() throws Exception {
+		Fixture fixture = fixture();
+		Path archive = publish(fixture, "Contributor revision", "review-new-question.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		var receipt = intake.receive(archive);
+		var plan = new MasterContributionReviewPlanner(fixture.master()).plan(receipt.received().packageId());
+		assertEquals(MasterContributionIntake.IntakeStatus.READY_FOR_REVIEW, plan.intakeStatus());
+		assertEquals(fixture.assignmentId(), plan.assignmentId());
+		assertEquals(1, plan.assessments().size());
+		var assessment = plan.assessments().getFirst();
+		assertEquals(MasterContributionReviewPlanner.ReviewStatus.READY_NEW, assessment.status());
+		assertNull(assessment.baselineRevisionId());
+		assertNull(assessment.masterRevisionId());
+		assertNull(assessment.masterRecordSha256());
+		assertEquals(intake.proposedChanges(receipt.received().packageId()).getFirst().revisionId(),
+				assessment.proposedRevisionId());
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+		assertNull(questionTextForCode(fixture.master(), "2"));
+	}
+
+	@Test
 	void masterReviewRecognisesNewQuestionWithoutInsertingIt() throws Exception {
 		Fixture fixture = fixture();
 		var session = new SqliteContributorAssignmentSessionRepository(fixture.contributor())
@@ -2681,27 +2645,6 @@ class ContributionArchiveInspectorTest {
 			assertTrue(result.next());
 			assertEquals(0, result.getInt(1));
 		}
-	}
-
-	@Test
-	void masterReviewRecognisesSafeBaselineUpdate() throws Exception {
-		Fixture fixture = fixture();
-		Path archive = publish(fixture, "Contributor revision", "review-ready.examwork");
-		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
-		var receipt = intake.receive(archive);
-		var plan = new MasterContributionReviewPlanner(fixture.master()).plan(receipt.received().packageId());
-		assertEquals(MasterContributionIntake.IntakeStatus.READY_FOR_REVIEW, plan.intakeStatus());
-		assertEquals(fixture.assignmentId(), plan.assignmentId());
-		assertEquals(1, plan.assessments().size());
-		var assessment = plan.assessments().getFirst();
-		assertEquals(MasterContributionReviewPlanner.ReviewStatus.READY_UPDATE, assessment.status());
-		assertEquals(assessment.baselineRevisionId(), assessment.masterRevisionId());
-		assertEquals(intake.proposedChanges(receipt.received().packageId()).getFirst().revisionId(),
-				assessment.proposedRevisionId());
-		assertNotNull(assessment.masterRecordSha256());
-
-		// A preliminary review must not modify the coordinator's record.
-		assertEquals("Biology question", masterQuestionText(fixture.master()));
 	}
 
 	@Test
@@ -2859,8 +2802,8 @@ class ContributionArchiveInspectorTest {
 				assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
 						UPDATE schema_version
 						SET version = 44
-						WHERE version = 47
-						"""));
+						WHERE version = %d
+						""".formatted(SqliteDatabase.latestSchemaVersion())));
 				connection.commit();
 			} catch (SQLException | RuntimeException failure) {
 				connection.rollback();
@@ -2944,6 +2887,34 @@ class ContributionArchiveInspectorTest {
 		}
 		assertEquals(WorkAssignmentLedger.State.ACTIVE,
 				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
+	}
+
+	@Test
+	void publishesOneFinalContributionWithoutCoordinatorAcknowledgement() throws Exception {
+		Fixture fixture = fixture();
+		Path archive = publish(fixture, "Final contributor Question", "single-final-return.examwork");
+		ContributionArchiveInspector inspector = new ContributionArchiveInspector(fixture.master());
+		var inspected = inspector.inspect(archive);
+		assertEquals(1, inspected.returnNumber());
+		assertNull(inspected.previousPackageId());
+		assertEquals(1, inspected.changes().size());
+		assertEquals("QUESTION", inspected.changes().getFirst().recordType());
+		assertTrue(inspected.proposedRecords().size() > inspected.changes().size());
+		assertEquals(fixture.assignmentId(), inspected.assignment().assignmentId());
+		assertTrue(inspected.archiveSha256().matches("[0-9a-f]{64}"));
+		assertArrayEquals(new WorkAssignmentLedger(fixture.master()).readBaseline(fixture.assignmentId()).records(),
+				readEntry(archive, "baseline/initial-records.jsonl"));
+
+		// No coordinator acknowledgement is necessary to finish the local
+		// submission. A second export from the same assignment is forbidden.
+		assertThrows(IllegalStateException.class,
+				() -> new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
+						.export(fixture.assignmentId(), directory.resolve("second-return.examwork")));
+		assertEquals(1, new SqliteContributionReturnLedger(fixture.contributor()).findLatest(fixture.assignmentId())
+				.orElseThrow().returnNumber());
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
 		fixture.master().verifySchema();
 		fixture.master().verifyIntegrity();
 	}
@@ -3455,17 +3426,35 @@ class ContributionArchiveInspectorTest {
 	}
 
 	private Path publish(Fixture fixture, String text, String name) throws Exception {
-		try (Connection connection = fixture.contributor().openConnection();
-				Statement statement = connection.createStatement()) {
 
-			// Count only directly updated Questions, excluding changes
-			// made by the portable revision triggers.
-			int affected = SqliteDirectChanges.executeUpdate(statement, """
-					UPDATE questions
-					SET question_text = '%s'
-					WHERE question_code = '1'
-					""".formatted(text));
-			assertEquals(1, affected);
+		// The contributor may create a new Question but must never alter
+		// Question 1, which was included in the immutable issued baseline.
+		try (Connection connection = fixture.contributor().openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						INSERT INTO questions (
+						    booklet_id,
+						    classification_node_id,
+						    question_code,
+						    question_text,
+						    marks,
+						    shared_context_capture_required,
+						    response_type,
+						    source_capture_required
+						)
+						SELECT
+						    booklet_id,
+						    classification_node_id,
+						    '2',
+						    ?,
+						    marks,
+						    shared_context_capture_required,
+						    response_type,
+						    source_capture_required
+						FROM questions
+						WHERE question_code = '1'
+						""")) {
+			statement.setString(1, text);
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement));
 		}
 		Path target = directory.resolve(name);
 		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
@@ -3613,6 +3602,31 @@ class ContributionArchiveInspectorTest {
 		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
 				.export(fixture.assignmentId(), destination);
 		return destination;
+	}
+
+	private String questionTextForCode(SqliteDatabase database, String questionCode) throws SQLException {
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT question.question_text
+						FROM questions question
+						JOIN exam_booklets booklet
+						  ON booklet.id = question.booklet_id
+						JOIN exams exam
+						  ON exam.id = booklet.exam_id
+						WHERE exam.exam_name = 'External Assessment'
+						  AND booklet.booklet_name = 'Paper 1'
+						  AND question.question_code = ?
+						""")) {
+			statement.setString(1, questionCode);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					return null;
+				}
+				String value = result.getString(1);
+				assertFalse(result.next(), "Question code must be unique within the test Booklet");
+				return value;
+			}
+		}
 	}
 
 	private byte[] readEntry(Path archive, String name) throws IOException {

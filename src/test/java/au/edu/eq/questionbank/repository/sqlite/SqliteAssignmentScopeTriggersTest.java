@@ -42,7 +42,6 @@ class SqliteAssignmentScopeTriggersTest {
 	@Test
 	void explicitlyPermittedLegacySyllabusCanClassify() throws Exception {
 		SqliteDatabase database = fixture(true);
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 
 			// Capture a new contributor Question before changing classification.
@@ -57,20 +56,17 @@ class SqliteAssignmentScopeTriggersTest {
 					    '4', 'New contributor Question', 2, 0
 					)
 					""");
-
 			statement.execute("""
 					UPDATE questions
 					SET classification_node_id = 106
 					WHERE id = 4
 					""");
-
 			assertBlocked(statement, """
 					UPDATE questions
 					SET classification_node_id = 201
 					WHERE id = 4
 					""");
 		}
-
 		database.verifyIntegrity();
 	}
 
@@ -319,7 +315,6 @@ class SqliteAssignmentScopeTriggersTest {
 					)
 					VALUES (4, 101)
 					""");
-
 			statement.execute("""
 					UPDATE questions
 					SET question_text = 'Corrected new contributor work'

@@ -3530,18 +3530,12 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private Set<Long> loadContributorBaselineQuestionIds(UUID assignmentId) throws SQLException, IOException {
-
 		Objects.requireNonNull(assignmentId, "assignmentId");
-
 		byte[] baseline = contributorAssignments.readBaseline(assignmentId).records();
-
 		List<ExchangeRecord> records = new ExamWorkJsonlCodec().readRecords(new ByteArrayInputStream(baseline));
-
 		Set<UUID> issuedQuestionIds = records.stream().filter(record -> "QUESTION".equals(record.recordType()))
 				.map(ExchangeRecord::recordId).collect(Collectors.toUnmodifiableSet());
-
 		SqliteDatabase database = new SqliteDatabase(applicationConfig.databasePath());
-
 		return new SqlitePortableIdentityRepository(database).findAllByLocalId(EntityType.QUESTION).entrySet().stream()
 				.filter(entry -> issuedQuestionIds.contains(entry.getValue().portableId())).map(Map.Entry::getKey)
 				.collect(Collectors.toUnmodifiableSet());
@@ -5145,14 +5139,10 @@ public class QuestionBankApplication extends Application {
 			boolean installedContributorSubject = contributorAssignments != null && contributorAssignments.findAll()
 					.stream().anyMatch(session -> session.subjectLocalId() == dashboardSubject.getId());
 			boolean readOnly = imported || (activeAssignmentContext == null && installedContributorSubject);
-
 			dashboard.setReadOnlyContext(assignedExams, readOnly);
-
 			if (activeAssignmentContext != null) {
 				UUID assignmentId = activeAssignmentContext.session().assignmentId();
-
 				dashboard.setAssignmentExamScope(activeAssignmentContext.session().examLocalId());
-
 				dashboard.setContributorBaselineQuestionIds(loadContributorBaselineQuestionIds(assignmentId));
 			}
 		} catch (SQLException | IOException failure) {
@@ -5167,7 +5157,6 @@ public class QuestionBankApplication extends Application {
 					failureMessage(failure));
 			return;
 		}
-
 		corpusDashboardPane = dashboard;
 		corpusDashboardHost.getChildren().setAll(dashboard);
 	}

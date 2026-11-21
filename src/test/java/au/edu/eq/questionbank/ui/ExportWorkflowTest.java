@@ -137,19 +137,16 @@ class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
 				.filter(item -> "export-subject-snapshot".equals(item.getId())).findFirst().orElseThrow();
 		MenuItem contributionExport = exportMenu.getItems().stream()
 				.filter(item -> "export-assignment-contribution".equals(item.getId())).findFirst().orElseThrow();
-		MenuItem receiptExport = exportMenu.getItems().stream()
-				.filter(item -> "export-import-receipt".equals(item.getId())).findFirst().orElseThrow();
 		assertEquals("Import _Subject / Work Package...", packageImport.getText());
 		assertEquals("Export Working _Subject Snapshot...", subjectExport.getText());
 		assertEquals("Export Assignment _Contribution...", contributionExport.getText());
-		assertEquals("Export _Import Receipt...", receiptExport.getText());
 		assertFalse(packageImport.isDisable());
 		assertFalse(subjectExport.isDisable());
-		assertFalse(receiptExport.isDisable());
 		assertTrue(contributionExport.isDisable());
 
-		// The ordinary File menu must contain no developer-facing
-		// package comparison or redundant package import/export command.
+		// Receipt export and developer-only package comparison have been
+		// deliberately removed from the ordinary application interface.
+		assertFalse(exportMenu.getItems().stream().anyMatch(item -> "export-import-receipt".equals(item.getId())));
 		assertFalse(fileMenu.getItems().stream().anyMatch(item -> item.getId() != null
 				&& (item.getId().contains("subject-snapshot") || item.getId().contains("contributor-assignment"))));
 		assertFalse(

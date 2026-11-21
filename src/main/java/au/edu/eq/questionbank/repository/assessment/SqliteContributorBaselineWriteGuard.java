@@ -1,4 +1,3 @@
-
 package au.edu.eq.questionbank.repository.assessment;
 
 import java.io.ByteArrayInputStream;
@@ -51,21 +50,19 @@ public final class SqliteContributorBaselineWriteGuard {
 	 * @param type       portable entity type
 	 * @param localId    positive SQLite-local identifier
 	 * @throws SQLException             if ownership or baseline validation fails
-	 * @throws IllegalStateException    if the record is not editable
+	 *
+	 * @throws IllegalStateException    if the record is not editable or does not
+	 *                                  exist
 	 * @throws IllegalArgumentException if the ID or entity type is unsupported
 	 * @throws NullPointerException     if a required argument is null
 	 */
 	public void requireMutable(Connection connection, EntityType type, long localId) throws SQLException {
-
 		Objects.requireNonNull(connection, "connection");
 		Objects.requireNonNull(type, "type");
-
 		if (localId < 1) {
 			throw new IllegalArgumentException("Record ID must be positive");
 		}
-
 		Scope scope = readScope(connection, type, localId);
-
 		if (exists(connection, """
 				SELECT 1
 				FROM imported_subject_authorities
@@ -73,9 +70,7 @@ public final class SqliteContributorBaselineWriteGuard {
 				""", scope.subjectId())) {
 			throw new IllegalStateException("This Subject is an imported read-only snapshot.");
 		}
-
 		ActiveAssignment active = readActiveAssignment(connection);
-
 		if (active == null) {
 			if (exists(connection, """
 					SELECT 1
@@ -87,17 +82,13 @@ public final class SqliteContributorBaselineWriteGuard {
 			}
 			return;
 		}
-
 		if (active.examId() != scope.examId()) {
 			throw new IllegalStateException("This record is outside the selected contributor Exam.");
 		}
-
 		if (type == EntityType.EXAM || type == EntityType.EXAM_BOOKLET || type == EntityType.ANSWER_FILE) {
 			throw new IllegalStateException("Exam and Booklet structure is coordinator-owned.");
 		}
-
 		UUID portableId = readPortableId(connection, type, localId);
-
 		if (baselineContains(active, type, portableId)) {
 			throw new IllegalStateException(
 					"This " + type.name() + " was supplied by the coordinator and is read-only. "
@@ -106,36 +97,29 @@ public final class SqliteContributorBaselineWriteGuard {
 	}
 
 	private boolean baselineContains(ActiveAssignment active, EntityType type, UUID portableId) throws SQLException {
-
 		byte[] records = active.baselineRecords();
-
 		String digest;
 		try {
 			digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(records));
 		} catch (NoSuchAlgorithmException failure) {
 			throw new SQLException("SHA-256 is unavailable", failure);
 		}
-
 		if (!digest.equals(active.recordsSha256())) {
 			throw new SQLException("Contributor assignment baseline failed its integrity check");
 		}
-
 		List<ExchangeRecord> baseline;
 		try {
 			baseline = new ExamWorkJsonlCodec().readRecords(new ByteArrayInputStream(records));
 		} catch (IOException failure) {
 			throw new SQLException("Contributor assignment baseline cannot be decoded", failure);
 		}
-
 		return baseline.stream()
 				.anyMatch(record -> record.recordType().equals(type.name()) && record.recordId().equals(portableId));
 	}
 
 	private boolean exists(Connection connection, String sql, long localId) throws SQLException {
-
 		try (PreparedStatement statement = connection.prepareStatement(sql)) {
 			statement.setLong(1, localId);
-
 			try (ResultSet result = statement.executeQuery()) {
 				return result.next();
 			}
@@ -143,7 +127,6 @@ public final class SqliteContributorBaselineWriteGuard {
 	}
 
 	private ActiveAssignment readActiveAssignment(Connection connection) throws SQLException {
-
 		try (PreparedStatement statement = connection.prepareStatement("""
 				SELECT session.exam_local_id,
 				       session.baseline_records,
@@ -163,30 +146,23 @@ public final class SqliteContributorBaselineWriteGuard {
 				      WHERE hidden.assignment_id = session.assignment_id
 				  )
 				"""); ResultSet result = statement.executeQuery()) {
-
 			if (!result.next()) {
 				return null;
 			}
-
 			byte[] records = result.getBytes("baseline_records");
 			String digest = result.getString("records_sha256");
-
 			if (records == null || digest == null) {
 				throw new SQLException("Active contributor baseline is missing");
 			}
-
 			ActiveAssignment active = new ActiveAssignment(result.getLong("exam_local_id"), records, digest);
-
 			if (result.next()) {
 				throw new SQLException("More than one active contributor assignment is selected");
 			}
-
 			return active;
 		}
 	}
 
 	private UUID readPortableId(Connection connection, EntityType type, long localId) throws SQLException {
-
 		try (PreparedStatement statement = connection.prepareStatement("""
 				SELECT portable_id
 				FROM portable_entity_identities
@@ -194,28 +170,22 @@ public final class SqliteContributorBaselineWriteGuard {
 				  AND local_id = ?
 				  AND retired = 0
 				""")) {
-
 			statement.setString(1, type.name());
 			statement.setLong(2, localId);
-
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
 					throw new SQLException("Missing portable identity for " + type + ":" + localId);
 				}
-
 				UUID identifier = UUID.fromString(result.getString("portable_id"));
-
 				if (result.next()) {
 					throw new SQLException("Duplicate portable record identity");
 				}
-
 				return identifier;
 			}
 		}
 	}
 
 	private Scope readScope(Connection connection, EntityType type, long localId) throws SQLException {
-
 		String sql = switch (type) {
 		case QUESTION -> """
 				SELECT exam.subject_id, exam.id AS exam_id
@@ -265,21 +235,16 @@ public final class SqliteContributorBaselineWriteGuard {
 				""";
 		default -> throw new IllegalArgumentException("Unsupported contributor write-guard entity: " + type);
 		};
-
 		try (PreparedStatement statement = connection.prepareStatement(sql)) {
 			statement.setLong(1, localId);
-
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
-					throw new IllegalArgumentException("Record does not exist: " + type + ":" + localId);
+					throw new IllegalStateException("Record does not exist: " + type + ":" + localId);
 				}
-
 				Scope scope = new Scope(result.getLong("subject_id"), result.getLong("exam_id"));
-
 				if (result.next()) {
 					throw new SQLException("Ambiguous record ownership");
 				}
-
 				return scope;
 			}
 		}

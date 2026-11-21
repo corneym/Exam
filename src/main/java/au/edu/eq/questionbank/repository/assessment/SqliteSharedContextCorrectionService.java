@@ -128,7 +128,6 @@ public final class SqliteSharedContextCorrectionService {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
-
 				new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.QUESTION, questionId);
 
 				// Structural corrections are prohibited for a completed Exam.

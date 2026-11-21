@@ -69,10 +69,8 @@ public final class LegacyQuestionSplitService {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
-
 				new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.QUESTION,
 						request.originalQuestion().getId());
-
 				StoredOriginalState originalState = readStoredOriginalState(connection,
 						request.originalQuestion().getId());
 				validatePersistedOriginal(request, originalState);

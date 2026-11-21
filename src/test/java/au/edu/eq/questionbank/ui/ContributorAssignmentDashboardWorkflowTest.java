@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.ui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.Field;
@@ -112,6 +113,7 @@ class ContributorAssignmentDashboardWorkflowTest {
 	}
 
 	@Test
+	@SuppressWarnings("unchecked")
 	void contributionExportAvailabilityTracksAssignmentMode(FxRobot robot) throws Exception {
 		awaitAssignedDashboard(robot);
 		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
@@ -121,29 +123,28 @@ class ContributorAssignmentDashboardWorkflowTest {
 				.filter(item -> "export-assignment-contribution".equals(item.getId())).findFirst().orElseThrow();
 		MenuItem snapshot = exportMenu.getItems().stream()
 				.filter(item -> "export-subject-snapshot".equals(item.getId())).findFirst().orElseThrow();
+		ComboBox<SqliteContributorAssignmentSessionRepository.Session> assignments = robot
+				.lookup("#corpus-dashboard-assignment-selector").queryAs(ComboBox.class);
+		Button remove = robot.lookup("#corpus-dashboard-remove-assignment").queryButton();
 
-		// Active contributor mode exposes the scoped return operation.
+		// An installed active assignment is selected automatically.
+		assertEquals(1, assignments.getItems().size());
+		assertEquals(assignmentId, assignments.getValue().assignmentId());
+		assertFalse(assignments.isDisabled());
+		assertFalse(remove.isDisabled());
 		assertFalse(contribution.isDisable());
 		assertTrue(snapshot.isDisable());
-		Button exit = robot.lookup("#corpus-dashboard-exit-assignment").queryButton();
-		robot.interact(exit::fire);
 
-		// Exiting mode must not erase the installed assignment, and ordinary
-		// Subject snapshot export becomes available again.
-		assertTrue(contribution.isDisable());
-		assertFalse(snapshot.isDisable());
-		SqliteContributorAssignmentSessionRepository sessions = new SqliteContributorAssignmentSessionRepository(
-				new SqliteDatabase(contributor.databasePath()));
-		assertTrue(sessions.active().isEmpty());
-		assertTrue(sessions.find(assignmentId).isPresent());
-		ComboBox<?> assignments = robot.lookup("#corpus-dashboard-assignment-selector").queryAs(ComboBox.class);
-		Button switchButton = robot.lookup("#corpus-dashboard-switch-assignment").queryButton();
+		// There is no separate assignment mode to exit or Switch button.
+		robot.interact(() -> {
+			assertNull(primaryStage.getScene().getRoot().lookup("#corpus-dashboard-exit-assignment"));
+			assertNull(primaryStage.getScene().getRoot().lookup("#corpus-dashboard-switch-assignment"));
+		});
+
+		// Selecting the already active assignment must not change its
+		// persistent identity or remove the export permission.
 		robot.interact(() -> assignments.getSelectionModel().selectFirst());
-		robot.interact(switchButton::fire);
-		awaitAssignedDashboard(robot);
-
-		// Re-entry restores the same assignment and its return eligibility.
-		assertEquals(assignmentId, sessions.active().orElseThrow().assignmentId());
+		assertEquals(assignmentId, sessions().active().orElseThrow().assignmentId());
 		assertFalse(contribution.isDisable());
 		assertTrue(snapshot.isDisable());
 	}
@@ -209,20 +210,18 @@ class ContributorAssignmentDashboardWorkflowTest {
 	@SuppressWarnings("unchecked")
 	void hiddenInstallationBlocksCaptureAndContextUntilDashboardPublication(FxRobot robot) throws Exception {
 		awaitAssignedDashboard(robot);
-		robot.interact(robot.lookup("#corpus-dashboard-exit-assignment").queryButton()::fire);
-		awaitAssignedDashboard(robot);
 		Subject originalSubject = field("workingSubject", Subject.class);
 		Subject otherSubject = new Subject(999, "Physics");
 		ComboBox<Subject> subjects = robot.lookup("#curriculum-subject").queryAs(ComboBox.class);
-		Button switchAssignment = robot.lookup("#corpus-dashboard-switch-assignment").queryButton();
+		ComboBox<SqliteContributorAssignmentSessionRepository.Session> assignments = robot
+				.lookup("#corpus-dashboard-assignment-selector").queryAs(ComboBox.class);
 		robot.interact(() -> {
 			subjects.getItems().add(otherSubject);
-			ComboBox<?> assignments = robot.lookup("#corpus-dashboard-assignment-selector").queryAs(ComboBox.class);
-			assignments.getSelectionModel().selectFirst();
 			TableView<?> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
 			booklets.getSelectionModel().selectFirst();
 		});
-		assertFalse(switchAssignment.isDisabled());
+		assertFalse(assignments.isDisabled());
+		assertEquals(assignmentId, assignments.getValue().assignmentId());
 		QuestionRepository repository = field("questionRepository", QuestionRepository.class);
 		Question question = repository.findAll().getFirst();
 		Question answeredQuestion = repository.findAll().getFirst();
@@ -258,17 +257,19 @@ class ContributorAssignmentDashboardWorkflowTest {
 			robot.interact(() -> {
 				assertTrue(busyOverlay().isBusy());
 				assertTrue(subjects.isDisabled());
-				assertTrue(switchAssignment.isDisabled());
+				assertTrue(assignments.isDisabled());
 				Button captureQuestion = robot.lookup("#corpus-dashboard-capture-questions").queryButton();
 				Button captureAnswer = robot.lookup("#corpus-dashboard-capture-answers").queryButton();
 				assertTrue(captureQuestion.isDisabled());
 				assertTrue(captureAnswer.isDisabled());
+
+				// Disabled actions must remain inert even when fired directly.
 				captureQuestion.fire();
 				captureAnswer.fire();
-				switchAssignment.fire();
 
-				// Exercise context guards as well as disabled controls: selection-model
-				// changes and queued callbacks must not bypass the busy ownership.
+				// The assignment selector replaces the removed Switch button.
+				// Programmatic selection and direct entry-point invocation must
+				// not bypass installation ownership.
 				subjects.getSelectionModel().select(otherSubject);
 				invoke("changeContributorAssignment", new Class<?>[] { UUID.class }, assignmentId);
 				invoke("showCorpusDashboardQuestionCorrection", new Class<?>[] { Question.class }, question);
@@ -285,7 +286,9 @@ class ContributorAssignmentDashboardWorkflowTest {
 				assertFalse(field("answerCapturePane", AnswerCapturePane.class).isEditingAnswer());
 				assertFalse(field("answerCapturePane", AnswerCapturePane.class).hasAcceptedRegions());
 			});
-			assertTrue(sessions().active().isEmpty());
+
+			// Reinstalling an already active assignment does not erase it.
+			assertEquals(assignmentId, sessions().active().orElseThrow().assignmentId());
 			Task<WorkAssignmentInstallationCoordinator.Result> duplicate = new ApplicationBackgroundTask<>(() -> {
 				throw new AssertionError("Duplicate installation must not start");
 			});
@@ -293,12 +296,15 @@ class ContributorAssignmentDashboardWorkflowTest {
 			robot.interact(() -> assertEquals(Worker.State.READY, duplicate.getState()));
 			releaseInstaller.countDown();
 			assertTrue(captureEntered.await(10, TimeUnit.SECONDS));
-			robot.interact(() -> assertTrue(busyOverlay().isBusy()));
+			robot.interact(() -> {
+				assertTrue(busyOverlay().isBusy());
+				assertTrue(assignments.isDisabled());
+			});
 			releaseCapture.countDown();
 			assertTrue(dashboardEntered.await(10, TimeUnit.SECONDS));
 			robot.interact(() -> {
 				assertTrue(busyOverlay().isBusy());
-				assertTrue(switchAssignment.isDisabled());
+				assertTrue(assignments.isDisabled());
 			});
 			releaseDashboard.countDown();
 			acknowledgeDialog(robot, "Contributor Assignment Installed", "The previously installed assignment");
@@ -311,32 +317,6 @@ class ContributorAssignmentDashboardWorkflowTest {
 			releaseCapture.countDown();
 			releaseDashboard.countDown();
 		}
-	}
-
-	@Test
-	void installationActivatesAssignmentFromDifferentSubject(FxRobot robot) throws Exception {
-		awaitAssignedDashboard(robot);
-		robot.interact(robot.lookup("#corpus-dashboard-exit-assignment").queryButton()::fire);
-		Subject physics = new SqliteCurriculumWriter(new SqliteDatabase(contributor.databasePath()))
-				.insertSubject("Physics");
-		robot.interact(() -> {
-			CurriculumSelectorPane selector = field("curriculumSelectorPane", CurriculumSelectorPane.class);
-			selector.refreshSubjects();
-			selector.selectSubject(physics);
-		});
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
-			AtomicBoolean ready = new AtomicBoolean();
-			robot.interact(
-					() -> ready.set(primaryStage.getScene().getRoot().lookup("#corpus-dashboard-no-exams") != null));
-			return ready.get();
-		});
-		assertEquals(physics, field("workingSubject", Subject.class));
-		startInstallation(robot, realInstaller());
-		acknowledgeDialog(robot, "Contributor Assignment Installed", "The previously installed assignment");
-		awaitAssignedDashboard(robot);
-		assertControlsReleased(robot);
-		robot.interact(() -> assertEquals("Biology", field("workingSubject", Subject.class).getName()));
-		assertEquals(assignmentId, sessions().active().orElseThrow().assignmentId());
 	}
 
 	@Test
@@ -363,17 +343,13 @@ class ContributorAssignmentDashboardWorkflowTest {
 
 	@Test
 	@SuppressWarnings("unchecked")
-	void installedAssignmentRestoresAndCanExitReenterAndRestart(FxRobot robot) throws Exception {
+	void installedAssignmentRestoresAutomaticallyAcrossRestart(FxRobot robot) throws Exception {
 		awaitAssignedDashboard(robot);
 		Label subject = robot.lookup("#working-subject-value").queryAs(Label.class);
 		assertEquals("Biology", subject.getText());
 		assertTrue(subject.isVisible());
 		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
 		assertEquals(1, exams.getItems().size());
-
-		// SQLite-local IDs are allocated independently by each
-		// installation. The contributor's Exam need not retain
-		// the coordinator's original integer ID.
 		SqliteDatabase contributorDatabase = new SqliteDatabase(contributor.databasePath());
 		var session = new SqliteContributorAssignmentSessionRepository(contributorDatabase).active().orElseThrow();
 		Exam installedExam = exams.getItems().getFirst().exam();
@@ -381,47 +357,41 @@ class ContributorAssignmentDashboardWorkflowTest {
 		assertEquals(session.examLocalId(), installedExam.getId());
 		assertEquals("External Assessment", installedExam.getName());
 
-		// The original portable UUID must survive installation,
-		// regardless of how SQLite assigns its local primary key.
-		var installedIdentity = new SqlitePortableIdentityRepository(contributorDatabase)
-				.requireByLocalId(EntityType.EXAM, installedExam.getId());
-		assertEquals(session.examPortableId(), installedIdentity.portableId());
+		// Local integer IDs are installation-specific; portable UUID identity
+		// must survive assignment installation and application restart.
+		var identity = new SqlitePortableIdentityRepository(contributorDatabase).requireByLocalId(EntityType.EXAM,
+				installedExam.getId());
+		assertEquals(session.examPortableId(), identity.portableId());
 		assertTrue(robot.lookup("#corpus-dashboard-manage-exam-assets").queryButton().isDisabled());
 		assertTrue(robot.lookup("#corpus-dashboard-create-contributor-assignment").queryButton().isDisabled());
-		Button exit = robot.lookup("#corpus-dashboard-exit-assignment").queryButton();
-		robot.interact(exit::fire);
-		var sessions = new SqliteContributorAssignmentSessionRepository(new SqliteDatabase(contributor.databasePath()));
-		assertTrue(sessions.active().isEmpty());
-		assertTrue(sessions.find(assignmentId).isPresent());
-		ComboBox<Subject> subjectSelector = robot.lookup("#curriculum-subject").queryAs(ComboBox.class);
-		assertTrue(subjectSelector.isVisible());
-
-		// Re-enter the saved assignment using the real Dashboard
-		// selector and semantic button activation.
 		ComboBox<SqliteContributorAssignmentSessionRepository.Session> assignments = robot
 				.lookup("#corpus-dashboard-assignment-selector").queryAs(ComboBox.class);
-		Button switchButton = robot.lookup("#corpus-dashboard-switch-assignment").queryButton();
-		robot.interact(() -> assignments.getSelectionModel().selectFirst());
-		assertFalse(switchButton.isDisabled());
-		robot.interact(switchButton::fire);
-		assertEquals(assignmentId, sessions.active().orElseThrow().assignmentId());
-		awaitAssignedDashboard(robot);
+		assertEquals(1, assignments.getItems().size());
+		assertEquals(assignmentId, assignments.getValue().assignmentId());
+		robot.interact(() -> {
+			assertNull(primaryStage.getScene().getRoot().lookup("#corpus-dashboard-exit-assignment"));
+			assertNull(primaryStage.getScene().getRoot().lookup("#corpus-dashboard-switch-assignment"));
+		});
 
-		// Construct a new application instance against the same
-		// persisted contributor data, as occurs after restart.
+		// A new application instance against the same data installation must
+		// restore the active assignment automatically, with no Switch action.
 		robot.interact(() -> {
 			try {
 				application.stop();
 				application = new QuestionBankApplication();
 				startDesktopApplication(application);
-			} catch (Exception exception) {
-				throw new IllegalStateException(exception);
+			} catch (Exception failure) {
+				throw new IllegalStateException(failure);
 			}
 		});
 		awaitAssignedDashboard(robot);
 		Label restoredSubject = robot.lookup("#working-subject-value").queryAs(Label.class);
 		assertEquals("Biology", restoredSubject.getText());
 		assertTrue(restoredSubject.isVisible());
+		ComboBox<SqliteContributorAssignmentSessionRepository.Session> restoredAssignments = robot
+				.lookup("#corpus-dashboard-assignment-selector").queryAs(ComboBox.class);
+		assertEquals(1, restoredAssignments.getItems().size());
+		assertEquals(assignmentId, restoredAssignments.getValue().assignmentId());
 		assertEquals(assignmentId,
 				new SqliteContributorAssignmentSessionRepository(new SqliteDatabase(contributor.databasePath()))
 						.active().orElseThrow().assignmentId());
@@ -476,6 +446,35 @@ class ContributorAssignmentDashboardWorkflowTest {
 		var sessions = new SqliteContributorAssignmentSessionRepository(new SqliteDatabase(contributor.databasePath()));
 		assertEquals(assignmentId, sessions.active().orElseThrow().assignmentId());
 		assertEquals(1, sessions.findAll().size());
+	}
+
+	@Test
+	void reimportRestoresAssignedSubjectAfterAttemptedSwitch(FxRobot robot) throws Exception {
+		awaitAssignedDashboard(robot);
+
+		// An active assignment owns its Working Subject. A user cannot leave
+		// that context merely by selecting another Subject in the Dashboard.
+		Subject biology = field("workingSubject", Subject.class);
+		Subject physics = new SqliteCurriculumWriter(new SqliteDatabase(contributor.databasePath()))
+				.insertSubject("Physics");
+		robot.interact(() -> {
+			CurriculumSelectorPane selector = field("curriculumSelectorPane", CurriculumSelectorPane.class);
+			selector.refreshSubjects();
+			selector.selectSubject(physics);
+		});
+		WaitForAsyncUtils.waitForFxEvents();
+		robot.interact(() -> assertEquals(biology, field("workingSubject", Subject.class)));
+		assertEquals(assignmentId, sessions().active().orElseThrow().assignmentId());
+
+		// Reimporting the same original package remains idempotent and
+		// restores the selected assignment without duplicating records.
+		startInstallation(robot, realInstaller());
+		acknowledgeDialog(robot, "Contributor Assignment Installed", "The previously installed assignment");
+		awaitAssignedDashboard(robot);
+		assertControlsReleased(robot);
+		robot.interact(() -> assertEquals("Biology", field("workingSubject", Subject.class).getName()));
+		assertEquals(assignmentId, sessions().active().orElseThrow().assignmentId());
+		assertEquals(1, sessions().findAll().size());
 	}
 
 	@Start

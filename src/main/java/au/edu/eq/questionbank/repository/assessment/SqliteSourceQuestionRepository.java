@@ -123,7 +123,6 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 	// part.
 
 	boolean deleteIfUnreferenced(Connection connection, SourceQuestion sourceQuestion) throws SQLException {
-
 		Objects.requireNonNull(connection, "connection");
 		Objects.requireNonNull(sourceQuestion, "sourceQuestion");
 
@@ -136,14 +135,12 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 				""")) {
 			check.setLong(1, sourceQuestion.getId());
 			check.setLong(2, sourceQuestion.getBooklet().getId());
-
 			try (ResultSet result = check.executeQuery()) {
 				if (!result.next()) {
 					return false;
 				}
 			}
 		}
-
 		try (PreparedStatement check = connection.prepareStatement("""
 				SELECT 1
 				FROM questions
@@ -151,7 +148,6 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 				LIMIT 1
 				""")) {
 			check.setLong(1, sourceQuestion.getId());
-
 			try (ResultSet result = check.executeQuery()) {
 				if (result.next()) {
 					return false;
@@ -162,7 +158,6 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 		// The Source Question would genuinely be deleted: verify ownership.
 		new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.SOURCE_QUESTION,
 				sourceQuestion.getId());
-
 		try (PreparedStatement statement = connection.prepareStatement("""
 				DELETE FROM source_questions
 				WHERE id = ?
@@ -251,10 +246,8 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 		if (sharedContextStatus == null) {
 			throw new NullPointerException("sharedContextStatus");
 		}
-
 		new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.SOURCE_QUESTION,
 				sourceQuestion.getId());
-
 		try (PreparedStatement statement = connection.prepareStatement("""
 				UPDATE source_questions
 				SET shared_context_status = ?

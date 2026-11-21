@@ -123,9 +123,7 @@ public final class SqliteQuestionOutputApplicabilityRepository implements Questi
 		validateQuestion(question);
 		validateCurrentNode(question, currentNode);
 		try (Connection connection = database.openConnection()) {
-
 			new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.QUESTION, question.getId());
-
 			if (excluded) {
 				insertExclusion(connection, question, currentNode);
 			} else {

@@ -100,9 +100,7 @@ public final class SqliteBookletApplicabilityReviewRepository implements Booklet
 	public void setReviewed(long bookletId, boolean reviewed) {
 		requireId(bookletId, "bookletId");
 		try (Connection connection = database.openConnection()) {
-
 			new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.EXAM_BOOKLET, bookletId);
-
 			if (reviewed) {
 				try (PreparedStatement statement = connection.prepareStatement("""
 						INSERT OR IGNORE INTO booklet_applicability_reviews

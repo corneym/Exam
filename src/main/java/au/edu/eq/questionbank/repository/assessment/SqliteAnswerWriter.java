@@ -353,7 +353,6 @@ public final class SqliteAnswerWriter {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
-
 				new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.QUESTION,
 						question.getId());
 
@@ -436,9 +435,7 @@ public final class SqliteAnswerWriter {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
-
 				SqliteContributorBaselineWriteGuard guard = new SqliteContributorBaselineWriteGuard();
-
 				guard.requireMutable(connection, EntityType.QUESTION, question.getId());
 				guard.requireMutable(connection, EntityType.ANSWER, answerId);
 
@@ -840,10 +837,8 @@ public final class SqliteAnswerWriter {
 		if (answerFile == null) {
 			throw new NullPointerException("answerFile");
 		}
-
 		new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.ANSWER_FILE,
 				answerFile.getId());
-
 		try (PreparedStatement statement = connection.prepareStatement("""
 				UPDATE answer_files
 				SET contains_answer_explanations = ?

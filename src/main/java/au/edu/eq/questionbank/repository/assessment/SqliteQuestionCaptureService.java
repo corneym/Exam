@@ -214,7 +214,6 @@ public final class SqliteQuestionCaptureService {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
-
 				if (request.operation() != Operation.NEW) {
 					new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.QUESTION,
 							request.existingQuestion().getId());
