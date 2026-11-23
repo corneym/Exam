@@ -1738,12 +1738,12 @@ public class QuestionSearchPane extends BorderPane {
 		}
 		Question question = getSelectedQuestion();
 		QuestionOutputApplicabilityRow row = outputApplicabilityList.getSelectionModel().getSelectedItem();
-		if (question == null || row == null || row.excluded() == excluded) {
+		if (question == null || isOutputApplicabilityReadOnly(question) || row == null || row.excluded() == excluded) {
 			return;
 		}
 
-		// Capture the Question and node before leaving the FX thread. The background
-		// task must not inspect mutable JavaFX selection state.
+		// Capture the selected objects before starting the
+		// background persistence operation.
 		startOutputApplicabilityUpdate(question, row.currentNode(), excluded);
 	}
 
@@ -1858,6 +1858,10 @@ public class QuestionSearchPane extends BorderPane {
 		clearResults();
 		clearPreview();
 		statusLabel.setText("");
+	}
+
+	private boolean isOutputApplicabilityReadOnly(Question question) {
+		return question != null && (question.getExam().isComplete() || readOnlyQuestionPredicate.get().test(question));
 	}
 
 	private boolean isRequestedResultStillSelected(QuestionSearchResult requestedResult) {
@@ -1982,9 +1986,9 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private Void persistOutputApplicabilityChange(Question question, CurriculumNode currentNode, boolean excluded) {
-		if (readOnlyQuestionPredicate.get().test(question)) {
-			throw new IllegalStateException("This Question is read-only while its Exam is assigned "
-					+ "or its Subject is externally authoritative.");
+		if (isOutputApplicabilityReadOnly(question)) {
+			throw new IllegalStateException("Revision output applicability is read-only "
+					+ "while the Exam is complete or assigned, " + "or its Subject is externally authoritative.");
 		}
 		outputApplicabilityRepository.setExcluded(question, currentNode, excluded);
 		return null;
@@ -2983,7 +2987,7 @@ public class QuestionSearchPane extends BorderPane {
 		QuestionOutputApplicabilityRow selected = outputApplicabilityList.getSelectionModel().getSelectedItem();
 		boolean saving = activeOutputApplicabilityUpdateTask != null;
 		boolean editingClassification = classificationDirty.get();
-		boolean readOnly = isSelectedQuestionReadOnly();
+		boolean readOnly = isOutputApplicabilityReadOnly(getSelectedQuestion());
 		outputApplicabilityList.setDisable(saving);
 		includeOutputApplicabilityButton
 				.setDisable(saving || editingClassification || readOnly || selected == null || !selected.excluded());

@@ -52,6 +52,7 @@ import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.ImageQuestionContentPart;
 import au.edu.eq.questionbank.model.PdfQuestionContentPart;
@@ -784,6 +785,55 @@ public class QuestionSearchPaneTest {
 		robot.clickOn("#question-search-classification");
 		assertEquals(currentSubtopic, classificationBox.getValue());
 		assertEquals(null, descriptorBox.getValue());
+	}
+
+	@Test
+	public void completedExamRetainsApplicabilityInspectionButDisablesChanges(FxRobot robot) throws TimeoutException {
+
+		// Establish an existing exclusion before constructing the
+		// subsequently completed Exam snapshot.
+		outputApplicabilityRepository.setExcluded(historicalQuestion, currentDescriptor, true);
+		Exam originalExam = historicalQuestion.getExam();
+		Exam completedExam = new Exam(originalExam.getId(), originalExam.getSubject(), originalExam.getProvider(),
+				originalExam.getYear(), originalExam.getName(), ExamCaptureState.COMPLETE);
+		ExamBooklet originalBooklet = historicalQuestion.getBooklet();
+		ExamBooklet completedBooklet = new ExamBooklet(originalBooklet.getId(), completedExam,
+				originalBooklet.getName(), originalBooklet.getSourceDocument());
+		Question completedQuestion = new Question(historicalQuestion.getId(), completedBooklet, "21a",
+				"Calculate the requested quantity.", 3, List.of(), historicalDescriptor, false);
+		QuestionRetrievalRepository repository = currentNodes -> {
+			if (!currentNodes.contains(currentDescriptor) || !currentNodes.contains(noMatchDescriptor)) {
+				return List.of();
+			}
+			return List.of(new QuestionApplicabilityMatch(completedQuestion, currentDescriptor),
+					new QuestionApplicabilityMatch(completedQuestion, noMatchDescriptor));
+		};
+		QuestionRetrievalService service = new QuestionRetrievalService(repository,
+				new CurriculumSearchNodeExpansionService(curriculumRepository));
+		replaceSearchPane(robot, curriculumRepository, service, () -> List.of(completedQuestion));
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		ListView<QuestionOutputApplicabilityRow> output = robot.lookup("#question-search-output-applicability")
+				.queryListView();
+		Button include = robot.lookup("#question-search-output-include").queryButton();
+		Button exclude = robot.lookup("#question-search-output-exclude").queryButton();
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1);
+		robot.interact(() -> results.getSelectionModel().selectFirst());
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> output.getItems().size() == 2);
+		QuestionOutputApplicabilityRow excludedRow = output.getItems().stream()
+				.filter(QuestionOutputApplicabilityRow::excluded).findFirst().orElseThrow();
+		QuestionOutputApplicabilityRow includedRow = output.getItems().stream().filter(row -> !row.excluded())
+				.findFirst().orElseThrow();
+		robot.interact(() -> output.getSelectionModel().select(excludedRow));
+		assertFalse(output.isDisabled());
+		assertTrue(include.isDisabled());
+		assertTrue(exclude.isDisabled());
+		robot.interact(include::fire);
+		robot.interact(() -> output.getSelectionModel().select(includedRow));
+		assertTrue(include.isDisabled());
+		assertTrue(exclude.isDisabled());
+		robot.interact(exclude::fire);
+		assertEquals(Set.of(currentDescriptor.getId()),
+				outputApplicabilityRepository.findExcludedCurrentNodeIds(completedQuestion));
 	}
 
 	@Test

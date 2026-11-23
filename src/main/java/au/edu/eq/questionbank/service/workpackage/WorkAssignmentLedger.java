@@ -404,6 +404,10 @@ public final class WorkAssignmentLedger {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
+
+				// Recheck the persisted lifecycle at registration time.
+				// The Exam may have changed since the archive was created.
+				requireActiveExam(connection, manifest.scope().examIds().getFirst());
 				try (PreparedStatement statement = connection.prepareStatement("""
 						INSERT INTO exam_work_assignments (
 						    assignment_id,
@@ -512,6 +516,28 @@ public final class WorkAssignmentLedger {
 					State.valueOf(result.getString("state")));
 		} catch (IllegalArgumentException exception) {
 			throw new SQLException("Invalid persisted assignment identity or state", exception);
+		}
+	}
+
+	private void requireActiveExam(Connection connection, UUID examPortableId) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT exam.capture_state
+				FROM portable_entity_identities identity
+				JOIN exams exam ON exam.id = identity.local_id
+				WHERE identity.entity_type = 'EXAM'
+				  AND identity.portable_id = ?
+				  AND identity.retired = 0
+				""")) {
+			statement.setString(1, examPortableId.toString());
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new SQLException("Assigned Exam is missing from the master database.");
+				}
+				if (!"ACTIVE".equals(result.getString("capture_state"))) {
+					throw new SQLException("Assignment blocked: the Exam is complete. "
+							+ "Reactivate it before issuing an assignment.");
+				}
+			}
 		}
 	}
 

@@ -123,11 +123,20 @@ public final class SqliteQuestionOutputApplicabilityRepository implements Questi
 		validateQuestion(question);
 		validateCurrentNode(question, currentNode);
 		try (Connection connection = database.openConnection()) {
-			new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.QUESTION, question.getId());
-			if (excluded) {
-				insertExclusion(connection, question, currentNode);
-			} else {
-				deleteExclusion(connection, question, currentNode);
+			connection.setAutoCommit(false);
+			try {
+				requireActiveExam(connection, question.getId());
+				new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.QUESTION,
+						question.getId());
+				if (excluded) {
+					insertExclusion(connection, question, currentNode);
+				} else {
+					deleteExclusion(connection, question, currentNode);
+				}
+				connection.commit();
+			} catch (SQLException | RuntimeException failure) {
+				connection.rollback();
+				throw failure;
 			}
 		} catch (SQLException exception) {
 			throw new IllegalStateException("Could not update Question output exclusion", exception);
@@ -161,6 +170,30 @@ public final class SqliteQuestionOutputApplicabilityRepository implements Questi
 
 			// The composite primary key makes repeated exclusion requests idempotent.
 			statement.executeUpdate();
+		}
+	}
+
+	private void requireActiveExam(Connection connection, long questionId) throws SQLException {
+
+		// The Question object may have been loaded before its
+		// Exam was marked complete. Use persisted Exam state.
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT e.capture_state
+				FROM questions q
+				JOIN exam_booklets b ON b.id = q.booklet_id
+				JOIN exams e ON e.id = b.exam_id
+				WHERE q.id = ?
+				""")) {
+			statement.setLong(1, questionId);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalStateException("Question does not exist: " + questionId);
+				}
+				if ("COMPLETE".equals(result.getString("capture_state"))) {
+					throw new IllegalStateException(
+							"Exam is complete; reactivate it before " + "changing revision output applicability.");
+				}
+			}
 		}
 	}
 

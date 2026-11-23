@@ -6,6 +6,7 @@ import java.util.Set;
 
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.repository.assessment.BookletApplicabilityReviewRepository;
 
 /**
@@ -76,25 +77,34 @@ public final class BookletApplicabilityReviewService {
 	}
 
 	/**
-	 * Records or clears an explicit review confirmation.
+	 * Records or clears an explicit review confirmation for an active Exam.
 	 *
-	 * Clearing is always permitted. Confirming requires that the booklet's
-	 * persisted Question capture and classification are complete.
+	 * Confirming requires the booklet's persisted Question capture and
+	 * classification to be complete. Neither confirmation nor revocation is
+	 * permitted while the Exam is declared complete.
 	 *
 	 * @param booklet  persisted Question booklet
 	 * @param reviewed desired confirmation state
-	 * @throws SQLException          if its audit cannot be loaded
-	 * @throws IllegalStateException if confirmation is not permitted
+	 * @throws SQLException          if the audit cannot be loaded
+	 * @throws IllegalStateException if the Exam is complete or the requested
+	 *                               confirmation is not permitted
 	 */
 	public void setReviewed(ExamBooklet booklet, boolean reviewed) throws SQLException {
 		if (booklet == null) {
 			throw new NullPointerException("booklet");
 		}
+		ExamCorpusStatus examStatus = findExamStatus(booklet.getExam());
+		if (examStatus.declaredCaptureState() == ExamCaptureState.COMPLETE) {
+			throw new IllegalStateException(
+					"Exam is complete; reactivate it before " + "changing applicability review.");
+		}
 		if (!reviewed) {
 			repository.setReviewed(booklet.getId(), false);
 			return;
 		}
-		BookletCorpusStatus status = findBookletStatus(booklet);
+		BookletCorpusStatus status = examStatus.bookletStatuses().stream()
+				.filter(candidate -> candidate.booklet().getId() == booklet.getId()).findFirst()
+				.orElseThrow(() -> new IllegalArgumentException("Booklet does not exist in the persisted Exam audit"));
 		if (!ExamApplicabilityReview.eligibleForReview(status)) {
 			throw new IllegalStateException("Applicability review cannot be confirmed: "
 					+ "the booklet has incomplete Question capture, "

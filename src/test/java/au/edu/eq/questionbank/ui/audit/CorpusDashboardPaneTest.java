@@ -582,6 +582,50 @@ class CorpusDashboardPaneTest {
 
 	@Test
 	@SuppressWarnings("unchecked")
+	void completedExamCannotChangeApplicabilityOrIssueAssignment(FxRobot robot) {
+		BookletCorpusStatus readyBooklet = new BookletCorpusStatus(fixture.paper1, true, fixture.markingGuide, 20, 20,
+				0, new QuestionCorpusSummary(20, 20, 0, 0, 0, 0, 0), new McqExplanationCoverage(true, 20, 20),
+				EnumSet.noneOf(BookletCorpusFinding.class));
+		ExamCorpusStatus completedStatus = new ExamCorpusStatus(fixture.completeExam,
+				new ExamAssetExpectations(1, 1, 1, 1), List.of(readyBooklet),
+				new QuestionCorpusSummary(20, 20, 0, 0, 0, 0, 0), new McqExplanationSummary(1, 20, 20),
+				EnumSet.noneOf(ExamCorpusFinding.class));
+		AtomicReference<Boolean> requestedReview = new AtomicReference<>();
+		AtomicReference<Exam> requestedAssignment = new AtomicReference<>();
+		robot.interact(() -> {
+			pane.setApplicabilityReviewHandler((booklet, reviewed) -> requestedReview.set(reviewed));
+			pane.setCreateContributorAssignmentHandler(requestedAssignment::set);
+			pane.replaceData(List.of(completedStatus), List.of());
+			pane.setApplicabilityReviewState(Set.of(fixture.paper1.getId()));
+		});
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		TableColumn<BookletCorpusStatus, Boolean> reviewedColumn = booklets.getColumns().stream()
+				.filter(column -> "Applicability Reviewed".equals(column.getText()))
+				.map(column -> (TableColumn<BookletCorpusStatus, Boolean>) column).findFirst().orElseThrow();
+		robot.interact(() -> booklets.scrollToColumn(reviewedColumn));
+		WaitForAsyncUtils.waitForFxEvents();
+		CheckBox review = robot.lookup("#corpus-dashboard-applicability-reviewed-20").queryAs(CheckBox.class);
+		Button issue = robot.lookup("#corpus-dashboard-create-contributor-assignment").queryButton();
+		Button lifecycle = robot.lookup("#corpus-dashboard-exam-lifecycle").queryButton();
+		assertTrue(review.isSelected());
+		assertTrue(review.isDisabled());
+		assertTrue(issue.isDisabled());
+		assertFalse(lifecycle.isDisabled());
+		assertEquals("Mark Active", lifecycle.getText());
+		robot.interact(review::fire);
+		robot.interact(issue::fire);
+		assertNull(requestedReview.get());
+		assertNull(requestedAssignment.get());
+
+		// A missing confirmation is also locked while COMPLETE.
+		robot.interact(() -> pane.setApplicabilityReviewState(Set.of()));
+		CheckBox unreviewed = robot.lookup("#corpus-dashboard-applicability-reviewed-20").queryAs(CheckBox.class);
+		assertFalse(unreviewed.isSelected());
+		assertTrue(unreviewed.isDisabled());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
 	void contributorCanCaptureAnswersOnlyForNewQuestions(FxRobot robot) {
 		Question baseline = fixture.question(910, fixture.activePaper, "Q9", QuestionResponseType.WRITTEN_RESPONSE,
 				true, false);
@@ -623,10 +667,13 @@ class CorpusDashboardPaneTest {
 		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
 		AtomicReference<Exam> requested = new AtomicReference<>();
 		robot.interact(() -> pane.setCreateContributorAssignmentHandler(requested::set));
-		assertFalse(createAssignment.isDisabled());
+
+		// The initially selected fixture Exam is COMPLETE.
+		assertTrue(createAssignment.isDisabled());
 
 		// Issuance uses the actual selected Exam identity.
 		robot.interact(() -> exams.getSelectionModel().select(fixture.activeExamStatus));
+		assertFalse(createAssignment.isDisabled());
 		robot.interact(createAssignment::fire);
 		assertEquals(fixture.activeExam.getId(), requested.get().getId());
 		requested.set(null);
@@ -1320,17 +1367,20 @@ class CorpusDashboardPaneTest {
 	@Test
 	@SuppressWarnings("unchecked")
 	void incompleteBookletCannotBeConfirmedReviewed(FxRobot robot) {
+		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
 		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+
+		// Test incomplete capture independently of the COMPLETE
+		// lifecycle restriction introduced in this batch.
+		robot.interact(() -> exams.getSelectionModel().select(fixture.activeExamStatus));
 		TableColumn<BookletCorpusStatus, Boolean> reviewedColumn = booklets.getColumns().stream()
 				.filter(column -> "Applicability Reviewed".equals(column.getText()))
 				.map(column -> (TableColumn<BookletCorpusStatus, Boolean>) column).findFirst().orElseThrow();
 		robot.interact(() -> booklets.scrollToColumn(reviewedColumn));
 		WaitForAsyncUtils.waitForFxEvents();
-
-		// Paper 1 still lacks one required MCQ explanation.
-		CheckBox checkBox = robot.lookup("#corpus-dashboard-applicability-reviewed-20").queryAs(CheckBox.class);
+		CheckBox checkBox = robot.lookup("#corpus-dashboard-applicability-reviewed-31").queryAs(CheckBox.class);
 		assertFalse(checkBox.isSelected());
-		assertTrue(checkBox.isDisable());
+		assertTrue(checkBox.isDisabled());
 		assertTrue(checkBox.getTooltip().getText().contains("classification"));
 	}
 

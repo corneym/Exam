@@ -49,8 +49,9 @@ public final class ExamAssignmentPreflight {
 	}
 
 	/**
-	 * Verifies that one complete Exam can be issued for offline work, including
-	 * opening every required PDF with the application's PDF reader.
+	 * Verifies that an active Exam has a complete asset structure suitable for
+	 * offline work, including opening every required PDF with the application's PDF
+	 * reader.
 	 *
 	 * @param requestedExam        Exam selected by the coordinator
 	 * @param legacyCaptureEnabled whether the original 2019 syllabus must be
@@ -69,6 +70,10 @@ public final class ExamAssignmentPreflight {
 		Exam exam = exams.findExamsForSubject(subject).stream()
 				.filter(candidate -> candidate.getId() == requestedExam.getId()).findFirst().orElseThrow(
 						() -> new IllegalArgumentException("Assigned Exam does not exist in the selected Subject"));
+		if (exam.isComplete()) {
+			throw new IOException("Assignment blocked: the Exam is complete. "
+					+ "Reactivate the Exam before creating a work package.");
+		}
 		List<ExamBooklet> booklets = exams.findExamBooklets(exam);
 		List<AnswerFile> answerFiles = answers.findAnswerFiles(exam);
 		ExamAssetExpectations expectations = exams.findExamAssetExpectations(exam);

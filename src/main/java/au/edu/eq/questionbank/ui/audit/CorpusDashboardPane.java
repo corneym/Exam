@@ -1757,6 +1757,7 @@ public final class CorpusDashboardPane extends VBox {
 				checkBox.setOnAction(_ -> {
 					BookletCorpusStatus status = getTableRow() == null ? null : getTableRow().getItem();
 					if (status == null || applicabilityReviewChangeInProgress || assignmentExamId != null
+							|| status.booklet().getExam().isComplete()
 							|| isExamReadOnly(status.booklet().getExam().getId())) {
 						return;
 					}
@@ -1787,9 +1788,12 @@ public final class CorpusDashboardPane extends VBox {
 				checkBox.setId("corpus-dashboard-applicability-reviewed-" + bookletId);
 				checkBox.setSelected(recorded && eligible);
 				checkBox.setDisable(applicabilityReviewChangeInProgress || assignmentExamId != null
-						|| isExamReadOnly(status.booklet().getExam().getId()) || (!recorded && !eligible));
+						|| status.booklet().getExam().isComplete() || isExamReadOnly(status.booklet().getExam().getId())
+						|| (!recorded && !eligible));
 				String explanation;
-				if (!eligible) {
+				if (status.booklet().getExam().isComplete()) {
+					explanation = "Exam is complete. Reactivate it before " + "changing applicability review.";
+				} else if (!eligible) {
 					explanation = "Finish the booklet's expected Question "
 							+ "capture, classification and required content "
 							+ "before confirming applicability review.";
@@ -2659,9 +2663,10 @@ public final class CorpusDashboardPane extends VBox {
 		ExamCorpusStatus selectedExam = examTable.getSelectionModel().getSelectedItem();
 		boolean selected = selectedExam != null;
 		boolean locked = selected && isSelectedExamReadOnly();
+		boolean complete = selected && selectedExam.declaredCaptureState() == ExamCaptureState.COMPLETE;
 		boolean coordinatorContext = assignmentExamId == null;
 		manageExamAssetsButton.setDisable(!selected || !coordinatorContext || locked);
-		createContributorAssignmentButton.setDisable(!selected || !coordinatorContext || locked);
+		createContributorAssignmentButton.setDisable(!selected || !coordinatorContext || locked || complete);
 		boolean hasActiveLock = selected && coordinatorExamLocks.containsKey(selectedExam.exam().getId());
 		closeContributorAssignmentButton.setDisable(!coordinatorContext || importedSubjectReadOnly || !hasActiveLock);
 	}
