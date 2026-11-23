@@ -927,6 +927,12 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void applyDashboardAuthority(CorpusDashboardPane dashboard, CorpusDashboardSnapshot snapshot) {
+		boolean readOnly = snapshot.importedSubject()
+				|| (activeAssignmentContext == null && snapshot.installedContributorSubject());
+		dashboard.setReadOnlyContext(snapshot.coordinatorExamLocks(), readOnly);
+	}
+
 	private void applyInstalledContributorAssignment(WorkAssignmentInstallationCoordinator.Result result,
 			Consumer<Throwable> completionHandler) throws SQLException {
 		Objects.requireNonNull(result, "result");
@@ -3559,6 +3565,12 @@ public class QuestionBankApplication extends Application {
 
 		// Only the newest Dashboard refresh may publish its results.
 		long dashboardGeneration = ++corpusDashboardRefreshGeneration;
+
+		// Keep the existing Dashboard visible while refreshing its
+		// authority information. Mutating actions must not rely on stale locks.
+		if (corpusDashboardPane != null) {
+			corpusDashboardPane.restrictUntilAuthorityRefresh();
+		}
 		PerformanceOperation refreshOperation = performanceRecorder.start("dashboard.refresh");
 		Task<CorpusDashboardSnapshot> task = new ApplicationBackgroundTask<>(() -> {
 			try (PerformanceOperation snapshotOperation = performanceRecorder.start("dashboard.snapshot",
@@ -3598,8 +3610,15 @@ public class QuestionBankApplication extends Application {
 				corpusDashboardPane.setApplicabilityReviewState(snapshot.reviewedBookletIds());
 				corpusDashboardPane.replaceData(snapshot.examStatuses(), snapshot.questions(),
 						snapshot.mappingCoverages(), snapshot.curriculumAvailable(), preferredQuestionId);
+
+				// Publish the refreshed authority information to the existing
+				// Dashboard, not just to newly constructed Dashboards.
+				applyDashboardAuthority(corpusDashboardPane, snapshot);
 			} catch (RuntimeException | Error failure) {
 				refreshOperation.failed();
+				if (corpusDashboardPane != null) {
+					corpusDashboardPane.restrictUntilAuthorityRefresh();
+				}
 				publicationFailure = failure;
 			} finally {
 				try {
@@ -3714,8 +3733,21 @@ public class QuestionBankApplication extends Application {
 		// Subject-scoped repository lookup.
 		Set<Long> reviewedBookletIds = bookletApplicabilityReviewRepository
 				.findReviewedBookletIdsForSubject(dashboardSubject.getId());
+
+		// Assignment authority belongs to the same refresh generation
+		// as the displayed Exam and Question information.
+		Map<Long, String> assignedExams = new HashMap<>();
+		for (var entry : new SqliteCoordinatorExamLockRepository(database).findForSubject(dashboardSubject.getId())
+				.entrySet()) {
+			assignedExams.put(entry.getKey(), entry.getValue().contributorName());
+		}
+		boolean importedSubject = new SqliteImportedSubjectAuthorityRepository(database)
+				.isImported(dashboardSubject.getId());
+		boolean installedContributorSubject = contributorAssignments != null && contributorAssignments.findAll()
+				.stream().anyMatch(session -> session.subjectLocalId() == dashboardSubject.getId());
 		return new CorpusDashboardSnapshot(examStatuses, questions, curriculumState.mappingCoverages(),
-				curriculumState.curriculumAvailable(), reviewedBookletIds);
+				curriculumState.curriculumAvailable(), reviewedBookletIds, assignedExams, importedSubject,
+				installedContributorSubject);
 	}
 
 	private CurriculumDashboardState loadCurriculumDashboardState(SqliteDatabase database, Subject subject) {
@@ -5043,10 +5075,13 @@ public class QuestionBankApplication extends Application {
 		if (applicationBody == null || corpusDashboardHomePane == null) {
 			return;
 		}
-
-		// Dashboard home owns the Subject selector inside its own titled border.
 		showWorkingSubjectInDashboard();
-		applicationBody.setCenter(corpusDashboardHomePane);
+
+		// Do not replace the centre node when the Dashboard
+		// is already mounted.
+		if (applicationBody.getCenter() != corpusDashboardHomePane) {
+			applicationBody.setCenter(corpusDashboardHomePane);
+		}
 	}
 
 	private void showCorpusDashboardLoading(Subject subject) {
@@ -5130,21 +5165,7 @@ public class QuestionBankApplication extends Application {
 		dashboard.setQuestionInspectionHandler(this::showDashboardQuestionInspection);
 		dashboard.setCloseContributorAssignmentHandler(this::showCloseContributorAssignment);
 		try {
-			SqliteDatabase database = new SqliteDatabase(applicationConfig.databasePath());
-			Map<Long, String> assignedExams = new HashMap<>();
-			for (var entry : new SqliteCoordinatorExamLockRepository(database).findForSubject(dashboardSubject.getId())
-					.entrySet()) {
-				assignedExams.put(entry.getKey(), entry.getValue().contributorName());
-			}
-			boolean imported = new SqliteImportedSubjectAuthorityRepository(database)
-					.isImported(dashboardSubject.getId());
-
-			// A Subject installed through a worker assignment is also externally
-			// authoritative when that installation has no active capture assignment.
-			boolean installedContributorSubject = contributorAssignments != null && contributorAssignments.findAll()
-					.stream().anyMatch(session -> session.subjectLocalId() == dashboardSubject.getId());
-			boolean readOnly = imported || (activeAssignmentContext == null && installedContributorSubject);
-			dashboard.setReadOnlyContext(assignedExams, readOnly);
+			applyDashboardAuthority(dashboard, snapshot);
 			if (activeAssignmentContext != null) {
 				UUID assignmentId = activeAssignmentContext.session().assignmentId();
 				dashboard.setAssignmentExamScope(activeAssignmentContext.session().examLocalId());
@@ -6488,17 +6509,16 @@ public class QuestionBankApplication extends Application {
 		if (workingSubjectContext == null) {
 			return;
 		}
-
-		// Dashboard Home owns the only editable Working Subject selector.
-		// Imported Question work may have locked Subject and syllabus together.
-		// Releasing that lock here restores editing only after navigation has
-		// returned to Dashboard; active capture retains its syllabus constraint.
-		// Assignment mode keeps the same Subject context but does not
-		// expose the ordinary editable Subject selector or Add Subject.
 		curriculumSelectorPane.setSyllabusContextLocked(false);
 		curriculumSelectorPane.setSubjectEditingEnabled(activeAssignmentContext == null);
-		workspaceSubjectHost.getChildren().remove(workingSubjectContext);
-		corpusDashboardSubjectHost.getChildren().setAll(workingSubjectContext);
+
+		// Transfer the selector only when navigation genuinely
+		// changes its parent. Repeated Dashboard refreshes must
+		// not remove and reinsert an already mounted control.
+		if (workingSubjectContext.getParent() != corpusDashboardSubjectHost) {
+			workspaceSubjectHost.getChildren().remove(workingSubjectContext);
+			corpusDashboardSubjectHost.getChildren().setAll(workingSubjectContext);
+		}
 	}
 
 	private void showWorkingSubjectInWorkspace() {
@@ -7835,28 +7855,23 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private record CorpusDashboardSnapshot(List<ExamCorpusStatus> examStatuses, List<Question> questions,
-			List<CurriculumMappingCoverage> mappingCoverages, boolean curriculumAvailable,
-			Set<Long> reviewedBookletIds) {
+			List<CurriculumMappingCoverage> mappingCoverages, boolean curriculumAvailable, Set<Long> reviewedBookletIds,
+			Map<Long, String> coordinatorExamLocks, boolean importedSubject, boolean installedContributorSubject) {
 
 		private CorpusDashboardSnapshot {
-			if (examStatuses == null) {
-				throw new NullPointerException("examStatuses");
-			}
-			if (questions == null) {
-				throw new NullPointerException("questions");
-			}
-			if (mappingCoverages == null) {
-				throw new NullPointerException("mappingCoverages");
-			}
-			if (reviewedBookletIds == null) {
-				throw new NullPointerException("reviewedBookletIds");
-			}
+			Objects.requireNonNull(examStatuses, "examStatuses");
+			Objects.requireNonNull(questions, "questions");
+			Objects.requireNonNull(mappingCoverages, "mappingCoverages");
+			Objects.requireNonNull(reviewedBookletIds, "reviewedBookletIds");
+			Objects.requireNonNull(coordinatorExamLocks, "coordinatorExamLocks");
 
-			// The worker publishes immutable snapshots to the FX thread.
+			// Publish immutable data from the background Task
+			// to the JavaFX application thread.
 			examStatuses = List.copyOf(examStatuses);
 			questions = List.copyOf(questions);
 			mappingCoverages = List.copyOf(mappingCoverages);
 			reviewedBookletIds = Set.copyOf(reviewedBookletIds);
+			coordinatorExamLocks = Map.copyOf(coordinatorExamLocks);
 		}
 	}
 

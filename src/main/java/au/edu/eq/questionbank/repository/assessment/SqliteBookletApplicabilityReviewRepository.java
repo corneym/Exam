@@ -100,27 +100,59 @@ public final class SqliteBookletApplicabilityReviewRepository implements Booklet
 	public void setReviewed(long bookletId, boolean reviewed) {
 		requireId(bookletId, "bookletId");
 		try (Connection connection = database.openConnection()) {
-			new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.EXAM_BOOKLET, bookletId);
-			if (reviewed) {
-				try (PreparedStatement statement = connection.prepareStatement("""
-						INSERT OR IGNORE INTO booklet_applicability_reviews
-						    (booklet_id)
-						VALUES (?)
-						""")) {
-					statement.setLong(1, bookletId);
-					statement.executeUpdate();
+			connection.setAutoCommit(false);
+			try {
+				requireActiveExam(connection, bookletId);
+				new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.EXAM_BOOKLET,
+						bookletId);
+				if (reviewed) {
+					try (PreparedStatement statement = connection.prepareStatement("""
+							INSERT OR IGNORE INTO booklet_applicability_reviews
+							    (booklet_id)
+							VALUES (?)
+							""")) {
+						statement.setLong(1, bookletId);
+						statement.executeUpdate();
+					}
+				} else {
+					try (PreparedStatement statement = connection.prepareStatement("""
+							DELETE FROM booklet_applicability_reviews
+							WHERE booklet_id = ?
+							""")) {
+						statement.setLong(1, bookletId);
+						statement.executeUpdate();
+					}
 				}
-			} else {
-				try (PreparedStatement statement = connection.prepareStatement("""
-						DELETE FROM booklet_applicability_reviews
-						WHERE booklet_id = ?
-						""")) {
-					statement.setLong(1, bookletId);
-					statement.executeUpdate();
-				}
+				connection.commit();
+			} catch (SQLException | RuntimeException failure) {
+				connection.rollback();
+				throw failure;
 			}
 		} catch (SQLException exception) {
 			throw new IllegalStateException("Could not update booklet applicability review", exception);
+		}
+	}
+
+	private void requireActiveExam(Connection connection, long bookletId) throws SQLException {
+
+		// Resolve the authoritative Exam state from the persisted
+		// booklet rather than trusting a potentially stale UI object.
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT e.capture_state
+				FROM exam_booklets b
+				JOIN exams e ON e.id = b.exam_id
+				WHERE b.id = ?
+				""")) {
+			statement.setLong(1, bookletId);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalStateException("Booklet does not exist: " + bookletId);
+				}
+				if ("COMPLETE".equals(result.getString("capture_state"))) {
+					throw new IllegalStateException(
+							"Exam is complete; reactivate it before " + "changing applicability review.");
+				}
+			}
 		}
 	}
 

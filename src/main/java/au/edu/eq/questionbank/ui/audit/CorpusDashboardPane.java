@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.ui.audit;
 
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -9,6 +10,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamAssetExpectations;
@@ -47,6 +49,7 @@ import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressIndicator;
+import javafx.scene.control.ScrollBar;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SelectionMode;
 import javafx.scene.control.SplitPane;
@@ -259,17 +262,16 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	/**
-	 * Replaces the complete persistence-derived Dashboard generation while
-	 * retaining compatible local filters and selection.
+	 * Replaces the persistence-derived Dashboard data while preserving valid
+	 * selections, filters and the existing Dashboard layout.
 	 *
 	 * @param updatedStatuses            refreshed Exam audit state
 	 * @param updatedQuestions           refreshed Question corpus
 	 * @param updatedMappingCoverages    refreshed curriculum mapping coverage
-	 * @param updatedCurriculumAvailable whether the Subject has at least one
-	 *                                   curriculum version
-	 * @param preferredQuestionId        Question to restore when still visible, or
-	 *                                   a non-positive value for no preferred
-	 *                                   Question
+	 * @param updatedCurriculumAvailable whether curriculum is available
+	 * @param preferredQuestionId        Question to select when visible, or a
+	 *                                   non-positive value to preserve the existing
+	 *                                   selection
 	 */
 	public void replaceData(List<ExamCorpusStatus> updatedStatuses, List<Question> updatedQuestions,
 			List<CurriculumMappingCoverage> updatedMappingCoverages, boolean updatedCurriculumAvailable,
@@ -279,9 +281,12 @@ public final class CorpusDashboardPane extends VBox {
 		Long providerId = providerBox.getValue() == null ? null : providerBox.getValue().getId();
 		Integer year = yearBox.getValue();
 		ExamCaptureState examState = examStateBox.getValue();
+		Set<Long> selectedQuestionIds = questionTable.getSelectionModel().getSelectedItems().stream()
+				.map(item -> item.question().getId()).collect(Collectors.toSet());
+		Map<ScrollBar, Double> scrollPositions = captureTableScrollPositions();
 
-		// Replace all Subject-level reporting snapshots from the same persistence
-		// generation without allowing mapping status to alter corpus completeness.
+		// Replace the data without reconstructing the Dashboard
+		// or its adjustable split panes.
 		examStatuses = statusesForWorkingSubject(updatedStatuses);
 		questions = questionsForWorkingSubject(updatedQuestions);
 		mappingCoverages = mappingCoveragesForWorkingSubject(updatedMappingCoverages);
@@ -297,25 +302,34 @@ public final class CorpusDashboardPane extends VBox {
 		} finally {
 			changingScopeFilters = false;
 		}
-
-		// Exam creation depends on Subject curriculum, so refresh that gate from the
-		// same generation before rebuilding the structural hierarchy.
 		updateAddExamActionState();
 		refreshSummaryControls();
 		refreshCurriculumMappingSummary();
 		refreshExamTable(selectedExamId, selectedBookletId);
 		refreshQuestionWork();
-		if (preferredQuestionId > 0) {
+		restoreTableScrollPositions(scrollPositions);
 
-			// Restore a corrected Question only when it remains visible under the
-			// Dashboard's current Exam, booklet and work filters.
-			QuestionCorpusWorkItem preferred = questionTable.getItems().stream()
-					.filter(item -> item.question().getId() == preferredQuestionId).findFirst().orElse(null);
-			if (preferred != null) {
-				questionTable.getSelectionModel().select(preferred);
-				questionTable.scrollTo(preferred);
+		// An explicitly requested Question takes precedence over
+		// the previous selection after a correction workflow.
+		QuestionCorpusWorkItem preferred = preferredQuestionId > 0
+				? questionTable.getItems().stream().filter(item -> item.question().getId() == preferredQuestionId)
+						.findFirst().orElse(null)
+				: null;
+		if (preferred != null) {
+			questionTable.getSelectionModel().select(preferred);
+			questionTable.scrollTo(preferred);
+		} else {
+
+			// Preserve every selected Question that still exists
+			// within the refreshed display scope.
+			for (QuestionCorpusWorkItem item : questionTable.getItems()) {
+				if (selectedQuestionIds.contains(item.question().getId())) {
+					questionTable.getSelectionModel().select(item);
+				}
 			}
 		}
+		updateBulkActionState();
+		updateQuestionActionState();
 	}
 
 	/**
@@ -336,6 +350,18 @@ public final class CorpusDashboardPane extends VBox {
 		// value from the Dashboard generation already on screen.
 		replaceData(updatedStatuses, updatedQuestions, updatedMappingCoverages, curriculumAvailable,
 				preferredQuestionId);
+	}
+
+	/**
+	 * Temporarily restricts Dashboard mutations while fresh authority information
+	 * is being acquired.
+	 *
+	 * <p>
+	 * The existing assignment indicators and displayed data remain visible. A
+	 * subsequently published authority snapshot restores the permitted operations.
+	 */
+	public void restrictUntilAuthorityRefresh() {
+		setReadOnlyContext(coordinatorExamLocks, true);
 	}
 
 	/**
@@ -1132,6 +1158,18 @@ public final class CorpusDashboardPane extends VBox {
 		// Do not warn before a Question code exists. Parts of an existing
 		// source Question do not increase its top-level count.
 		newQuestionCaptureHandler.accept(selected.booklet());
+	}
+
+	private Map<ScrollBar, Double> captureTableScrollPositions() {
+		Map<ScrollBar, Double> positions = new HashMap<>();
+		for (TableView<?> table : List.of(examTable, bookletTable, questionTable)) {
+			for (Node node : table.lookupAll(".scroll-bar")) {
+				if (node instanceof ScrollBar scrollBar) {
+					positions.put(scrollBar, scrollBar.getValue());
+				}
+			}
+		}
+		return positions;
 	}
 
 	private <S> void centreTableColumns(TableView<S> table) {
@@ -2389,6 +2427,18 @@ public final class CorpusDashboardPane extends VBox {
 		case WRITTEN_RESPONSE -> "Written";
 		case UNKNOWN -> "UNKNOWN";
 		};
+	}
+
+	private void restoreTableScrollPositions(Map<ScrollBar, Double> positions) {
+
+		// Update table layout before restoring the existing scrollbars.
+		// A shorter refreshed table may require a smaller scroll value.
+		layout();
+		positions.forEach((scrollBar, value) -> {
+			if (scrollBar.getScene() != null) {
+				scrollBar.setValue(Math.max(scrollBar.getMin(), Math.min(scrollBar.getMax(), value)));
+			}
+		});
 	}
 
 	private List<ExamCorpusStatus> scopeFilteredExamStatuses() {
