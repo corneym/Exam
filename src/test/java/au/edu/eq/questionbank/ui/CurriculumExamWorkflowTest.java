@@ -995,31 +995,30 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		prepareExamAndClassification(robot);
 		ExamBooklet originalBooklet = examMetadataPane().getBooklet();
 		assertNotNull(originalBooklet);
+		long examId = originalBooklet.getExam().getId();
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		SqliteExamWriter writer = new SqliteExamWriter(database);
 
-		// Establish a historical COMPLETE declaration without using the
-		// Dashboard action under test.
+		// Establish a historical COMPLETE declaration without using
+		// the Dashboard action under test.
 		persistHistoricalCompleteState(database, originalBooklet.getExam());
 		WaitForAsyncUtils.asyncFx(() -> {
 			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
 			return null;
 		}).get();
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> evaluateOnFx(robot,
-						() -> robot.lookup("#corpus-dashboard-exam-lifecycle").tryQuery()
-								.filter(Button.class::isInstance).map(Button.class::cast)
-								.map(button -> "Mark Active".equals(button.getText())).orElse(false)));
+				() -> evaluateOnFx(robot, () -> robot.lookup("#corpus-dashboard-exam-lifecycle").tryQuery()
+						.filter(Button.class::isInstance).map(Button.class::cast)
+						.map(button -> "Mark Active".equals(button.getText()) && !button.isDisabled()).orElse(false)));
 		Button lifecycle = lookup(robot, "#corpus-dashboard-exam-lifecycle", Button.class);
 		HBox progressRow = lookup(robot, "#corpus-dashboard-exam-lifecycle-progress", HBox.class);
-		Label selectedState = lookup(robot, "#corpus-dashboard-selected-exam-state", Label.class);
-		assertEquals("Declared state: COMPLETE", selectedState.getText());
+		TableView<?> exams = lookup(robot, "#corpus-dashboard-exams", TableView.class);
+		assertTrue(evaluateOnFx(robot, () -> selectedExamHasState(exams, examId, ExamCaptureState.COMPLETE)));
 		try (Connection lockConnection = database.openConnection();
 				Statement lockStatement = lockConnection.createStatement()) {
 
-			// Hold SQLite's write lock so lifecycle persistence cannot finish immediately.
-			// If persistence still ran on JavaFX, firing the Dashboard action would block
-			// the UI here until SQLite's busy timeout expired.
+			// Hold SQLite's write lock so lifecycle persistence
+			// cannot finish immediately.
 			lockStatement.execute("BEGIN EXCLUSIVE");
 			fireControl(robot, lifecycle);
 			WaitForAsyncUtils.waitFor(2, TimeUnit.SECONDS,
@@ -1027,29 +1026,29 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 			AtomicBoolean fxResponsive = new AtomicBoolean(false);
 			robot.interact(() -> fxResponsive.set(true));
 
-			// JavaFX must remain able to process work while the lifecycle worker is blocked
-			// on persistence.
+			// JavaFX must remain responsive while persistence is blocked.
 			assertTrue(fxResponsive.get());
-			assertTrue(progressRow.isVisible());
-			assertTrue(lifecycle.isDisabled());
+			assertTrue(evaluateOnFx(robot, progressRow::isVisible));
+			assertTrue(evaluateOnFx(robot, lifecycle::isDisabled));
 			lockStatement.execute("COMMIT");
 		}
-		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot,
-				() -> !progressRow.isVisible() && "Declared state: ACTIVE".equals(selectedState.getText())));
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot,
+						() -> !progressRow.isVisible() && selectedExamHasState(exams, examId, ExamCaptureState.ACTIVE)
+								&& "Mark Complete".equals(lifecycle.getText())));
 
-		// The same Dashboard selection survives the persistence-backed refresh, while
-		// the action returns to the normal readiness rule for an ACTIVE Exam.
-		assertFalse(progressRow.isVisible());
-		assertFalse(progressRow.isManaged());
-		assertEquals("Declared state: ACTIVE", selectedState.getText());
-		assertEquals("Mark Complete", lifecycle.getText());
+		// The retained Dashboard must publish the updated lifecycle state
+		// without losing the selected Exam.
+		assertFalse(evaluateOnFx(robot, progressRow::isVisible));
+		assertFalse(evaluateOnFx(robot, progressRow::isManaged));
+		assertTrue(evaluateOnFx(robot, () -> selectedExamHasState(exams, examId, ExamCaptureState.ACTIVE)));
 		ExamBooklet reloaded = writer
 				.findExamBookletBySourceDocumentPath(originalBooklet.getSourceDocument().getRelativePath());
 		assertNotNull(reloaded);
 		assertFalse(reloaded.getExam().isComplete());
 
-		// Capture's retained immutable booklet snapshot is synchronised only after the
-		// background persistence succeeds.
+		// Capture's retained immutable booklet snapshot must also
+		// reflect the successful lifecycle change.
 		assertFalse(examMetadataPane().getBooklet().getExam().isComplete());
 	}
 
@@ -1058,6 +1057,7 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		prepareExamAndClassification(robot);
 		ExamBooklet originalBooklet = examMetadataPane().getBooklet();
 		assertNotNull(originalBooklet);
+		long examId = originalBooklet.getExam().getId();
 		SqliteDatabase database = new SqliteDatabase(databasePath);
 		SqliteExamWriter realWriter = new SqliteExamWriter(database);
 
@@ -1069,55 +1069,50 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 			return null;
 		}).get();
 		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
-				() -> evaluateOnFx(robot,
-						() -> robot.lookup("#corpus-dashboard-exam-lifecycle").tryQuery()
-								.filter(Button.class::isInstance).map(Button.class::cast)
-								.map(button -> "Mark Active".equals(button.getText())).orElse(false)));
+				() -> evaluateOnFx(robot, () -> robot.lookup("#corpus-dashboard-exam-lifecycle").tryQuery()
+						.filter(Button.class::isInstance).map(Button.class::cast)
+						.map(button -> "Mark Active".equals(button.getText()) && !button.isDisabled()).orElse(false)));
 		Button lifecycle = lookup(robot, "#corpus-dashboard-exam-lifecycle", Button.class);
 		HBox progressRow = lookup(robot, "#corpus-dashboard-exam-lifecycle-progress", HBox.class);
-		Label selectedState = lookup(robot, "#corpus-dashboard-selected-exam-state", Label.class);
+		TableView<?> exams = lookup(robot, "#corpus-dashboard-exams", TableView.class);
+		assertTrue(evaluateOnFx(robot, () -> selectedExamHasState(exams, examId, ExamCaptureState.COMPLETE)));
 
-		// An existing directory cannot be opened as a SQLite database file. Replacing
-		// only the application writer gives the lifecycle worker a deterministic
-		// persistence failure without changing the real Dashboard data source.
+		// An existing directory cannot be opened as a SQLite database.
+		// Replace only the lifecycle persistence dependency.
 		Path invalidDatabasePath = Files
 				.createDirectory(databasePath.getParent().resolve("invalid-lifecycle-database"));
 		ExamLifecycleService originalLifecycleService = field(application, "examLifecycleService",
 				ExamLifecycleService.class);
 		SqliteExamWriter failingWriter = new SqliteExamWriter(new SqliteDatabase(invalidDatabasePath));
-
-		// The Dashboard now delegates to ExamLifecycleService.
-		// Replace that dependency, rather than the unused application
-		// writer field, to exercise a genuine persistence failure.
 		ExamLifecycleService failingLifecycleService = new ExamLifecycleService(failingWriter,
 				field(application, "corpusDashboardAuditService", ExamCorpusAuditService.class),
 				field(application, "bookletApplicabilityReviewRepository", BookletApplicabilityReviewRepository.class));
 		setField(application, "examLifecycleService", failingLifecycleService);
-		fireControl(robot, lifecycle);
-		waitForDialogShowing(robot, "Exam State");
+		try {
+			fireControl(robot, lifecycle);
+			waitForDialogShowing(robot, "Exam State");
 
-		// Failure handling clears operation state before presenting the error dialog.
-		assertFalse(evaluateOnFx(robot, progressRow::isVisible));
-		assertFalse(evaluateOnFx(robot, progressRow::isManaged));
-		assertFalse(evaluateOnFx(robot, lifecycle::isDisabled));
-		assertEquals("Declared state: COMPLETE", selectedState.getText());
-		assertFalse(field(application, "corpusDashboardLifecycleChangeRunning", Boolean.class));
-		DialogPane error = showingDialogPane(robot, "Exam State");
-		Node okNode = error.lookupButton(ButtonType.OK);
-		assertTrue(okNode instanceof Button);
-		robot.interact(((Button) okNode)::fire);
-		waitForDialogHidden(robot, "Exam State");
+			// Failure must clear progress without changing the selected
+			// Exam's displayed lifecycle state.
+			assertFalse(evaluateOnFx(robot, progressRow::isVisible));
+			assertFalse(evaluateOnFx(robot, progressRow::isManaged));
+			assertFalse(evaluateOnFx(robot, lifecycle::isDisabled));
+			assertTrue(evaluateOnFx(robot, () -> selectedExamHasState(exams, examId, ExamCaptureState.COMPLETE)));
+			assertFalse(field(application, "corpusDashboardLifecycleChangeRunning", Boolean.class));
+			DialogPane error = showingDialogPane(robot, "Exam State");
+			Node okNode = error.lookupButton(ButtonType.OK);
+			assertTrue(okNode instanceof Button);
+			robot.interact(((Button) okNode)::fire);
+			waitForDialogHidden(robot, "Exam State");
 
-		// Failed persistence must leave authoritative lifecycle state unchanged.
-		ExamBooklet reloaded = realWriter
-				.findExamBookletBySourceDocumentPath(originalBooklet.getSourceDocument().getRelativePath());
-		assertNotNull(reloaded);
-		assertTrue(reloaded.getExam().isComplete());
-
-		// Restore the application's normal writer so teardown and any later fixture
-		// work continue against the real test database.
-		// Restore the original lifecycle service after the failure test.
-		setField(application, "examLifecycleService", originalLifecycleService);
+			// Failed persistence must leave authoritative state unchanged.
+			ExamBooklet reloaded = realWriter
+					.findExamBookletBySourceDocumentPath(originalBooklet.getSourceDocument().getRelativePath());
+			assertNotNull(reloaded);
+			assertTrue(reloaded.getExam().isComplete());
+		} finally {
+			setField(application, "examLifecycleService", originalLifecycleService);
+		}
 	}
 
 	@Test
@@ -2095,6 +2090,21 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 				auditService.isApplicabilityReviewed(status,
 						reviewRepository.findReviewedBookletIds(booklet.getExam().getId())),
 				"The lifecycle test fixture must have valid " + "persisted applicability reviews.");
+	}
+
+	private boolean selectedExamHasState(TableView<?> exams, long examId, ExamCaptureState state) {
+		int selectedIndex = exams.getSelectionModel().getSelectedIndex();
+		if (selectedIndex < 0 || !(exams.getSelectionModel().getSelectedItem() instanceof ExamCorpusStatus selected)) {
+			return false;
+		}
+		if (selected.exam().getId() != examId || selected.declaredCaptureState() != state) {
+			return false;
+		}
+
+		// Verify both the selected audit snapshot and the value
+		// actually supplied to the visible State column.
+		return exams.getColumns().stream().filter(column -> "State".equals(column.getText()))
+				.anyMatch(column -> state.name().equals(column.getCellData(selectedIndex)));
 	}
 
 	private void selectSubject(FxRobot robot, String subjectName) {

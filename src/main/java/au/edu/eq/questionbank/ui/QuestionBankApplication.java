@@ -6696,7 +6696,7 @@ public class QuestionBankApplication extends Application {
 		task.setOnSucceeded(_ -> {
 			contributionExportRunning = false;
 			progress.close();
-			ExamWorkManifest manifest = task.getValue();
+			ExamWorkManifest _ = task.getValue();
 			try {
 
 				// The durable return ledger now marks this assignment SUBMITTED.

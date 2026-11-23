@@ -593,7 +593,7 @@ class CorpusDashboardPaneTest {
 		AtomicReference<Boolean> requestedReview = new AtomicReference<>();
 		AtomicReference<Exam> requestedAssignment = new AtomicReference<>();
 		robot.interact(() -> {
-			pane.setApplicabilityReviewHandler((booklet, reviewed) -> requestedReview.set(reviewed));
+			pane.setApplicabilityReviewHandler((_, reviewed) -> requestedReview.set(reviewed));
 			pane.setCreateContributorAssignmentHandler(requestedAssignment::set);
 			pane.replaceData(List.of(completedStatus), List.of());
 			pane.setApplicabilityReviewState(Set.of(fixture.paper1.getId()));

@@ -9,7 +9,6 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
-import java.util.Set;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,7 +16,6 @@ import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamCaptureState;
-import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
