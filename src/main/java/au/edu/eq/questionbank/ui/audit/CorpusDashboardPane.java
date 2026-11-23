@@ -130,8 +130,6 @@ public final class CorpusDashboardPane extends VBox {
 	private final Button missingQuestionsButton = new Button();
 	private final Button sharedContextButton = new Button();
 	private final TableView<ExamCorpusStatus> examTable = new TableView<>();
-	private final Label selectedExamLabel = new Label();
-	private final Label declaredExamStateLabel = new Label();
 	private final Label selectedExamCountsLabel = new Label();
 	private final TableView<BookletCorpusStatus> bookletTable = new TableView<>();
 	private final Label selectedBookletLabel = new Label();
@@ -204,6 +202,7 @@ public final class CorpusDashboardPane extends VBox {
 	private Map<Long, String> coordinatorExamLocks = Map.of();
 	private boolean importedSubjectReadOnly;
 	private Set<Long> contributorBaselineQuestionIds = Set.of();
+	private StackPane curriculumSection;
 
 	/**
 	 * Creates a Subject-scoped operational Dashboard from one persistence snapshot.
@@ -259,6 +258,28 @@ public final class CorpusDashboardPane extends VBox {
 		// Existing callers without mapping information retain an explicit
 		// not-applicable mapping-review state.
 		this(workingSubject, examStatuses, questions, List.of());
+	}
+
+	/**
+	 * Mounts this Dashboard's existing Curriculum controls in an external
+	 * application header without duplicating their state or handlers.
+	 *
+	 * A standalone Dashboard retains its Curriculum section until this method is
+	 * called.
+	 *
+	 * @param destination host for the Curriculum section
+	 * @throws NullPointerException if the destination is null
+	 */
+	public void moveCurriculumSectionTo(StackPane destination) {
+		Objects.requireNonNull(destination, "destination");
+		if (curriculumSection.getParent() == destination) {
+			return;
+		}
+
+		// Transfer the existing section rather than constructing
+		// a second set of Curriculum controls.
+		getChildren().remove(curriculumSection);
+		destination.getChildren().setAll(curriculumSection);
 	}
 
 	/**
@@ -732,13 +753,13 @@ public final class CorpusDashboardPane extends VBox {
 	/**
 	 * Applies authoritative read-only presentation to the Dashboard.
 	 *
-	 * <p>
 	 * Active coordinator assignments are recorded by Exam ID. Imported Subjects are
-	 * read-only throughout their entire Exam hierarchy. Searching, inspection,
-	 * filtering and navigation remain available.
+	 * read-only throughout their Exam hierarchy. Searching, inspection, filtering
+	 * and navigation remain available.
 	 *
 	 * @param lockedExams     active Exam IDs mapped to contributor names
-	 * @param subjectReadOnly whether the Subject is externally authoritative
+	 * @param subjectReadOnly whether the Subject is externally authoritative or
+	 *                        temporarily restricted
 	 * @throws NullPointerException     if the map contains null values
 	 * @throws IllegalArgumentException if an Exam ID or name is invalid
 	 */
@@ -751,11 +772,18 @@ public final class CorpusDashboardPane extends VBox {
 				throw new IllegalArgumentException("Invalid assigned Exam details");
 			}
 		}
+		boolean locksChanged = !coordinatorExamLocks.equals(lockedExams);
 		coordinatorExamLocks = Map.copyOf(lockedExams);
 		importedSubjectReadOnly = subjectReadOnly;
 		addCurriculumButton.setDisable(importedSubjectReadOnly || assignmentExamId != null);
 		updateAddExamActionState();
 		refreshCurriculumMappingSummary();
+
+		// Only repaint assignment-dependent table cells when
+		// the durable lock information has actually changed.
+		if (locksChanged) {
+			examTable.refresh();
+		}
 		refreshExamRowStyles();
 		bookletTable.refresh();
 		updateCaptureActionState();
@@ -767,14 +795,7 @@ public final class CorpusDashboardPane extends VBox {
 		assignQuestionWorkDescriptorsButton
 				.setDisable(importedSubjectReadOnly || assignmentExamId != null || isSelectedExamReadOnly()
 						|| outstanding.isEmpty() || outstanding.stream().anyMatch(this::isQuestionReadOnly));
-		ExamCorpusStatus selected = examTable.getSelectionModel().getSelectedItem();
-		if (selected != null) {
-			Exam exam = selected.exam();
-			String description = "%s %d — %s".formatted(exam.getProvider().getName(), exam.getYear(), exam.getName());
-			String contributor = coordinatorExamLocks.get(exam.getId());
-			selectedExamLabel
-					.setText(contributor == null ? description : description + " — ASSIGNED to " + contributor);
-		}
+		updateSelectedExamSummary(examTable.getSelectionModel().getSelectedItem());
 	}
 
 	void replaceData(List<ExamCorpusStatus> updatedStatuses, List<Question> updatedQuestions) {
@@ -960,15 +981,16 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private void buildContent() {
-		StackPane curriculumSection = buildCurriculumSection();
+		curriculumSection = buildCurriculumSection();
 		HBox summaryRow = buildSummaryRow();
 		ScrollPane summaryScroll = createHorizontalScrollRow("corpus-dashboard-summary-scroll", summaryRow);
 		SplitPane hierarchyRow = buildHierarchyRow();
 		StackPane questionSection = buildQuestionWorkSection();
 		SplitPane workSplit = buildWorkSplit(hierarchyRow, questionSection);
 
-		// Keep the summary outside the adjustable work area, but allow its
-		// natural-width buttons to scroll rather than become clipped.
+		// Standalone Dashboard usage retains its local
+		// Curriculum section. The application home transfers
+		// that same section to its shared header.
 		getChildren().addAll(curriculumSection, summaryScroll, workSplit);
 		setSpacing(SPACING);
 		setPadding(PADDING);
@@ -994,11 +1016,9 @@ public final class CorpusDashboardPane extends VBox {
 		examEmptyStateRow.setId("corpus-dashboard-exam-empty-state");
 		examEmptyStateRow.setAlignment(Pos.CENTER_LEFT);
 		examEmptyStateScroll = createHorizontalScrollRow("corpus-dashboard-empty-exam-scroll", examEmptyStateRow);
-		HBox selectedExamTitleRow = new HBox(SPACING, selectedExamLabel, declaredExamStateLabel, manageExamAssetsButton,
-				createContributorAssignmentButton, closeContributorAssignmentButton, inspectExamQuestionsButton,
-				examLifecycleButton);
+		HBox selectedExamTitleRow = new HBox(SPACING, manageExamAssetsButton, createContributorAssignmentButton,
+				closeContributorAssignmentButton, inspectExamQuestionsButton, examLifecycleButton);
 		selectedExamTitleRow.setAlignment(Pos.CENTER_LEFT);
-		HBox.setHgrow(selectedExamLabel, Priority.ALWAYS);
 		ScrollPane examActionsScroll = createHorizontalScrollRow("corpus-dashboard-exam-actions-scroll",
 				selectedExamTitleRow);
 		examOperationalContent = new VBox(SPACING, examFilterScroll, examTable, examActionsScroll,
@@ -1221,9 +1241,7 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private void clearSelectedExam() {
-		selectedExamLabel.setText("No Exam selected");
-		declaredExamStateLabel.setText("");
-		selectedExamCountsLabel.setText("");
+		updateSelectedExamSummary(null);
 		bookletTable.getItems().clear();
 		updateSelectedBookletLabel(null);
 		setVisibleAndManaged(bookletWarningLabel, false);
@@ -1490,14 +1508,11 @@ public final class CorpusDashboardPane extends VBox {
 
 		// Status labels must remain readable as the adjacent panel grows or
 		// shrinks, rather than forcing the enclosing section to be wider.
-		declaredExamStateLabel.setStyle("-fx-font-weight: bold;");
 		selectedExamCountsLabel.setStyle("-fx-font-weight: bold;");
 		selectedExamCountsLabel.setWrapText(true);
+		selectedExamCountsLabel.setId("corpus-dashboard-selected-exam-counts");
 		selectedBookletLabel.setStyle("-fx-font-weight: bold;");
 		selectedBookletLabel.setWrapText(true);
-		selectedExamLabel.setId("corpus-dashboard-selected-exam");
-		declaredExamStateLabel.setId("corpus-dashboard-selected-exam-state");
-		selectedExamCountsLabel.setId("corpus-dashboard-selected-exam-counts");
 		selectedBookletLabel.setId("corpus-dashboard-selected-booklet");
 		bookletWarningLabel.setId("corpus-dashboard-booklet-warning");
 		mcqExplanationCoverageLabel.setId("corpus-dashboard-mcq-coverage");
@@ -1527,8 +1542,9 @@ public final class CorpusDashboardPane extends VBox {
 		TableColumn<ExamCorpusStatus, String> assessmentColumn = new TableColumn<>("Assessment");
 		assessmentColumn.setCellValueFactory(data -> new ReadOnlyStringWrapper(data.getValue().exam().getName()));
 		TableColumn<ExamCorpusStatus, String> stateColumn = new TableColumn<>("State");
-		stateColumn
-				.setCellValueFactory(data -> new ReadOnlyStringWrapper(data.getValue().declaredCaptureState().name()));
+		stateColumn.setCellValueFactory(data -> new ReadOnlyStringWrapper(
+				coordinatorExamLocks.containsKey(data.getValue().exam().getId()) ? "ASSIGNED"
+						: data.getValue().declaredCaptureState().name()));
 		TableColumn<ExamCorpusStatus, String> questionBookletsColumn = new TableColumn<>("Question Booklets");
 		questionBookletsColumn
 				.setCellValueFactory(data -> new ReadOnlyStringWrapper(questionAssetCount(data.getValue())));
@@ -2522,18 +2538,7 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private void showSelectedExam(ExamCorpusStatus status, Long preferredBookletId) {
-		String description = String.format("%s %d — %s", status.exam().getProvider().getName(), status.exam().getYear(),
-				status.exam().getName());
-		String contributor = coordinatorExamLocks.get(status.exam().getId());
-		selectedExamLabel.setText(contributor == null ? description : description + " — ASSIGNED to " + contributor);
-		declaredExamStateLabel.setText("Declared state: " + status.declaredCaptureState().name());
-		ExamAssetExpectations expectations = status.assetExpectations();
-		selectedExamCountsLabel.setText(String.format(
-				"Question booklets: %s     Answer booklets: %s     Questions: %d     Need work: %d",
-				presentExpected(expectations.availableQuestionBookletCount(),
-						expectations.expectedQuestionBookletCount()),
-				presentExpected(expectations.availableAnswerFileCount(), expectations.expectedAnswerFileCount()),
-				status.questionSummary().totalQuestions(), examWorkCount(status)));
+		updateSelectedExamSummary(status);
 		List<BookletCorpusStatus> displayedBooklets = filteredBookletStatuses(status);
 		bookletTable.getItems().setAll(displayedBooklets);
 		bookletTable.getSelectionModel().clearSelection();
@@ -2796,6 +2801,25 @@ public final class CorpusDashboardPane extends VBox {
 		// changing Exams cannot retain the previous Exam's display.
 		selectedBookletLabel.setText(String.format("Selected booklet: %s %d — %s — %s", exam.getProvider().getName(),
 				exam.getYear(), exam.getName(), bookletName));
+	}
+
+	private void updateSelectedExamSummary(ExamCorpusStatus status) {
+		if (status == null) {
+			selectedExamCountsLabel.setText("");
+			setVisibleAndManaged(selectedExamCountsLabel, false);
+			return;
+		}
+
+		// Exam identity, lifecycle and booklet counts already
+		// appear in the table. Retain only additional information.
+		String summary = String.format("Questions: %d     Need work: %d", status.questionSummary().totalQuestions(),
+				examWorkCount(status));
+		String contributor = coordinatorExamLocks.get(status.exam().getId());
+		if (contributor != null) {
+			summary += "     ASSIGNED to " + contributor;
+		}
+		selectedExamCountsLabel.setText(summary);
+		setVisibleAndManaged(selectedExamCountsLabel, true);
 	}
 
 	private String workLabel(ExamCorpusStatus status) {

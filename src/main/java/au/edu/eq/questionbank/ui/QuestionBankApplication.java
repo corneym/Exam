@@ -420,6 +420,7 @@ public class QuestionBankApplication extends Application {
 	private boolean contributionExportRunning;
 	private MenuItem subjectSnapshotExportMenuItem;
 	private boolean packageImportInProgress;
+	private final StackPane corpusDashboardCurriculumHost = new StackPane();
 
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
@@ -1357,6 +1358,12 @@ public class QuestionBankApplication extends Application {
 		returnToCorpusDashboardButton.setManaged(false);
 	}
 
+	private void clearDashboardCurriculumSection() {
+		corpusDashboardCurriculumHost.getChildren().clear();
+		corpusDashboardCurriculumHost.setVisible(false);
+		corpusDashboardCurriculumHost.setManaged(false);
+	}
+
 	private void clearPdfWorkspaceForSubjectChange(Subject newSubject) {
 		ExamBooklet activeBooklet = examMetadataPane == null ? null : examMetadataPane.getBooklet();
 		boolean newSubjectExamAlreadyDisplayed = newSubject != null && activeBooklet != null
@@ -1435,6 +1442,7 @@ public class QuestionBankApplication extends Application {
 		finishContributorAssignmentInstallation(request);
 		if (failure != null) {
 			corpusDashboardPane = null;
+			clearDashboardCurriculumSection();
 			corpusDashboardHost.getChildren().setAll(new Label(
 					"The installed assignment could not be displayed. Restart the application to refresh it."));
 
@@ -2181,12 +2189,30 @@ public class QuestionBankApplication extends Application {
 		showCorpusDashboardNoSubject();
 		corpusDashboardSubjectHost.setId("corpus-dashboard-subject-host");
 		corpusDashboardSubjectHost.setAlignment(Pos.CENTER_LEFT);
+		corpusDashboardCurriculumHost.setId("corpus-dashboard-curriculum-host");
+		corpusDashboardCurriculumHost.setAlignment(Pos.CENTER_LEFT);
+		HBox.setHgrow(corpusDashboardCurriculumHost, Priority.ALWAYS);
+
+		// The Working Subject and Curriculum share the same
+		// horizontal header instead of consuming two vertical rows.
+		HBox dashboardHeader = new HBox(SECTION_SPACING, corpusDashboardSubjectHost, corpusDashboardCurriculumHost);
+		dashboardHeader.setId("corpus-dashboard-header");
+		dashboardHeader.setAlignment(Pos.CENTER_LEFT);
+		dashboardHeader.setMinWidth(Region.USE_PREF_SIZE);
+
+		// Preserve natural control widths when the window is narrow.
+		ScrollPane headerScroll = new ScrollPane(dashboardHeader);
+		headerScroll.setId("corpus-dashboard-header-scroll");
+		headerScroll.setFitToWidth(true);
+		headerScroll.setFitToHeight(true);
+		headerScroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+		headerScroll.setVbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+		headerScroll.setMinWidth(0);
 		configureContributorAssignmentToolbar();
 		Label heading = new Label("CORPUS DASHBOARD");
 		heading.setStyle("-fx-font-weight: bold; -fx-font-size: 14px;" + " -fx-background-color: -fx-background;"
 				+ " -fx-padding: 0 5 0 5;");
-		VBox dashboardBody = new VBox(SECTION_SPACING, corpusDashboardSubjectHost, assignmentToolbar,
-				corpusDashboardHost);
+		VBox dashboardBody = new VBox(SECTION_SPACING, headerScroll, assignmentToolbar, corpusDashboardHost);
 		dashboardBody.setPadding(new Insets(14, 10, 10, 10));
 		dashboardBody.setStyle("-fx-border-color: #b0b0b0;" + " -fx-border-width: 1;" + " -fx-border-radius: 3;");
 		VBox.setVgrow(corpusDashboardHost, Priority.ALWAYS);
@@ -5086,8 +5112,10 @@ public class QuestionBankApplication extends Application {
 
 	private void showCorpusDashboardLoading(Subject subject) {
 
-		// Never expose the previous Subject's rows if replacement loading fails.
+		// A genuine Subject or assignment-context transition must
+		// not expose the previous Subject's Curriculum or Exams.
 		corpusDashboardPane = null;
+		clearDashboardCurriculumSection();
 		Label loading = new Label("Loading " + subject.getName() + " corpus...");
 		loading.setId("corpus-dashboard-loading");
 		corpusDashboardHost.getChildren().setAll(loading);
@@ -5095,11 +5123,9 @@ public class QuestionBankApplication extends Application {
 
 	private void showCorpusDashboardNoSubject() {
 		corpusDashboardPane = null;
+		clearDashboardCurriculumSection();
 		Label message = new Label("Select or add a Subject to view its corpus.");
 		message.setId("corpus-dashboard-no-subject");
-
-		// A Subject is application context, not a prerequisite dialog. The empty home
-		// remains usable so the existing + Subject action is always available.
 		corpusDashboardHost.getChildren().setAll(message);
 	}
 
@@ -5183,6 +5209,12 @@ public class QuestionBankApplication extends Application {
 					failureMessage(failure));
 			return;
 		}
+
+		// Mount Curriculum beside the Working Subject. The controls
+		// retain ownership of the same Dashboard state and handlers.
+		dashboard.moveCurriculumSectionTo(corpusDashboardCurriculumHost);
+		corpusDashboardCurriculumHost.setManaged(true);
+		corpusDashboardCurriculumHost.setVisible(true);
 		corpusDashboardPane = dashboard;
 		corpusDashboardHost.getChildren().setAll(dashboard);
 	}

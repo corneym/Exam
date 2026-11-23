@@ -800,10 +800,7 @@ class CorpusDashboardPaneTest {
 		Label provider = (Label) filterRow.getChildren().get(0);
 		Label year = (Label) filterRow.getChildren().get(2);
 		Label examState = (Label) filterRow.getChildren().get(4);
-		Label selectedExam = robot.lookup("#corpus-dashboard-selected-exam").queryAs(Label.class);
-		Label declaredState = robot.lookup("#corpus-dashboard-selected-exam-state").queryAs(Label.class);
-
-		// Exercise window resizing and the existing vertical divider.
+		Label selectedSummary = robot.lookup("#corpus-dashboard-selected-exam-counts").queryAs(Label.class);
 		robot.interact(() -> {
 			pane.getScene().getWindow().setWidth(820);
 			workSplit.setDividerPositions(0.65);
@@ -812,10 +809,7 @@ class CorpusDashboardPaneTest {
 		robot.interact(() -> {
 			pane.applyCss();
 			pane.layout();
-
-			// Under the standard light JavaFX theme these labels must
-			// retain dark text, including those below the Exam table.
-			for (Label label : List.of(provider, year, examState, selectedExam, declaredState)) {
+			for (Label label : List.of(provider, year, examState, selectedSummary)) {
 				assertTrue(label.getTextFill() instanceof Color, label.getText());
 				Color colour = (Color) label.getTextFill();
 				assertTrue(colour.getBrightness() < 0.65, label.getText() + " has unreadable text: " + colour);
@@ -899,29 +893,22 @@ class CorpusDashboardPaneTest {
 	void displaysApprovedExamAndBookletHierarchy(FxRobot robot) {
 		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
 		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
-		Label selectedExam = robot.lookup("#corpus-dashboard-selected-exam").queryAs(Label.class);
-		Label selectedState = robot.lookup("#corpus-dashboard-selected-exam-state").queryAs(Label.class);
 		Label selectedCounts = robot.lookup("#corpus-dashboard-selected-exam-counts").queryAs(Label.class);
 		Label selectedBooklet = robot.lookup("#corpus-dashboard-selected-booklet").queryAs(Label.class);
 		assertEquals(2, exams.getItems().size());
-
-		// Dashboard terminology must use the agreed user-facing corpus concepts rather
-		// than the internal generic asset terminology.
 		assertEquals("Question Booklets", exams.getColumns().get(4).getText());
 		assertEquals("Answer Booklets", exams.getColumns().get(5).getText());
 		assertEquals("Question PDF", booklets.getColumns().get(2).getText());
-
-		// First visible Exam is selected automatically, while booklet scope initially
-		// remains the whole Exam.
 		assertEquals(fixture.completeExamStatus, exams.getSelectionModel().getSelectedItem());
-		assertTrue(selectedExam.getText().contains("QCAA 2025"));
-		assertEquals("Declared state: COMPLETE", selectedState.getText());
-		assertTrue(selectedCounts.getText().contains("Question booklets: 2 / 2"));
-		assertTrue(selectedCounts.getText().contains("Answer booklets: 1 / 1"));
-		assertTrue(selectedCounts.getText().contains("Questions: 54"));
 
-		// The Exam has three ordinary incomplete Questions plus one required MCQ
-		// explanation, so both work dimensions contribute to the operational total.
+		// Exam identity and lifecycle are communicated by the
+		// selected table row, not duplicated beneath the table.
+		assertEquals("COMPLETE", exams.getColumns().get(3).getCellData(fixture.completeExamStatus));
+		assertTrue(robot.lookup("#corpus-dashboard-selected-exam").tryQuery().isEmpty());
+		assertTrue(robot.lookup("#corpus-dashboard-selected-exam-state").tryQuery().isEmpty());
+		assertFalse(selectedCounts.getText().contains("Question booklets:"));
+		assertFalse(selectedCounts.getText().contains("Answer booklets:"));
+		assertTrue(selectedCounts.getText().contains("Questions: 54"));
 		assertTrue(selectedCounts.getText().contains("Need work: 4"));
 		assertEquals(2, booklets.getItems().size());
 		assertNull(booklets.getSelectionModel().getSelectedItem());
@@ -1181,8 +1168,7 @@ class CorpusDashboardPaneTest {
 		assertEquals(1, exams.getItems().size());
 		assertEquals(fixture.activeExamStatus, exams.getSelectionModel().getSelectedItem());
 		assertEquals(1, booklets.getItems().size());
-		Label selectedState = robot.lookup("#corpus-dashboard-selected-exam-state").queryAs(Label.class);
-		assertEquals("Declared state: ACTIVE", selectedState.getText());
+		assertEquals("ACTIVE", exams.getColumns().get(3).getCellData(fixture.activeExamStatus));
 
 		// The representative ACTIVE Question is complete, so the default Needs
 		// attention view contains no Question work.
@@ -1350,18 +1336,14 @@ class CorpusDashboardPaneTest {
 	void horizontalScrollRowsKeepLabelsReadableAfterResize(FxRobot robot) {
 		ScrollPane filters = robot.lookup("#corpus-dashboard-exam-filters-scroll").queryAs(ScrollPane.class);
 		Label providerLabel = (Label) ((HBox) filters.getContent()).getChildren().get(0);
-		Label selectedExamLabel = robot.lookup("#corpus-dashboard-selected-exam").queryAs(Label.class);
+		Label selectedSummary = robot.lookup("#corpus-dashboard-selected-exam-counts").queryAs(Label.class);
 		robot.interact(() -> pane.getScene().getWindow().setWidth(820));
 		WaitForAsyncUtils.waitForFxEvents();
 		robot.interact(pane::applyCss);
-
-		// The standard light Dashboard theme requires dark label text.
-		// Transparent background colour lookups must not turn it white.
 		Color providerText = (Color) providerLabel.getTextFill();
-		Color selectedExamText = (Color) selectedExamLabel.getTextFill();
+		Color summaryText = (Color) selectedSummary.getTextFill();
 		assertTrue(providerText.getBrightness() < 0.65, "Provider label has insufficient contrast: " + providerText);
-		assertTrue(selectedExamText.getBrightness() < 0.65,
-				"Selected Exam label has insufficient contrast: " + selectedExamText);
+		assertTrue(summaryText.getBrightness() < 0.65, "Exam summary has insufficient contrast: " + summaryText);
 	}
 
 	@Test
@@ -1491,13 +1473,16 @@ class CorpusDashboardPaneTest {
 		assertTrue(lifecycle.isDisabled());
 		assertFalse(close.isDisabled());
 		assertFalse(inspect.isDisabled());
-		Label selectedLabel = robot.lookup("#corpus-dashboard-selected-exam").queryAs(Label.class);
-		assertTrue(selectedLabel.getText().contains("ASSIGNED to Test Contributor"));
+		Label selectedSummary = robot.lookup("#corpus-dashboard-selected-exam-counts").queryAs(Label.class);
+		assertTrue(selectedSummary.getText().contains("ASSIGNED to Test Contributor"));
+		assertEquals("ASSIGNED", exams.getColumns().get(3).getCellData(fixture.activeExamStatus));
 		robot.interact(() -> pane.setReadOnlyContext(java.util.Map.of(), false));
 		assertFalse(manage.isDisabled());
 		assertFalse(issue.isDisabled());
 		assertTrue(close.isDisabled());
 		assertFalse(capture.isDisabled());
+		assertFalse(selectedSummary.getText().contains("ASSIGNED to"));
+		assertEquals("ACTIVE", exams.getColumns().get(3).getCellData(fixture.activeExamStatus));
 	}
 
 	@Test
@@ -2511,6 +2496,7 @@ class CorpusDashboardPaneTest {
 	}
 
 	@Test
+	@SuppressWarnings("unchecked")
 	void unsetExpectedCountsAreShownExplicitly(FxRobot robot) {
 		ExamCorpusStatus unsetExpectations = new ExamCorpusStatus(fixture.completeExam,
 				new ExamAssetExpectations(null, 2, null, 1), fixture.completeExamStatus.bookletStatuses(),
@@ -2518,12 +2504,19 @@ class CorpusDashboardPaneTest {
 				EnumSet.noneOf(ExamCorpusFinding.class));
 		robot.interact(
 				() -> pane.replaceData(List.of(unsetExpectations, fixture.activeExamStatus), fixture.questions()));
-		Label selectedCounts = robot.lookup("#corpus-dashboard-selected-exam-counts").queryAs(Label.class);
+		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		TableColumn<ExamCorpusStatus, ?> questionBooklets = exams.getColumns().stream()
+				.filter(column -> "Question Booklets".equals(column.getText())).findFirst().orElseThrow();
+		TableColumn<ExamCorpusStatus, ?> answerBooklets = exams.getColumns().stream()
+				.filter(column -> "Answer Booklets".equals(column.getText())).findFirst().orElseThrow();
 
-		// Missing planning metadata must be distinguishable from a genuine zero count
-		// and from the dash used to represent no ordinary work.
-		assertTrue(selectedCounts.getText().contains("Question booklets: 2 / not recorded"));
-		assertTrue(selectedCounts.getText().contains("Answer booklets: 1 / not recorded"));
+		// Missing expectations remain distinguishable from zero,
+		// even though the redundant summary counts have been removed.
+		robot.interact(() -> {
+			assertTrue(exams.getItems().contains(unsetExpectations));
+			assertEquals("2 / not recorded", questionBooklets.getCellData(unsetExpectations));
+			assertEquals("1 / not recorded", answerBooklets.getCellData(unsetExpectations));
+		});
 	}
 
 	@SuppressWarnings({ "rawtypes", "unchecked" })

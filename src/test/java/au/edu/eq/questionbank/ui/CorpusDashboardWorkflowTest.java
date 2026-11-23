@@ -68,6 +68,7 @@ import au.edu.eq.questionbank.service.audit.BookletCorpusStatus;
 import au.edu.eq.questionbank.service.audit.ExamCorpusStatus;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusWorkItem;
 import au.edu.eq.questionbank.service.legacy.LegacyQuestionWorkbookStore;
+import au.edu.eq.questionbank.ui.audit.CorpusDashboardPane;
 import au.edu.eq.questionbank.ui.exam.ExamAssetsPane;
 import au.edu.eq.questionbank.ui.pdf.PdfFilePicker;
 import javafx.application.Platform;
@@ -945,8 +946,26 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// Even without booklets, the selected Exam must provide
 		// access to structural setup.
-		Button manageAssets = lookup(robot, "#corpus-dashboard-manage-exam-assets", Button.class);
-		assertFalse(manageAssets.isDisabled());
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> WaitForAsyncUtils.asyncFx(() -> {
+			CorpusDashboardPane dashboard = field(application, "corpusDashboardPane", CorpusDashboardPane.class);
+			if (dashboard == null || dashboard.getScene() == null) {
+				return false;
+			}
+			dashboard.applyCss();
+			dashboard.layout();
+			Button manageAssets = field(dashboard, "manageExamAssetsButton", Button.class);
+			TableView<?> currentExams = field(dashboard, "examTable", TableView.class);
+
+			// Wait for the mounted Dashboard, selected Exam,
+			// attached action control and refreshed authority.
+			return currentExams == exams
+					&& currentExams.getSelectionModel().getSelectedItem() instanceof ExamCorpusStatus selected
+					&& selected.exam().getId() == exam.getId() && manageAssets.getScene() == dashboard.getScene()
+					&& !manageAssets.isDisabled();
+		}).get());
+		CorpusDashboardPane dashboard = field(application, "corpusDashboardPane", CorpusDashboardPane.class);
+		Button manageAssets = field(dashboard, "manageExamAssetsButton", Button.class);
+		assertFalse(evaluateOnFx(robot, manageAssets::isDisabled));
 
 		// Adding expectations must update the existing Exam,
 		// not introduce a new Dashboard row.
