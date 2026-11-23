@@ -3,6 +3,7 @@ package au.edu.eq.questionbank.ui.search;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
@@ -26,14 +27,17 @@ import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.Constants;
+import au.edu.eq.questionbank.model.Answer;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.SourceDocument;
+import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
@@ -191,6 +195,141 @@ class QuestionSearchDialogTest {
 			dialog.close();
 			dialog.dispose();
 		});
+	}
+
+	@ParameterizedTest
+	@ValueSource(booleans = { false, true })
+	void completedExamQuestionsRemainReadOnlyInSearch(boolean examInspection, FxRobot robot) throws TimeoutException {
+		Subject chemistry = new Subject(1, "Chemistry");
+		SyllabusVersion syllabus = new SyllabusVersion(2, chemistry, "2025", true);
+		Unit unit = new Unit(3, syllabus, "1", "Unit one", 1);
+		Topic topic = new Topic(4, syllabus, unit, "1.1", "Topic one", 1);
+		Subtopic subtopic = new Subtopic(5, syllabus, topic, "1.1.1", "Subtopic", 1);
+		Descriptor descriptor = new Descriptor(6, syllabus, subtopic, "1.1.1.1", "Descriptor", 1);
+		InMemoryCurriculumRepository curriculum = new InMemoryCurriculumRepository(List.of(chemistry),
+				List.of(syllabus), List.of(unit, topic, subtopic, descriptor));
+		ExamProvider provider = new ExamProvider(7, "QCAA");
+		Exam completedExam = new Exam(8, chemistry, provider, 2025, "Completed Exam", ExamCaptureState.COMPLETE);
+		Exam activeExam = new Exam(9, chemistry, provider, 2024, "Active Exam", ExamCaptureState.ACTIVE);
+		ExamBooklet completedBooklet = new ExamBooklet(10, completedExam, "Paper 1",
+				new SourceDocument(11, "completed-paper.pdf"));
+		ExamBooklet activeBooklet = new ExamBooklet(12, activeExam, "Paper 1",
+				new SourceDocument(13, "active-paper.pdf"));
+
+		// The standalone Questions would ordinarily permit splitting,
+		// Answer editing and inline Descriptor refinement.
+		Question completedStandalone = new Question(21, completedBooklet, "1", "Completed Question", 2, List.of(),
+				subtopic, false);
+		completedStandalone.setAnswer(new Answer(31, "Completed Answer", List.of()));
+		Question activeStandalone = new Question(22, activeBooklet, "1", "Active Question", 2, List.of(), subtopic,
+				false);
+		activeStandalone.setAnswer(new Answer(32, "Active Answer", List.of()));
+
+		// Multipart Questions additionally exercise Shared Context editing.
+		SourceQuestion completedSource = new SourceQuestion(41, completedBooklet, "2");
+		SourceQuestion activeSource = new SourceQuestion(42, activeBooklet, "2");
+		Question completedPart = new Question(23, completedBooklet, "2a", "Completed part", 2, List.of(), descriptor,
+				false, completedSource, null);
+		Question activePart = new Question(24, activeBooklet, "2a", "Active part", 2, List.of(), descriptor, false,
+				activeSource, null);
+		QuestionSearchNarrowing narrowing = examInspection ? QuestionSearchNarrowing.forExam(completedExam)
+				: QuestionSearchNarrowing.unrestricted();
+		QuestionRetrievalRepository repository = _ -> List.of();
+		QuestionRetrievalService retrieval = new QuestionRetrievalService(repository,
+				new CurriculumSearchNodeExpansionService(curriculum));
+		QuestionPreviewService preview = new QuestionPreviewService(new PdfStore(tempDirectory),
+				new QuestionExtractor());
+		QuestionSearchDialog[] holder = new QuestionSearchDialog[1];
+		robot.interact(() -> {
+			holder[0] = new QuestionSearchDialog(stage, chemistry, curriculum, retrieval,
+					() -> List.of(completedStandalone, completedPart, activeStandalone, activePart), preview,
+					new InMemoryQuestionOutputApplicabilityRepository(), (_, _) -> {
+						throw new AssertionError("Classification persistence was not expected");
+					}, narrowing);
+			holder[0].show();
+		});
+		QuestionSearchDialog dialog = holder[0];
+		try {
+			ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+			ComboBox<CurriculumNode> descriptorBox = robot.lookup("#question-search-selected-descriptor")
+					.queryComboBox();
+			Button editQuestion = robot.lookup("#question-search-edit-question").queryButton();
+			Button splitQuestion = robot.lookup("#question-search-split-question").queryButton();
+			Button editMetadata = robot.lookup("#question-search-edit-metadata").queryButton();
+			Button editSharedContext = robot.lookup("#question-search-recapture-shared-context").queryButton();
+			Button editAnswer = robot.lookup("#question-search-edit-answer").queryButton();
+			Button saveClassification = robot.lookup("#question-search-save-classification").queryButton();
+			Button include = robot.lookup("#question-search-output-include").queryButton();
+			Button exclude = robot.lookup("#question-search-output-exclude").queryButton();
+			Button close = (Button) dialog.getDialogPane().lookupButton(ButtonType.CLOSE);
+			List<Button> editControls = List.of(editQuestion, splitQuestion, editMetadata, editSharedContext,
+					editAnswer, saveClassification, include, exclude);
+			int expectedCount = examInspection ? 2 : 4;
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+					() -> onFx(robot, () -> results.getItems().size() == expectedCount));
+			for (Question question : List.of(completedStandalone, completedPart)) {
+				robot.interact(() -> {
+					results.getSelectionModel().select(results.getItems().stream()
+							.filter(result -> result.question().getId() == question.getId()).findFirst().orElseThrow());
+
+					// Selecting a COMPLETE Question must not activate
+					// any editing control or disable ordinary inspection.
+					for (Button control : editControls) {
+						assertTrue(control.isDisabled(), control.getId());
+					}
+					assertTrue(descriptorBox.isDisabled());
+					assertFalse(results.isDisabled());
+					assertFalse(close.isDisabled());
+
+					// Even direct result conversion must not publish
+					// an edit request for a COMPLETE Question.
+					for (ButtonType type : dialog.getDialogPane().getButtonTypes()) {
+						assertNull(dialog.getResultConverter().call(type));
+					}
+				});
+			}
+			if (!examInspection) {
+				robot.interact(() -> {
+					results.getSelectionModel()
+							.select(results.getItems().stream()
+									.filter(result -> result.question().getId() == activeStandalone.getId()).findFirst()
+									.orElseThrow());
+
+					// The restriction belongs to the selected Question,
+					// not the entire Search dialog or Working Subject.
+					assertFalse(editQuestion.isDisabled());
+					assertFalse(splitQuestion.isDisabled());
+					assertFalse(editMetadata.isDisabled());
+					assertFalse(editAnswer.isDisabled());
+					assertFalse(descriptorBox.isDisabled());
+					assertTrue(editSharedContext.isDisabled());
+					results.getSelectionModel()
+							.select(results.getItems().stream()
+									.filter(result -> result.question().getId() == activePart.getId()).findFirst()
+									.orElseThrow());
+					assertFalse(editQuestion.isDisabled());
+					assertFalse(editMetadata.isDisabled());
+					assertFalse(editSharedContext.isDisabled());
+					assertTrue(splitQuestion.isDisabled());
+
+					// Returning to a COMPLETE Question must restore
+					// every restriction immediately.
+					results.getSelectionModel()
+							.select(results.getItems().stream()
+									.filter(result -> result.question().getId() == completedStandalone.getId())
+									.findFirst().orElseThrow());
+					for (Button control : editControls) {
+						assertTrue(control.isDisabled(), control.getId());
+					}
+					assertTrue(descriptorBox.isDisabled());
+				});
+			}
+		} finally {
+			robot.interact(() -> {
+				dialog.close();
+				dialog.dispose();
+			});
+		}
 	}
 
 	@ParameterizedTest

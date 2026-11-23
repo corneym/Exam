@@ -287,6 +287,10 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 		// A dirty Descriptor must be resolved before full Question editing begins,
 		// while Edit Question itself remains available.
 		editQuestionButton.addEventFilter(ActionEvent.ACTION, event -> {
+			if (searchPane.isSelectedQuestionReadOnly()) {
+				event.consume();
+				return;
+			}
 			if (!searchPane.isClassificationDirty()) {
 				return;
 			}
@@ -594,7 +598,7 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	private Question savePendingClassification() {
 		Question selected = searchPane.getSelectedQuestion();
 		CurriculumNode classification = searchPane.getPendingClassification();
-		if (selected == null || classification == null) {
+		if (selected == null || classification == null || searchPane.isSelectedQuestionReadOnly()) {
 			return null;
 		}
 		try {

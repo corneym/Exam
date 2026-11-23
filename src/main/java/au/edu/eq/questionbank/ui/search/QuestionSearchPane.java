@@ -390,8 +390,7 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	boolean isSelectedQuestionReadOnly() {
-		Question question = getSelectedQuestion();
-		return question != null && readOnlyQuestionPredicate.get().test(question);
+		return isQuestionReadOnly(getSelectedQuestion());
 	}
 
 	/**
@@ -524,6 +523,9 @@ public class QuestionSearchPane extends BorderPane {
 			throw new IllegalStateException("Resolve the pending classification before changing editing permissions");
 		}
 		readOnlyQuestionPredicate.set(Objects.requireNonNull(predicate, "predicate"));
+
+		// Recalculate editing permissions for any already selected Question.
+		showSelectedClassification(resultsList.getSelectionModel().getSelectedItem());
 		updateOutputApplicabilityActionState();
 	}
 
@@ -1738,7 +1740,7 @@ public class QuestionSearchPane extends BorderPane {
 		}
 		Question question = getSelectedQuestion();
 		QuestionOutputApplicabilityRow row = outputApplicabilityList.getSelectionModel().getSelectedItem();
-		if (question == null || isOutputApplicabilityReadOnly(question) || row == null || row.excluded() == excluded) {
+		if (question == null || isQuestionReadOnly(question) || row == null || row.excluded() == excluded) {
 			return;
 		}
 
@@ -1788,7 +1790,7 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private void handleSelectedDescriptorSelection() {
-		if (updatingSelectedClassification || disposed) {
+		if (updatingSelectedClassification || disposed || isSelectedQuestionReadOnly()) {
 			return;
 		}
 		Question question = getSelectedQuestion();
@@ -1860,7 +1862,7 @@ public class QuestionSearchPane extends BorderPane {
 		statusLabel.setText("");
 	}
 
-	private boolean isOutputApplicabilityReadOnly(Question question) {
+	private boolean isQuestionReadOnly(Question question) {
 		return question != null && (question.getExam().isComplete() || readOnlyQuestionPredicate.get().test(question));
 	}
 
@@ -1986,7 +1988,7 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private Void persistOutputApplicabilityChange(Question question, CurriculumNode currentNode, boolean excluded) {
-		if (isOutputApplicabilityReadOnly(question)) {
+		if (isQuestionReadOnly(question)) {
 			throw new IllegalStateException("Revision output applicability is read-only "
 					+ "while the Exam is complete or assigned, " + "or its Subject is externally authoritative.");
 		}
@@ -2987,7 +2989,7 @@ public class QuestionSearchPane extends BorderPane {
 		QuestionOutputApplicabilityRow selected = outputApplicabilityList.getSelectionModel().getSelectedItem();
 		boolean saving = activeOutputApplicabilityUpdateTask != null;
 		boolean editingClassification = classificationDirty.get();
-		boolean readOnly = isOutputApplicabilityReadOnly(getSelectedQuestion());
+		boolean readOnly = isSelectedQuestionReadOnly();
 		outputApplicabilityList.setDisable(saving);
 		includeOutputApplicabilityButton
 				.setDisable(saving || editingClassification || readOnly || selected == null || !selected.excluded());
