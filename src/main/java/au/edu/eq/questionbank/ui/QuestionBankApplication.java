@@ -424,6 +424,7 @@ public class QuestionBankApplication extends Application {
 	private boolean packageImportInProgress;
 	private final StackPane corpusDashboardCurriculumHost = new StackPane();
 	private Menu curriculumMenu;
+	private Map<UUID, String> assignmentDisplayLabels = Map.of();
 
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
@@ -1047,6 +1048,46 @@ public class QuestionBankApplication extends Application {
 		return true;
 	}
 
+	private Map<UUID, String> buildAssignmentDisplayLabels(SqliteDatabase database,
+			List<SqliteContributorAssignmentSessionRepository.Session> sessions) throws SQLException {
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		Map<Long, List<Exam>> examsBySubject = new HashMap<>();
+		Map<UUID, String> descriptions = new LinkedHashMap<>();
+		Map<UUID, String> subjectNames = new HashMap<>();
+		for (var session : sessions) {
+			var context = contributorAssignmentResolver.require(session.assignmentId());
+			Subject subject = context.subject();
+			List<Exam> exams = examsBySubject.get(subject.getId());
+			if (exams == null) {
+				exams = writer.findExamsForSubject(subject);
+				examsBySubject.put(subject.getId(), exams);
+			}
+			Exam exam = exams.stream().filter(candidate -> candidate.getId() == session.examLocalId()).findFirst()
+					.orElseThrow(() -> new SQLException("Assigned Exam metadata is unavailable"));
+			String description = "%s %d %s".formatted(exam.getProvider().getName(), exam.getYear(), exam.getName());
+			descriptions.put(session.assignmentId(), description);
+			subjectNames.put(session.assignmentId(), subject.getName());
+		}
+
+		// Include Subject only when the ordinary Exam description
+		// does not distinguish the available assignments.
+		Map<String, Long> descriptionCounts = descriptions.values().stream()
+				.collect(Collectors.groupingBy(description -> description, Collectors.counting()));
+		Map<UUID, String> labels = new LinkedHashMap<>();
+		descriptions.forEach((id, description) -> {
+			String label = descriptionCounts.get(description) > 1 ? subjectNames.get(id) + " — " + description
+					: description;
+			labels.put(id, label);
+		});
+
+		// Retain unambiguous selection even if two assignments
+		// have identical Subject and Exam descriptions.
+		Map<String, Long> labelCounts = labels.values().stream()
+				.collect(Collectors.groupingBy(label -> label, Collectors.counting()));
+		labels.replaceAll((id, label) -> labelCounts.get(label) > 1 ? label + " (" + id + ")" : label);
+		return Map.copyOf(labels);
+	}
+
 	private void cancelPendingLegacyQuestionImport() {
 
 		// User cancellation abandons the pending workbook transaction but may also need
@@ -1607,13 +1648,14 @@ public class QuestionBankApplication extends Application {
 				if (session == null) {
 					return "";
 				}
-				String shortId = session.assignmentId().toString().substring(0, 8);
-				return "Exam " + session.examLocalId() + " — " + session.contributorName() + " (" + shortId + ")";
+
+				// JavaFX cell rendering must not perform SQLite reads.
+				return assignmentDisplayLabels.getOrDefault(session.assignmentId(), "Assignment unavailable");
 			}
 		});
 		assignmentRemoveButton.setId("corpus-dashboard-remove-assignment");
 		assignmentRemoveButton.setTooltip(new Tooltip("Remove an unchanged work package from the active list. "
-				+ "Assignments with saved work must be submitted instead."));
+				+ "Assignments with saved work must be " + "submitted instead."));
 		assignmentRemoveButton.setOnAction(_ -> removeContributorAssignment());
 		assignmentSelector.valueProperty().addListener((_, _, selected) -> {
 			updateContributorAssignmentActions();
@@ -4159,6 +4201,10 @@ public class QuestionBankApplication extends Application {
 					.copyOf(new SqliteContributorAssignmentVisibilityRepository(database).findActiveAssignmentIds());
 			List<SqliteContributorAssignmentSessionRepository.Session> installed = contributorAssignments.findAll()
 					.stream().filter(session -> activeIds.contains(session.assignmentId())).toList();
+
+			// Resolve authoritative descriptions before publishing
+			// the selector items so cell rendering is persistence-free.
+			assignmentDisplayLabels = buildAssignmentDisplayLabels(database, installed);
 			assignmentSelector.getItems().setAll(installed);
 			if (activeAssignmentContext == null) {
 				assignmentSelector.getSelectionModel().clearSelection();

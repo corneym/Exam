@@ -104,6 +104,39 @@ class ContributorAssignmentDashboardWorkflowTest {
 	}
 
 	@Test
+	@SuppressWarnings("unchecked")
+	void assignmentSelectorDisplaysAuthoritativeExamDescription(FxRobot robot) throws Exception {
+		awaitAssignedDashboard(robot);
+		ComboBox<SqliteContributorAssignmentSessionRepository.Session> assignments = robot
+				.lookup("#corpus-dashboard-assignment-selector").queryAs(ComboBox.class);
+		robot.interact(() -> {
+			assertEquals(1, assignments.getItems().size());
+			var selected = assignments.getValue();
+			assertNotNull(selected);
+			assertEquals(assignmentId, selected.assignmentId());
+			String description = assignments.getConverter().toString(selected);
+
+			// Display meaningful Exam metadata rather than
+			// installation-specific identifiers.
+			assertEquals("QCAA 2025 External Assessment", description);
+			assertFalse(description.contains(selected.contributorName()));
+			assertFalse(description.contains(selected.assignmentId().toString()));
+			assertEquals("", assignments.getConverter().toString(null));
+		});
+
+		// Refreshing the assignment catalogue must preserve
+		// both its display description and selected identity.
+		robot.interact(() -> invoke("refreshContributorAssignmentToolbar", new Class<?>[0]));
+		robot.interact(() -> {
+			assertEquals(1, assignments.getItems().size());
+			assertNotNull(assignments.getValue());
+			assertEquals(assignmentId, assignments.getValue().assignmentId());
+			assertEquals("QCAA 2025 External Assessment", assignments.getConverter().toString(assignments.getValue()));
+		});
+		assertEquals(assignmentId, sessions().active().orElseThrow().assignmentId());
+	}
+
+	@Test
 	void cancelledHiddenInstallationReleasesApplication(FxRobot robot) throws Exception {
 		awaitAssignedDashboard(robot);
 		CountDownLatch entered = new CountDownLatch(1);
