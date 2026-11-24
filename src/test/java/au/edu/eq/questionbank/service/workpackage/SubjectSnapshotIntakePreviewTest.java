@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.service.workpackage;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -8,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -21,6 +23,9 @@ import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.repository.sqlite.SqliteImportedSubjectAuthorityRepository;
+import au.edu.eq.questionbank.repository.sqlite.SqliteSubjectImportLedger;
+import au.edu.eq.questionbank.service.workpackage.SubjectImportSnapshotFingerprint.Fingerprint;
+import au.edu.eq.questionbank.service.workpackage.SubjectImportSnapshotFingerprint.SnapshotEvidence;
 
 /**
  * Verifies one-file Subject inspection against independent installations.
@@ -85,22 +90,14 @@ class SubjectSnapshotIntakePreviewTest {
 
 	@Test
 	void refreshRejectsDifferentSubjectIdentityWithinSameInstallation() throws Exception {
-
 		SqliteDatabase source = createDatabase("refresh-wrong-subject-source");
-
 		insertSubject(source, 1, "Biology");
-
 		SqliteDatabase destination = createDatabase("refresh-wrong-subject-destination");
-
 		ApplicationConfig config = ApplicationConfig
 				.fromDataRoot(directory.resolve("refresh-wrong-subject-destination"));
-
 		Path original = export(source, "refresh-wrong-subject-source", 1, "refresh-original-subject.examwork");
-
 		var preview = new SubjectSnapshotIntakePreview(destination);
-
 		var initial = preview.inspect(original);
-
 		assertTrue(new SubjectImportCoordinator(config).executeNewSubject(initial, original).applied());
 
 		// Retain the original authoritative Subject under a
@@ -112,107 +109,145 @@ class SubjectSnapshotIntakePreviewTest {
 						SET subject_name = 'Historical Biology'
 						WHERE id = 1
 						""")) {
-
 			assertEquals(1, statement.executeUpdate());
 		}
-
 		insertSubject(source, 2, "Biology");
-
 		Path differentSubject = export(source, "refresh-wrong-subject-source", 2, "refresh-different-subject.examwork");
-
 		var inspection = preview.inspect(differentSubject);
-
 		assertEquals(SubjectSnapshotIntakePreview.State.EXISTING_SUBJECT, inspection.state());
-
 		assertEquals(initial.fingerprint().originInstallationId(), inspection.fingerprint().originInstallationId());
-
 		assertTrue(!initial.fingerprint().subjectId().equals(inspection.fingerprint().subjectId()));
-
 		PackageFormatException failure = assertThrows(PackageFormatException.class,
 				() -> preview.requireRefreshAuthority(inspection));
-
 		assertTrue(failure.getMessage().contains("different originating Subject identity"));
-
 		assertEquals(1, countSubjects(destination));
-
 		long localSubjectId = inspection.existingSubjectId().longValue();
-
 		var authority = new SqliteImportedSubjectAuthorityRepository(destination).find(localSubjectId).orElseThrow();
-
 		assertEquals(initial.fingerprint().subjectId(), authority.originSubjectPortableId());
-
 		assertEquals(initial.fingerprint().packageId(), authority.latestPackageId());
-
 		destination.verifyIntegrity();
 	}
 
 	@Test
 	void refreshRejectsLocallyAuthoritativeSubject() throws Exception {
-
 		SqliteDatabase source = createDatabase("refresh-local-source");
 		insertSubject(source, 1, "Biology");
-
 		SqliteDatabase destination = createDatabase("refresh-local-destination");
-
 		insertSubject(destination, 51, "Biology");
-
 		Path archive = export(source, "refresh-local-source", 1, "refresh-local.examwork");
-
 		var preview = new SubjectSnapshotIntakePreview(destination);
 		var inspection = preview.inspect(archive);
-
 		assertEquals(SubjectSnapshotIntakePreview.State.EXISTING_SUBJECT, inspection.state());
-
 		assertEquals(51L, inspection.existingSubjectId());
-
 		PackageFormatException failure = assertThrows(PackageFormatException.class,
 				() -> preview.requireRefreshAuthority(inspection));
-
 		assertTrue(failure.getMessage().contains("locally authoritative"));
-
 		assertEquals(1, countSubjects(destination));
 		assertEquals("Biology", subjectName(destination, 51));
-
 		assertTrue(new SqliteImportedSubjectAuthorityRepository(destination).find(51L).isEmpty());
-
 		destination.verifyIntegrity();
 	}
 
 	@Test
 	void refreshRejectsNewSubjectAndPreviouslyAppliedPackage() throws Exception {
-
 		SqliteDatabase source = createDatabase("refresh-replay-source");
-
 		insertSubject(source, 1, "Biology");
-
 		SqliteDatabase destination = createDatabase("refresh-replay-destination");
-
 		ApplicationConfig config = ApplicationConfig.fromDataRoot(directory.resolve("refresh-replay-destination"));
-
 		Path archive = export(source, "refresh-replay-source", 1, "refresh-replay.examwork");
-
 		var preview = new SubjectSnapshotIntakePreview(destination);
-
 		var initial = preview.inspect(archive);
-
 		assertEquals(SubjectSnapshotIntakePreview.State.NEW_SUBJECT, initial.state());
-
 		assertThrows(PackageFormatException.class, () -> preview.requireRefreshAuthority(initial));
-
 		assertEquals(0, countSubjects(destination));
-
 		assertTrue(new SubjectImportCoordinator(config).executeNewSubject(initial, archive).applied());
-
 		var replay = preview.inspect(archive);
-
 		assertEquals(SubjectSnapshotIntakePreview.State.ALREADY_IMPORTED, replay.state());
 
 		// The ordinary intake route may report an idempotent replay,
 		// but it must not prepare another refresh transaction.
 		assertThrows(PackageFormatException.class, () -> preview.requireRefreshAuthority(replay));
-
 		assertEquals(1, countSubjects(destination));
+		destination.verifyIntegrity();
+	}
 
+	@Test
+	void rejectsCaseOnlyChangeToImportedSubjectName() throws Exception {
+		SqliteDatabase source = createDatabase("refresh-name-case-source");
+		insertSubject(source, 1L, "Biology");
+		SqliteDatabase destination = createDatabase("refresh-name-case-destination");
+		ApplicationConfig config = ApplicationConfig.fromDataRoot(directory.resolve("refresh-name-case-destination"));
+		Path original = export(source, "refresh-name-case-source", 1L, "refresh-name-case-original.examwork");
+		var preview = new SubjectSnapshotIntakePreview(destination);
+		var initial = preview.inspect(original);
+		assertTrue(new SubjectImportCoordinator(config).executeNewSubject(initial, original).applied());
+		long localSubjectId = new SqliteCurriculumRepository(destination).findAllSubjects().getFirst().getId();
+		var authority = new SqliteImportedSubjectAuthorityRepository(destination).find(localSubjectId).orElseThrow();
+
+		// A case-insensitive collision must not permit the
+		// canonical Subject name to change.
+		try (Connection connection = source.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						UPDATE subjects
+						SET subject_name = 'BIOLOGY'
+						WHERE id = 1
+						""")) {
+			assertEquals(1, statement.executeUpdate());
+		}
+		Path changed = export(source, "refresh-name-case-source", 1L, "refresh-name-case-changed.examwork");
+		SQLException failure = assertThrows(SQLException.class, () -> preview.inspect(changed));
+		assertTrue(failure.getMessage().contains("Subject names are immutable"));
+		assertEquals(1, countSubjects(destination));
+		assertEquals("Biology", subjectName(destination, localSubjectId));
+		assertEquals(authority,
+				new SqliteImportedSubjectAuthorityRepository(destination).find(localSubjectId).orElseThrow());
+		destination.verifyIntegrity();
+	}
+
+	@Test
+	void rejectsChangedNameDuringTransactionalRefreshRevalidation() throws Exception {
+		SqliteDatabase source = createDatabase("refresh-name-revalidation-source");
+		insertSubject(source, 1L, "Biology");
+		SqliteDatabase destination = createDatabase("refresh-name-revalidation-destination");
+		ApplicationConfig config = ApplicationConfig
+				.fromDataRoot(directory.resolve("refresh-name-revalidation-destination"));
+		Path original = export(source, "refresh-name-revalidation-source", 1L,
+				"refresh-name-revalidation-original.examwork");
+		var preview = new SubjectSnapshotIntakePreview(destination);
+		var initial = preview.inspect(original);
+		assertTrue(new SubjectImportCoordinator(config).executeNewSubject(initial, original).applied());
+		long localSubjectId = new SqliteCurriculumRepository(destination).findAllSubjects().getFirst().getId();
+		var authority = new SqliteImportedSubjectAuthorityRepository(destination).find(localSubjectId).orElseThrow();
+		Path subsequent = export(source, "refresh-name-revalidation-source", 1L,
+				"refresh-name-revalidation-subsequent.examwork");
+		var inspection = preview.inspect(subsequent);
+		assertEquals(SubjectSnapshotIntakePreview.State.EXISTING_SUBJECT, inspection.state());
+		assertEquals(authority, preview.requireRefreshAuthority(inspection));
+
+		// Construct deliberately inconsistent inspection evidence.
+		// This represents a changed incoming name presented to the
+		// transactional revalidation boundary after valid inspection.
+		var originalFingerprint = inspection.fingerprint();
+		var invalidFingerprint = new Fingerprint(originalFingerprint.packageId(),
+				originalFingerprint.originInstallationId(), originalFingerprint.subjectId(), "Biological Science",
+				originalFingerprint.contentSha256(), originalFingerprint.archiveSha256());
+		var invalidInspection = new SubjectSnapshotIntakePreview.Inspection(invalidFingerprint, inspection.state(),
+				inspection.existingSubjectId(), inspection.recordCounts(), inspection.records(), inspection.assets());
+		try (Connection connection = destination.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				SQLException failure = assertThrows(SQLException.class,
+						() -> preview.requireRefreshAuthority(connection, invalidInspection));
+				assertTrue(failure.getMessage().contains("Subject names are immutable"));
+			} finally {
+				connection.rollback();
+			}
+		}
+		assertEquals(authority,
+				new SqliteImportedSubjectAuthorityRepository(destination).find(localSubjectId).orElseThrow());
+		assertEquals("Biology", subjectName(destination, localSubjectId));
+		assertEquals(1, countSubjects(destination));
+		assertTrue(new SqliteSubjectImportLedger(destination).find(originalFingerprint.packageId()).isEmpty());
 		destination.verifyIntegrity();
 	}
 
@@ -238,76 +273,102 @@ class SubjectSnapshotIntakePreviewTest {
 
 	@Test
 	void renamedOriginCannotBecomeDuplicateNewSubject() throws Exception {
-
 		SqliteDatabase source = createDatabase("refresh-rename-source");
-
 		insertSubject(source, 1, "Biology");
-
 		SqliteDatabase destination = createDatabase("refresh-rename-destination");
-
 		ApplicationConfig config = ApplicationConfig.fromDataRoot(directory.resolve("refresh-rename-destination"));
-
 		Path original = export(source, "refresh-rename-source", 1, "refresh-rename-original.examwork");
-
 		var preview = new SubjectSnapshotIntakePreview(destination);
-
 		var initial = preview.inspect(original);
-
 		SubjectImportCoordinator coordinator = new SubjectImportCoordinator(config);
-
 		assertTrue(coordinator.executeNewSubject(initial, original).applied());
+		long localSubjectId = new SqliteCurriculumRepository(destination).findAllSubjects().getFirst().getId();
+		var originalAuthority = new SqliteImportedSubjectAuthorityRepository(destination).find(localSubjectId)
+				.orElseThrow();
 
-		var originalAuthority = new SqliteImportedSubjectAuthorityRepository(destination)
-				.find(new SqliteCurriculumRepository(destination).findAllSubjects().getFirst().getId()).orElseThrow();
-
-		// Rename the authoritative Subject without changing its
-		// originating installation or portable Subject identity.
+		// Deliberately create an invalid authoritative snapshot
+		// with an altered Subject name but unchanged originating
+		// installation and portable Subject identity.
 		try (Connection connection = source.openConnection();
 				PreparedStatement statement = connection.prepareStatement("""
 						UPDATE subjects
 						SET subject_name = ?
 						WHERE id = ?
 						""")) {
-
 			statement.setString(1, "Biological Science");
 			statement.setLong(2, 1L);
-
 			assertEquals(1, statement.executeUpdate());
 		}
-
 		Path renamed = export(source, "refresh-rename-source", 1, "refresh-renamed.examwork");
+		var fingerprint = new SubjectImportSnapshotFingerprint().inspect(renamed);
+		assertEquals(originalAuthority.originInstallationId(), fingerprint.originInstallationId());
+		assertEquals(originalAuthority.originSubjectPortableId(), fingerprint.subjectId());
+		assertEquals("Biological Science", fingerprint.subjectName());
 
-		var inspection = preview.inspect(renamed);
-
-		assertEquals(SubjectSnapshotIntakePreview.State.EXISTING_SUBJECT, inspection.state());
-
-		assertEquals(originalAuthority.subjectLocalId(), inspection.existingSubjectId().longValue());
-
-		assertEquals(originalAuthority.originSubjectPortableId(), inspection.fingerprint().subjectId());
-
-		assertEquals(originalAuthority, preview.requireRefreshAuthority(inspection));
-
-		// Eligibility identifies the established Subject.
-		// It does not perform the rename or install another Subject.
-		assertThrows(IOException.class, () -> coordinator.executeNewSubject(inspection, renamed));
-
+		// The invalid package must be rejected during intake,
+		// not presented as an eligible refresh or new Subject.
+		SQLException failure = assertThrows(SQLException.class, () -> preview.inspect(renamed));
+		assertTrue(failure.getMessage().contains("Subject names are immutable"));
 		assertEquals(1, countSubjects(destination));
+		assertEquals("Biology", subjectName(destination, localSubjectId));
+		assertEquals(originalAuthority,
+				new SqliteImportedSubjectAuthorityRepository(destination).find(localSubjectId).orElseThrow());
+		assertTrue(new SqliteSubjectImportLedger(destination).find(fingerprint.packageId()).isEmpty());
 
-		assertEquals("Biology", subjectName(destination, originalAuthority.subjectLocalId()));
-
-		assertEquals(originalAuthority, new SqliteImportedSubjectAuthorityRepository(destination)
-				.find(originalAuthority.subjectLocalId()).orElseThrow());
-
-		// A separate local Subject with the incoming name creates
-		// an ambiguous destination that must fail closed.
+		// A separate local Subject with the incoming name also
+		// creates an ambiguous destination that must fail closed.
 		insertSubject(destination, 99, "Biological Science");
-
-		assertThrows(SQLException.class, () -> preview.inspect(renamed));
-
+		SQLException ambiguous = assertThrows(SQLException.class, () -> preview.inspect(renamed));
+		assertTrue(ambiguous.getMessage().contains("different destination Subjects"));
 		assertEquals(2, countSubjects(destination));
+		assertEquals("Biology", subjectName(destination, localSubjectId));
 		assertEquals("Biological Science", subjectName(destination, 99));
-
+		assertEquals(originalAuthority,
+				new SqliteImportedSubjectAuthorityRepository(destination).find(localSubjectId).orElseThrow());
 		destination.verifyIntegrity();
+	}
+
+	@Test
+	void snapshotEvidenceDistinguishesContentFromPackageIdentity() throws Exception {
+		SqliteDatabase source = createDatabase("snapshot-content-source");
+		insertSubject(source, 1L, "Biology");
+		Path firstArchive = export(source, "snapshot-content-source", 1L, "snapshot-content-first.examwork");
+		Path secondArchive = export(source, "snapshot-content-source", 1L, "snapshot-content-second.examwork");
+		SubjectImportSnapshotFingerprint fingerprints = new SubjectImportSnapshotFingerprint();
+		SnapshotEvidence first = fingerprints.inspectEvidence(firstArchive);
+		SnapshotEvidence second = fingerprints.inspectEvidence(secondArchive);
+
+		// Independent exports of unchanged Subject content
+		// retain the same semantic content fingerprint.
+		assertEquals(first.fingerprint().contentSha256(), second.fingerprint().contentSha256());
+		assertNotEquals(first.fingerprint().packageId(), second.fingerprint().packageId());
+		assertNotEquals(first.fingerprint().archiveSha256(), second.fingerprint().archiveSha256());
+		assertEquals(first.fingerprint().subjectId(), second.fingerprint().subjectId());
+		assertEquals(first.fingerprint().originInstallationId(), second.fingerprint().originInstallationId());
+		source.verifyIntegrity();
+	}
+
+	@Test
+	void snapshotEvidenceRetainsManifestCreationTime() throws Exception {
+		SqliteDatabase source = createDatabase("snapshot-evidence-source");
+		insertSubject(source, 1L, "Biology");
+		Path archive = directory.resolve("snapshot-evidence-original.examwork");
+		ExamWorkManifest manifest = new SubjectSnapshotExporter(source,
+				new ManagedDataLayout(directory.resolve("snapshot-evidence-source"))).export(1L, archive);
+		SubjectImportSnapshotFingerprint fingerprints = new SubjectImportSnapshotFingerprint();
+		SnapshotEvidence evidence = fingerprints.inspectEvidence(archive);
+		assertEquals(manifest.createdAt(), evidence.createdAt());
+		assertEquals(manifest.packageId(), evidence.fingerprint().packageId());
+		assertEquals(manifest.originInstallationId(), evidence.fingerprint().originInstallationId());
+		assertEquals(manifest.subjectId(), evidence.fingerprint().subjectId());
+		assertEquals(manifest.subjectName(), evidence.fingerprint().subjectName());
+		assertEquals(fingerprints.inspect(archive), evidence.fingerprint());
+
+		// Filesystem modification time must not influence
+		// the originating creation timestamp or archive digest.
+		Files.setLastModifiedTime(archive, FileTime.from(manifest.createdAt().plusSeconds(86400)));
+		assertEquals(evidence, fingerprints.inspectEvidence(archive));
+		source.verifyIntegrity();
 	}
 
 	private int countSubjects(SqliteDatabase database) throws SQLException {

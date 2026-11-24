@@ -356,40 +356,24 @@ class SubjectImportCoordinatorIntegrationTest {
 
 	@Test
 	void refreshEligibilityPreservesImportedAuthorityAndUnrelatedSubjects() throws Exception {
-
 		ApplicationConfig destination = ApplicationConfig.fromDataRoot(directory.resolve("refresh-eligible-target"));
-
 		Files.createDirectories(destination.dataRoot());
-
 		SqliteDatabase database = new SqliteDatabase(destination.databasePath());
-
 		database.initialiseSchema();
-
 		execute(database, """
 				INSERT INTO subjects (id, subject_name)
 				VALUES (100, 'Chemistry')
 				""");
-
 		Path original = createIndependentSnapshot("Biology", "refresh-eligible-source");
-
 		var preview = new SubjectSnapshotIntakePreview(database);
-
 		var initial = preview.inspect(original);
-
 		SubjectImportCoordinator coordinator = new SubjectImportCoordinator(destination);
-
 		var installation = coordinator.executeNewSubject(initial, original);
-
 		assertTrue(installation.applied());
-
 		long subjectId = findSubjectId(database, "Biology");
-
 		SqliteImportedSubjectAuthorityRepository authorities = new SqliteImportedSubjectAuthorityRepository(database);
-
 		var originalAuthority = authorities.find(subjectId).orElseThrow();
-
 		ApplicationConfig source = ApplicationConfig.fromDataRoot(directory.resolve("refresh-eligible-source"));
-
 		SqliteDatabase sourceDatabase = new SqliteDatabase(source.databasePath());
 
 		// Make a genuine authoritative change while preserving
@@ -399,108 +383,65 @@ class SubjectImportCoordinatorIntegrationTest {
 				SET marks = 3
 				WHERE id = 81
 				""");
-
 		Path updated = directory.resolve("refresh-eligible-updated.examwork");
-
 		new SubjectSnapshotExporter(sourceDatabase, new ManagedDataLayout(source.dataRoot())).export(1L, updated);
-
 		var inspection = preview.inspect(updated);
-
 		assertEquals(SubjectSnapshotIntakePreview.State.EXISTING_SUBJECT, inspection.state());
-
 		assertEquals(subjectId, inspection.existingSubjectId().longValue());
-
 		assertFalse(initial.fingerprint().packageId().equals(inspection.fingerprint().packageId()));
-
 		assertFalse(initial.fingerprint().contentSha256().equals(inspection.fingerprint().contentSha256()));
-
 		assertEquals(originalAuthority, preview.requireRefreshAuthority(inspection));
 
 		// Eligibility inspection must not advance the latest
 		// accepted package or mutate any authoritative records.
 		assertEquals(originalAuthority, authorities.find(subjectId).orElseThrow());
-
 		assertEquals(100L, findSubjectId(database, "Chemistry"));
-
 		assertFalse(authorities.isImported(100L));
-
 		assertTrue(new SqliteSubjectImportLedger(database).find(inspection.fingerprint().packageId()).isEmpty());
-
 		try (Connection connection = database.openConnection()) {
-
 			assertEquals(2, count(connection, "SELECT COUNT(*) FROM subjects"));
-
 			assertEquals(1, count(connection, "SELECT COUNT(*) FROM questions WHERE marks = 2"));
-
 			assertEquals(0, count(connection, "SELECT COUNT(*) FROM questions WHERE marks = 3"));
-
 			assertEquals(1, count(connection, "SELECT COUNT(*) FROM subject_import_packages"));
-
 			assertEquals(1, count(connection, "SELECT COUNT(*) FROM imported_subject_authorities"));
 		}
 
 		// The current new-Subject service must remain incapable
 		// of publishing an eligible subsequent snapshot.
 		assertThrows(IOException.class, () -> coordinator.executeNewSubject(inspection, updated));
-
 		assertImportedSubjectGraph(database, destination, "Biology");
-
 		database.verifyIntegrity();
 	}
 
 	@Test
 	void refreshRejectsDifferentOriginInstallation() throws Exception {
-
 		ApplicationConfig destination = ApplicationConfig
 				.fromDataRoot(directory.resolve("refresh-wrong-origin-target"));
-
 		Files.createDirectories(destination.dataRoot());
-
 		SqliteDatabase database = new SqliteDatabase(destination.databasePath());
-
 		database.initialiseSchema();
-
 		Path original = createIndependentSnapshot("Biology", "refresh-correct-origin");
-
 		Path unrelated = createIndependentSnapshot("Biology", "refresh-unrelated-origin");
-
 		var preview = new SubjectSnapshotIntakePreview(database);
-
 		var initial = preview.inspect(original);
-
 		assertTrue(new SubjectImportCoordinator(destination).executeNewSubject(initial, original).applied());
-
 		long subjectId = findSubjectId(database, "Biology");
-
 		SqliteImportedSubjectAuthorityRepository authorities = new SqliteImportedSubjectAuthorityRepository(database);
-
 		var originalAuthority = authorities.find(subjectId).orElseThrow();
-
 		var inspection = preview.inspect(unrelated);
-
 		assertEquals(SubjectSnapshotIntakePreview.State.EXISTING_SUBJECT, inspection.state());
-
 		assertEquals(subjectId, inspection.existingSubjectId().longValue());
-
 		assertFalse(originalAuthority.originInstallationId().equals(inspection.fingerprint().originInstallationId()));
-
 		PackageFormatException failure = assertThrows(PackageFormatException.class,
 				() -> preview.requireRefreshAuthority(inspection));
-
 		assertTrue(failure.getMessage().contains("different originating installation"));
-
 		assertEquals(originalAuthority, authorities.find(subjectId).orElseThrow());
-
 		assertTrue(new SqliteSubjectImportLedger(database).find(inspection.fingerprint().packageId()).isEmpty());
-
 		try (Connection connection = database.openConnection()) {
 			assertEquals(1, count(connection, "SELECT COUNT(*) FROM subjects"));
-
 			assertEquals(1, count(connection, "SELECT COUNT(*) FROM subject_import_packages"));
 		}
-
 		assertImportedSubjectGraph(database, destination, "Biology");
-
 		database.verifyIntegrity();
 	}
 

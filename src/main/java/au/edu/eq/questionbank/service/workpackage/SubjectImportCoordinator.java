@@ -99,52 +99,37 @@ public final class SubjectImportCoordinator {
 	 */
 	public Result execute(long masterSubjectId, SubjectImportApprovalPlan plan, Path incomingArchive,
 			Path backupDirectory, String approvalNote) throws SQLException, IOException, BackupException {
-
 		Objects.requireNonNull(plan, "plan");
 		Objects.requireNonNull(incomingArchive, "incomingArchive");
 		Objects.requireNonNull(backupDirectory, "backupDirectory");
-
 		boolean newSubject = plan.isNewSubjectInstallation();
-
 		if (newSubject ? masterSubjectId != 0 : masterSubjectId < 1) {
 			throw new IllegalArgumentException(
 					"Destination Subject ID does not match " + "the approved import operation");
 		}
-
 		if (approvalNote == null || approvalNote.isBlank() || approvalNote.length() > 4000) {
 			throw new IllegalArgumentException("Import approval needs 1–4000 characters of rationale");
 		}
-
 		UUID packageId = plan.reviewedIncoming().packageId();
-
 		try (var lock = ManagedAssetPublicationLock.acquire(config.dataRoot())) {
-
 			ManagedAssetPublicationRecovery.recoverPending(config, lock);
 
 			// Even an idempotent replay must identify the exact
 			// archive that was originally reviewed.
 			plan.requireFreshIncoming(incomingArchive);
-
 			var existing = ledger.find(packageId);
-
 			if (existing.isPresent()) {
 				PackageEntry previous = existing.get();
-
 				if (!previous.archiveSha256().equals(plan.reviewedIncoming().archiveSha256())
 						|| (!newSubject && !previous.approvalSha256().equals(plan.approvalSha256()))) {
-
 					throw new IOException("Package identity already recorded " + "with different approval or bytes");
 				}
-
 				return new Result(packageId, previous.outcome() == PackageOutcome.APPLIED, true,
 						previous.backupArchivePath());
 			}
-
 			if (newSubject) {
 				UUID localInstallationId = new SqlitePortableIdentityRepository(database).installationId();
-
 				if (localInstallationId.equals(plan.reviewedIncoming().originInstallationId())) {
-
 					throw new IOException("Cannot import a Subject snapshot " + "from the current installation");
 				}
 			}
@@ -152,31 +137,20 @@ public final class SubjectImportCoordinator {
 			// A verified full backup always precedes staging
 			// and managed-file publication.
 			SubjectImportBackupGate gate = new SubjectImportBackupGate(config);
-
 			Certificate backup = gate.createVerifiedFullBackup(packageId, backupDirectory);
-
 			StagedPackage staged = new SubjectImportAssetStager(config).stage(plan, backup, incomingArchive);
-
 			SubjectImportPublicationJournal journal = new SubjectImportPublicationJournal(config);
-
 			boolean prepared = false;
 			boolean committed = false;
-
 			try {
 				SubjectImportGraphWriter writer = new SubjectImportGraphWriter(database);
-
 				DecodedPackage decoded = writer.decode(staged, plan);
-
 				journal.prepare(staged, backup);
 				prepared = true;
-
 				try (Connection connection = database.openConnection()) {
-
 					connection.setAutoCommit(false);
-
 					try {
 						reserveWriter(connection);
-
 						if (newSubject) {
 
 							// Revalidate destination absence by both
@@ -184,51 +158,35 @@ public final class SubjectImportCoordinator {
 							// A renamed Subject must not bypass this
 							// transactional installation boundary.
 							requireNewSubjectDestination(connection, plan.reviewedIncoming());
-
 							requireNewSubjectProviders(connection, plan, decoded);
-
 						} else {
 
 							// Preserve existing reconciliation
 							// stale-master protection.
 							requireFreshMaster(masterSubjectId, plan);
 						}
-
 						gate.requireIntact(packageId, backup);
-
 						journal.publishFiles(packageId);
-
 						Map<Key, UUID> canonical = writer.apply(connection, plan, staged, decoded, approvalNote);
-
 						requireForeignKeyIntegrity(connection);
-
 						journal.verifyPublished(packageId);
-
 						gate.requireIntact(packageId, backup);
-
 						recordPackage(connection, plan, backup, approvalNote);
-
 						recordItems(connection, plan, canonical);
-
 						if (newSubject) {
 
 							// Authority and terminal package history
 							// commit atomically with the imported graph.
 							recordNewSubjectAuthority(connection, plan, canonical);
 						}
-
 						connection.commit();
-
 						committed = true;
-
 					} catch (SQLException | IOException | RuntimeException failure) {
-
 						try {
 							connection.rollback();
 						} catch (SQLException rollbackFailure) {
 							failure.addSuppressed(rollbackFailure);
 						}
-
 						throw failure;
 					}
 				}
@@ -238,14 +196,10 @@ public final class SubjectImportCoordinator {
 				try {
 					journal.recover(packageId, lock);
 				} catch (SQLException | IOException cleanupFailure) {
-
 					return new Result(packageId, true, false, backup.backupPath().toString());
 				}
-
 				return new Result(packageId, true, false, backup.backupPath().toString());
-
 			} catch (SQLException | IOException | RuntimeException failure) {
-
 				if (!committed) {
 					try {
 						if (prepared) {
@@ -257,7 +211,6 @@ public final class SubjectImportCoordinator {
 						failure.addSuppressed(recoveryFailure);
 					}
 				}
-
 				throw failure;
 			}
 		}
@@ -449,17 +402,12 @@ public final class SubjectImportCoordinator {
 	}
 
 	private void requireNewSubjectDestination(Connection connection, Fingerprint incoming) throws SQLException {
-
 		Objects.requireNonNull(connection, "connection");
 		Objects.requireNonNull(incoming, "incoming");
-
 		if (connection.getAutoCommit()) {
-
 			throw new IllegalStateException("New Subject installation requires " + "a caller-owned transaction");
 		}
-
 		Long existingSubjectId = SubjectSnapshotIntakePreview.findExistingSubject(connection, incoming);
-
 		if (existingSubjectId != null) {
 
 			// Neither a local name collision nor an existing

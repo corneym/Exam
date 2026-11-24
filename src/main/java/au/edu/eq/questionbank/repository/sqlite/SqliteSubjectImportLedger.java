@@ -71,10 +71,8 @@ public final class SqliteSubjectImportLedger {
 	 * @throws NullPointerException if either argument is null
 	 */
 	public Optional<PackageEntry> find(Connection connection, UUID packageId) throws SQLException {
-
 		Objects.requireNonNull(connection, "connection");
 		Objects.requireNonNull(packageId, "packageId");
-
 		try (PreparedStatement statement = connection.prepareStatement("""
 				SELECT package_id, archive_sha256,
 				       origin_installation_id, subject_portable_id,
@@ -83,15 +81,11 @@ public final class SqliteSubjectImportLedger {
 				FROM subject_import_packages
 				WHERE package_id = ?
 				""")) {
-
 			statement.setString(1, packageId.toString());
-
 			try (ResultSet result = statement.executeQuery()) {
-
 				if (!result.next()) {
 					return Optional.empty();
 				}
-
 				return Optional.of(new PackageEntry(UUID.fromString(result.getString("package_id")),
 						result.getString("archive_sha256"), UUID.fromString(result.getString("origin_installation_id")),
 						UUID.fromString(result.getString("subject_portable_id")),
