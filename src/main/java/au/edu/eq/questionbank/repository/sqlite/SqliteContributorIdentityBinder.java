@@ -13,6 +13,7 @@ import java.util.Set;
 import java.util.UUID;
 
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.Identity;
 
 /**
  * Preserves coordinator-issued portable identities during installation of newly
@@ -162,6 +163,129 @@ public final class SqliteContributorIdentityBinder {
 		}
 	}
 
+	/**
+	 * Reconciles validated contributor identities with accepted coordinator
+	 * identities.
+	 *
+	 * <p>
+	 * The caller must establish assignment scope, submission history, accepted
+	 * canonical mappings and refresh eligibility before invoking this operation.
+	 *
+	 * <p>
+	 * Each original identity must still match the supplied portable UUID and
+	 * revision. Replaced contributor identities are retired. All changes occur
+	 * within a savepoint, and the identity immutability trigger is restored and
+	 * verified before returning.
+	 *
+	 * @param originals validated existing contributor identities
+	 * @param bindings  corresponding authoritative replacement identities
+	 * @throws SQLException             if identity evidence differs or binding
+	 *                                  fails
+	 * @throws IllegalStateException    if the connection uses autocommit
+	 * @throws IllegalArgumentException if the lists differ in size
+	 */
+	public void bindReconciled(List<Identity> originals, List<Binding> bindings) throws SQLException {
+		List<Identity> previous = List.copyOf(originals);
+		List<Binding> requested = List.copyOf(bindings);
+		if (connection.getAutoCommit()) {
+			throw new IllegalStateException("Contributor reconciliation requires a transaction");
+		}
+		if (previous.size() != requested.size()) {
+			throw new IllegalArgumentException("Reconciliation binding count mismatch");
+		}
+		if (requested.isEmpty()) {
+			return;
+		}
+		Set<Key> keys = new HashSet<>();
+		Set<UUID> portableIds = new HashSet<>();
+		Set<UUID> revisions = new HashSet<>();
+		for (int i = 0; i < requested.size(); i++) {
+			Identity original = previous.get(i);
+			Binding target = requested.get(i);
+			Key key = new Key(target.entityType(), target.localId());
+			boolean supported = switch (target.entityType()) {
+			case QUESTION, ANSWER, SOURCE_QUESTION, SHARED_QUESTION_CONTEXT, QUESTION_IMAGE -> true;
+			default -> false;
+			};
+			if (!supported || original.entityType() != target.entityType() || original.localId() != target.localId()
+					|| !originalKeys.contains(key) || boundKeys.contains(key) || !keys.add(key)
+					|| !portableIds.add(target.portableId()) || !revisions.add(target.revisionId())
+					|| original.portableId().equals(target.portableId())
+					|| original.revisionId().equals(target.revisionId())) {
+				throw new SQLException("Invalid contributor reconciliation binding: " + key);
+			}
+			requireReconciliationSource(original);
+			requireNotRetired(target);
+		}
+		Savepoint savepoint = connection.setSavepoint();
+		try {
+			SqlitePortableIdentitySchema.verifyTriggers(connection);
+			try (Statement statement = connection.createStatement()) {
+				statement.execute("DROP TRIGGER app_portable_identity_immutable");
+			}
+			try (PreparedStatement retire = connection.prepareStatement("""
+					INSERT INTO portable_entity_retirements (
+					    portable_id,
+					    entity_type,
+					    local_id,
+					    revision_id
+					)
+					VALUES (?, ?, ?, ?)
+					"""); PreparedStatement update = connection.prepareStatement("""
+					UPDATE portable_entity_identities
+					SET portable_id = ?,
+					    revision_id = ?
+					WHERE entity_type = ?
+					  AND local_id = ?
+					  AND portable_id = ?
+					  AND revision_id = ?
+					  AND retired = 0
+					""")) {
+				for (int i = 0; i < requested.size(); i++) {
+					Identity original = previous.get(i);
+					Binding target = requested.get(i);
+
+					// Preserve the submitted contributor identity as
+					// historical evidence instead of silently discarding it.
+					retire.setString(1, original.portableId().toString());
+					retire.setString(2, original.entityType().name());
+					retire.setLong(3, original.localId());
+					retire.setString(4, original.revisionId().toString());
+					if (SqliteDirectChanges.executeUpdate(retire) != 1) {
+						throw new SQLException("Contributor identity retirement failed");
+					}
+					update.setString(1, target.portableId().toString());
+					update.setString(2, target.revisionId().toString());
+					update.setString(3, target.entityType().name());
+					update.setLong(4, target.localId());
+					update.setString(5, original.portableId().toString());
+					update.setString(6, original.revisionId().toString());
+					if (SqliteDirectChanges.executeUpdate(update) != 1) {
+						throw new SQLException("Contributor identity reconciliation failed");
+					}
+				}
+			}
+			try (Statement statement = connection.createStatement()) {
+				statement.execute(SqlitePortableIdentitySchema.identityImmutableTriggerSql());
+			}
+			SqlitePortableIdentitySchema.verifyTriggers(connection);
+			connection.releaseSavepoint(savepoint);
+			boundKeys.addAll(keys);
+		} catch (SQLException | RuntimeException failure) {
+			try {
+				connection.rollback(savepoint);
+			} catch (SQLException rollbackFailure) {
+				failure.addSuppressed(rollbackFailure);
+			}
+			try {
+				connection.releaseSavepoint(savepoint);
+			} catch (SQLException releaseFailure) {
+				failure.addSuppressed(releaseFailure);
+			}
+			throw failure;
+		}
+	}
+
 	private void requireInsertedIdentity(Binding binding) throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
 				SELECT retired
@@ -195,6 +319,43 @@ public final class SqliteContributorIdentityBinder {
 			try (ResultSet result = statement.executeQuery()) {
 				if (result.next()) {
 					throw new SQLException("Cannot reuse a retired portable identity " + "or revision");
+				}
+			}
+		}
+	}
+
+	private void requireReconciliationSource(Identity original) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT portable_id, revision_id
+				FROM portable_entity_identities
+				WHERE entity_type = ?
+				  AND local_id = ?
+				  AND retired = 0
+				""")) {
+			statement.setString(1, original.entityType().name());
+			statement.setLong(2, original.localId());
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next() || !original.portableId().toString().equals(result.getString("portable_id"))
+						|| !original.revisionId().toString().equals(result.getString("revision_id")) || result.next()) {
+					throw new SQLException("Reconciliation source identity has changed");
+				}
+			}
+		}
+
+		// An authoritative alias referring to the local identity must
+		// not be invalidated by a contributor reconciliation operation.
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT 1
+				FROM portable_identity_aliases
+				WHERE entity_type = ?
+				  AND canonical_portable_id = ?
+				LIMIT 1
+				""")) {
+			statement.setString(1, original.entityType().name());
+			statement.setString(2, original.portableId().toString());
+			try (ResultSet result = statement.executeQuery()) {
+				if (result.next()) {
+					throw new SQLException("Cannot reconcile an identity with existing aliases");
 				}
 			}
 		}

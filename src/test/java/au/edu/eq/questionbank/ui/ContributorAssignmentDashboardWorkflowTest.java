@@ -185,74 +185,49 @@ class ContributorAssignmentDashboardWorkflowTest {
 
 	@Test
 	void failedHiddenInstallationReleasesApplicationAndAllowsRetry(FxRobot robot) throws Exception {
-
 		awaitAssignedDashboard(robot);
-
 		CountDownLatch entered = new CountDownLatch(1);
 		CountDownLatch release = new CountDownLatch(1);
-
 		String diagnostic = "Controlled installation failure. ".repeat(30)
 				+ "UNIQUE constraint diagnostic at end of message.";
-
 		Task<WorkAssignmentInstallationCoordinator.Result> installer = new ApplicationBackgroundTask<>(() -> {
 			awaitBarrier(entered, release);
 			throw new IllegalStateException(diagnostic);
 		});
-
 		try {
 			startInstallation(robot, installer);
-
 			assertTrue(entered.await(10, TimeUnit.SECONDS));
-
 			hideInstallationProgress(robot);
-
 			robot.interact(() -> assertTrue(busyOverlay().isBusy()));
-
 			release.countDown();
-
 			DialogPane pane = awaitDialog(robot, "Import Contributor Assignment");
-
 			robot.interact(() -> {
-
 				assertEquals("The assignment could not be installed.", pane.getHeaderText());
-
 				assertTrue(((Stage) pane.getScene().getWindow()).isResizable());
 
 				// The complete message must be available for
 				// selection and copying without truncation.
 				assertTrue(pane.getContent() instanceof TextArea);
-
 				TextArea message = (TextArea) pane.getContent();
-
 				assertFalse(message.isEditable());
 				assertTrue(message.isWrapText());
 				assertEquals(diagnostic, message.getText());
-
 				message.selectAll();
-
 				assertEquals(diagnostic, message.getSelectedText());
 
 				// Technical details must preserve the original
 				// exception and its stack trace.
 				assertTrue(pane.getExpandableContent() instanceof TextArea);
-
 				TextArea details = (TextArea) pane.getExpandableContent();
-
 				assertFalse(details.isEditable());
 				assertTrue(details.getText().contains(diagnostic));
 				assertTrue(details.getText().contains("IllegalStateException"));
-
 				((ButtonBase) pane.lookupButton(ButtonType.OK)).fire();
 			});
-
 			assertControlsReleased(robot);
-
 			startInstallation(robot, realInstaller());
-
 			acknowledgeDialog(robot, "Contributor Assignment Installed", "The previously installed assignment");
-
 			assertControlsReleased(robot);
-
 		} finally {
 			release.countDown();
 		}

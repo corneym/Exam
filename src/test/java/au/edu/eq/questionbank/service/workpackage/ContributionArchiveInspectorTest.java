@@ -324,6 +324,7 @@ class ContributionArchiveInspectorTest {
 		var replay = intake.receive(archive);
 		assertTrue(replay.duplicate());
 		assertEquals(packageId, replay.received().packageId());
+
 		// A completed assignment cannot be approved for another merge.
 		assertThrows(PackageFormatException.class,
 				() -> new MasterContributionDecisionLedger(fixture.master()).recordMerge(packageId));
@@ -680,93 +681,62 @@ class ContributionArchiveInspectorTest {
 
 	@Test
 	void historicalReconciliationEvidenceContainsAcceptedMappings() throws Exception {
-
 		Fixture fixture = fixture();
-
 		var assignment = new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow();
-
 		var reader = new AssignmentReconciliationEvidenceReader(fixture.master());
-
 		UUID examId = assignment.examPortableId();
 
 		// No contribution has yet been accepted.
 		assertTrue(reader.read(examId, assignment.contributorId()).isEmpty());
-
 		addNewContributorQuestionAndAnswer(fixture);
-
 		Path contribution = directory.resolve("reconciliation-evidence.examwork");
-
 		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
 				.export(fixture.assignmentId(), contribution);
-
 		var published = new SqliteContributionReturnLedger(fixture.contributor()).findLatest(fixture.assignmentId())
 				.orElseThrow();
-
 		var intake = new MasterContributionIntake(fixture.master());
-
 		UUID packageId = intake.receive(contribution).received().packageId();
 
 		// Receiving a contribution is not evidence of acceptance.
 		assertTrue(reader.read(examId, assignment.contributorId()).isEmpty());
-
 		var review = new MasterContributionDecisionLedger(fixture.master()).recordMerge(packageId);
 
 		// Recording approval alone is not evidence of application.
 		assertTrue(reader.read(examId, assignment.contributorId()).isEmpty());
-
 		new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId(), contribution,
 				new ManagedDataLayout(directory.resolve("coordinator")));
-
 		var evidence = reader.read(examId, assignment.contributorId());
-
 		assertFalse(evidence.isEmpty());
-
 		var questionEvidence = evidence.stream()
 				.filter(record -> record.values().path("record_type").asText().equals("QUESTION")).findFirst()
 				.orElseThrow();
-
 		var answerEvidence = evidence.stream()
 				.filter(record -> record.values().path("record_type").asText().equals("ANSWER")).findFirst()
 				.orElseThrow();
-
 		assertNotEquals(questionEvidence.values().path("contributor_record_id").asText(),
 				questionEvidence.values().path("canonical_record_id").asText());
-
 		assertNotEquals(answerEvidence.values().path("contributor_record_id").asText(),
 				answerEvidence.values().path("canonical_record_id").asText());
-
 		for (ExchangeRecord record : evidence) {
-
 			var values = record.values();
-
 			assertEquals(fixture.assignmentId().toString(), values.path("assignment_id").asText());
-
 			assertEquals(published.packageId().toString(), values.path("return_package_id").asText());
-
 			assertEquals(published.baselineSnapshotId().toString(), values.path("baseline_snapshot_id").asText());
-
 			assertEquals(published.masterInstallationId().toString(), values.path("master_installation_id").asText());
-
 			assertEquals(published.contributorId().toString(), values.path("contributor_id").asText());
-
 			assertEquals(published.originInstallationId().toString(), values.path("origin_installation_id").asText());
-
 			assertEquals(published.archiveSha256(), values.path("archive_sha256").asText());
-
 			assertEquals(review.reviewId().toString(), values.path("review_id").asText());
-
 			assertTrue(values.hasNonNull("proposed_revision_id"));
 			assertTrue(values.hasNonNull("resulting_revision_id"));
 		}
 
 		// Evidence must not escape its Exam or contributor scope.
 		assertTrue(reader.read(examId, UUID.randomUUID()).isEmpty());
-
 		assertTrue(reader.read(UUID.randomUUID(), assignment.contributorId()).isEmpty());
 
 		// Repeated reads must preserve deterministic evidence identities.
 		assertEquals(evidence, reader.read(examId, assignment.contributorId()));
-
 		fixture.master().verifySchema();
 		fixture.master().verifyIntegrity();
 		fixture.contributor().verifySchema();
@@ -1010,9 +980,7 @@ class ContributionArchiveInspectorTest {
 		List<ExchangeRecord> proposed = intake.proposedChanges(packageId);
 		assertEquals(2, proposed.size());
 		var review = new MasterContributionDecisionLedger(fixture.master()).recordMerge(packageId);
-
 		assertEquals(2, review.decisions().size());
-
 		assertTrue(review.decisions().stream()
 				.allMatch(decision -> decision.choice() == MasterContributionDecisionLedger.Choice.QUEUE_APPLY));
 		for (var decision : review.decisions()) {
@@ -2247,6 +2215,7 @@ class ContributionArchiveInspectorTest {
 		ExchangeRecord proposal = intake.proposedChanges(packageId).getFirst();
 		var key = new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId());
 		MasterContributionDecisionLedger decisions = new MasterContributionDecisionLedger(fixture.master());
+
 		// The simplified merge workflow must not approve a late
 		// return from an already cancelled assignment.
 		assertThrows(PackageFormatException.class, () -> decisions.recordMerge(packageId));
@@ -3409,85 +3378,59 @@ class ContributionArchiveInspectorTest {
 
 	@Test
 	void reconciliationEvidenceRejectsForeignAndDuplicateMappings() throws Exception {
-
 		Fixture fixture = fixture();
-
 		var assignment = new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow();
-
 		addNewContributorQuestionAndAnswer(fixture);
-
 		Path contribution = directory.resolve("validation-contribution.examwork");
-
 		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
 				.export(fixture.assignmentId(), contribution);
-
 		UUID packageId = new MasterContributionIntake(fixture.master()).receive(contribution).received().packageId();
-
 		var review = new MasterContributionDecisionLedger(fixture.master()).recordMerge(packageId);
-
 		new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId(), contribution,
 				new ManagedDataLayout(directory.resolve("coordinator")));
-
 		Exam exam = new Exam(31, new Subject(1, "Biology"), new ExamProvider(21, "QCAA"), 2025, "External Assessment");
-
 		Path archive = directory.resolve("validation-assignment.examwork");
-
 		new WorkAssignmentIssuanceService(fixture.master(), new ManagedDataLayout(directory.resolve("coordinator")))
 				.issue(new WorkAssignmentExporter.Request(exam, UUID.randomUUID(), assignment.contributorId(),
 						assignment.contributorName(), false, archive));
-
 		var inspection = new WorkAssignmentPackageInspector().inspect(archive, ApplicationVersion.current(),
 				SqliteDatabase.latestSchemaVersion());
-
 		ExchangeRecord original = inspection.context();
-
 		var validator = new AssignmentReconciliationEvidenceValidator();
-
 		assertDoesNotThrow(() -> validator.validate(inspection.manifest(), original));
 
 		// Original-format assignment contexts remain readable.
 		ObjectNode legacy = (ObjectNode) original.values();
 		legacy.remove("reconciliation_evidence");
-
 		assertDoesNotThrow(() -> validator.validate(inspection.manifest(), contextWithValues(original, legacy)));
 
 		// Foreign contributor.
 		ObjectNode foreignContributor = (ObjectNode) original.values();
-
 		((ObjectNode) foreignContributor.path("reconciliation_evidence").get(0).path("mapping")).put("contributor_id",
 				UUID.randomUUID().toString());
-
 		assertThrows(PackageFormatException.class,
 				() -> validator.validate(inspection.manifest(), contextWithValues(original, foreignContributor)));
 
 		// Foreign coordinator.
 		ObjectNode foreignMaster = (ObjectNode) original.values();
-
 		((ObjectNode) foreignMaster.path("reconciliation_evidence").get(0).path("mapping"))
 				.put("master_installation_id", UUID.randomUUID().toString());
-
 		assertThrows(PackageFormatException.class,
 				() -> validator.validate(inspection.manifest(), contextWithValues(original, foreignMaster)));
 
 		// Duplicate evidence.
 		ObjectNode duplicate = (ObjectNode) original.values();
-
 		ArrayNode entries = (ArrayNode) duplicate.path("reconciliation_evidence");
-
 		entries.add(entries.get(0).deepCopy());
-
 		assertThrows(PackageFormatException.class,
 				() -> validator.validate(inspection.manifest(), contextWithValues(original, duplicate)));
 
 		// Invalid contribution digest.
 		ObjectNode invalidDigest = (ObjectNode) original.values();
-
 		((ObjectNode) invalidDigest.path("reconciliation_evidence").get(0).path("mapping")).put("archive_sha256",
 				"invalid");
-
 		assertThrows(PackageFormatException.class,
 				() -> validator.validate(inspection.manifest(), contextWithValues(original, invalidDigest)));
-
 		fixture.master().verifyIntegrity();
 		fixture.contributor().verifyIntegrity();
 	}
@@ -3693,66 +3636,48 @@ class ContributionArchiveInspectorTest {
 
 	@Test
 	void subsequentAssignmentContainsHistoricalReconciliationEvidence() throws Exception {
-
 		Fixture fixture = fixture();
-
 		var assignment = new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow();
-
 		addNewContributorQuestionAndAnswer(fixture);
-
 		Path contribution = directory.resolve("evidence-contribution.examwork");
-
 		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
 				.export(fixture.assignmentId(), contribution);
-
 		var intake = new MasterContributionIntake(fixture.master());
-
 		UUID packageId = intake.receive(contribution).received().packageId();
-
 		var review = new MasterContributionDecisionLedger(fixture.master()).recordMerge(packageId);
-
 		new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId(), contribution,
 				new ManagedDataLayout(directory.resolve("coordinator")));
-
 		Exam exam = new Exam(31, new Subject(1, "Biology"), new ExamProvider(21, "QCAA"), 2025, "External Assessment");
-
 		UUID newAssignmentId = UUID.randomUUID();
-
 		Path newAssignment = directory.resolve("assignment-with-evidence.examwork");
-
 		new WorkAssignmentIssuanceService(fixture.master(), new ManagedDataLayout(directory.resolve("coordinator")))
 				.issue(new WorkAssignmentExporter.Request(exam, newAssignmentId, assignment.contributorId(),
 						assignment.contributorName(), false, newAssignment));
-
 		var inspection = new WorkAssignmentPackageInspector().inspect(newAssignment, ApplicationVersion.current(),
 				SqliteDatabase.latestSchemaVersion());
-
 		var expected = new AssignmentReconciliationEvidenceReader(fixture.master()).read(assignment.examPortableId(),
 				assignment.contributorId());
-
 		var actual = inspection.context().values().path("reconciliation_evidence");
-
 		assertTrue(actual.isArray());
 		assertFalse(expected.isEmpty());
 		assertEquals(expected.size(), actual.size());
-
 		for (int i = 0; i < expected.size(); i++) {
-
 			ExchangeRecord record = expected.get(i);
 			var entry = actual.get(i);
-
 			assertEquals(record.recordId().toString(), entry.path("evidence_id").asText());
-
 			assertEquals(record.values(), entry.path("mapping"));
 		}
 
 		// Historical evidence is metadata, not additional
 		// authoritative domain records or baseline changes.
 		assertEquals(inspection.baseline(), inspection.records());
-
 		assertTrue(inspection.records().stream()
 				.noneMatch(record -> record.recordType().equals("ASSIGNMENT_RECONCILIATION_EVIDENCE")));
-
+		var authorised = new AssignmentReconciliationAuthority(fixture.contributor()).assess(inspection);
+		assertEquals(expected.size(), authorised.size());
+		for (ExchangeRecord mapping : expected) {
+			assertTrue(authorised.contains(mapping));
+		}
 		fixture.master().verifySchema();
 		fixture.master().verifyIntegrity();
 		fixture.contributor().verifyIntegrity();
@@ -3760,47 +3685,32 @@ class ContributionArchiveInspectorTest {
 
 	@Test
 	void subsequentAssignmentInstallsIntoPreviousContributorAfterMerge() throws Exception {
-
 		Fixture fixture = fixture();
-
 		var masterLedger = new WorkAssignmentLedger(fixture.master());
-
 		var originalAssignment = masterLedger.find(fixture.assignmentId()).orElseThrow();
-
 		var sessions = new SqliteContributorAssignmentSessionRepository(fixture.contributor());
-
 		var originalBaseline = sessions.readBaseline(fixture.assignmentId());
 
 		// Capture new work in the first contributor assignment.
 		addNewContributorQuestionAndAnswer(fixture);
-
 		Path contribution = directory.resolve("first-contribution.examwork");
-
 		new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
 				.export(fixture.assignmentId(), contribution);
 
 		// Merge the contribution into the authoritative Exam.
 		var intake = new MasterContributionIntake(fixture.master());
-
 		UUID packageId = intake.receive(contribution).received().packageId();
-
 		var review = new MasterContributionDecisionLedger(fixture.master()).recordMerge(packageId);
-
 		new MasterContributionApplicationCoordinator(fixture.master()).execute(review.reviewId(), contribution,
 				new ManagedDataLayout(directory.resolve("coordinator")));
-
 		assertEquals(WorkAssignmentLedger.State.COMPLETE,
 				masterLedger.find(fixture.assignmentId()).orElseThrow().state());
-
 		assertEquals("New contributor question", questionTextForCode(fixture.master(), "2"));
 
 		// Issue the same Exam to the same contributor again.
 		Exam exam = new Exam(31, new Subject(1, "Biology"), new ExamProvider(21, "QCAA"), 2025, "External Assessment");
-
 		UUID newAssignmentId = UUID.randomUUID();
-
 		Path newAssignment = directory.resolve("subsequent-assignment.examwork");
-
 		new WorkAssignmentIssuanceService(fixture.master(), new ManagedDataLayout(directory.resolve("coordinator")))
 				.issue(new WorkAssignmentExporter.Request(exam, newAssignmentId, originalAssignment.contributorId(),
 						originalAssignment.contributorName(), false, newAssignment));
@@ -3809,40 +3719,208 @@ class ContributionArchiveInspectorTest {
 		// not a newly created contributor database.
 		var installed = new WorkAssignmentInstallationCoordinator(
 				ApplicationConfig.fromDataRoot(fixture.contributorRoot())).install(newAssignment);
-
 		assertEquals(newAssignmentId, installed.assignmentId());
 		assertFalse(installed.replay());
-
 		assertEquals(newAssignmentId, sessions.active().orElseThrow().assignmentId());
 
 		// The previous assignment remains submitted.
 		var visibility = new SqliteContributorAssignmentVisibilityRepository(fixture.contributor());
-
 		assertEquals(SqliteContributorAssignmentVisibilityRepository.State.SUBMITTED,
 				visibility.find(fixture.assignmentId()).orElseThrow());
 
 		// Historical assignment evidence must remain immutable.
 		assertArrayEquals(originalBaseline.records(), sessions.readBaseline(fixture.assignmentId()).records());
-
 		assertArrayEquals(originalBaseline.assets(), sessions.readBaseline(fixture.assignmentId()).assets());
 
 		// The newly installed graph must match its fresh
 		// authoritative baseline and contain no contributor delta.
 		Path snapshotPath = directory.resolve("subsequent-installed.db");
-
 		fixture.contributor().createConsistentSnapshot(snapshotPath);
-
 		var snapshot = new ContributionSnapshotReader(snapshotPath).read(newAssignmentId);
-
 		assertEquals(snapshot.baselineRecords(), snapshot.currentRecords());
-
 		assertTrue(snapshot.delta().candidates().isEmpty());
-
 		assertEquals("New contributor question", questionTextForCode(fixture.contributor(), "2"));
+		fixture.contributor().verifySchema();
+		fixture.contributor().verifyIntegrity();
+		fixture.master().verifySchema();
+		fixture.master().verifyIntegrity();
+	}
 
+	@Test
+	void subsequentAssignmentRefreshesAuthoritativeContentAndRejectsInvalidEvidence() throws Exception {
+		Fixture fixture = fixture();
+		var masterLedger = new WorkAssignmentLedger(fixture.master());
+		var original = masterLedger.find(fixture.assignmentId()).orElseThrow();
+		var sessions = new SqliteContributorAssignmentSessionRepository(fixture.contributor());
+		var visibility = new SqliteContributorAssignmentVisibilityRepository(fixture.contributor());
+		var returns = new SqliteContributionReturnLedger(fixture.contributor());
+		var originalBaseline = sessions.readBaseline(fixture.assignmentId());
+		var coordinatorLayout = new ManagedDataLayout(directory.resolve("coordinator"));
+		var contributorLayout = new ManagedDataLayout(fixture.contributorRoot());
+		var installer = new WorkAssignmentInstallationCoordinator(
+				ApplicationConfig.fromDataRoot(fixture.contributorRoot()));
+		var identities = new SqlitePortableIdentityRepository(fixture.contributor());
+		addNewContributorQuestionAndAnswer(fixture);
+		Path contribution = directory.resolve("refresh-first-contribution.examwork");
+		new ContributionExporter(fixture.contributor(), contributorLayout).export(fixture.assignmentId(), contribution);
+		var originalReturn = returns.findLatest(fixture.assignmentId()).orElseThrow();
+		mergeRefreshContribution(fixture.master(), coordinatorLayout, contribution);
+		assertEquals(WorkAssignmentLedger.State.COMPLETE,
+				masterLedger.find(fixture.assignmentId()).orElseThrow().state());
+
+		// The coordinator corrects accepted content before
+		// issuing the next authoritative baseline.
+		try (Connection connection = fixture.master().openConnection();
+				Statement statement = connection.createStatement()) {
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
+					UPDATE questions
+					SET question_text =
+					    'Coordinator revised accepted question'
+					WHERE question_code = '2'
+					"""));
+		}
+		Exam exam = new Exam(31, new Subject(1, "Biology"), new ExamProvider(21, "QCAA"), 2025, "External Assessment");
+		UUID secondAssignmentId = UUID.randomUUID();
+		Path secondAssignment = directory.resolve("refresh-second-assignment.examwork");
+		new WorkAssignmentIssuanceService(fixture.master(), coordinatorLayout)
+				.issue(new WorkAssignmentExporter.Request(exam, secondAssignmentId, original.contributorId(),
+						original.contributorName(), false, secondAssignment));
+		var inspection = new WorkAssignmentPackageInspector().inspect(secondAssignment, ApplicationVersion.current(),
+				SqliteDatabase.latestSchemaVersion());
+		ExchangeRecord questionMapping = new AssignmentReconciliationEvidenceReader(fixture.master())
+				.read(original.examPortableId(), original.contributorId()).stream()
+				.filter(record -> record.values().path("record_type").asText().equals("QUESTION")).findFirst()
+				.orElseThrow();
+		UUID contributorQuestionId = UUID.fromString(questionMapping.values().path("contributor_record_id").asText());
+		UUID canonicalQuestionId = UUID.fromString(questionMapping.values().path("canonical_record_id").asText());
+		long originalLocalId = identities.findByPortableId(EntityType.QUESTION, contributorQuestionId).orElseThrow()
+				.localId();
+		Path beforePath = directory.resolve("before-invalid-refresh.db");
+		fixture.contributor().createConsistentSnapshot(beforePath);
+		var before = new ContributionSnapshotReader(beforePath).read(fixture.assignmentId());
+
+		// Forge structurally valid evidence with an incorrect
+		// contribution digest. Repackage recalculates the archive
+		// manifest checksums, so ordinary integrity validation passes.
+		ObjectNode forgedValues = (ObjectNode) inspection.context().values();
+		ObjectNode forgedMapping = (ObjectNode) forgedValues.path("reconciliation_evidence").get(0).path("mapping");
+		forgedMapping.put("archive_sha256", "0".repeat(64));
+		Path forgedArchive = repackage(secondAssignment, "records/assignment-context.jsonl",
+				encode(List.of(contextWithValues(inspection.context(), forgedValues))));
+		assertArchiveWellFormed(forgedArchive, fixture.contributor());
+		assertThrows(PackageFormatException.class, () -> installer.install(forgedArchive));
+
+		// Also simulate an assignment issued by the older
+		// application before reconciliation evidence was introduced.
+		ObjectNode legacyValues = (ObjectNode) inspection.context().values();
+		legacyValues.remove("reconciliation_evidence");
+		Path legacyArchive = repackage(secondAssignment, "records/assignment-context.jsonl",
+				encode(List.of(contextWithValues(inspection.context(), legacyValues))));
+		assertArchiveWellFormed(legacyArchive, fixture.contributor());
+		assertThrows(PackageFormatException.class, () -> installer.install(legacyArchive));
+		assertTrue(sessions.find(secondAssignmentId).isEmpty());
+		assertEquals(SqliteContributorAssignmentVisibilityRepository.State.SUBMITTED,
+				visibility.find(fixture.assignmentId()).orElseThrow());
+		assertEquals(originalReturn, returns.findLatest(fixture.assignmentId()).orElseThrow());
+		assertTrue(identities.findByPortableId(EntityType.QUESTION, canonicalQuestionId).isEmpty());
+		assertEquals(originalLocalId,
+				identities.findByPortableId(EntityType.QUESTION, contributorQuestionId).orElseThrow().localId());
+		Path afterPath = directory.resolve("after-invalid-refresh.db");
+		fixture.contributor().createConsistentSnapshot(afterPath);
+		var after = new ContributionSnapshotReader(afterPath).read(fixture.assignmentId());
+		assertEquals(before.currentRecords(), after.currentRecords());
 		fixture.contributor().verifySchema();
 		fixture.contributor().verifyIntegrity();
 
+		// The genuine package must still install successfully
+		// following both rejected installation attempts.
+		assertEquals(secondAssignmentId, installer.install(secondAssignment).assignmentId());
+		assertEquals("Coordinator revised accepted question", questionTextForCode(fixture.contributor(), "2"));
+		assertTrue(identities.findByPortableId(EntityType.QUESTION, contributorQuestionId).isEmpty());
+
+		// Reconciliation retains the existing local record
+		// and its relationships instead of inserting a duplicate.
+		assertEquals(originalLocalId,
+				identities.findByPortableId(EntityType.QUESTION, canonicalQuestionId).orElseThrow().localId());
+		requireExactRefreshBaseline(fixture.contributor(), secondAssignmentId, "refresh-second-installed.db");
+		assertArrayEquals(originalBaseline.records(), sessions.readBaseline(fixture.assignmentId()).records());
+		assertArrayEquals(originalBaseline.assets(), sessions.readBaseline(fixture.assignmentId()).assets());
+		assertEquals(originalReturn, returns.findLatest(fixture.assignmentId()).orElseThrow());
+
+		// Construct a competing package without registering
+		// another assignment on the coordinator.
+		Path competingArchive = directory.resolve("refresh-competing-assignment.examwork");
+		UUID competingId = UUID.randomUUID();
+		new WorkAssignmentExporter(fixture.master(), coordinatorLayout).export(new WorkAssignmentExporter.Request(exam,
+				competingId, original.contributorId(), original.contributorName(), false, competingArchive));
+		assertThrows(PackageFormatException.class, () -> installer.install(competingArchive));
+		assertTrue(sessions.find(competingId).isEmpty());
+		assertEquals(secondAssignmentId, sessions.active().orElseThrow().assignmentId());
+
+		// Capture additional work during the second assignment.
+		try (Connection connection = fixture.contributor().openConnection();
+				Statement statement = connection.createStatement()) {
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
+					INSERT INTO questions (
+					    booklet_id,
+					    classification_node_id,
+					    question_code,
+					    question_text,
+					    marks,
+					    shared_context_capture_required,
+					    response_type,
+					    source_capture_required
+					)
+					SELECT
+					    booklet_id,
+					    classification_node_id,
+					    '3',
+					    'Second contribution question',
+					    marks,
+					    shared_context_capture_required,
+					    response_type,
+					    source_capture_required
+					FROM questions
+					WHERE question_code = '1'
+					"""));
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
+					INSERT INTO answers (
+					    question_id,
+					    answer_text
+					)
+					SELECT
+					    id,
+					    'Second contribution answer'
+					FROM questions
+					WHERE question_code = '3'
+					"""));
+		}
+		var secondBaseline = sessions.readBaseline(secondAssignmentId);
+		Path secondContribution = directory.resolve("refresh-second-contribution.examwork");
+		new ContributionExporter(fixture.contributor(), contributorLayout).export(secondAssignmentId,
+				secondContribution);
+		var secondReturn = returns.findLatest(secondAssignmentId).orElseThrow();
+		mergeRefreshContribution(fixture.master(), coordinatorLayout, secondContribution);
+		UUID thirdAssignmentId = UUID.randomUUID();
+		Path thirdAssignment = directory.resolve("refresh-third-assignment.examwork");
+		new WorkAssignmentIssuanceService(fixture.master(), coordinatorLayout).issue(new WorkAssignmentExporter.Request(
+				exam, thirdAssignmentId, original.contributorId(), original.contributorName(), false, thirdAssignment));
+		assertEquals(thirdAssignmentId, installer.install(thirdAssignment).assignmentId());
+		requireExactRefreshBaseline(fixture.contributor(), thirdAssignmentId, "refresh-third-installed.db");
+		assertEquals("Coordinator revised accepted question", questionTextForCode(fixture.contributor(), "2"));
+		assertEquals("Second contribution question", questionTextForCode(fixture.contributor(), "3"));
+		assertArrayEquals(secondBaseline.records(), sessions.readBaseline(secondAssignmentId).records());
+		assertArrayEquals(secondBaseline.assets(), sessions.readBaseline(secondAssignmentId).assets());
+		assertEquals(secondReturn, returns.findLatest(secondAssignmentId).orElseThrow());
+		assertEquals(SqliteContributorAssignmentVisibilityRepository.State.SUBMITTED,
+				visibility.find(secondAssignmentId).orElseThrow());
+
+		// Neither submitted historical assignment may be
+		// reopened after the third assignment becomes active.
+		assertThrows(IOException.class, () -> installer.install(secondAssignment));
+		assertEquals(thirdAssignmentId, sessions.active().orElseThrow().assignmentId());
+		fixture.contributor().verifySchema();
+		fixture.contributor().verifyIntegrity();
 		fixture.master().verifySchema();
 		fixture.master().verifyIntegrity();
 	}
@@ -3971,7 +4049,6 @@ class ContributionArchiveInspectorTest {
 	}
 
 	private ExchangeRecord contextWithValues(ExchangeRecord original, ObjectNode values) {
-
 		return new ExchangeRecord(original.recordVersion(), original.recordType(), original.recordId(),
 				original.revisionId(), original.baselineRevisionId(), values);
 	}
@@ -4183,6 +4260,13 @@ class ContributionArchiveInspectorTest {
 			assertFalse(result.next());
 			return text;
 		}
+	}
+
+	private void mergeRefreshContribution(SqliteDatabase master, ManagedDataLayout layout, Path contribution)
+			throws Exception {
+		UUID packageId = new MasterContributionIntake(master).receive(contribution).received().packageId();
+		var review = new MasterContributionDecisionLedger(master).recordMerge(packageId);
+		new MasterContributionApplicationCoordinator(master).execute(review.reviewId(), contribution, layout);
 	}
 
 	private Path publish(Fixture fixture, String text, String name) throws Exception {
@@ -4470,6 +4554,15 @@ class ContributionArchiveInspectorTest {
 			new ExamWorkArchiveWriter().write(altered, sources, output);
 		}
 		return destination;
+	}
+
+	private void requireExactRefreshBaseline(SqliteDatabase database, UUID assignmentId, String snapshotName)
+			throws Exception {
+		Path snapshotPath = directory.resolve(snapshotName);
+		database.createConsistentSnapshot(snapshotPath);
+		var snapshot = new ContributionSnapshotReader(snapshotPath).read(assignmentId);
+		assertEquals(snapshot.baselineRecords(), snapshot.currentRecords());
+		assertTrue(snapshot.delta().candidates().isEmpty());
 	}
 
 	private ExchangeRecord withValues(ExchangeRecord original, ObjectNode values) {

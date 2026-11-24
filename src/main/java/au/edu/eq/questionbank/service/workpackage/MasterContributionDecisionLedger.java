@@ -57,37 +57,27 @@ public final class MasterContributionDecisionLedger {
 	 * @throws NullPointerException     if the plan is null
 	 */
 	public static Map<RecordKey, Choice> mergeSelections(ReviewPlan plan) {
-
 		Objects.requireNonNull(plan, "plan");
-
 		if (plan.intakeStatus() != MasterContributionIntake.IntakeStatus.READY_FOR_REVIEW) {
 			throw new IllegalArgumentException("This contribution is not eligible for merging.");
 		}
-
 		if (plan.assessments().isEmpty()) {
 			throw new IllegalArgumentException("The contribution contains no new work.");
 		}
-
 		Map<RecordKey, Choice> selections = new HashMap<>();
-
 		for (RecordAssessment assessment : plan.assessments()) {
-
 			boolean supported = switch (assessment.recordType()) {
 			case "SOURCE_QUESTION", "SHARED_QUESTION_CONTEXT", "QUESTION", "ANSWER", "QUESTION_IMAGE" -> true;
 			default -> false;
 			};
-
 			if (!supported) {
 				throw new IllegalArgumentException("The contribution contains an unsupported " + "type of work.");
 			}
-
 			if (assessment.baselineRevisionId() != null) {
 				throw new IllegalArgumentException(
 						"The contribution attempts to modify " + "existing coordinator-owned content.");
 			}
-
 			if (assessment.status() != ReviewStatus.READY_NEW) {
-
 				String explanation = switch (assessment.status()) {
 				case SKIP_IDENTICAL -> "Some returned work already exists in the Exam.";
 				case READY_UPDATE -> "The contribution attempts to update existing work.";
@@ -98,17 +88,13 @@ public final class MasterContributionDecisionLedger {
 				case HELD_LINEAGE -> "The contribution does not match an eligible assignment.";
 				default -> "Some returned work cannot be safely merged.";
 				};
-
 				throw new IllegalArgumentException(explanation);
 			}
-
 			RecordKey key = new RecordKey(assessment.recordType(), assessment.recordId());
-
 			if (selections.putIfAbsent(key, Choice.QUEUE_APPLY) != null) {
 				throw new IllegalArgumentException("The contribution contains duplicate records.");
 			}
 		}
-
 		return Map.copyOf(selections);
 	}
 
@@ -197,19 +183,14 @@ public final class MasterContributionDecisionLedger {
 	 */
 	public RecordedReview record(UUID packageId, Map<RecordKey, Choice> selections, String note)
 			throws SQLException, IOException {
-
 		Objects.requireNonNull(packageId, "packageId");
 		Objects.requireNonNull(selections, "selections");
 		Objects.requireNonNull(note, "note");
-
 		String rationale = note.strip();
-
 		if (rationale.isEmpty() || rationale.length() > 4000) {
 			throw new IllegalArgumentException("Review rationale must contain 1–4000 characters");
 		}
-
 		ReviewPlan plan = new MasterContributionReviewPlanner(database).plan(packageId);
-
 		return persistReview(plan, selections, rationale);
 	}
 
@@ -233,12 +214,9 @@ public final class MasterContributionDecisionLedger {
 	 * @throws NullPointerException     if the package identity is null
 	 */
 	public RecordedReview recordMerge(UUID packageId) throws SQLException, IOException {
-
 		Objects.requireNonNull(packageId, "packageId");
-
 		ReviewPlan plan = new MasterContributionReviewPlanner(database).planPending(packageId).orElseThrow(
 				() -> new PackageFormatException("This contribution is no longer eligible " + "for merging."));
-
 		Map<RecordKey, Choice> selections = mergeSelections(plan);
 
 		// Preserve durable approval evidence without requiring
@@ -295,67 +273,44 @@ public final class MasterContributionDecisionLedger {
 
 	private RecordedReview persistReview(ReviewPlan plan, Map<RecordKey, Choice> selections, String rationale)
 			throws SQLException {
-
 		UUID packageId = plan.packageId();
-
 		Map<RecordKey, RecordAssessment> assessed = new HashMap<>();
-
 		for (RecordAssessment assessment : plan.assessments()) {
-
 			RecordKey key = new RecordKey(assessment.recordType(), assessment.recordId());
-
 			if (assessed.putIfAbsent(key, assessment) != null) {
 				throw new IllegalArgumentException("Duplicate proposed record identity");
 			}
 		}
-
 		if (!assessed.keySet().equals(selections.keySet())) {
 			throw new IllegalArgumentException("One coordinator choice is required for every proposal");
 		}
-
 		List<RecordDecision> decisions = new ArrayList<>();
-
 		for (RecordAssessment assessment : plan.assessments()) {
-
 			RecordKey key = new RecordKey(assessment.recordType(), assessment.recordId());
-
 			Choice choice = Objects.requireNonNull(selections.get(key), "choice for " + key);
-
 			requirePermitted(assessment.status(), choice);
-
 			UUID resultRevision = choice == Choice.SKIP_IDENTICAL ? assessment.masterRevisionId() : null;
-
 			decisions.add(new RecordDecision(key, assessment.baselineRevisionId(), assessment.proposedRevisionId(),
 					assessment.masterRevisionId(), assessment.masterRecordSha256(), assessment.status(), choice,
 					resultRevision));
 		}
-
 		UUID reviewId = UUID.randomUUID();
-
 		Instant recordedAt = Instant.now();
-
 		RecordedReview review = new RecordedReview(reviewId, packageId, plan.observedAt(), recordedAt, rationale,
 				decisions);
-
 		try (Connection connection = database.openConnection()) {
-
 			connection.setAutoCommit(false);
-
 			try {
 				insertBatch(connection, review);
 				insertDecisions(connection, review);
 				connection.commit();
-
 				return review;
-
 			} catch (SQLException | RuntimeException failure) {
-
 				try {
 					connection.rollback();
 				} catch (SQLException rollbackFailure) {
 					failure.addSuppressed(rollbackFailure);
 				}
-
 				throw failure;
 			}
 		}

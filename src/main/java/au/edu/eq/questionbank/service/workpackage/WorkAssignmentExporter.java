@@ -131,7 +131,6 @@ public final class WorkAssignmentExporter {
 			addStructuredEntry(sources, entries, BASELINE_PATH, EntryRole.BASELINE, initialRecords);
 			List<ExchangeRecord> reconciliationEvidence = new AssignmentReconciliationEvidenceReader(snapshotDatabase)
 					.read(examPortableId, request.contributorId());
-
 			ExchangeRecord assignmentContext = assignmentContext(request, masterId, subjectPortableId, examPortableId,
 					currentSyllabusId, legacySyllabusId, baselineId, issuedAt, reconciliationEvidence);
 			addStructuredEntry(sources, entries, ASSIGNMENT_CONTEXT_PATH, EntryRole.RECORDS,
@@ -191,9 +190,7 @@ public final class WorkAssignmentExporter {
 	private ExchangeRecord assignmentContext(Request request, UUID masterId, UUID subjectId, UUID examId,
 			UUID currentSyllabusId, UUID legacySyllabusId, UUID baselineId, Instant issuedAt,
 			List<ExchangeRecord> reconciliationEvidence) {
-
 		ObjectNode values = JsonNodeFactory.instance.objectNode();
-
 		values.put("assignment_id", request.assignmentId().toString());
 		values.put("baseline_snapshot_id", baselineId.toString());
 		values.put("contributor_id", request.contributorId().toString());
@@ -204,7 +201,6 @@ public final class WorkAssignmentExporter {
 		values.put("legacy_capture_enabled", request.legacyCaptureEnabled());
 		values.put("master_installation_id", masterId.toString());
 		values.put("subject_id", subjectId.toString());
-
 		if (legacySyllabusId != null) {
 			values.put("legacy_syllabus_id", legacySyllabusId.toString());
 		}
@@ -213,13 +209,11 @@ public final class WorkAssignmentExporter {
 		// integrity-checked assignment context. No separate receipt
 		// exchange is required.
 		ArrayNode evidence = values.putArray("reconciliation_evidence");
-
 		for (ExchangeRecord record : reconciliationEvidence) {
 			ObjectNode entry = evidence.addObject();
 			entry.put("evidence_id", record.recordId().toString());
 			entry.set("mapping", record.values());
 		}
-
 		return new ExchangeRecord(ExchangeRecord.CURRENT_RECORD_VERSION, "WORK_ASSIGNMENT_CONTEXT",
 				request.assignmentId(), baselineId, null, values);
 	}

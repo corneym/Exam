@@ -33,12 +33,9 @@ final class AssignmentReconciliationEvidenceReader {
 	}
 
 	List<ExchangeRecord> read(UUID examId, UUID contributorId) throws SQLException {
-
 		Objects.requireNonNull(examId, "examId");
 		Objects.requireNonNull(contributorId, "contributorId");
-
 		List<ExchangeRecord> evidence = new ArrayList<>();
-
 		try (Connection connection = database.openConnection();
 				PreparedStatement statement = connection.prepareStatement("""
 						SELECT
@@ -80,17 +77,14 @@ final class AssignmentReconciliationEvidenceReader {
 						         mapping.record_type,
 						         mapping.record_id
 						""")) {
-
 			statement.setString(1, examId.toString());
 			statement.setString(2, contributorId.toString());
-
 			try (ResultSet rows = statement.executeQuery()) {
 				while (rows.next()) {
 					evidence.add(readRecord(rows));
 				}
 			}
 		}
-
 		return List.copyOf(evidence);
 	}
 
@@ -100,14 +94,11 @@ final class AssignmentReconciliationEvidenceReader {
 		// appearing in different historical contribution applications.
 		String identity = "assignment-reconciliation-v1:" + row.getString("review_id") + ":"
 				+ row.getString("record_type") + ":" + row.getString("record_id");
-
 		return UUID.nameUUIDFromBytes(identity.getBytes(StandardCharsets.UTF_8));
 	}
 
 	private ExchangeRecord readRecord(ResultSet row) throws SQLException {
-
 		ObjectNode values = JsonNodeFactory.instance.objectNode();
-
 		values.put("assignment_id", row.getString("assignment_id"));
 		values.put("return_package_id", row.getString("package_id"));
 		values.put("baseline_snapshot_id", row.getString("baseline_snapshot_id"));
@@ -121,7 +112,6 @@ final class AssignmentReconciliationEvidenceReader {
 		values.put("canonical_record_id", row.getString("canonical_record_id"));
 		values.put("proposed_revision_id", row.getString("proposed_revision_id"));
 		values.put("resulting_revision_id", row.getString("resulting_revision_id"));
-
 		return new ExchangeRecord(ExchangeRecord.CURRENT_RECORD_VERSION, "ASSIGNMENT_RECONCILIATION_EVIDENCE",
 				evidenceId(row), null, null, values);
 	}

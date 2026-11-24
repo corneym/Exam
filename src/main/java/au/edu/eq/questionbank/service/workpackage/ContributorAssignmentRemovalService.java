@@ -57,6 +57,16 @@ public final class ContributorAssignmentRemovalService {
 				"Unknown contributor assignment: " + assignmentId)) != State.REMOVED) {
 			throw new IllegalStateException("Only a previously removed assignment can be reactivated.");
 		}
+		var sessions = new SqliteContributorAssignmentSessionRepository(database);
+		var previous = sessions.find(assignmentId)
+				.orElseThrow(() -> new SQLException("Removed assignment session is missing"));
+		boolean superseded = sessions.findAll().stream()
+				.anyMatch(session -> session.examPortableId().equals(previous.examPortableId())
+						&& session.issuedAt().isAfter(previous.issuedAt()));
+		if (superseded) {
+			throw new IllegalStateException(
+					"This removed assignment has been superseded " + "by a newer assignment for the same Exam.");
+		}
 		requireNoSavedChanges(assignmentId);
 		try (Connection connection = database.openConnection();
 				PreparedStatement statement = connection.prepareStatement("""

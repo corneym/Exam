@@ -3997,18 +3997,14 @@ public class QuestionBankApplication extends Application {
 
 	private void presentCoordinatorContributionReview(Stage primaryStage, ApplicationConfig config, Path archive,
 			ContributionReviewData data) {
-
 		MasterContributionReviewDialog dialog = new MasterContributionReviewDialog(primaryStage, data.plan(),
 				data.baseline(), data.proposals(), data.assignment().examPortableId(),
 				data.assignment().contributorName());
-
 		ButtonType result = dialog.showAndWait().orElse(ButtonType.CANCEL);
-
 		if (result != MasterContributionReviewDialog.MERGE) {
 			packageImportInProgress = false;
 			return;
 		}
-
 		Path backupDirectory = config.dataRoot().resolve("backups").resolve("pre-import").toAbsolutePath().normalize();
 
 		// The Merge Contribution action is the coordinator's
@@ -4967,46 +4963,36 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void showAlert(Alert.AlertType type, String title, String header, String message) {
-
 		showAlert(type, title, header, message, null);
 	}
 
 	private void showAlert(Alert.AlertType type, String title, String header, String message, Throwable failure) {
-
 		Alert alert = new Alert(type);
-
 		alert.setTitle(title);
 		alert.setHeaderText(header);
 		alert.setContentText(message);
 		alert.setResizable(true);
-
 		if (type == Alert.AlertType.ERROR || type == Alert.AlertType.WARNING) {
 
 			// Use selectable, scrollable text rather than the
 			// standard non-selectable Alert content label.
 			TextArea messageArea = new TextArea(message);
-
 			messageArea.setId("alert-message");
 			messageArea.setEditable(false);
 			messageArea.setWrapText(true);
 			messageArea.setPrefColumnCount(70);
 			messageArea.setPrefRowCount(6);
-
 			alert.getDialogPane().setContent(messageArea);
 			alert.getDialogPane().setPrefWidth(680);
 		}
-
 		if (failure != null) {
 
 			// Preserve the complete exception chain and stack trace.
 			StringWriter output = new StringWriter();
-
 			try (PrintWriter writer = new PrintWriter(output)) {
 				failure.printStackTrace(writer);
 			}
-
 			TextArea details = new TextArea(output.toString());
-
 			details.setId("alert-technical-details");
 			details.setEditable(false);
 			details.setWrapText(false);
@@ -5014,10 +5000,8 @@ public class QuestionBankApplication extends Application {
 			details.setPrefRowCount(15);
 			details.setMaxWidth(Double.MAX_VALUE);
 			details.setMaxHeight(Double.MAX_VALUE);
-
 			alert.getDialogPane().setExpandableContent(details);
 		}
-
 		alert.showAndWait();
 	}
 
@@ -6867,11 +6851,8 @@ public class QuestionBankApplication extends Application {
 
 	private void startCoordinatorContributionApplication(Stage primaryStage, ApplicationConfig config, Path archive,
 			UUID packageId, Path backupDirectory) {
-
 		Task<ContributionApplicationData> task = new ApplicationBackgroundTask<>(() -> {
-
 			SqliteDatabase database = new SqliteDatabase(config.databasePath());
-
 			SubjectImportBackupGate backupGate = new SubjectImportBackupGate(config);
 
 			// A verified recovery backup must exist before
@@ -6882,7 +6863,6 @@ public class QuestionBankApplication extends Application {
 			// approval internally. No partial selection
 			// or manual rationale is accepted here.
 			var review = new MasterContributionDecisionLedger(database).recordMerge(packageId);
-
 			backupGate.requireIntact(packageId, certificate);
 
 			// The existing application service verifies the
@@ -6891,68 +6871,47 @@ public class QuestionBankApplication extends Application {
 			// guarded application workflow.
 			var result = new MasterContributionApplicationCoordinator(database).execute(review.reviewId(), archive,
 					new ManagedDataLayout(config.dataRoot()));
-
 			return new ContributionApplicationData(result, certificate.backupPath());
 		});
-
 		Alert progress = new Alert(Alert.AlertType.INFORMATION);
-
 		progress.initOwner(primaryStage);
 		progress.setTitle("Merging Contribution");
-
 		progress.setHeaderText("Creating a backup and merging contributor work");
-
 		progress.setContentText("All returned work will be merged together."
 				+ "\n\nIf validation or application fails, " + "the contribution will not be partially merged.");
-
 		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
-
 		progress.getButtonTypes().setAll(new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE));
-
 		task.setOnSucceeded(_ -> {
-
 			packageImportInProgress = false;
 			progress.close();
-
 			ContributionApplicationData data = task.getValue();
-
 			long applied = data.application().outcomes().stream()
 					.filter(outcome -> outcome.outcome() == MasterContributionApplicationCoordinator.Outcome.APPLIED)
 					.count();
-
 			try {
 				refreshCorpusDashboardHome(-1L);
-
 			} catch (RuntimeException failure) {
-
 				showAlert(Alert.AlertType.WARNING, "Dashboard Refresh",
 						"The contribution was merged, but " + "the Dashboard refresh failed.",
 						"Restart the application to load " + "the authoritative state.\n" + failureMessage(failure));
 			}
-
 			showAlert(Alert.AlertType.INFORMATION, "Contribution Merged",
 					"The contribution has been merged successfully.",
 					"New records merged: " + applied + "\n\nVerified backup:\n" + data.backupPath()
 							+ "\n\nThe assignment is now closed " + "and its Exam unlocked.");
 		});
-
 		task.setOnFailed(_ -> {
-
 			packageImportInProgress = false;
 			progress.close();
-
 			showAlert(Alert.AlertType.ERROR, "Contribution Merge Failed", "The contribution could not be merged.",
 					failureMessage(task.getException()) + "\n\nRetain the contribution archive "
 							+ "and any recovery backup." + "\nDo not delete recovery files " + "to force a retry.");
 		});
-
 		task.setOnCancelled(_ -> {
 			packageImportInProgress = false;
 			progress.close();
 		});
-
 		Thread worker = new Thread(task, "examwork-coordinator-contribution-application");
-
 		worker.setDaemon(true);
 		progress.show();
 		worker.start();

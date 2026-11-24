@@ -196,38 +196,34 @@ public class SqliteSubjectGraphReader {
 	}
 
 	/**
-	 * Discovers the complete portable-identity entity set belonging to one Subject.
+	 * Reads a complete Subject graph using the caller's existing transaction.
 	 *
 	 * <p>
-	 * The result contains SQLite-local identifiers for subsequent portable record
-	 * assembly. These identifiers must not be serialised directly into an exchange
-	 * package.
+	 * Uncommitted graph changes are visible to this operation. The caller retains
+	 * responsibility for transaction completion.
 	 *
-	 * @param subjectId existing SQLite-local Subject identifier
-	 * @return immutable Subject graph selection
-	 * @throws SQLException if the Subject cannot be found, the database cannot be
-	 *                      read, or a cross-Subject curriculum relationship
-	 *                      prevents a valid Subject-only export
+	 * @param connection caller-owned SQLite transaction
+	 * @param subjectId  existing Subject identifier
+	 * @return complete Subject graph selection
+	 * @throws SQLException             if graph selection or validation fails
+	 * @throws IllegalStateException    if the connection uses autocommit
+	 * @throws IllegalArgumentException if the Subject identifier is invalid
 	 */
-	public SubjectGraph read(long subjectId) throws SQLException {
+	public static SubjectGraph readInTransaction(Connection connection, long subjectId) throws SQLException {
+		Objects.requireNonNull(connection, "connection");
+		if (connection.getAutoCommit()) {
+			throw new IllegalStateException("Subject graph selection requires a transaction");
+		}
 		if (subjectId < 1) {
-			throw new IllegalArgumentException("subjectId must be positive");
+			throw new IllegalArgumentException("Subject ID must be positive");
 		}
-		try (Connection connection = database.openConnection()) {
-			connection.setAutoCommit(false);
-			String subjectName = readSubjectName(connection, subjectId);
-
-			// Do not omit mappings or reviews that cross the
-			// requested Subject boundary.
-			requireInternalCurriculumReferences(connection, subjectId);
-			Map<EntityType, List<Long>> selections = readSelections(connection, subjectId);
-			SubjectGraph graph = new SubjectGraph(subjectId, subjectName, selections);
-			connection.commit();
-			return graph;
-		}
+		String subjectName = readSubjectName(connection, subjectId);
+		requireInternalCurriculumReferences(connection, subjectId);
+		return new SubjectGraph(subjectId, subjectName, readSelections(connection, subjectId));
 	}
 
-	private Map<EntityType, List<Long>> readSelections(Connection connection, long subjectId) throws SQLException {
+	private static Map<EntityType, List<Long>> readSelections(Connection connection, long subjectId)
+			throws SQLException {
 		Map<EntityType, List<Long>> selections = new EnumMap<>(EntityType.class);
 		for (EntityType type : EntityType.values()) {
 			String sql = SELECTION_SQL.get(type);
@@ -252,7 +248,7 @@ public class SqliteSubjectGraphReader {
 		return selections;
 	}
 
-	private String readSubjectName(Connection connection, long subjectId) throws SQLException {
+	private static String readSubjectName(Connection connection, long subjectId) throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
 				SELECT subject_name
 				FROM subjects
@@ -272,7 +268,7 @@ public class SqliteSubjectGraphReader {
 		}
 	}
 
-	private void rejectCrossSubject(Connection connection, long subjectId, String relationship, String sql)
+	private static void rejectCrossSubject(Connection connection, long subjectId, String relationship, String sql)
 			throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement(sql)) {
 			for (int parameter = 1; parameter <= 4; parameter++) {
@@ -287,7 +283,7 @@ public class SqliteSubjectGraphReader {
 		}
 	}
 
-	private void requireInternalCurriculumReferences(Connection connection, long subjectId) throws SQLException {
+	private static void requireInternalCurriculumReferences(Connection connection, long subjectId) throws SQLException {
 		rejectCrossSubject(connection, subjectId, "curriculum mapping", """
 				SELECT mapping.id
 				FROM curriculum_mappings mapping
@@ -332,6 +328,38 @@ public class SqliteSubjectGraphReader {
 				)
 				LIMIT 1
 				""");
+	}
+
+	/**
+	 * Discovers the complete portable-identity entity set belonging to one Subject.
+	 *
+	 * <p>
+	 * The result contains SQLite-local identifiers for subsequent portable record
+	 * assembly. These identifiers must not be serialised directly into an exchange
+	 * package.
+	 *
+	 * @param subjectId existing SQLite-local Subject identifier
+	 * @return immutable Subject graph selection
+	 * @throws SQLException if the Subject cannot be found, the database cannot be
+	 *                      read, or a cross-Subject curriculum relationship
+	 *                      prevents a valid Subject-only export
+	 */
+	public SubjectGraph read(long subjectId) throws SQLException {
+		if (subjectId < 1) {
+			throw new IllegalArgumentException("subjectId must be positive");
+		}
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			String subjectName = readSubjectName(connection, subjectId);
+
+			// Do not omit mappings or reviews that cross the
+			// requested Subject boundary.
+			requireInternalCurriculumReferences(connection, subjectId);
+			Map<EntityType, List<Long>> selections = readSelections(connection, subjectId);
+			SubjectGraph graph = new SubjectGraph(subjectId, subjectName, selections);
+			connection.commit();
+			return graph;
+		}
 	}
 
 	/**
