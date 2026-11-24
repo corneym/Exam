@@ -35,6 +35,60 @@ public final class SqliteImportedSubjectAuthorityRepository {
 	}
 
 	/**
+	 * Reads imported Subject authority using the caller's existing database
+	 * connection.
+	 *
+	 * <p>
+	 * This allows refresh eligibility and transactional revalidation to inspect
+	 * authority, package history and canonical identities within the same database
+	 * view. The caller retains ownership of the connection.
+	 *
+	 * @param connection     caller-owned database connection
+	 * @param subjectLocalId positive SQLite-local Subject ID
+	 * @return imported authority, or empty for a locally authoritative Subject
+	 * @throws SQLException             if reading authority fails
+	 * @throws NullPointerException     if connection is null
+	 * @throws IllegalArgumentException if the Subject ID is not positive
+	 */
+	public Optional<ImportedAuthority> find(Connection connection, long subjectLocalId) throws SQLException {
+
+		Objects.requireNonNull(connection, "connection");
+		requireSubjectId(subjectLocalId);
+
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT origin_installation_id,
+				       origin_subject_portable_id,
+				       latest_package_id,
+				       archive_sha256,
+				       imported_at
+				FROM imported_subject_authorities
+				WHERE subject_local_id = ?
+				""")) {
+
+			statement.setLong(1, subjectLocalId);
+
+			try (ResultSet result = statement.executeQuery()) {
+
+				if (!result.next()) {
+					return Optional.empty();
+				}
+
+				ImportedAuthority authority = new ImportedAuthority(subjectLocalId,
+						UUID.fromString(result.getString("origin_installation_id")),
+						UUID.fromString(result.getString("origin_subject_portable_id")),
+						UUID.fromString(result.getString("latest_package_id")), result.getString("archive_sha256"),
+						Instant.parse(result.getString("imported_at")));
+
+				if (result.next()) {
+					throw new SQLException("Duplicate imported authority for Subject " + subjectLocalId);
+				}
+
+				return Optional.of(authority);
+			}
+		}
+	}
+
+	/**
 	 * Returns the imported authority for one local Subject.
 	 *
 	 * @param subjectLocalId positive SQLite-local Subject ID
@@ -42,32 +96,8 @@ public final class SqliteImportedSubjectAuthorityRepository {
 	 * @throws SQLException if reading authority fails
 	 */
 	public Optional<ImportedAuthority> find(long subjectLocalId) throws SQLException {
-		requireSubjectId(subjectLocalId);
-		try (Connection connection = database.openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
-						SELECT origin_installation_id,
-						       origin_subject_portable_id,
-						       latest_package_id,
-						       archive_sha256,
-						       imported_at
-						FROM imported_subject_authorities
-						WHERE subject_local_id = ?
-						""")) {
-			statement.setLong(1, subjectLocalId);
-			try (ResultSet result = statement.executeQuery()) {
-				if (!result.next()) {
-					return Optional.empty();
-				}
-				ImportedAuthority authority = new ImportedAuthority(subjectLocalId,
-						UUID.fromString(result.getString("origin_installation_id")),
-						UUID.fromString(result.getString("origin_subject_portable_id")),
-						UUID.fromString(result.getString("latest_package_id")), result.getString("archive_sha256"),
-						Instant.parse(result.getString("imported_at")));
-				if (result.next()) {
-					throw new SQLException("Duplicate imported authority for Subject " + subjectLocalId);
-				}
-				return Optional.of(authority);
-			}
+		try (Connection connection = database.openConnection()) {
+			return find(connection, subjectLocalId);
 		}
 	}
 

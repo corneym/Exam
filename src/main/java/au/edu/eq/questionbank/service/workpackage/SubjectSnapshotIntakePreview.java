@@ -21,8 +21,12 @@ import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
 import org.apache.commons.compress.archivers.zip.ZipFile;
 
 import au.edu.eq.questionbank.ApplicationVersion;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableAliasRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteImportedSubjectAuthorityRepository;
+import au.edu.eq.questionbank.repository.sqlite.SqliteImportedSubjectAuthorityRepository.ImportedAuthority;
 import au.edu.eq.questionbank.repository.sqlite.SqliteSubjectImportLedger;
 import au.edu.eq.questionbank.repository.sqlite.SqliteSubjectImportLedger.PackageOutcome;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest.EntryRole;
@@ -55,6 +59,51 @@ public final class SubjectSnapshotIntakePreview {
 		this.database = Objects.requireNonNull(database, "database");
 	}
 
+	static Long findExistingSubject(Connection connection, Fingerprint fingerprint) throws SQLException {
+
+		Objects.requireNonNull(connection, "connection");
+		Objects.requireNonNull(fingerprint, "fingerprint");
+
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT s.id
+				FROM subjects s
+				WHERE s.subject_name = ? COLLATE NOCASE
+				   OR EXISTS (
+				       SELECT 1
+				       FROM imported_subject_authorities authority
+				       WHERE authority.subject_local_id = s.id
+				         AND authority.origin_installation_id = ?
+				         AND authority.origin_subject_portable_id = ?
+				   )
+				ORDER BY s.id
+				""")) {
+
+			statement.setString(1, fingerprint.subjectName());
+
+			statement.setString(2, fingerprint.originInstallationId().toString());
+
+			statement.setString(3, fingerprint.subjectId().toString());
+
+			try (ResultSet result = statement.executeQuery()) {
+
+				if (!result.next()) {
+					return null;
+				}
+
+				long localId = result.getLong(1);
+
+				// A name collision with a different Subject must
+				// never override an established originating identity.
+				if (result.next()) {
+					throw new SQLException("The incoming Subject name and originating "
+							+ "identity match different destination Subjects.");
+				}
+
+				return localId;
+			}
+		}
+	}
+
 	/**
 	 * Validates a Subject snapshot and identifies its destination state.
 	 *
@@ -63,68 +112,132 @@ public final class SubjectSnapshotIntakePreview {
 	 * domain graph and asset-index validation use that copy. No destination
 	 * database or managed asset mutations are performed.
 	 *
+	 * <p>
+	 * Existing Subjects are resolved by name and previously recorded originating
+	 * Subject identity. A renamed originating Subject must not be mistaken for a
+	 * new independent Subject.
+	 *
 	 * @param incomingArchive complete Subject snapshot archive
 	 * @return immutable inspection and record-count summary
 	 * @throws IOException          if the archive is unreadable, malformed or
 	 *                              invalid
-	 * @throws SQLException         if destination inspection fails
+	 * @throws SQLException         if destination inspection fails or is ambiguous
 	 * @throws NullPointerException if incomingArchive is null
 	 */
 	public Inspection inspect(Path incomingArchive) throws IOException, SQLException {
+
 		Objects.requireNonNull(incomingArchive, "incomingArchive");
+
 		Path source = incomingArchive.toAbsolutePath().normalize();
+
 		if (!Files.isRegularFile(source, LinkOption.NOFOLLOW_LINKS)
 				|| !source.getFileName().toString().endsWith(".examwork")) {
 			throw new PackageFormatException("Choose an ordinary .examwork Subject snapshot file.");
 		}
+
+		if (Files.size(source) > 512L * 1024 * 1024) {
+			throw new PackageFormatException("Subject archive exceeds maximum compressed size.");
+		}
+
 		Path directory = Files.createTempDirectory("examwork-subject-inspection-");
+
 		Path privateArchive = directory.resolve("incoming.examwork");
+
 		try {
 			Files.copy(source, privateArchive, LinkOption.NOFOLLOW_LINKS);
+
 			ExamWorkManifest manifest = new ExamWorkArchiveValidator().validate(privateArchive,
 					ApplicationVersion.current(), SqliteDatabase.latestSchemaVersion());
+
 			if (manifest.packageType() != ExamWorkPackageType.SUBJECT_SNAPSHOT
 					|| manifest.scope().level() != ScopeLevel.SUBJECT) {
+
 				throw new PackageFormatException("The selected package is not a complete Subject snapshot.");
 			}
+
 			Fingerprint fingerprint = new SubjectImportSnapshotFingerprint().inspect(privateArchive);
+
 			List<ExchangeRecord> records;
 			ExamWorkAssetIndex assets;
+
 			try (ZipFile archive = ZipFile.builder().setPath(privateArchive).get()) {
+
 				ExamWorkJsonlCodec codec = new ExamWorkJsonlCodec();
+
 				records = readRecords(archive, manifest, codec);
 				assets = readAssets(archive, codec);
 			}
+
 			assets.requireMatchingManifest(manifest);
+
 			PortableDomainRecordValidator.validate(manifest.subjectId(), records);
+
 			List<ExchangeRecord> subjects = records.stream().filter(record -> record.recordType().equals("SUBJECT"))
 					.toList();
+
 			if (subjects.size() != 1 || !subjects.getFirst().recordId().equals(manifest.subjectId())
 					|| !manifest.subjectName().equals(subjects.getFirst().values().path("subject_name").asText())) {
+
 				throw new PackageFormatException("Subject identity differs between the manifest and records.");
 			}
+
 			UUID localInstallationId = new SqlitePortableIdentityRepository(database).installationId();
+
 			if (localInstallationId.equals(manifest.originInstallationId())) {
-				throw new PackageFormatException("This Subject snapshot originated from the current installation.");
+
+				throw new PackageFormatException(
+						"This Subject snapshot originated " + "from the current installation.");
 			}
-			var recorded = new SqliteSubjectImportLedger(database).find(manifest.packageId());
+
 			State state;
-			Long existingSubjectId = findExistingSubject(manifest.subjectName());
-			if (recorded.isPresent()) {
-				var previous = recorded.orElseThrow();
-				if (!previous.archiveSha256().equals(fingerprint.archiveSha256())) {
-					throw new PackageFormatException("The package UUID was previously recorded with different bytes.");
+			Long existingSubjectId;
+
+			try (Connection connection = database.openConnection()) {
+
+				connection.setAutoCommit(false);
+
+				try {
+					// Resolve package history and destination identity
+					// from the same consistent database read transaction.
+					var recorded = new SqliteSubjectImportLedger(database).find(connection, manifest.packageId());
+
+					existingSubjectId = findExistingSubject(connection, fingerprint);
+
+					if (recorded.isPresent()) {
+						var previous = recorded.orElseThrow();
+
+						if (!previous.archiveSha256().equals(fingerprint.archiveSha256())) {
+
+							throw new PackageFormatException(
+									"The package UUID was previously " + "recorded with different bytes.");
+						}
+
+						if (previous.outcome() != PackageOutcome.APPLIED) {
+							throw new PackageFormatException(
+									"This package was previously rejected " + "and cannot be replayed.");
+						}
+
+						state = State.ALREADY_IMPORTED;
+					} else {
+						state = existingSubjectId == null ? State.NEW_SUBJECT : State.EXISTING_SUBJECT;
+					}
+
+					connection.commit();
+				} catch (SQLException | IOException | RuntimeException failure) {
+					try {
+						connection.rollback();
+					} catch (SQLException rollbackFailure) {
+						failure.addSuppressed(rollbackFailure);
+					}
+					throw failure;
 				}
-				if (previous.outcome() != PackageOutcome.APPLIED) {
-					throw new PackageFormatException("This package was previously rejected and cannot be replayed.");
-				}
-				state = State.ALREADY_IMPORTED;
-			} else {
-				state = existingSubjectId == null ? State.NEW_SUBJECT : State.EXISTING_SUBJECT;
 			}
+
 			Map<String, Long> counts = records.stream()
 					.collect(Collectors.groupingBy(ExchangeRecord::recordType, TreeMap::new, Collectors.counting()));
+
 			return new Inspection(fingerprint, state, existingSubjectId, counts, records, assets);
+
 		} finally {
 			try {
 				Files.deleteIfExists(privateArchive);
@@ -134,25 +247,148 @@ public final class SubjectSnapshotIntakePreview {
 		}
 	}
 
-	private Long findExistingSubject(String name) throws SQLException {
-		try (Connection connection = database.openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
-						SELECT id
-						FROM subjects
-						WHERE subject_name = ? COLLATE NOCASE
-						""")) {
-			statement.setString(1, name);
-			try (ResultSet result = statement.executeQuery()) {
-				if (!result.next()) {
-					return null;
+	/**
+	 * Establishes whether an inspected snapshot belongs to an existing imported
+	 * Subject owned by the same originating authority.
+	 *
+	 * <p>
+	 * Locally authoritative Subjects, different originating installations,
+	 * different originating Subject identities and previously recorded packages are
+	 * not eligible for a new refresh operation.
+	 *
+	 * <p>
+	 * This is a read-only eligibility check. It neither approves a refresh nor
+	 * establishes that the incoming snapshot is newer than the last accepted
+	 * snapshot. Archive freshness, destination content comparison, explicit
+	 * approval and transactional revalidation remain necessary.
+	 *
+	 * @param inspection previously validated incoming snapshot
+	 * @return current imported authority for the eligible destination
+	 * @throws SQLException           if destination evidence cannot be read
+	 * @throws PackageFormatException if refresh eligibility cannot be established
+	 * @throws NullPointerException   if inspection is null
+	 */
+	public ImportedAuthority requireRefreshAuthority(Inspection inspection)
+			throws SQLException, PackageFormatException {
+
+		Objects.requireNonNull(inspection, "inspection");
+
+		try (Connection connection = database.openConnection()) {
+
+			connection.setAutoCommit(false);
+
+			try {
+				ImportedAuthority authority = requireRefreshAuthority(connection, inspection);
+
+				connection.commit();
+
+				return authority;
+
+			} catch (SQLException | PackageFormatException | RuntimeException failure) {
+
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					failure.addSuppressed(rollbackFailure);
 				}
-				long localId = result.getLong(1);
-				if (result.next()) {
-					throw new SQLException("Multiple existing Subjects match the incoming name.");
-				}
-				return localId;
+
+				throw failure;
 			}
 		}
+	}
+
+	ImportedAuthority requireRefreshAuthority(Connection connection, Inspection inspection)
+			throws SQLException, PackageFormatException {
+
+		Objects.requireNonNull(connection, "connection");
+		Objects.requireNonNull(inspection, "inspection");
+
+		if (connection.getAutoCommit()) {
+			throw new IllegalStateException("Refresh eligibility requires a consistent " + "caller-owned transaction.");
+		}
+
+		if (inspection.state() != State.EXISTING_SUBJECT || inspection.existingSubjectId() == null) {
+
+			throw new PackageFormatException(
+					"Refresh requires an existing imported Subject " + "and a previously unapplied package.");
+		}
+
+		Fingerprint incoming = inspection.fingerprint();
+
+		Long currentSubjectId = findExistingSubject(connection, incoming);
+
+		if (!Objects.equals(currentSubjectId, inspection.existingSubjectId())) {
+
+			throw new PackageFormatException("The destination Subject changed after inspection.");
+		}
+
+		SqliteImportedSubjectAuthorityRepository authorities = new SqliteImportedSubjectAuthorityRepository(database);
+
+		ImportedAuthority authority = authorities.find(connection, currentSubjectId)
+				.orElseThrow(() -> new PackageFormatException(
+						"The existing Subject is locally authoritative " + "and cannot be overwritten by a snapshot."));
+
+		// Both originating identities must match. A common name
+		// or a common originating installation is not sufficient.
+		if (!authority.originInstallationId().equals(incoming.originInstallationId())) {
+
+			throw new PackageFormatException(
+					"The incoming snapshot belongs to a different " + "originating installation.");
+		}
+
+		if (!authority.originSubjectPortableId().equals(incoming.subjectId())) {
+
+			throw new PackageFormatException(
+					"The incoming snapshot belongs to a different " + "originating Subject identity.");
+		}
+
+		SqliteSubjectImportLedger ledger = new SqliteSubjectImportLedger(database);
+
+		var previousIncoming = ledger.find(connection, incoming.packageId());
+
+		if (previousIncoming.isPresent()) {
+
+			if (!previousIncoming.orElseThrow().archiveSha256().equals(incoming.archiveSha256())) {
+
+				throw new PackageFormatException("The package UUID was previously recorded " + "with different bytes.");
+			}
+
+			throw new PackageFormatException("The incoming package already has a recorded outcome.");
+		}
+
+		// Imported authority must be backed by a consistent terminal
+		// package entry. An authority row alone is insufficient.
+		var latest = ledger.find(connection, authority.latestPackageId()).orElseThrow(
+				() -> new PackageFormatException("The latest imported Subject package evidence is missing."));
+
+		if (latest.outcome() != PackageOutcome.APPLIED
+				|| !latest.originInstallationId().equals(authority.originInstallationId())
+				|| !latest.subjectPortableId().equals(authority.originSubjectPortableId())
+				|| !latest.archiveSha256().equals(authority.archiveSha256())) {
+
+			throw new PackageFormatException(
+					"The recorded Subject authority and latest " + "applied package evidence are inconsistent.");
+		}
+
+		SqlitePortableAliasRepository aliases = new SqlitePortableAliasRepository(database);
+
+		UUID canonicalSubjectId = aliases
+				.findAlias(connection, incoming.originInstallationId(), EntityType.SUBJECT, incoming.subjectId())
+				.orElseThrow(
+						() -> new PackageFormatException("The originating Subject has no approved canonical alias."));
+
+		SqlitePortableIdentityRepository identities = new SqlitePortableIdentityRepository(database);
+
+		var canonicalSubject = identities.findByPortableId(connection, EntityType.SUBJECT, canonicalSubjectId)
+				.orElseThrow(() -> new PackageFormatException("The imported canonical Subject identity is missing."));
+
+		if (canonicalSubject.localId() != currentSubjectId.longValue()) {
+
+			throw new PackageFormatException(
+					"The originating Subject alias points to " + "a different destination Subject.");
+		}
+
+		return authority;
 	}
 
 	private ExamWorkAssetIndex readAssets(ZipFile archive, ExamWorkJsonlCodec codec) throws IOException {

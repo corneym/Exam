@@ -57,6 +57,52 @@ public final class SqliteSubjectImportLedger {
 	}
 
 	/**
+	 * Retrieves a previously recorded package outcome using the caller's existing
+	 * database connection.
+	 *
+	 * <p>
+	 * The connection remains owned by the caller. This method does not commit, roll
+	 * back or modify package history.
+	 *
+	 * @param connection caller-owned database connection
+	 * @param packageId  immutable package identity
+	 * @return the recorded package, or an empty result
+	 * @throws SQLException         if reading the ledger fails
+	 * @throws NullPointerException if either argument is null
+	 */
+	public Optional<PackageEntry> find(Connection connection, UUID packageId) throws SQLException {
+
+		Objects.requireNonNull(connection, "connection");
+		Objects.requireNonNull(packageId, "packageId");
+
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT package_id, archive_sha256,
+				       origin_installation_id, subject_portable_id,
+				       master_state_sha256, approval_sha256, outcome,
+				       backup_archive_path, approval_note
+				FROM subject_import_packages
+				WHERE package_id = ?
+				""")) {
+
+			statement.setString(1, packageId.toString());
+
+			try (ResultSet result = statement.executeQuery()) {
+
+				if (!result.next()) {
+					return Optional.empty();
+				}
+
+				return Optional.of(new PackageEntry(UUID.fromString(result.getString("package_id")),
+						result.getString("archive_sha256"), UUID.fromString(result.getString("origin_installation_id")),
+						UUID.fromString(result.getString("subject_portable_id")),
+						result.getString("master_state_sha256"), result.getString("approval_sha256"),
+						PackageOutcome.valueOf(result.getString("outcome")), result.getString("backup_archive_path"),
+						result.getString("approval_note")));
+			}
+		}
+	}
+
+	/**
 	 * Retrieves a previously recorded package outcome.
 	 *
 	 * @param packageId immutable package identity
@@ -184,34 +230,6 @@ public final class SqliteSubjectImportLedger {
 			statement.executeUpdate();
 		}
 		return true;
-	}
-
-	/**
-	 * Finds a package using the caller's existing database connection.
-	 */
-	private Optional<PackageEntry> find(Connection connection, UUID packageId) throws SQLException {
-		Objects.requireNonNull(packageId, "packageId");
-		try (PreparedStatement statement = connection.prepareStatement("""
-				SELECT package_id, archive_sha256,
-				       origin_installation_id, subject_portable_id,
-				       master_state_sha256, approval_sha256, outcome,
-				       backup_archive_path, approval_note
-				FROM subject_import_packages
-				WHERE package_id = ?
-				""")) {
-			statement.setString(1, packageId.toString());
-			try (ResultSet result = statement.executeQuery()) {
-				if (!result.next()) {
-					return Optional.empty();
-				}
-				return Optional.of(new PackageEntry(UUID.fromString(result.getString("package_id")),
-						result.getString("archive_sha256"), UUID.fromString(result.getString("origin_installation_id")),
-						UUID.fromString(result.getString("subject_portable_id")),
-						result.getString("master_state_sha256"), result.getString("approval_sha256"),
-						PackageOutcome.valueOf(result.getString("outcome")), result.getString("backup_archive_path"),
-						result.getString("approval_note")));
-			}
-		}
 	}
 
 	/**
