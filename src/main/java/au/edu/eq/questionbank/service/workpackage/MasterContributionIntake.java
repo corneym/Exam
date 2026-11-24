@@ -43,6 +43,56 @@ public final class MasterContributionIntake {
 	}
 
 	/**
+	 * Finds the assignment associated with a return that remains eligible for
+	 * reconciliation.
+	 *
+	 * @param connection current database connection
+	 * @param packageId  received contribution package identity
+	 * @return eligible assignment identity, or empty if the return cannot be
+	 *         reconciled
+	 * @throws SQLException if persistence or lifecycle evidence is invalid
+	 */
+	static Optional<UUID> findReviewableAssignment(Connection connection, UUID packageId) throws SQLException {
+		Objects.requireNonNull(connection, "connection");
+		Objects.requireNonNull(packageId, "packageId");
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT packet.assignment_id
+				FROM contribution_intake_packages packet
+				JOIN exam_work_assignment_states states
+				  ON states.assignment_id = packet.assignment_id
+				JOIN exam_work_assignments assignment
+				  ON assignment.assignment_id = packet.assignment_id
+				JOIN exam_work_assignment_exam_locks locks
+				  ON locks.assignment_id = packet.assignment_id
+				 AND locks.exam_portable_id =
+				     assignment.exam_portable_id
+				WHERE packet.package_id = ?
+				  AND packet.intake_status = 'READY_FOR_REVIEW'
+				  AND packet.return_number = 1
+				  AND packet.previous_package_id IS NULL
+				  AND states.state = 'ACTIVE'
+				  AND NOT EXISTS (
+				      SELECT 1
+				      FROM contribution_intake_packages competing
+				      WHERE competing.assignment_id = packet.assignment_id
+				        AND competing.package_id <> packet.package_id
+				  )
+				""")) {
+			statement.setString(1, packageId.toString());
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					return Optional.empty();
+				}
+				UUID assignmentId = UUID.fromString(result.getString("assignment_id"));
+				if (result.next()) {
+					throw new SQLException("Duplicate active assignment reconciliation");
+				}
+				return Optional.of(assignmentId);
+			}
+		}
+	}
+
+	/**
 	 * Finds durable receipt evidence for a package UUID.
 	 *
 	 * @param packageId return package identity

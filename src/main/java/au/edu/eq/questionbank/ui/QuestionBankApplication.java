@@ -6929,59 +6929,54 @@ public class QuestionBankApplication extends Application {
 		if (activeAssignmentContext != null) {
 			packageImportInProgress = false;
 			showAlert(Alert.AlertType.ERROR, "Coordinator Contribution", "Exit contributor assignment mode first.",
-					"Contribution reconciliation requires the authoritative " + "coordinator installation.");
+					"Contribution reconciliation requires the " + "authoritative coordinator installation.");
 			return;
 		}
 		Task<ContributionReviewData> task = new ApplicationBackgroundTask<>(() -> {
 			SqliteDatabase database = new SqliteDatabase(config.databasePath());
 			MasterContributionIntake intake = new MasterContributionIntake(database);
 
-			// Intake validates and durably records the package, but does
-			// not authorise or apply any proposed contributor changes.
+			// Receipt records that an archive has arrived.
+			// It does not establish that its work was applied.
 			MasterContributionIntake.Receipt receipt = intake.receive(archive);
-			if (receipt.duplicate()
-					|| receipt.received().status() != MasterContributionIntake.IntakeStatus.READY_FOR_REVIEW) {
+			UUID packageId = receipt.received().packageId();
+
+			// Identical, previously received archives may
+			// resume review while their assignment is eligible.
+			var pendingPlan = new MasterContributionReviewPlanner(database).planPending(packageId);
+			if (pendingPlan.isEmpty()) {
 				return new ContributionReviewData(receipt, null, null, List.of(), List.of());
 			}
-			UUID packageId = receipt.received().packageId();
-			var plan = new MasterContributionReviewPlanner(database).plan(packageId);
 			WorkAssignmentLedger ledger = new WorkAssignmentLedger(database);
 			var assignment = ledger.find(receipt.received().assignmentId())
 					.orElseThrow(() -> new SQLException("Issued assignment is missing."));
 			List<ExchangeRecord> baseline = new ExamWorkJsonlCodec()
 					.readRecords(new ByteArrayInputStream(ledger.readBaseline(assignment.assignmentId()).records()));
 			List<ExchangeRecord> proposals = intake.proposedChanges(packageId);
-			return new ContributionReviewData(receipt, plan, assignment, baseline, proposals);
+			return new ContributionReviewData(receipt, pendingPlan.orElseThrow(), assignment, baseline, proposals);
 		});
 		Alert progress = new Alert(Alert.AlertType.INFORMATION);
 		progress.initOwner(primaryStage);
 		progress.setTitle("Receiving Contributor Work");
-		progress.setHeaderText("Validating and recording the incoming contribution");
+		progress.setHeaderText("Validating the incoming contribution");
 		progress.setContentText(
-				"The master Exam remains locked. Received proposals " + "will not be applied during intake.");
+				"The master Exam remains locked. " + "Received proposals will not be applied " + "during intake.");
 		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
 		progress.getButtonTypes().setAll(new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE));
 		task.setOnSucceeded(_ -> {
 			progress.close();
 			try {
 				ContributionReviewData data = task.getValue();
-				var receipt = data.receipt();
-				if (receipt.duplicate()) {
+
+				// Eligibility, rather than duplicate receipt status,
+				// determines whether review can proceed.
+				if (data.plan() == null) {
 					packageImportInProgress = false;
-					showAlert(Alert.AlertType.INFORMATION, "Contribution Already Received",
-							"The identical contribution package was previously recorded.",
-							"Package: " + receipt.received().packageId() + "\nAssignment: "
-									+ receipt.received().assignmentId()
-									+ "\n\nNo proposals were applied a second time.");
-					return;
-				}
-				if (receipt.received().status() != MasterContributionIntake.IntakeStatus.READY_FOR_REVIEW) {
-					packageImportInProgress = false;
-					showAlert(Alert.AlertType.WARNING, "Contribution Held",
-							"The contribution was retained but cannot be applied.",
-							"Package: " + receipt.received().packageId() + "\nStatus: " + receipt.received().status()
-									+ "\n\nThis may be a late, competing or " + "out-of-order return."
-									+ "\nThe master Exam has not been modified.");
+					showAlert(Alert.AlertType.WARNING, "Contribution Not Available",
+							"This contribution cannot be merged.",
+							"The contribution may already have been merged, " + "its assignment may have been closed, "
+									+ "or another return may prevent " + "reconciliation."
+									+ "\n\nNo Question or Answer data " + "has been changed.");
 					return;
 				}
 				presentCoordinatorContributionReview(primaryStage, config, archive, data);
@@ -6996,7 +6991,7 @@ public class QuestionBankApplication extends Application {
 			progress.close();
 			showAlert(Alert.AlertType.ERROR, "Contribution Intake Failed",
 					"The contributor return could not be received.", failureMessage(task.getException())
-							+ "\n\nNo automatic overwrite or conflict resolution " + "has been attempted.");
+							+ "\n\nNo automatic overwrite or conflict " + "resolution has been attempted.");
 		});
 		task.setOnCancelled(_ -> {
 			packageImportInProgress = false;

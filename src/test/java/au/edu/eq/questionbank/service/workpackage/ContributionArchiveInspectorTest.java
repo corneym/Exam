@@ -2464,9 +2464,14 @@ class ContributionArchiveInspectorTest {
 		assertEquals(first.received(), replay.received());
 		assertEquals(MasterContributionIntake.IntakeStatus.HELD_LINEAGE,
 				intake.find(first.received().packageId()).orElseThrow().status());
-		var review = new MasterContributionReviewPlanner(fixture.master()).plan(first.received().packageId());
+		MasterContributionReviewPlanner planner = new MasterContributionReviewPlanner(fixture.master());
+		var review = planner.plan(first.received().packageId());
 		assertEquals(MasterContributionReviewPlanner.ReviewStatus.HELD_LINEAGE,
 				review.assessments().getFirst().status());
+
+		// Historical assessment remains available, but a late return
+		// for a cancelled assignment must not open actionable review.
+		assertTrue(planner.planPending(first.received().packageId()).isEmpty());
 		assertEquals("Biology question", masterQuestionText(fixture.master()));
 		assertNull(questionTextForCode(fixture.master(), "2"));
 		fixture.master().verifySchema();
@@ -2490,6 +2495,74 @@ class ContributionArchiveInspectorTest {
 		assertThrows(PackageFormatException.class, () -> intake.receive(reused));
 		assertEquals(recorded.received(), intake.find(recorded.received().packageId()).orElseThrow());
 		assertEquals(1, intake.proposedChanges(recorded.received().packageId()).size());
+	}
+
+	@Test
+	void masterPendingReviewCanResumeAfterCancellationUntilApplication() throws Exception {
+		Fixture fixture = fixture();
+		Path archive = publish(fixture, "Contributor work awaiting reconciliation", "pending-review.examwork");
+		MasterContributionIntake intake = new MasterContributionIntake(fixture.master());
+		MasterContributionReviewPlanner planner = new MasterContributionReviewPlanner(fixture.master());
+		var firstReceipt = intake.receive(archive);
+		assertFalse(firstReceipt.duplicate());
+		UUID packageId = firstReceipt.received().packageId();
+		var firstPlan = planner.planPending(packageId).orElseThrow();
+		assertEquals(1, firstPlan.assessments().size());
+		assertEquals(MasterContributionReviewPlanner.ReviewStatus.READY_NEW,
+				firstPlan.assessments().getFirst().status());
+
+		// Simulate cancelling the first review without recording
+		// decisions or applying the proposed records.
+		assertEquals("Biology question", masterQuestionText(fixture.master()));
+		assertNull(questionTextForCode(fixture.master(), "2"));
+		assertEquals(WorkAssignmentLedger.State.ACTIVE,
+				new WorkAssignmentLedger(fixture.master()).find(fixture.assignmentId()).orElseThrow().state());
+
+		// Reimport the identical archive. Receipt duplication must
+		// not prevent the pending contribution from being reviewed.
+		var secondReceipt = intake.receive(archive);
+		assertTrue(secondReceipt.duplicate());
+		assertEquals(firstReceipt.received(), secondReceipt.received());
+		var secondPlan = planner.planPending(packageId).orElseThrow();
+		assertEquals(firstPlan.assessments(), secondPlan.assessments());
+		assertNull(questionTextForCode(fixture.master(), "2"));
+
+		// Reopen the database through new service instances,
+		// representing a later application session after cancellation.
+		ApplicationConfig config = ApplicationConfig.fromDataRoot(directory.resolve("coordinator"));
+		SqliteDatabase reopened = new SqliteDatabase(config.databasePath());
+		MasterContributionIntake reopenedIntake = new MasterContributionIntake(reopened);
+		MasterContributionReviewPlanner reopenedPlanner = new MasterContributionReviewPlanner(reopened);
+		var thirdReceipt = reopenedIntake.receive(archive);
+		assertTrue(thirdReceipt.duplicate());
+		assertEquals(firstReceipt.received(), thirdReceipt.received());
+		var thirdPlan = reopenedPlanner.planPending(packageId).orElseThrow();
+		assertEquals(firstPlan.assessments(), thirdPlan.assessments());
+		assertNull(questionTextForCode(reopened, "2"));
+
+		// Apply the contribution exactly once.
+		ExchangeRecord proposal = reopenedIntake.proposedChanges(packageId).getFirst();
+		var key = new MasterContributionDecisionLedger.RecordKey(proposal.recordType(), proposal.recordId());
+		var review = new MasterContributionDecisionLedger(reopened).record(packageId,
+				Map.of(key, MasterContributionDecisionLedger.Choice.QUEUE_APPLY),
+				"Accept previously cancelled contribution review");
+		var applied = new MasterContributionApplicationCoordinator(reopened).execute(review.reviewId());
+		assertFalse(applied.duplicate());
+		assertEquals(MasterContributionApplicationCoordinator.Outcome.APPLIED, applied.outcomes().getFirst().outcome());
+		assertEquals("Biology question", masterQuestionText(reopened));
+		assertEquals("Contributor work awaiting reconciliation", questionTextForCode(reopened, "2"));
+		assertEquals(WorkAssignmentLedger.State.COMPLETE,
+				new WorkAssignmentLedger(reopened).find(fixture.assignmentId()).orElseThrow().state());
+
+		// Once application and closure have committed, an identical
+		// archive must no longer reopen the review.
+		var completedReplay = reopenedIntake.receive(archive);
+		assertTrue(completedReplay.duplicate());
+		assertEquals(firstReceipt.received(), completedReplay.received());
+		assertTrue(reopenedPlanner.planPending(packageId).isEmpty());
+		assertEquals("Contributor work awaiting reconciliation", questionTextForCode(reopened, "2"));
+		reopened.verifySchema();
+		reopened.verifyIntegrity();
 	}
 
 	@Test

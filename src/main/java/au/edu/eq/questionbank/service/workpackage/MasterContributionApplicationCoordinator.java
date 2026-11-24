@@ -556,42 +556,9 @@ public final class MasterContributionApplicationCoordinator {
 	}
 
 	private UUID requireOneActiveReturn(Connection connection, UUID packageId) throws SQLException {
-		try (PreparedStatement statement = connection.prepareStatement("""
-				SELECT packet.assignment_id
-				FROM contribution_intake_packages packet
-				JOIN exam_work_assignment_states states
-				  ON states.assignment_id = packet.assignment_id
-				JOIN exam_work_assignments assignment
-				  ON assignment.assignment_id = packet.assignment_id
-				JOIN exam_work_assignment_exam_locks locks
-				  ON locks.assignment_id = packet.assignment_id
-				 AND locks.exam_portable_id =
-				     assignment.exam_portable_id
-				WHERE packet.package_id = ?
-				  AND packet.intake_status = 'READY_FOR_REVIEW'
-				  AND packet.return_number = 1
-				  AND packet.previous_package_id IS NULL
-				  AND states.state = 'ACTIVE'
-				  AND NOT EXISTS (
-				      SELECT 1
-				      FROM contribution_intake_packages competing
-				      WHERE competing.assignment_id = packet.assignment_id
-				        AND competing.package_id <> packet.package_id
-				  )
-				""")) {
-			statement.setString(1, packageId.toString());
-			try (ResultSet result = statement.executeQuery()) {
-				if (!result.next()) {
-					throw new SQLException("Return cannot be applied: the assignment is "
-							+ "closed, the return is held, or " + "another return remains unresolved");
-				}
-				UUID assignmentId = UUID.fromString(result.getString("assignment_id"));
-				if (result.next()) {
-					throw new SQLException("Duplicate active assignment reconciliation");
-				}
-				return assignmentId;
-			}
-		}
+		return MasterContributionIntake.findReviewableAssignment(connection, packageId)
+				.orElseThrow(() -> new SQLException("Return cannot be applied: the assignment is "
+						+ "closed, the return is held, or " + "another return remains unresolved"));
 	}
 
 	private void requireReconciledClosure(Connection connection, UUID packageId) throws SQLException {
