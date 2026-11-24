@@ -26,30 +26,38 @@ final class AssignmentReconciliationEvidenceValidator {
 			"contributor_record_id", "canonical_record_id", "proposed_revision_id", "resulting_revision_id");
 
 	void validate(ExamWorkManifest manifest, ExchangeRecord context) throws PackageFormatException {
+
 		JsonNode values = context.values();
 		JsonNode evidence = values.get("reconciliation_evidence");
 
-		// Older assignment packages do not contain reconciliation
-		// evidence. Their absence is not itself a format error.
 		if (evidence == null) {
 			return;
 		}
+
 		if (!evidence.isArray()) {
 			throw new PackageFormatException("Invalid assignment reconciliation evidence collection");
 		}
+
 		UUID contributorId = requiredUuid(values, "contributor_id");
+
 		Set<UUID> evidenceIds = new HashSet<>();
 		Set<String> mappingKeys = new HashSet<>();
 		Set<String> canonicalKeys = new HashSet<>();
+
 		for (JsonNode entry : evidence) {
+
 			if (!entry.isObject()) {
 				throw new PackageFormatException("Invalid assignment reconciliation evidence entry");
 			}
+
 			UUID evidenceId = requiredUuid(entry, "evidence_id");
+
 			if (!evidenceIds.add(evidenceId)) {
 				throw new PackageFormatException("Duplicate assignment reconciliation evidence");
 			}
+
 			JsonNode mapping = entry.path("mapping");
+
 			validateMapping(manifest, contributorId, evidenceId, mapping, mappingKeys, canonicalKeys);
 		}
 	}

@@ -2271,25 +2271,35 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private Menu createExportMenu(Stage primaryStage, ApplicationConfig config) {
+
 		Menu exportMenu = createMenu("E_xport");
+
 		subjectSnapshotExportMenuItem = createMenuItem("Export Working _Subject Snapshot...",
 				() -> showExportWorkingSubjectSnapshot(primaryStage, config));
+
 		subjectSnapshotExportMenuItem.setId("export-subject-snapshot");
+
 		contributionExportMenuItem = createMenuItem("Export Assignment _Contribution...",
 				() -> showExportAssignmentContribution(primaryStage, config));
+
 		contributionExportMenuItem.setId("export-assignment-contribution");
-		MenuItem receiptExportItem = createMenuItem("Export _Import Receipt...",
-				() -> showExportImportReceipt(primaryStage, config));
-		receiptExportItem.setId("export-import-receipt");
+
 		revisionExportMenuItem = createMenuItem("_Revision HTML...",
 				() -> showRevisionExportDialog(primaryStage, config));
+
 		revisionExportMenuItem.setId("export-revision-html");
+
 		scormExportMenuItem = createMenuItem("Revision _SCORM...", () -> showScormExportDialog(primaryStage, config));
+
 		scormExportMenuItem.setId("export-revision-scorm");
+
 		exportMenu.getItems().setAll(subjectSnapshotExportMenuItem, contributionExportMenuItem, new SeparatorMenuItem(),
 				revisionExportMenuItem, scormExportMenuItem);
+
 		subjectSnapshotExportMenuItem.setDisable(activeAssignmentContext != null);
+
 		contributionExportMenuItem.setDisable(activeAssignmentContext == null);
+
 		return exportMenu;
 	}
 

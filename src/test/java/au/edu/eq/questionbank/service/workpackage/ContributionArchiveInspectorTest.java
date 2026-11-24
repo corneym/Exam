@@ -3747,182 +3747,189 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
-	void subsequentAssignmentRefreshesAuthoritativeContentAndRejectsInvalidEvidence() throws Exception {
+	void subsequentAssignmentRefreshRollsBackAfterIdentityReconciliation() throws Exception {
+
 		Fixture fixture = fixture();
-		var masterLedger = new WorkAssignmentLedger(fixture.master());
-		var original = masterLedger.find(fixture.assignmentId()).orElseThrow();
+
+		var ledger = new WorkAssignmentLedger(fixture.master());
+
+		var original = ledger.find(fixture.assignmentId()).orElseThrow();
+
 		var sessions = new SqliteContributorAssignmentSessionRepository(fixture.contributor());
-		var visibility = new SqliteContributorAssignmentVisibilityRepository(fixture.contributor());
+
 		var returns = new SqliteContributionReturnLedger(fixture.contributor());
+
 		var originalBaseline = sessions.readBaseline(fixture.assignmentId());
+
 		var coordinatorLayout = new ManagedDataLayout(directory.resolve("coordinator"));
+
 		var contributorLayout = new ManagedDataLayout(fixture.contributorRoot());
+
 		var installer = new WorkAssignmentInstallationCoordinator(
 				ApplicationConfig.fromDataRoot(fixture.contributorRoot()));
-		var identities = new SqlitePortableIdentityRepository(fixture.contributor());
-		addNewContributorQuestionAndAnswer(fixture);
-		Path contribution = directory.resolve("refresh-first-contribution.examwork");
-		new ContributionExporter(fixture.contributor(), contributorLayout).export(fixture.assignmentId(), contribution);
-		var originalReturn = returns.findLatest(fixture.assignmentId()).orElseThrow();
-		mergeRefreshContribution(fixture.master(), coordinatorLayout, contribution);
-		assertEquals(WorkAssignmentLedger.State.COMPLETE,
-				masterLedger.find(fixture.assignmentId()).orElseThrow().state());
 
-		// The coordinator corrects accepted content before
-		// issuing the next authoritative baseline.
-		try (Connection connection = fixture.master().openConnection();
-				Statement statement = connection.createStatement()) {
-			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
-					UPDATE questions
-					SET question_text =
-					    'Coordinator revised accepted question'
-					WHERE question_code = '2'
-					"""));
-		}
+		addNewContributorQuestionAndAnswer(fixture);
+
+		Path contribution = directory.resolve("rollback-contribution.examwork");
+
+		new ContributionExporter(fixture.contributor(), contributorLayout).export(fixture.assignmentId(), contribution);
+
+		var published = returns.findLatest(fixture.assignmentId()).orElseThrow();
+
+		mergeRefreshContribution(fixture.master(), coordinatorLayout, contribution);
+
+		execute(fixture.master(), """
+				UPDATE questions
+				SET question_text = 'Authoritative revised question'
+				WHERE question_code = '2'
+				""");
+
 		Exam exam = new Exam(31, new Subject(1, "Biology"), new ExamProvider(21, "QCAA"), 2025, "External Assessment");
-		UUID secondAssignmentId = UUID.randomUUID();
-		Path secondAssignment = directory.resolve("refresh-second-assignment.examwork");
-		new WorkAssignmentIssuanceService(fixture.master(), coordinatorLayout)
-				.issue(new WorkAssignmentExporter.Request(exam, secondAssignmentId, original.contributorId(),
-						original.contributorName(), false, secondAssignment));
-		var inspection = new WorkAssignmentPackageInspector().inspect(secondAssignment, ApplicationVersion.current(),
-				SqliteDatabase.latestSchemaVersion());
-		ExchangeRecord questionMapping = new AssignmentReconciliationEvidenceReader(fixture.master())
+
+		UUID nextId = UUID.randomUUID();
+
+		Path archive = directory.resolve("rollback-assignment.examwork");
+
+		new WorkAssignmentIssuanceService(fixture.master(), coordinatorLayout).issue(new WorkAssignmentExporter.Request(
+				exam, nextId, original.contributorId(), original.contributorName(), false, archive));
+
+		ExchangeRecord mapping = new AssignmentReconciliationEvidenceReader(fixture.master())
 				.read(original.examPortableId(), original.contributorId()).stream()
 				.filter(record -> record.values().path("record_type").asText().equals("QUESTION")).findFirst()
 				.orElseThrow();
-		UUID contributorQuestionId = UUID.fromString(questionMapping.values().path("contributor_record_id").asText());
-		UUID canonicalQuestionId = UUID.fromString(questionMapping.values().path("canonical_record_id").asText());
-		long originalLocalId = identities.findByPortableId(EntityType.QUESTION, contributorQuestionId).orElseThrow()
-				.localId();
-		Path beforePath = directory.resolve("before-invalid-refresh.db");
+
+		UUID contributorId = UUID.fromString(mapping.values().path("contributor_record_id").asText());
+
+		UUID canonicalId = UUID.fromString(mapping.values().path("canonical_record_id").asText());
+
+		var identities = new SqlitePortableIdentityRepository(fixture.contributor());
+
+		var originalIdentity = identities.findByPortableId(EntityType.QUESTION, contributorId).orElseThrow();
+
+		Path beforePath = directory.resolve("before-refresh-rollback.db");
+
 		fixture.contributor().createConsistentSnapshot(beforePath);
+
 		var before = new ContributionSnapshotReader(beforePath).read(fixture.assignmentId());
 
-		// Forge structurally valid evidence with an incorrect
-		// contribution digest. Repackage recalculates the archive
-		// manifest checksums, so ordinary integrity validation passes.
-		ObjectNode forgedValues = (ObjectNode) inspection.context().values();
-		ObjectNode forgedMapping = (ObjectNode) forgedValues.path("reconciliation_evidence").get(0).path("mapping");
-		forgedMapping.put("archive_sha256", "0".repeat(64));
-		Path forgedArchive = repackage(secondAssignment, "records/assignment-context.jsonl",
-				encode(List.of(contextWithValues(inspection.context(), forgedValues))));
-		assertArchiveWellFormed(forgedArchive, fixture.contributor());
-		assertThrows(PackageFormatException.class, () -> installer.install(forgedArchive));
+		// Fail during the scalar refresh, after the contributor
+		// identity has already been reconciled.
+		execute(fixture.contributor(), """
+				CREATE TRIGGER test_refresh_failure
+				BEFORE UPDATE OF question_text ON questions
+				WHEN NEW.question_code = '2'
+				 AND NEW.question_text =
+				        'Authoritative revised question'
+				BEGIN
+				    SELECT RAISE(
+				        ABORT,
+				        'Injected assignment refresh failure'
+				    );
+				END
+				""");
 
-		// Also simulate an assignment issued by the older
-		// application before reconciliation evidence was introduced.
-		ObjectNode legacyValues = (ObjectNode) inspection.context().values();
-		legacyValues.remove("reconciliation_evidence");
-		Path legacyArchive = repackage(secondAssignment, "records/assignment-context.jsonl",
-				encode(List.of(contextWithValues(inspection.context(), legacyValues))));
-		assertArchiveWellFormed(legacyArchive, fixture.contributor());
-		assertThrows(PackageFormatException.class, () -> installer.install(legacyArchive));
-		assertTrue(sessions.find(secondAssignmentId).isEmpty());
-		assertEquals(SqliteContributorAssignmentVisibilityRepository.State.SUBMITTED,
-				visibility.find(fixture.assignmentId()).orElseThrow());
-		assertEquals(originalReturn, returns.findLatest(fixture.assignmentId()).orElseThrow());
-		assertTrue(identities.findByPortableId(EntityType.QUESTION, canonicalQuestionId).isEmpty());
-		assertEquals(originalLocalId,
-				identities.findByPortableId(EntityType.QUESTION, contributorQuestionId).orElseThrow().localId());
-		Path afterPath = directory.resolve("after-invalid-refresh.db");
-		fixture.contributor().createConsistentSnapshot(afterPath);
-		var after = new ContributionSnapshotReader(afterPath).read(fixture.assignmentId());
-		assertEquals(before.currentRecords(), after.currentRecords());
-		fixture.contributor().verifySchema();
-		fixture.contributor().verifyIntegrity();
+		try {
 
-		// The genuine package must still install successfully
-		// following both rejected installation attempts.
-		assertEquals(secondAssignmentId, installer.install(secondAssignment).assignmentId());
-		assertEquals("Coordinator revised accepted question", questionTextForCode(fixture.contributor(), "2"));
-		assertTrue(identities.findByPortableId(EntityType.QUESTION, contributorQuestionId).isEmpty());
+			SQLException failure = assertThrows(SQLException.class, () -> installer.install(archive));
 
-		// Reconciliation retains the existing local record
-		// and its relationships instead of inserting a duplicate.
-		assertEquals(originalLocalId,
-				identities.findByPortableId(EntityType.QUESTION, canonicalQuestionId).orElseThrow().localId());
-		requireExactRefreshBaseline(fixture.contributor(), secondAssignmentId, "refresh-second-installed.db");
-		assertArrayEquals(originalBaseline.records(), sessions.readBaseline(fixture.assignmentId()).records());
-		assertArrayEquals(originalBaseline.assets(), sessions.readBaseline(fixture.assignmentId()).assets());
-		assertEquals(originalReturn, returns.findLatest(fixture.assignmentId()).orElseThrow());
+			assertTrue(failure.getMessage().contains("Injected assignment refresh failure"), failure.getMessage());
 
-		// Construct a competing package without registering
-		// another assignment on the coordinator.
-		Path competingArchive = directory.resolve("refresh-competing-assignment.examwork");
-		UUID competingId = UUID.randomUUID();
-		new WorkAssignmentExporter(fixture.master(), coordinatorLayout).export(new WorkAssignmentExporter.Request(exam,
-				competingId, original.contributorId(), original.contributorName(), false, competingArchive));
-		assertThrows(PackageFormatException.class, () -> installer.install(competingArchive));
-		assertTrue(sessions.find(competingId).isEmpty());
-		assertEquals(secondAssignmentId, sessions.active().orElseThrow().assignmentId());
+		} finally {
 
-		// Capture additional work during the second assignment.
-		try (Connection connection = fixture.contributor().openConnection();
-				Statement statement = connection.createStatement()) {
-			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
-					INSERT INTO questions (
-					    booklet_id,
-					    classification_node_id,
-					    question_code,
-					    question_text,
-					    marks,
-					    shared_context_capture_required,
-					    response_type,
-					    source_capture_required
-					)
-					SELECT
-					    booklet_id,
-					    classification_node_id,
-					    '3',
-					    'Second contribution question',
-					    marks,
-					    shared_context_capture_required,
-					    response_type,
-					    source_capture_required
-					FROM questions
-					WHERE question_code = '1'
-					"""));
-			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
-					INSERT INTO answers (
-					    question_id,
-					    answer_text
-					)
-					SELECT
-					    id,
-					    'Second contribution answer'
-					FROM questions
-					WHERE question_code = '3'
-					"""));
+			execute(fixture.contributor(), "DROP TRIGGER test_refresh_failure");
 		}
-		var secondBaseline = sessions.readBaseline(secondAssignmentId);
-		Path secondContribution = directory.resolve("refresh-second-contribution.examwork");
-		new ContributionExporter(fixture.contributor(), contributorLayout).export(secondAssignmentId,
-				secondContribution);
-		var secondReturn = returns.findLatest(secondAssignmentId).orElseThrow();
-		mergeRefreshContribution(fixture.master(), coordinatorLayout, secondContribution);
-		UUID thirdAssignmentId = UUID.randomUUID();
-		Path thirdAssignment = directory.resolve("refresh-third-assignment.examwork");
-		new WorkAssignmentIssuanceService(fixture.master(), coordinatorLayout).issue(new WorkAssignmentExporter.Request(
-				exam, thirdAssignmentId, original.contributorId(), original.contributorName(), false, thirdAssignment));
-		assertEquals(thirdAssignmentId, installer.install(thirdAssignment).assignmentId());
-		requireExactRefreshBaseline(fixture.contributor(), thirdAssignmentId, "refresh-third-installed.db");
-		assertEquals("Coordinator revised accepted question", questionTextForCode(fixture.contributor(), "2"));
-		assertEquals("Second contribution question", questionTextForCode(fixture.contributor(), "3"));
-		assertArrayEquals(secondBaseline.records(), sessions.readBaseline(secondAssignmentId).records());
-		assertArrayEquals(secondBaseline.assets(), sessions.readBaseline(secondAssignmentId).assets());
-		assertEquals(secondReturn, returns.findLatest(secondAssignmentId).orElseThrow());
-		assertEquals(SqliteContributorAssignmentVisibilityRepository.State.SUBMITTED,
-				visibility.find(secondAssignmentId).orElseThrow());
 
-		// Neither submitted historical assignment may be
-		// reopened after the third assignment becomes active.
-		assertThrows(IOException.class, () -> installer.install(secondAssignment));
-		assertEquals(thirdAssignmentId, sessions.active().orElseThrow().assignmentId());
+		assertTrue(sessions.find(nextId).isEmpty());
+
+		assertEquals(originalIdentity, identities.findByPortableId(EntityType.QUESTION, contributorId).orElseThrow());
+
+		assertTrue(identities.findByPortableId(EntityType.QUESTION, canonicalId).isEmpty());
+
+		assertEquals(published, returns.findLatest(fixture.assignmentId()).orElseThrow());
+
+		Path afterPath = directory.resolve("after-refresh-rollback.db");
+
+		fixture.contributor().createConsistentSnapshot(afterPath);
+
+		var after = new ContributionSnapshotReader(afterPath).read(fixture.assignmentId());
+
+		assertEquals(before.currentRecords(), after.currentRecords());
+
+		assertArrayEquals(originalBaseline.records(), sessions.readBaseline(fixture.assignmentId()).records());
+
+		assertArrayEquals(originalBaseline.assets(), sessions.readBaseline(fixture.assignmentId()).assets());
+
 		fixture.contributor().verifySchema();
 		fixture.contributor().verifyIntegrity();
-		fixture.master().verifySchema();
-		fixture.master().verifyIntegrity();
+
+		// The original, unchanged assignment must install
+		// successfully once the injected failure is removed.
+		assertEquals(nextId, installer.install(archive).assignmentId());
+
+		assertEquals("Authoritative revised question", questionTextForCode(fixture.contributor(), "2"));
+
+		assertEquals(originalIdentity.localId(),
+				identities.findByPortableId(EntityType.QUESTION, canonicalId).orElseThrow().localId());
+
+		requireExactRefreshBaseline(fixture.contributor(), nextId, "successful-refresh-retry.db");
+
+		assertEquals(published, returns.findLatest(fixture.assignmentId()).orElseThrow());
+
+		fixture.contributor().verifySchema();
+		fixture.contributor().verifyIntegrity();
+	}
+
+	@Test
+	void supersededRemovedAssignmentCannotBeReactivated() throws Exception {
+
+		Fixture fixture = fixture();
+
+		var ledger = new WorkAssignmentLedger(fixture.master());
+
+		var original = ledger.find(fixture.assignmentId()).orElseThrow();
+
+		var sessions = new SqliteContributorAssignmentSessionRepository(fixture.contributor());
+
+		var removal = new ContributorAssignmentRemovalService(fixture.contributor());
+
+		var originalBaseline = sessions.readBaseline(fixture.assignmentId());
+
+		removal.removeUnchanged(fixture.assignmentId());
+
+		ledger.closeWithoutReturn(fixture.assignmentId(), "Replace an unchanged assignment");
+
+		Exam exam = new Exam(31, new Subject(1, "Biology"), new ExamProvider(21, "QCAA"), 2025, "External Assessment");
+
+		UUID replacementId = UUID.randomUUID();
+
+		Path replacement = directory.resolve("replacement-assignment.examwork");
+
+		new WorkAssignmentIssuanceService(fixture.master(), new ManagedDataLayout(directory.resolve("coordinator")))
+				.issue(new WorkAssignmentExporter.Request(exam, replacementId, original.contributorId(),
+						original.contributorName(), false, replacement));
+
+		var installer = new WorkAssignmentInstallationCoordinator(
+				ApplicationConfig.fromDataRoot(fixture.contributorRoot()));
+
+		assertEquals(replacementId, installer.install(replacement).assignmentId());
+
+		assertThrows(IllegalStateException.class, () -> removal.reactivate(fixture.assignmentId()));
+
+		assertEquals(replacementId, sessions.active().orElseThrow().assignmentId());
+
+		var visibility = new SqliteContributorAssignmentVisibilityRepository(fixture.contributor());
+
+		assertEquals(SqliteContributorAssignmentVisibilityRepository.State.REMOVED,
+				visibility.find(fixture.assignmentId()).orElseThrow());
+
+		assertArrayEquals(originalBaseline.records(), sessions.readBaseline(fixture.assignmentId()).records());
+
+		assertArrayEquals(originalBaseline.assets(), sessions.readBaseline(fixture.assignmentId()).assets());
+
+		requireExactRefreshBaseline(fixture.contributor(), replacementId, "replacement-installed.db");
+
+		fixture.contributor().verifySchema();
+		fixture.contributor().verifyIntegrity();
 	}
 
 	@Test
