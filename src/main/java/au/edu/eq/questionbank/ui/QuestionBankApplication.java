@@ -4,6 +4,8 @@ import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
@@ -29,7 +31,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CancellationException;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -255,6 +256,7 @@ import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.SplitPane;
+import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.Tooltip;
@@ -3995,57 +3997,24 @@ public class QuestionBankApplication extends Application {
 
 	private void presentCoordinatorContributionReview(Stage primaryStage, ApplicationConfig config, Path archive,
 			ContributionReviewData data) {
+
 		MasterContributionReviewDialog dialog = new MasterContributionReviewDialog(primaryStage, data.plan(),
-				data.baseline(), data.proposals(), data.assignment().examPortableId());
-		dialog.showAndWait();
-		if (!dialog.approved()) {
+				data.baseline(), data.proposals(), data.assignment().examPortableId(),
+				data.assignment().contributorName());
+
+		ButtonType result = dialog.showAndWait().orElse(ButtonType.CANCEL);
+
+		if (result != MasterContributionReviewDialog.MERGE) {
 			packageImportInProgress = false;
 			return;
 		}
-		Map<MasterContributionDecisionLedger.RecordKey, MasterContributionDecisionLedger.Choice> decisions = dialog
-				.decisions();
-		TextInputDialog reason = new TextInputDialog();
-		reason.initOwner(primaryStage);
-		reason.setTitle("Record Coordinator Review");
-		reason.setHeaderText("Explain the approved reconciliation decisions");
-		reason.setContentText("Review rationale:");
-		Optional<String> note = reason.showAndWait();
-		if (note.isEmpty()) {
-			packageImportInProgress = false;
-			return;
-		}
-		String explanation = note.get().strip();
-		if (explanation.isEmpty() || explanation.length() > 4000) {
-			packageImportInProgress = false;
-			showAlert(Alert.AlertType.ERROR, "Coordinator Review", "A valid review rationale is required.",
-					"Enter between 1 and 4000 characters.");
-			return;
-		}
+
 		Path backupDirectory = config.dataRoot().resolve("backups").resolve("pre-import").toAbsolutePath().normalize();
-		long applyCount = decisions.values().stream()
-				.filter(choice -> choice == MasterContributionDecisionLedger.Choice.QUEUE_APPLY).count();
-		long skipCount = decisions.values().stream()
-				.filter(choice -> choice == MasterContributionDecisionLedger.Choice.SKIP_IDENTICAL).count();
-		long rejectCount = decisions.values().stream()
-				.filter(choice -> choice == MasterContributionDecisionLedger.Choice.REJECT).count();
-		Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
-		confirmation.initOwner(primaryStage);
-		confirmation.setTitle("Apply Coordinator Reconciliation");
-		confirmation.setHeaderText("Commit reviewed changes and close this assignment?");
-		confirmation.setContentText("Assignment: " + data.assignment().assignmentId() + "\nPackage: "
-				+ data.receipt().received().packageId() + "\nQueue Apply: " + applyCount + "\nSkip Identical: "
-				+ skipCount + "\nReject: " + rejectCount + "\nFull backup destination: " + backupDirectory
-				+ "\n\nA verified full backup is required before " + "any contribution application."
-				+ "\n\nSuccessful reconciliation closes the assignment " + "and releases the master Exam lock."
-				+ "\nFurther contributor work requires a new assignment.");
-		ButtonType applyButton = new ButtonType("Apply Reviewed Contribution", ButtonBar.ButtonData.OK_DONE);
-		confirmation.getButtonTypes().setAll(applyButton, ButtonType.CANCEL);
-		if (confirmation.showAndWait().orElse(ButtonType.CANCEL) != applyButton) {
-			packageImportInProgress = false;
-			return;
-		}
+
+		// The Merge Contribution action is the coordinator's
+		// explicit approval of the complete return.
 		startCoordinatorContributionApplication(primaryStage, config, archive, data.receipt().received().packageId(),
-				decisions, explanation, backupDirectory);
+				backupDirectory);
 	}
 
 	private Stage primaryStage() {
@@ -4998,10 +4967,57 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void showAlert(Alert.AlertType type, String title, String header, String message) {
+
+		showAlert(type, title, header, message, null);
+	}
+
+	private void showAlert(Alert.AlertType type, String title, String header, String message, Throwable failure) {
+
 		Alert alert = new Alert(type);
+
 		alert.setTitle(title);
 		alert.setHeaderText(header);
 		alert.setContentText(message);
+		alert.setResizable(true);
+
+		if (type == Alert.AlertType.ERROR || type == Alert.AlertType.WARNING) {
+
+			// Use selectable, scrollable text rather than the
+			// standard non-selectable Alert content label.
+			TextArea messageArea = new TextArea(message);
+
+			messageArea.setId("alert-message");
+			messageArea.setEditable(false);
+			messageArea.setWrapText(true);
+			messageArea.setPrefColumnCount(70);
+			messageArea.setPrefRowCount(6);
+
+			alert.getDialogPane().setContent(messageArea);
+			alert.getDialogPane().setPrefWidth(680);
+		}
+
+		if (failure != null) {
+
+			// Preserve the complete exception chain and stack trace.
+			StringWriter output = new StringWriter();
+
+			try (PrintWriter writer = new PrintWriter(output)) {
+				failure.printStackTrace(writer);
+			}
+
+			TextArea details = new TextArea(output.toString());
+
+			details.setId("alert-technical-details");
+			details.setEditable(false);
+			details.setWrapText(false);
+			details.setPrefColumnCount(80);
+			details.setPrefRowCount(15);
+			details.setMaxWidth(Double.MAX_VALUE);
+			details.setMaxHeight(Double.MAX_VALUE);
+
+			alert.getDialogPane().setExpandableContent(details);
+		}
+
 		alert.showAndWait();
 	}
 
@@ -6781,7 +6797,8 @@ public class QuestionBankApplication extends Application {
 				finishContributorAssignmentInstallation(request);
 				progress.close();
 				showAlert(Alert.AlertType.ERROR, "Import Contributor Assignment",
-						"The assignment could not be installed.", failureMessage(task.getException()));
+						"The assignment could not be installed.", failureMessage(task.getException()),
+						task.getException());
 			});
 			task.setOnCancelled(_ -> {
 				finishContributorAssignmentInstallation(request);
@@ -6849,77 +6866,93 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void startCoordinatorContributionApplication(Stage primaryStage, ApplicationConfig config, Path archive,
-			UUID packageId,
-			Map<MasterContributionDecisionLedger.RecordKey, MasterContributionDecisionLedger.Choice> decisions,
-			String note, Path backupDirectory) {
-		AtomicReference<UUID> recordedReviewId = new AtomicReference<>();
+			UUID packageId, Path backupDirectory) {
+
 		Task<ContributionApplicationData> task = new ApplicationBackgroundTask<>(() -> {
+
 			SqliteDatabase database = new SqliteDatabase(config.databasePath());
+
 			SubjectImportBackupGate backupGate = new SubjectImportBackupGate(config);
 
-			// No review or master mutation proceeds unless a complete,
-			// validated recovery backup has been published.
+			// A verified recovery backup must exist before
+			// the contribution can modify authoritative data.
 			var certificate = backupGate.createVerifiedFullBackup(packageId, backupDirectory);
-			var review = new MasterContributionDecisionLedger(database).record(packageId, decisions, note);
-			recordedReviewId.set(review.reviewId());
+
+			// Reassess the complete contribution and record
+			// approval internally. No partial selection
+			// or manual rationale is accepted here.
+			var review = new MasterContributionDecisionLedger(database).recordMerge(packageId);
+
 			backupGate.requireIntact(packageId, certificate);
 
-			// Application rechecks immutable intake, archive bytes,
-			// current master state and all supported graph dependencies.
-			// Terminal outcomes and assignment closure share one transaction.
+			// The existing application service verifies the
+			// archive, current record revisions, dependencies
+			// and assignment eligibility within its
+			// guarded application workflow.
 			var result = new MasterContributionApplicationCoordinator(database).execute(review.reviewId(), archive,
 					new ManagedDataLayout(config.dataRoot()));
+
 			return new ContributionApplicationData(result, certificate.backupPath());
 		});
+
 		Alert progress = new Alert(Alert.AlertType.INFORMATION);
+
 		progress.initOwner(primaryStage);
-		progress.setTitle("Applying Reviewed Contribution");
-		progress.setHeaderText("Preparing a verified backup and committing master changes");
-		progress.setContentText("The operation cannot be cancelled after publication begins."
-				+ "\nA failed validation must leave the master " + "without an unapproved overwrite.");
+		progress.setTitle("Merging Contribution");
+
+		progress.setHeaderText("Creating a backup and merging contributor work");
+
+		progress.setContentText("All returned work will be merged together."
+				+ "\n\nIf validation or application fails, " + "the contribution will not be partially merged.");
+
 		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
+
 		progress.getButtonTypes().setAll(new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE));
+
 		task.setOnSucceeded(_ -> {
+
 			packageImportInProgress = false;
 			progress.close();
+
 			ContributionApplicationData data = task.getValue();
-			var application = data.application();
-			long applied = application.outcomes().stream()
+
+			long applied = data.application().outcomes().stream()
 					.filter(outcome -> outcome.outcome() == MasterContributionApplicationCoordinator.Outcome.APPLIED)
 					.count();
-			long skipped = application.outcomes().stream()
-					.filter(outcome -> outcome.outcome() == MasterContributionApplicationCoordinator.Outcome.SKIPPED)
-					.count();
-			long rejected = application.outcomes().stream()
-					.filter(outcome -> outcome.outcome() == MasterContributionApplicationCoordinator.Outcome.REJECTED)
-					.count();
+
 			try {
 				refreshCorpusDashboardHome(-1L);
+
 			} catch (RuntimeException failure) {
+
 				showAlert(Alert.AlertType.WARNING, "Dashboard Refresh",
-						"Reconciliation committed, but the Dashboard refresh failed.",
-						"Restart the application to load the authoritative " + "state.\n" + failureMessage(failure));
+						"The contribution was merged, but " + "the Dashboard refresh failed.",
+						"Restart the application to load " + "the authoritative state.\n" + failureMessage(failure));
 			}
-			showAlert(Alert.AlertType.INFORMATION, "Contribution Reconciled",
-					"The reviewed contribution has been committed.",
-					"Applied: " + applied + "\nSkipped: " + skipped + "\nRejected: " + rejected + "\nVerified backup: "
-							+ data.backupPath() + "\n\nThe assignment is now closed and its Exam unlocked.");
+
+			showAlert(Alert.AlertType.INFORMATION, "Contribution Merged",
+					"The contribution has been merged successfully.",
+					"New records merged: " + applied + "\n\nVerified backup:\n" + data.backupPath()
+							+ "\n\nThe assignment is now closed " + "and its Exam unlocked.");
 		});
+
 		task.setOnFailed(_ -> {
+
 			packageImportInProgress = false;
 			progress.close();
-			String reviewId = recordedReviewId.get() == null ? "Not recorded" : recordedReviewId.get().toString();
-			showAlert(Alert.AlertType.ERROR, "Contribution Application Failed",
-					"The reviewed contribution could not be completed.",
-					failureMessage(task.getException()) + "\n\nRecorded Review ID: " + reviewId
-							+ "\nThe incoming package and any retained review " + "evidence must be preserved."
-							+ "\nDo not overwrite or delete recovery files " + "to force a retry.");
+
+			showAlert(Alert.AlertType.ERROR, "Contribution Merge Failed", "The contribution could not be merged.",
+					failureMessage(task.getException()) + "\n\nRetain the contribution archive "
+							+ "and any recovery backup." + "\nDo not delete recovery files " + "to force a retry.");
 		});
+
 		task.setOnCancelled(_ -> {
 			packageImportInProgress = false;
 			progress.close();
 		});
+
 		Thread worker = new Thread(task, "examwork-coordinator-contribution-application");
+
 		worker.setDaemon(true);
 		progress.show();
 		worker.start();

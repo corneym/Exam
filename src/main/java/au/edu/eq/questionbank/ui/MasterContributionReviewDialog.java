@@ -1,352 +1,304 @@
 package au.edu.eq.questionbank.ui;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
-import java.util.TreeMap;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import au.edu.eq.questionbank.service.workpackage.ExchangeRecord;
-import au.edu.eq.questionbank.service.workpackage.MasterContributionDecisionLedger.Choice;
+import au.edu.eq.questionbank.service.workpackage.MasterContributionDecisionLedger;
 import au.edu.eq.questionbank.service.workpackage.MasterContributionDecisionLedger.RecordKey;
-import au.edu.eq.questionbank.service.workpackage.MasterContributionReviewPlanner;
-import au.edu.eq.questionbank.service.workpackage.MasterContributionReviewPlanner.RecordAssessment;
-import au.edu.eq.questionbank.service.workpackage.MasterContributionReviewPlanner.ReviewStatus;
+import au.edu.eq.questionbank.service.workpackage.MasterContributionReviewPlanner.ReviewPlan;
 import javafx.beans.property.ReadOnlyStringWrapper;
 import javafx.collections.FXCollections;
-import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
-import javafx.geometry.Pos;
-import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
-import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
-import javafx.scene.control.Tooltip;
-import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 import javafx.stage.Modality;
 import javafx.stage.Window;
 
 /**
- * Explicit read-only coordinator review of an already received contribution.
+ * Presents a read-only preview of an entire contribution.
  *
- * Decisions are held in memory until the coordinator confirms them. This dialog
- * never writes to SQLite or publishes managed assets.
+ * The coordinator may approve the complete contribution or cancel. This dialog
+ * never modifies the authoritative corpus or publishes managed assets.
  */
-final class MasterContributionReviewDialog extends Dialog<Void> {
+final class MasterContributionReviewDialog extends Dialog<ButtonType> {
 
-	private final Button applyButton = new Button("Queue Apply");
-	private final Button approveButton = new Button("Approve Decisions...");
-	private boolean approved;
-	private final Label detail = new Label();
-	private final Button holdButton = new Button("Hold");
-	private final Button rejectButton = new Button("Reject");
-	private final ObservableList<Row> rows = FXCollections.observableArrayList();
-	private final Button skipButton = new Button("Skip Identical");
-	private final Label summary = new Label();
-	private final Button suggestedButton = new Button("Select Supported Undecided");
-	private final TableView<Row> table = new TableView<>();
+	static final ButtonType MERGE = new ButtonType("Merge Contribution", ButtonBar.ButtonData.OK_DONE);
 
 	/**
-	 * Constructs a non-publishing coordinator review for one whole-Exam return.
+	 * Constructs a human-readable whole-contribution preview.
 	 *
-	 * @param owner          parent window
-	 * @param plan           consistent preliminary master assessment
-	 * @param baseline       immutable issued records
-	 * @param proposals      received delta records
-	 * @param examPortableId assigned master Exam identity
+	 * @param owner           parent window
+	 * @param plan            preliminary coordinator assessment
+	 * @param baseline        immutable issued records
+	 * @param proposals       returned new records
+	 * @param examPortableId  assigned Exam identity
+	 * @param contributorName contributor's recorded name
 	 */
-	MasterContributionReviewDialog(Window owner, MasterContributionReviewPlanner.ReviewPlan plan,
-			List<ExchangeRecord> baseline, List<ExchangeRecord> proposals, UUID examPortableId) {
+	MasterContributionReviewDialog(Window owner, ReviewPlan plan, List<ExchangeRecord> baseline,
+			List<ExchangeRecord> proposals, UUID examPortableId, String contributorName) {
+
 		initOwner(Objects.requireNonNull(owner, "owner"));
 		initModality(Modality.WINDOW_MODAL);
-		setTitle("Coordinator Contribution Review");
-		setHeaderText("Review every returned record before authorising master changes.");
-		Objects.requireNonNull(plan, "plan");
+
+		setTitle("Review Contribution");
+
+		Preview preview = buildPreview(baseline, proposals, examPortableId);
+
+		setHeaderText(preview.examName());
+
+		Label subject = new Label("Subject: " + preview.subjectName());
+
+		Label contributor = new Label("Contributor: " + Objects.requireNonNull(contributorName, "contributorName"));
+
+		Label summaryHeading = new Label("Contribution summary");
+		summaryHeading.setStyle("-fx-font-weight: bold;");
+
+		TableView<BookletSummary> summaries = new TableView<>(FXCollections.observableArrayList(preview.booklets()));
+
+		summaries.setId("contribution-review-summary");
+
+		summaries.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
+
+		summaries.getColumns().setAll(textColumn("Booklet", BookletSummary::booklet, 175),
+				textColumn("Questions", row -> Long.toString(row.questions()), 85),
+				textColumn("Answers", row -> Long.toString(row.answers()), 75),
+				textColumn("MCQ explanations", row -> Long.toString(row.mcqExplanations()), 135),
+				textColumn("Shared contexts", row -> Long.toString(row.sharedContexts()), 115));
+
+		summaries.setFixedCellSize(28);
+		summaries.setPrefHeight(Math.min(200, 32 + preview.booklets().size() * 28));
+
+		Label detailHeading = new Label("Returned work");
+		detailHeading.setStyle("-fx-font-weight: bold;");
+
+		TableView<ReturnedItem> details = new TableView<>(FXCollections.observableArrayList(preview.items()));
+
+		details.setId("contribution-review-records");
+
+		details.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
+
+		details.getColumns().setAll(textColumn("Booklet", ReturnedItem::booklet, 180),
+				textColumn("Question / Item", ReturnedItem::item, 180),
+				textColumn("Returned work", ReturnedItem::description, 310));
+
+		Label notice = new Label();
+		notice.setId("contribution-review-notice");
+		notice.setWrapText(true);
+
+		getDialogPane().getButtonTypes().setAll(MERGE, ButtonType.CANCEL);
+
+		Button mergeButton = (Button) getDialogPane().lookupButton(MERGE);
+
+		mergeButton.setId("contribution-review-merge");
+
+		try {
+			// The same whole-return policy is reassessed by
+			// the service when the coordinator approves merging.
+			MasterContributionDecisionLedger.mergeSelections(plan);
+
+			notice.setText("The returned work is ready for merge. " + "Existing coordinator-owned content "
+					+ "will be preserved." + "\n\nA verified full backup will be "
+					+ "created automatically before final " + "validation and application."
+					+ "\n\nAfter a successful merge, the " + "assignment will close and the "
+					+ "Exam will be unlocked.");
+
+		} catch (IllegalArgumentException failure) {
+
+			mergeButton.setDisable(true);
+
+			notice.setText("The contribution cannot be merged.\n\n" + failure.getMessage()
+					+ "\n\nNo returned work will be applied.");
+		}
+
+		VBox content = new VBox(10, subject, contributor, summaryHeading, summaries, detailHeading, details, notice);
+
+		content.setPadding(new Insets(12));
+
+		VBox.setVgrow(details, Priority.ALWAYS);
+
+		getDialogPane().setContent(content);
+		getDialogPane().setPrefSize(850, 650);
+
+		setResultConverter(button -> button);
+	}
+
+	/**
+	 * Builds a presentation using actual domain names and relationships.
+	 *
+	 * @param baseline       issued baseline records
+	 * @param proposals      returned records
+	 * @param examPortableId assigned Exam identity
+	 * @return read-only preview data
+	 */
+	static Preview buildPreview(List<ExchangeRecord> baseline, List<ExchangeRecord> proposals, UUID examPortableId) {
+
 		Objects.requireNonNull(baseline, "baseline");
 		Objects.requireNonNull(proposals, "proposals");
 		Objects.requireNonNull(examPortableId, "examPortableId");
-		Map<RecordKey, ExchangeRecord> issued = new HashMap<>();
+
 		Map<RecordKey, ExchangeRecord> indexed = new HashMap<>();
-		Map<RecordKey, ExchangeRecord> received = new HashMap<>();
+
 		for (ExchangeRecord record : baseline) {
-			RecordKey key = new RecordKey(record.recordType(), record.recordId());
-			if (issued.putIfAbsent(key, record) != null) {
-				throw new IllegalArgumentException("Duplicate issued baseline record: " + key);
-			}
-			indexed.put(key, record);
+			indexRecord(indexed, record);
 		}
+
 		for (ExchangeRecord record : proposals) {
-			RecordKey key = new RecordKey(record.recordType(), record.recordId());
-			if (received.putIfAbsent(key, record) != null) {
-				throw new IllegalArgumentException("Duplicate received proposal: " + key);
-			}
-			indexed.put(key, record);
+			indexRecord(indexed, record);
 		}
-		for (RecordAssessment assessment : plan.assessments()) {
-			RecordKey key = new RecordKey(assessment.recordType(), assessment.recordId());
-			ExchangeRecord proposal = received.get(key);
-			if (proposal == null) {
-				throw new IllegalArgumentException("Assessment has no received proposal: " + key);
-			}
-			UUID booklet = findBooklet(proposal, indexed, new HashSet<>());
-			String scope = booklet == null ? "Exam-wide / related" : "Booklet " + booklet.toString().substring(0, 8);
-			rows.add(new Row(assessment, issued.get(key), proposal, scope));
+
+		ExchangeRecord exam = indexed.get(new RecordKey("EXAM", examPortableId));
+
+		if (exam == null) {
+			throw new IllegalArgumentException("The assigned Exam details are missing.");
 		}
-		if (rows.isEmpty()) {
-			throw new IllegalArgumentException("Contribution review has no proposals.");
+
+		ExchangeRecord subject = reference(exam, "subject_id", "SUBJECT", indexed);
+
+		ExchangeRecord provider = reference(exam, "provider_id", "EXAM_PROVIDER", indexed);
+
+		String examName = provider.values().path("provider_name").asText() + " "
+				+ exam.values().path("exam_year").asText() + " " + exam.values().path("exam_name").asText();
+
+		List<ReturnedItem> items = new ArrayList<>();
+
+		for (ExchangeRecord proposal : proposals) {
+			items.add(describe(proposal, indexed));
 		}
-		table.setId("contribution-review-records");
-		table.setItems(rows);
-		table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
-		table.getColumns().setAll(textColumn("Exam / Booklet", Row::scope, 180),
-				textColumn("Record", row -> row.assessment.recordType(), 180),
-				textColumn("Master assessment", row -> row.assessment.status().name(), 170),
-				textColumn("Decision", row -> row.choice == null ? "UNDECIDED" : row.choice.name(), 140),
-				textColumn("Portable identity", row -> row.assessment.recordId().toString(), 290));
-		applyButton.setId("contribution-review-apply");
-		skipButton.setId("contribution-review-skip");
-		rejectButton.setId("contribution-review-reject");
-		holdButton.setId("contribution-review-hold");
-		approveButton.setId("contribution-review-approve");
-		suggestedButton.setId("contribution-review-suggested");
-		applyButton.setTooltip(new Tooltip("Accept this supported new contribution record for application "
-				+ "to the coordinator's Exam after final confirmation."));
-		skipButton.setTooltip(new Tooltip("Record that this proposal is already identical to the authoritative "
-				+ "master record. No Question content is changed."));
-		rejectButton.setTooltip(new Tooltip("Decline this proposed record. The rejected contribution remains "
-				+ "recorded in the reconciliation history."));
-		holdButton.setTooltip(new Tooltip("Leave this proposal unresolved. The assignment cannot be closed "
-				+ "until every proposal has a final decision."));
-		suggestedButton.setTooltip(new Tooltip("Choose recommended decisions for supported undecided records. "
-				+ "Inspect the resulting decisions before approving."));
-		approveButton.setTooltip(new Tooltip("Continue only when every proposal has been decided. "
-				+ "A verified full backup and final confirmation follow."));
-		applyButton.setOnAction(_ -> choose(Choice.QUEUE_APPLY));
-		skipButton.setOnAction(_ -> choose(Choice.SKIP_IDENTICAL));
-		rejectButton.setOnAction(_ -> choose(Choice.REJECT));
-		holdButton.setOnAction(_ -> choose(Choice.HOLD));
-		suggestedButton.setOnAction(_ -> suggestSupported());
-		approveButton.setOnAction(_ -> {
-			if (rows.stream().anyMatch(row -> row.choice == null || row.choice == Choice.HOLD)) {
-				return;
-			}
-			approved = true;
-			close();
-		});
-		table.getSelectionModel().selectedItemProperty().addListener((_, _, _) -> refresh());
-		detail.setId("contribution-review-detail");
-		detail.setWrapText(true);
-		detail.setText("Select a proposal to inspect issued, current-master " + "and contributor evidence.");
-		ScrollPane detailScroll = new ScrollPane(detail);
-		detailScroll.setFitToWidth(true);
-		detailScroll.setPrefViewportHeight(180);
-		summary.setId("contribution-review-summary");
-		summary.setWrapText(true);
-		Label notice = new Label("Queue Apply is available only for supported changes "
-				+ "with a valid master assessment. " + "Unsupported or conflicting proposals cannot "
-				+ "be forced into the master." + "\nHold retains unresolved evidence without applying. "
-				+ "Reject explicitly declines the proposal.");
-		notice.setWrapText(true);
-		HBox decisions = new HBox(8, applyButton, skipButton, rejectButton, holdButton);
-		decisions.setAlignment(Pos.CENTER_LEFT);
-		HBox finalActions = new HBox(8, suggestedButton, approveButton);
-		finalActions.setAlignment(Pos.CENTER_RIGHT);
-		VBox content = new VBox(10, table, detailScroll, decisions, summary, notice, finalActions);
-		content.setPadding(new Insets(12));
-		VBox.setVgrow(table, Priority.ALWAYS);
-		getDialogPane().setContent(content);
-		getDialogPane().getButtonTypes().setAll(ButtonType.CLOSE);
-		getDialogPane().setPrefSize(1100, 740);
-		refresh();
+
+		items.sort(Comparator.comparing(ReturnedItem::booklet).thenComparing(ReturnedItem::item)
+				.thenComparing(ReturnedItem::description));
+
+		// Group by portable Booklet identity internally, but display
+		// only the actual human-readable Booklet name.
+		var grouped = items.stream().collect(Collectors.groupingBy(ReturnedItem::bookletId));
+
+		List<BookletSummary> summaries = new ArrayList<>();
+
+		for (List<ReturnedItem> group : grouped.values()) {
+
+			summaries.add(new BookletSummary(group.getFirst().booklet(), count(group, "QUESTION"),
+					count(group, "ANSWER"), group.stream().filter(ReturnedItem::mcqExplanation).count(),
+					count(group, "SHARED_QUESTION_CONTEXT")));
+		}
+
+		summaries.sort(Comparator.comparing(BookletSummary::booklet));
+
+		return new Preview(subject.values().path("subject_name").asText(), examName, List.copyOf(summaries),
+				List.copyOf(items));
 	}
 
-	/**
-	 * Tests whether an assessed record can be queued for supported application.
-	 *
-	 * @param assessment preliminary master record assessment
-	 * @return true only for supported types with ready new/update evidence
-	 */
-	static boolean canQueue(RecordAssessment assessment) {
-		Objects.requireNonNull(assessment, "assessment");
-		boolean supportedType = switch (assessment.recordType()) {
-		case "SOURCE_QUESTION", "SHARED_QUESTION_CONTEXT", "QUESTION", "ANSWER", "QUESTION_IMAGE" -> true;
-		default -> false;
+	private static long count(List<ReturnedItem> items, String type) {
+
+		return items.stream().filter(item -> item.type().equals(type)).count();
+	}
+
+	private static ReturnedItem describe(ExchangeRecord proposal, Map<RecordKey, ExchangeRecord> indexed) {
+
+		String type = proposal.recordType();
+
+		ExchangeRecord question = switch (type) {
+		case "QUESTION" -> proposal;
+		case "ANSWER", "QUESTION_IMAGE" -> reference(proposal, "question_id", "QUESTION", indexed);
+		default -> null;
 		};
-		return supportedType
-				&& (assessment.status() == ReviewStatus.READY_NEW || assessment.status() == ReviewStatus.READY_UPDATE);
+
+		ExchangeRecord bookletOwner = question == null ? proposal : question;
+
+		if (!bookletOwner.values().hasNonNull("booklet_id")) {
+
+			return new ReturnedItem(new UUID(0, 0), "Exam-wide", "Other item", "Unsupported returned work", type,
+					false);
+		}
+
+		ExchangeRecord booklet = reference(bookletOwner, "booklet_id", "EXAM_BOOKLET", indexed);
+
+		String bookletName = booklet.values().path("booklet_name").asText();
+
+		String item = question == null ? switch (type) {
+		case "SOURCE_QUESTION" -> "Question " + proposal.values().path("source_question_code").asText();
+		case "SHARED_QUESTION_CONTEXT" -> "Shared context";
+		default -> "Other item";
+		} : "Question " + question.values().path("question_code").asText();
+
+		boolean mcqExplanation = "ANSWER".equals(type) && question != null
+				&& "MULTIPLE_CHOICE".equals(question.values().path("response_type").asText())
+				&& !proposal.values().path("answer_regions").isEmpty();
+
+		String description = switch (type) {
+		case "QUESTION" -> "New Question";
+		case "ANSWER" -> mcqExplanation ? "Answer and MCQ Explanation" : "New Answer";
+		case "SOURCE_QUESTION" -> "Source Question";
+		case "QUESTION_IMAGE" -> "Question image";
+		case "SHARED_QUESTION_CONTEXT" -> "Shared question context";
+		default -> "Unsupported returned work";
+		};
+
+		return new ReturnedItem(booklet.recordId(), bookletName, item, description, type, mcqExplanation);
 	}
 
-	/** Whether the coordinator explicitly approved a complete review. */
-	boolean approved() {
-		return approved;
-	}
+	private static void indexRecord(Map<RecordKey, ExchangeRecord> indexed, ExchangeRecord record) {
 
-	/**
-	 * Returns explicitly approved choices for every proposed record.
-	 *
-	 * @return immutable complete decision map
-	 * @throws IllegalStateException if approval was not given
-	 */
-	Map<RecordKey, Choice> decisions() {
-		if (!approved) {
-			throw new IllegalStateException("Contribution decisions have not been approved.");
-		}
-		Map<RecordKey, Choice> result = new LinkedHashMap<>();
-		for (Row row : rows) {
-			result.put(new RecordKey(row.assessment.recordType(), row.assessment.recordId()), row.choice);
-		}
-		return Map.copyOf(result);
-	}
-
-	private void choose(Choice choice) {
-		Row selected = table.getSelectionModel().getSelectedItem();
-		if (selected == null) {
-			return;
-		}
-		if (choice == Choice.QUEUE_APPLY && !canQueue(selected.assessment)) {
-			return;
-		}
-		if (choice == Choice.SKIP_IDENTICAL && selected.assessment.status() != ReviewStatus.SKIP_IDENTICAL) {
-			return;
-		}
-		selected.choice = choice;
-		refresh();
-	}
-
-	private String describe(Row row) {
-		RecordAssessment assessment = row.assessment;
-		String issued = row.baseline == null ? "New record; absent from issued baseline."
-				: row.baseline.values().toPrettyString();
-		return "Scope: " + row.scope + "\nRecord: " + assessment.recordType() + "\nPortable ID: "
-				+ assessment.recordId() + "\nAssessment: " + assessment.status() + "\n\nIssued revision: "
-				+ assessment.baselineRevisionId() + "\nObserved master revision: " + assessment.masterRevisionId()
-				+ "\nObserved master SHA-256: " + assessment.masterRecordSha256() + "\nProposed revision: "
-				+ assessment.proposedRevisionId() + "\n\nIssued baseline values:\n" + issued
-				+ "\n\nProposed contributor values:\n" + row.proposal.values().toPrettyString()
-				+ "\n\nThe master revision and digest are evidence, "
-				+ "not permission to overwrite divergent master content.";
-	}
-
-	private UUID findBooklet(ExchangeRecord record, Map<RecordKey, ExchangeRecord> indexed, Set<RecordKey> visited) {
 		RecordKey key = new RecordKey(record.recordType(), record.recordId());
-		if (!visited.add(key)) {
-			return null;
+
+		// The current contribution contract permits additions,
+		// rather than replacements of issued baseline records.
+		if (indexed.putIfAbsent(key, record) != null) {
+			throw new IllegalArgumentException(
+					"The contribution duplicates issued " + "or previously returned content.");
 		}
-		var values = record.values();
-		var direct = values.path("booklet_id");
-		if (direct.isTextual()) {
-			return UUID.fromString(direct.asText());
-		}
-		Map<String, String> parents = Map.of("source_question_id", "SOURCE_QUESTION", "question_id", "QUESTION",
-				"shared_context_id", "SHARED_QUESTION_CONTEXT", "answer_id", "ANSWER");
-		for (Map.Entry<String, String> parent : parents.entrySet()) {
-			var reference = values.path(parent.getKey());
-			if (!reference.isTextual()) {
-				continue;
-			}
-			UUID parentId = UUID.fromString(reference.asText());
-			ExchangeRecord ancestor = indexed.get(new RecordKey(parent.getValue(), parentId));
-			if (ancestor != null) {
-				UUID booklet = findBooklet(ancestor, indexed, visited);
-				if (booklet != null) {
-					return booklet;
-				}
-			}
-		}
-		return null;
 	}
 
-	private void refresh() {
-		Row selected = table.getSelectionModel().getSelectedItem();
-		applyButton.setDisable(selected == null || !canQueue(selected.assessment));
-		skipButton.setDisable(selected == null || selected.assessment.status() != ReviewStatus.SKIP_IDENTICAL);
-		rejectButton.setDisable(selected == null);
-		holdButton.setDisable(selected == null);
-		if (selected != null) {
-			detail.setText(describe(selected));
+	private static ExchangeRecord reference(ExchangeRecord owner, String field, String type,
+			Map<RecordKey, ExchangeRecord> indexed) {
+
+		var value = owner.values().path(field);
+
+		if (!value.isTextual()) {
+			throw new IllegalArgumentException("Required contribution details are missing.");
 		}
-		long undecided = rows.stream().filter(row -> row.choice == null).count();
-		long applying = rows.stream().filter(row -> row.choice == Choice.QUEUE_APPLY).count();
-		long skipped = rows.stream().filter(row -> row.choice == Choice.SKIP_IDENTICAL).count();
-		long rejected = rows.stream().filter(row -> row.choice == Choice.REJECT).count();
-		long held = rows.stream().filter(row -> row.choice == Choice.HOLD).count();
-		Map<String, Long> byScope = rows.stream()
-				.collect(Collectors.groupingBy(Row::scope, TreeMap::new, Collectors.counting()));
-		String scopes = byScope.entrySet().stream().map(entry -> entry.getKey() + ": " + entry.getValue())
-				.collect(Collectors.joining(" | "));
-		summary.setText("Total: " + rows.size() + " | Queue Apply: " + applying + " | Skip: " + skipped + " | Reject: "
-				+ rejected + " | Hold: " + held + " | Undecided: " + undecided + "\nExam/Booklet record counts: "
-				+ scopes);
-		approveButton.setDisable(undecided > 0 || held > 0);
-		table.refresh();
+
+		ExchangeRecord record = indexed.get(new RecordKey(type, UUID.fromString(value.asText())));
+
+		if (record == null) {
+			throw new IllegalArgumentException("Required contribution details could not " + "be located.");
+		}
+
+		return record;
 	}
 
-	private void suggestSupported() {
-		long eligible = rows.stream().filter(row -> row.choice == null)
-				.filter(row -> canQueue(row.assessment) || row.assessment.status() == ReviewStatus.SKIP_IDENTICAL)
-				.count();
-		if (eligible == 0) {
-			return;
-		}
-		Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
-		confirmation.initOwner(getDialogPane().getScene().getWindow());
-		confirmation.setTitle("Select Supported Decisions");
-		confirmation.setHeaderText("Select recommended decisions for " + eligible + " records?");
-		confirmation.setContentText("Supported ready records will be queued for application."
-				+ "\nIdentical records will be marked Skip." + "\nHeld or unsupported records remain undecided."
-				+ "\n\nThis only changes the review selections; " + "it does not modify the master database.");
-		if (confirmation.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) {
-			return;
-		}
-		for (Row row : rows) {
-			if (row.choice != null) {
-				continue;
-			}
-			if (canQueue(row.assessment)) {
-				row.choice = Choice.QUEUE_APPLY;
-			} else if (row.assessment.status() == ReviewStatus.SKIP_IDENTICAL) {
-				row.choice = Choice.SKIP_IDENTICAL;
-			}
-		}
-		refresh();
-	}
+	private static <T> TableColumn<T, String> textColumn(String title, Function<T, String> value, int width) {
 
-	private TableColumn<Row, String> textColumn(String title, Function<Row, String> value, int width) {
-		TableColumn<Row, String> column = new TableColumn<>(title);
+		TableColumn<T, String> column = new TableColumn<>(title);
+
 		column.setPrefWidth(width);
+
 		column.setCellValueFactory(cell -> new ReadOnlyStringWrapper(value.apply(cell.getValue())));
+
 		return column;
 	}
 
-	private static final class Row {
+	record BookletSummary(String booklet, long questions, long answers, long mcqExplanations, long sharedContexts) {
+	}
 
-		private final RecordAssessment assessment;
-		private final ExchangeRecord baseline;
-		private Choice choice;
-		private final ExchangeRecord proposal;
-		private final String scope;
+	record Preview(String subjectName, String examName, List<BookletSummary> booklets, List<ReturnedItem> items) {
+	}
 
-		private Row(RecordAssessment assessment, ExchangeRecord baseline, ExchangeRecord proposal, String scope) {
-			this.assessment = Objects.requireNonNull(assessment);
-			this.baseline = baseline;
-			this.proposal = Objects.requireNonNull(proposal);
-			this.scope = Objects.requireNonNull(scope);
-		}
-
-		private String scope() {
-			return scope;
-		}
+	record ReturnedItem(UUID bookletId, String booklet, String item, String description, String type,
+			boolean mcqExplanation) {
 	}
 }
