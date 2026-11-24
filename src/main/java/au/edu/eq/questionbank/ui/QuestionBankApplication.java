@@ -3578,16 +3578,28 @@ public class QuestionBankApplication extends Application {
 		};
 	}
 
-	private Set<Long> loadContributorBaselineQuestionIds(UUID assignmentId) throws SQLException, IOException {
+	private Set<Long> loadContributorBaselineIds(UUID assignmentId, EntityType type) throws SQLException, IOException {
+
 		Objects.requireNonNull(assignmentId, "assignmentId");
+		Objects.requireNonNull(type, "type");
+
 		byte[] baseline = contributorAssignments.readBaseline(assignmentId).records();
+
 		List<ExchangeRecord> records = new ExamWorkJsonlCodec().readRecords(new ByteArrayInputStream(baseline));
-		Set<UUID> issuedQuestionIds = records.stream().filter(record -> "QUESTION".equals(record.recordType()))
+
+		Set<UUID> issuedIds = records.stream().filter(record -> type.name().equals(record.recordType()))
 				.map(ExchangeRecord::recordId).collect(Collectors.toUnmodifiableSet());
+
 		SqliteDatabase database = new SqliteDatabase(applicationConfig.databasePath());
-		return new SqlitePortableIdentityRepository(database).findAllByLocalId(EntityType.QUESTION).entrySet().stream()
-				.filter(entry -> issuedQuestionIds.contains(entry.getValue().portableId())).map(Map.Entry::getKey)
+
+		return new SqlitePortableIdentityRepository(database).findAllByLocalId(type).entrySet().stream()
+				.filter(entry -> issuedIds.contains(entry.getValue().portableId())).map(Map.Entry::getKey)
 				.collect(Collectors.toUnmodifiableSet());
+	}
+
+	private Set<Long> loadContributorBaselineQuestionIds(UUID assignmentId) throws SQLException, IOException {
+
+		return loadContributorBaselineIds(assignmentId, EntityType.QUESTION);
 	}
 
 	private void loadCorpusDashboardHome(Subject dashboardSubject, long generation, long preferredQuestionId) {
@@ -5203,9 +5215,14 @@ public class QuestionBankApplication extends Application {
 		try {
 			applyDashboardAuthority(dashboard, snapshot);
 			if (activeAssignmentContext != null) {
+
 				UUID assignmentId = activeAssignmentContext.session().assignmentId();
+
 				dashboard.setAssignmentExamScope(activeAssignmentContext.session().examLocalId());
+
 				dashboard.setContributorBaselineQuestionIds(loadContributorBaselineQuestionIds(assignmentId));
+
+				dashboard.setContributorBaselineAnswerIds(loadContributorBaselineIds(assignmentId, EntityType.ANSWER));
 			}
 		} catch (SQLException | IOException failure) {
 
@@ -6174,15 +6191,37 @@ public class QuestionBankApplication extends Application {
 			boolean contributorSubject = contributorAssignments != null && contributorAssignments.findAll().stream()
 					.anyMatch(session -> session.subjectLocalId() == workingSubject.getId());
 
-			// Question Search is for inspection during worker capture. New work is
-			// authored and corrected in the assigned capture workspace instead.
-			boolean contributorInspectionOnly = activeAssignmentContext != null || contributorSubject;
-			dialog.setReadOnlyQuestionPredicate(question -> imported || contributorInspectionOnly
-					|| assignedExamIds.contains(question.getExam().getId()));
-		} catch (SQLException failure) {
+			if (activeAssignmentContext != null && !imported) {
+
+				var session = activeAssignmentContext.session();
+
+				long assignedExamId = session.examLocalId();
+
+				Set<Long> baselineQuestionIds = loadContributorBaselineQuestionIds(session.assignmentId());
+
+				Set<Long> baselineAnswerIds = loadContributorBaselineIds(session.assignmentId(), EntityType.ANSWER);
+
+				// Each predicate protects its own entity type.
+				// Records belonging to other Exams remain read-only.
+				dialog.setReadOnlyQuestionPredicate(question -> question.getExam().getId() != assignedExamId
+						|| baselineQuestionIds.contains(question.getId()));
+
+				dialog.setReadOnlyAnswerPredicate(question -> question.getExam().getId() != assignedExamId
+						|| !question.hasAnswer() || baselineAnswerIds.contains(question.getAnswer().getId()));
+
+			} else {
+
+				dialog.setReadOnlyQuestionPredicate(question -> imported || contributorSubject
+						|| assignedExamIds.contains(question.getExam().getId()));
+			}
+
+		} catch (SQLException | IOException failure) {
+
 			dialog.dispose();
+
 			showAlert(Alert.AlertType.ERROR, "Search Questions",
 					"Question editing permissions could not be established.", failureMessage(failure));
+
 			return;
 		}
 		showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);

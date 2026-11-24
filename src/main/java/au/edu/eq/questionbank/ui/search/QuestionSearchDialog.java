@@ -62,6 +62,7 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	private final ButtonType recaptureSharedContextButtonType = new ButtonType("Edit Shared Context",
 			ButtonBar.ButtonData.OTHER);
 	private final ButtonType splitQuestionButtonType = new ButtonType("Split Question...", ButtonBar.ButtonData.OTHER);
+	private final ObjectProperty<Predicate<Question>> readOnlyAnswerPredicate = new SimpleObjectProperty<>();
 
 	/**
 	 * Creates an unrestricted question-search dialog owned by the supplied window.
@@ -174,6 +175,22 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	}
 
 	/**
+	 * Supplies independent ownership restrictions for Answer editing.
+	 *
+	 * <p>
+	 * Without an explicit Answer predicate, the Question ownership restrictions
+	 * also apply to Answers. Complete Exams remain read-only regardless of the
+	 * supplied predicate.
+	 *
+	 * @param predicate predicate identifying protected Answers
+	 * @throws NullPointerException if the predicate is null
+	 */
+	public void setReadOnlyAnswerPredicate(Predicate<Question> predicate) {
+
+		readOnlyAnswerPredicate.set(Objects.requireNonNull(predicate, "predicate"));
+	}
+
+	/**
 	 * Restricts Question-editing actions without restricting inspection,
 	 * navigation, searching or filtering.
 	 *
@@ -224,10 +241,14 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 					|| (!selected.hasSharedContext() && !selected.hasSourceQuestion());
 		}, searchPane.selectedResultProperty(), searchPane.classificationDirtyProperty(), readOnlyQuestionPredicate));
 		editAnswerButton.disableProperty().bind(Bindings.createBooleanBinding(() -> {
+
 			Question selected = searchPane.getSelectedQuestion();
-			return searchPane.isSelectedQuestionReadOnly() || searchPane.isClassificationDirty() || selected == null
-					|| !selected.hasAnswer();
-		}, searchPane.selectedResultProperty(), searchPane.classificationDirtyProperty(), readOnlyQuestionPredicate));
+
+			return selected == null || !selected.hasAnswer() || searchPane.isClassificationDirty()
+					|| isAnswerReadOnly(selected);
+
+		}, searchPane.selectedResultProperty(), searchPane.classificationDirtyProperty(), readOnlyQuestionPredicate,
+				readOnlyAnswerPredicate));
 	}
 
 	private void configureActionButtonIds(Button editQuestionButton, Button splitQuestionButton,
@@ -360,28 +381,46 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	}
 
 	private void configureResultConversion() {
+
 		setResultConverter(buttonType -> {
+
 			Question selected = searchPane.getSelectedQuestion();
-			if (selected == null || searchPane.isSelectedQuestionReadOnly()) {
+
+			if (selected == null) {
 				return null;
 			}
-			if (buttonType == editQuestionButtonType) {
-				return new EditRequest(selected, EditTarget.QUESTION);
-			}
-			if (buttonType == splitQuestionButtonType) {
-				return new EditRequest(selected, EditTarget.SPLIT);
-			}
-			if (buttonType == editMetadataButtonType) {
-				return new EditRequest(selected, EditTarget.METADATA);
-			}
-			if (buttonType == recaptureSharedContextButtonType) {
-				return new EditRequest(selected, EditTarget.SHARED_CONTEXT);
-			}
+
+			// An editable contributor Answer can belong to an
+			// otherwise read-only coordinator Question.
 			if (buttonType == editAnswerButtonType) {
+
+				if (!selected.hasAnswer() || isAnswerReadOnly(selected) || searchPane.isClassificationDirty()) {
+					return null;
+				}
+
 				return new EditRequest(selected, EditTarget.ANSWER);
 			}
 
-			// Close publishes no edit request.
+			if (searchPane.isSelectedQuestionReadOnly()) {
+				return null;
+			}
+
+			if (buttonType == editQuestionButtonType) {
+				return new EditRequest(selected, EditTarget.QUESTION);
+			}
+
+			if (buttonType == splitQuestionButtonType) {
+				return new EditRequest(selected, EditTarget.SPLIT);
+			}
+
+			if (buttonType == editMetadataButtonType) {
+				return new EditRequest(selected, EditTarget.METADATA);
+			}
+
+			if (buttonType == recaptureSharedContextButtonType) {
+				return new EditRequest(selected, EditTarget.SHARED_CONTEXT);
+			}
+
 			return null;
 		});
 	}
@@ -504,6 +543,21 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 		// Search has a functional minimum width independent of whether the resize
 		// originated from the native window manager, restored geometry or code.
 		setWidth(minimum);
+	}
+
+	private boolean isAnswerReadOnly(Question question) {
+
+		if (question == null || question.getExam().isComplete()) {
+			return true;
+		}
+
+		Predicate<Question> predicate = readOnlyAnswerPredicate.get();
+
+		if (predicate == null) {
+			return searchPane.isSelectedQuestionReadOnly();
+		}
+
+		return predicate.test(question);
 	}
 
 	private boolean isRememberedPositionVisible() {

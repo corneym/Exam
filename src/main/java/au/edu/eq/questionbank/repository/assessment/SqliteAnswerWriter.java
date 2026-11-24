@@ -353,8 +353,7 @@ public final class SqliteAnswerWriter {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
-				new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.QUESTION,
-						question.getId());
+				new SqliteContributorBaselineWriteGuard().requireAnswerCreation(connection, question.getId());
 
 				// Existing capture paths may not yet have explicitly assigned the booklet.
 				// A single unambiguous AnswerFile can establish that relationship here.
@@ -435,9 +434,9 @@ public final class SqliteAnswerWriter {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
-				SqliteContributorBaselineWriteGuard guard = new SqliteContributorBaselineWriteGuard();
-				guard.requireMutable(connection, EntityType.QUESTION, question.getId());
-				guard.requireMutable(connection, EntityType.ANSWER, answerId);
+				// Answer ownership is independent of parent Question
+				// ownership. The existing relationship is verified below.
+				new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.ANSWER, answerId);
 
 				// Check ownership before replacing anything under the existing Answer ID.
 				verifyAnswerBelongsToQuestion(connection, answerId, question);

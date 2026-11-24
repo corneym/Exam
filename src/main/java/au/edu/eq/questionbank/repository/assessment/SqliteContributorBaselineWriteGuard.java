@@ -39,6 +39,45 @@ public final class SqliteContributorBaselineWriteGuard {
 	}
 
 	/**
+	 * Verifies that a new Answer may be created for a persisted Question.
+	 *
+	 * <p>
+	 * An issued Question may receive a new Answer without granting permission to
+	 * modify the Question itself. Imported Subjects, inactive assignments and
+	 * records outside the selected Exam remain protected.
+	 *
+	 * @param connection caller-owned database connection
+	 * @param questionId positive local Question identifier
+	 * @throws SQLException             if ownership validation fails
+	 * @throws IllegalStateException    if Answer creation is prohibited
+	 * @throws IllegalArgumentException if the Question ID is invalid
+	 * @throws NullPointerException     if the connection is null
+	 */
+	public void requireAnswerCreation(Connection connection, long questionId) throws SQLException {
+
+		Objects.requireNonNull(connection, "connection");
+
+		if (questionId < 1) {
+			throw new IllegalArgumentException("Question ID must be positive");
+		}
+
+		Scope scope = readScope(connection, EntityType.QUESTION, questionId);
+
+		requireWritableScope(connection, scope);
+
+		// Creation never grants permission to replace an
+		// existing Answer, regardless of its ownership.
+		if (exists(connection, """
+				SELECT 1
+				FROM answers
+				WHERE question_id = ?
+				""", questionId)) {
+
+			throw new IllegalStateException("This Question already has an Answer.");
+		}
+	}
+
+	/**
 	 * Rejects mutation of an externally authoritative or issued baseline record.
 	 *
 	 * <p>
@@ -57,42 +96,33 @@ public final class SqliteContributorBaselineWriteGuard {
 	 * @throws NullPointerException     if a required argument is null
 	 */
 	public void requireMutable(Connection connection, EntityType type, long localId) throws SQLException {
+
 		Objects.requireNonNull(connection, "connection");
 		Objects.requireNonNull(type, "type");
+
 		if (localId < 1) {
 			throw new IllegalArgumentException("Record ID must be positive");
 		}
+
 		Scope scope = readScope(connection, type, localId);
-		if (exists(connection, """
-				SELECT 1
-				FROM imported_subject_authorities
-				WHERE subject_local_id = ?
-				""", scope.subjectId())) {
-			throw new IllegalStateException("This Subject is an imported read-only snapshot.");
-		}
-		ActiveAssignment active = readActiveAssignment(connection);
+
+		ActiveAssignment active = requireWritableScope(connection, scope);
+
 		if (active == null) {
-			if (exists(connection, """
-					SELECT 1
-					FROM contributor_assignment_sessions
-					WHERE subject_local_id = ?
-					""", scope.subjectId())) {
-				throw new IllegalStateException("This Subject belongs to a contributor work package. "
-						+ "Select an active assignment to capture new work.");
-			}
 			return;
 		}
-		if (active.examId() != scope.examId()) {
-			throw new IllegalStateException("This record is outside the selected contributor Exam.");
-		}
+
 		if (type == EntityType.EXAM || type == EntityType.EXAM_BOOKLET || type == EntityType.ANSWER_FILE) {
+
 			throw new IllegalStateException("Exam and Booklet structure is coordinator-owned.");
 		}
+
 		UUID portableId = readPortableId(connection, type, localId);
+
 		if (baselineContains(active, type, portableId)) {
-			throw new IllegalStateException(
-					"This " + type.name() + " was supplied by the coordinator and is read-only. "
-							+ "Only newly captured contributor work may be edited.");
+
+			throw new IllegalStateException("This " + type.name() + " was supplied by the coordinator "
+					+ "and is read-only. " + "Only newly captured contributor " + "work may be edited.");
 		}
 	}
 
@@ -248,6 +278,42 @@ public final class SqliteContributorBaselineWriteGuard {
 				return scope;
 			}
 		}
+	}
+
+	private ActiveAssignment requireWritableScope(Connection connection, Scope scope) throws SQLException {
+
+		if (exists(connection, """
+				SELECT 1
+				FROM imported_subject_authorities
+				WHERE subject_local_id = ?
+				""", scope.subjectId())) {
+
+			throw new IllegalStateException("This Subject is an imported read-only snapshot.");
+		}
+
+		ActiveAssignment active = readActiveAssignment(connection);
+
+		if (active == null) {
+
+			if (exists(connection, """
+					SELECT 1
+					FROM contributor_assignment_sessions
+					WHERE subject_local_id = ?
+					""", scope.subjectId())) {
+
+				throw new IllegalStateException("This Subject belongs to a contributor "
+						+ "work package. Select an active " + "assignment to capture new work.");
+			}
+
+			return null;
+		}
+
+		if (active.examId() != scope.examId()) {
+
+			throw new IllegalStateException("This record is outside the " + "selected contributor Exam.");
+		}
+
+		return active;
 	}
 
 	private record ActiveAssignment(long examId, byte[] baselineRecords, String recordsSha256) {
