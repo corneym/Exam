@@ -954,6 +954,53 @@ class ContributorAssignmentDashboardWorkflowTest {
 		robot.interact(() -> assertTrue(primaryStage.getScene().getRoot().lookup("#corpus-dashboard-exams") == null));
 	}
 
+	@Test
+	void unchangedContributionIsRejectedBeforeDestinationSelection(FxRobot robot) throws Exception {
+		awaitAssignedDashboard(robot);
+		SqliteDatabase database = new SqliteDatabase(contributor.databasePath());
+		SqliteContributionReturnLedger ledger = new SqliteContributionReturnLedger(database);
+		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
+		Menu exportMenu = menuBar.getMenus().stream().filter(menu -> "E_xport".equals(menu.getText())).findFirst()
+				.orElseThrow();
+		MenuItem contribution = exportMenu.getItems().stream()
+				.filter(item -> "export-assignment-contribution".equals(item.getId())).findFirst().orElseThrow();
+		Button remove = robot.lookup("#corpus-dashboard-remove-assignment").queryButton();
+		WaitForAsyncUtils.waitFor(15, TimeUnit.SECONDS, () -> WaitForAsyncUtils
+				.asyncFx(() -> !remove.isDisabled() && !contribution.isDisable() && !busyOverlay().isBusy()).get());
+		assertTrue(ledger.findLatest(assignmentId).isEmpty());
+
+		// Invoke the real Export menu action. An unchanged
+		// assignment must produce an explanatory application
+		// alert instead of entering the native destination chooser.
+		Platform.runLater(contribution::fire);
+		DialogPane rejection = awaitDialog(robot, "Export Assignment Contribution");
+		robot.interact(() -> {
+			assertEquals("The work package is not ready for export.", rejection.getHeaderText());
+			TextArea message = (TextArea) rejection.getContent();
+			assertTrue(message.getText().contains("No contributor changes to export"));
+			assertTrue(message.getText().contains("Capture and save new work"));
+			assertFalse(busyOverlay().isBusy());
+			((ButtonBase) rejection.lookupButton(ButtonType.OK)).fire();
+		});
+		WaitForAsyncUtils.waitForFxEvents();
+
+		// Refusal must not submit, remove or deselect the assignment.
+		assertEquals(assignmentId, sessions().active().orElseThrow().assignmentId());
+		assertTrue(ledger.findLatest(assignmentId).isEmpty());
+		var visibility = new SqliteContributorAssignmentVisibilityRepository(database);
+		assertEquals(SqliteContributorAssignmentVisibilityRepository.State.ACTIVE,
+				visibility.find(assignmentId).orElseThrow());
+		robot.interact(() -> {
+			assertFalse(remove.isDisabled());
+			assertFalse(contribution.isDisable());
+			assertFalse(busyOverlay().isBusy());
+			ComboBox<?> assignments = robot.lookup("#corpus-dashboard-assignment-selector").queryAs(ComboBox.class);
+			assertEquals(1, assignments.getItems().size());
+			assertNotNull(assignments.getValue());
+		});
+		database.verifyIntegrity();
+	}
+
 	private void acknowledgeDialog(FxRobot robot, String title, String expectedHeader) throws Exception {
 		DialogPane pane = awaitDialog(robot, title);
 		robot.interact(() -> {

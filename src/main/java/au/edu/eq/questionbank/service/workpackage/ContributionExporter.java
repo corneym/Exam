@@ -33,6 +33,7 @@ import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.repository.identity.SqliteExamAssignmentGraphReader;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqliteSubjectGraphReader.SubjectGraph;
+import au.edu.eq.questionbank.repository.sqlite.SqliteContributorAssignmentVisibilityRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkArchiveWriter.EntrySource;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest.Entry;
@@ -173,6 +174,61 @@ public final class ContributionExporter {
 			// evidence; never discard potentially returned work.
 			ledger.recordPublished(verified, previousPackageId, sha256(target));
 			return verified;
+		} finally {
+			deleteTemporaryTree(stagingDirectory);
+		}
+	}
+
+	/**
+	 * Determines whether an installed assignment has saved work that may be
+	 * exported as a contribution.
+	 *
+	 * <p>
+	 * The lifecycle state and saved-work delta are inspected using a consistent
+	 * database snapshot. No contribution archive is created and no return evidence
+	 * is recorded.
+	 *
+	 * <p>
+	 * This advisory check does not replace the validation performed by the final
+	 * export operation.
+	 *
+	 * @param assignmentId installed contributor assignment UUID
+	 * @throws SQLException             if assignment persistence cannot be
+	 *                                  inspected
+	 * @throws IOException              if the snapshot cannot be inspected, the
+	 *                                  contribution is empty, or its changes are
+	 *                                  invalid
+	 * @throws IllegalStateException    if the assignment has been removed or
+	 *                                  already submitted
+	 * @throws IllegalArgumentException if the assignment is not installed
+	 * @throws NullPointerException     if the assignment identity is null
+	 */
+	public void preflight(UUID assignmentId) throws SQLException, IOException {
+		Objects.requireNonNull(assignmentId, "assignmentId");
+		Path stagingDirectory = Files.createTempDirectory("examwork-contribution-preflight-");
+		try {
+			Path snapshotPath = stagingDirectory.resolve("contributor-snapshot.db");
+			database.createConsistentSnapshot(snapshotPath);
+			SqliteDatabase snapshotDatabase = SqliteDatabase.readOnly(snapshotPath);
+			var visibility = new SqliteContributorAssignmentVisibilityRepository(snapshotDatabase);
+			var state = visibility.find(assignmentId)
+					.orElseThrow(() -> new IllegalArgumentException("Unknown contributor assignment: " + assignmentId));
+			if (state == SqliteContributorAssignmentVisibilityRepository.State.SUBMITTED) {
+				throw new IllegalStateException(
+						"This assignment has already been submitted. " + "Resend the original contribution package "
+								+ "if necessary. Further work requires a new assignment.");
+			}
+			if (state != SqliteContributorAssignmentVisibilityRepository.State.ACTIVE) {
+				throw new IllegalStateException("This assignment is no longer available " + "for contribution export.");
+			}
+			var snapshot = new ContributionSnapshotReader(snapshotPath).read(assignmentId);
+
+			// An unchanged assignment must be rejected without
+			// requiring a destination or producing any return evidence.
+			if (snapshot.delta().candidates().isEmpty()) {
+				throw new PackageFormatException("No contributor changes to export. "
+						+ "Capture and save new work before " + "exporting a contribution.");
+			}
 		} finally {
 			deleteTemporaryTree(stagingDirectory);
 		}

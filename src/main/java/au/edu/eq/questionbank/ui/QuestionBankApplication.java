@@ -17,7 +17,6 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HexFormat;
@@ -30,6 +29,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -1269,6 +1269,88 @@ public class QuestionBankApplication extends Application {
 	private Path chooseAnswerBookletSource(Stage primaryStage, PdfFilePicker bookletPicker) {
 		seedLegacyBookletPdfDirectory(bookletPicker);
 		return bookletPicker.chooseAnyPdf(primaryStage, "Choose Answer booklet PDF");
+	}
+
+	private void chooseAssignmentContributionDestination(Stage primaryStage, ApplicationConfig config,
+			UUID assignmentId, Exam exam, String contributorName) {
+
+		// Do not continue an obsolete preflight after the assignment
+		// context has changed.
+		if (activeAssignmentContext == null || !assignmentId.equals(activeAssignmentContext.session().assignmentId())) {
+			return;
+		}
+		long examId = exam.getId();
+		FileChooser chooser = new FileChooser();
+		chooser.setTitle("Export Assignment Contribution");
+		chooser.setInitialFileName(WorkPackageFileNames.contribution(exam, contributorName, LocalDateTime.now()));
+		chooser.getExtensionFilters()
+				.add(new FileChooser.ExtensionFilter("ExamWork contribution (*.examwork)", "*.examwork"));
+		File selected = chooser.showSaveDialog(primaryStage);
+		if (selected == null) {
+			return;
+		}
+		Path destination = selected.toPath().toAbsolutePath().normalize();
+		Path dataRoot = config.dataRoot().toAbsolutePath().normalize();
+		if (destination.startsWith(dataRoot)) {
+			showAlert(Alert.AlertType.ERROR, "Export Assignment Contribution",
+					"Choose a location outside the managed data directory.",
+					"Contribution packages are exchange files, " + "not authoritative application data.");
+			return;
+		}
+		if (Files.exists(destination, LinkOption.NOFOLLOW_LINKS)) {
+			showAlert(Alert.AlertType.ERROR, "Export Assignment Contribution", "The destination already exists.",
+					"Choose a new filename. Existing contribution " + "archives will not be overwritten.");
+			return;
+		}
+		Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+		confirmation.initOwner(primaryStage);
+		confirmation.setTitle("Export Assignment Contribution");
+		confirmation.setHeaderText("Export saved changes from this assignment?");
+		confirmation.setContentText("Assignment: " + assignmentId + "\nExam: " + examId + "\nDestination: "
+				+ destination + "\n\nOnly newly captured contributor work " + "will be exported."
+				+ "\n\nThis is the final submission for this assignment."
+				+ " Once successfully exported, the assignment " + "becomes read-only"
+				+ " and disappears from the active assignment list." + "\n\nKeep the exported file so it can be sent "
+				+ "again if necessary." + " The coordinator must issue a new assignment " + "for further work.");
+		ButtonType exportButton = new ButtonType("Export Contribution", ButtonBar.ButtonData.OK_DONE);
+		confirmation.getButtonTypes().setAll(exportButton, ButtonType.CANCEL);
+		if (confirmation.showAndWait().orElse(ButtonType.CANCEL) != exportButton) {
+			return;
+		}
+
+		// The final exporter independently rechecks the current
+		// assignment and saved-work snapshot before publication.
+		startAssignmentContributionExport(primaryStage, config, assignmentId, destination);
+	}
+
+	private void chooseContributorAssignmentDestination(Stage primaryStage, ApplicationConfig config, Exam exam,
+			String contributorName, boolean legacyCaptureEnabled) {
+		if (activeAssignmentContext != null || contributorAssignmentIssuanceRunning || workingSubject == null
+				|| workingSubject.getId() != exam.getSubject().getId()) {
+			return;
+		}
+		FileChooser chooser = new FileChooser();
+		chooser.setTitle("Save Contributor Assignment");
+		chooser.getExtensionFilters()
+				.add(new FileChooser.ExtensionFilter("ExamWork assignment (*.examwork)", "*.examwork"));
+		chooser.setInitialFileName(suggestContributorAssignmentFileName(exam, contributorName));
+		File destination = chooser.showSaveDialog(primaryStage);
+		if (destination == null) {
+			return;
+		}
+
+		// Identity is created once for this issuance attempt,
+		// only after successful preflight and destination selection.
+		WorkAssignmentExporter.Request request;
+		try {
+			request = new WorkAssignmentExporter.Request(exam, UUID.randomUUID(), UUID.randomUUID(), contributorName,
+					legacyCaptureEnabled, destination.toPath());
+		} catch (IllegalArgumentException exception) {
+			showAlert(Alert.AlertType.ERROR, "Create Contributor Assignment", "The assignment details are invalid.",
+					exception.getMessage());
+			return;
+		}
+		startContributorAssignmentIssuance(primaryStage, config, request);
 	}
 
 	private CurriculumAuthoringSession chooseExistingCurriculum(Stage primaryStage, List<SyllabusVersion> versions,
@@ -4963,6 +5045,45 @@ public class QuestionBankApplication extends Application {
 		return destination;
 	}
 
+	private <T> void runWorkPackagePreflight(String title, Callable<T> operation, Consumer<T> onReady) {
+		Objects.requireNonNull(title, "title");
+		Objects.requireNonNull(operation, "operation");
+		Objects.requireNonNull(onReady, "onReady");
+		long request = applicationBusyOverlay.begin("Checking work package readiness...");
+		if (request == 0) {
+			return;
+		}
+		Task<T> task = new ApplicationBackgroundTask<>(operation);
+		task.setOnSucceeded(_ -> {
+
+			// An obsolete completion must not open a native chooser
+			// after another workflow has acquired the application.
+			if (!applicationBusyOverlay.owns(request)) {
+				return;
+			}
+			applicationBusyOverlay.finish(request);
+			onReady.accept(task.getValue());
+		});
+		task.setOnFailed(_ -> {
+			if (!applicationBusyOverlay.owns(request)) {
+				return;
+			}
+			applicationBusyOverlay.finish(request);
+			showAlert(Alert.AlertType.ERROR, title, "The work package is not ready for export.",
+					failureMessage(task.getException()));
+		});
+		task.setOnCancelled(_ -> applicationBusyOverlay.finish(request));
+		Thread worker = new Thread(task, "examwork-export-preflight");
+		worker.setDaemon(true);
+		try {
+			worker.start();
+		} catch (RuntimeException failure) {
+			applicationBusyOverlay.finish(request);
+			showAlert(Alert.AlertType.ERROR, title, "The export readiness check could not be started.",
+					failureMessage(failure));
+		}
+	}
+
 	private Path scormExportDestination(Path parent, Subject subject) {
 		if (parent == null) {
 			throw new NullPointerException("parent");
@@ -5400,7 +5521,7 @@ public class QuestionBankApplication extends Application {
 		if (workingSubject == null || workingSubject.getId() != exam.getSubject().getId()) {
 			showAlert(Alert.AlertType.WARNING, "Create Contributor Assignment",
 					"The selected Exam is no longer in the Working Subject.",
-					"Return to the Corpus Dashboard and select the Exam again.");
+					"Return to the Corpus Dashboard and " + "select the Exam again.");
 			return;
 		}
 		if (!allowWorkingSubjectChange()) {
@@ -5416,7 +5537,7 @@ public class QuestionBankApplication extends Application {
 		examDescription.setWrapText(true);
 		Label explanation = new Label(
 				"The package will contain every Question booklet, " + "required Answer file, existing captured work, "
-						+ "the permitted syllabus hierarchy and an immutable baseline.");
+						+ "the permitted syllabus hierarchy " + "and an immutable baseline.");
 		explanation.setWrapText(true);
 		VBox form = new VBox(SECTION_SPACING, new Label("Selected Exam"), examDescription, new Label("Contributor"),
 				contributorName, legacyCapture, explanation);
@@ -5438,28 +5559,17 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 		String name = contributorName.getText().strip();
-		FileChooser chooser = new FileChooser();
-		chooser.setTitle("Save Contributor Assignment");
-		chooser.getExtensionFilters()
-				.add(new FileChooser.ExtensionFilter("ExamWork assignment (*.examwork)", "*.examwork"));
-		chooser.setInitialFileName(suggestContributorAssignmentFileName(exam, name));
-		File destination = chooser.showSaveDialog(primaryStage);
-		if (destination == null) {
-			return;
-		}
+		boolean legacyCaptureEnabled = legacyCapture.isSelected();
 
-		// Identity is created once for this issuance attempt.
-		// The service records it with the immutable baseline.
-		WorkAssignmentExporter.Request request;
-		try {
-			request = new WorkAssignmentExporter.Request(exam, UUID.randomUUID(), UUID.randomUUID(), name,
-					legacyCapture.isSelected(), destination.toPath());
-		} catch (IllegalArgumentException exception) {
-			showAlert(Alert.AlertType.ERROR, "Create Contributor Assignment", "The assignment details are invalid.",
-					exception.getMessage());
-			return;
-		}
-		startContributorAssignmentIssuance(primaryStage, config, request);
+		// Validate issuance prerequisites before constructing or
+		// displaying the destination chooser.
+		runWorkPackagePreflight("Create Contributor Assignment", () -> {
+			SqliteDatabase database = new SqliteDatabase(config.databasePath());
+			WorkAssignmentIssuanceService service = new WorkAssignmentIssuanceService(database,
+					new ManagedDataLayout(config.dataRoot()));
+			return service.preflight(exam, legacyCaptureEnabled);
+		}, readiness -> chooseContributorAssignmentDestination(primaryStage, config, readiness.exam(), name,
+				legacyCaptureEnabled));
 	}
 
 	private void showCurriculumAuthoring(Stage primaryStage, ApplicationConfig config) {
@@ -5829,58 +5939,35 @@ public class QuestionBankApplication extends Application {
 	private void showExportAssignmentContribution(Stage primaryStage, ApplicationConfig config) {
 		if (activeAssignmentContext == null) {
 			showAlert(Alert.AlertType.WARNING, "Export Assignment Contribution", "No contributor assignment is active.",
-					"Activate an installed assignment before exporting its work.");
+					"Activate an installed assignment before " + "exporting its work.");
 			return;
 		}
-		if (contributionExportRunning || contributorAssignmentInstallationRequest != 0
-				|| contributorAssignmentIssuanceRunning || applicationBusyOverlay.isBusy()) {
+		if (contributionExportRunning || contributorRemovalRunning || contributorAssignmentInstallationRequest != 0
+				|| contributorAssignmentIssuanceRunning || applicationBusyOverlay.isBusy()
+				|| (contributorContextRefreshGeneration != 0L
+						&& contributorContextRefreshGeneration == workingSubjectRefreshGeneration)) {
 			return;
 		}
 		if (!allowWorkingSubjectChange()) {
 			return;
 		}
-		UUID assignmentId = activeAssignmentContext.session().assignmentId();
-		long examId = activeAssignmentContext.session().examLocalId();
-		FileChooser chooser = new FileChooser();
-		chooser.setTitle("Export Assignment Contribution");
-		chooser.setInitialFileName("Exam-" + examId + "-contribution-"
-				+ LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")) + ".examwork");
-		chooser.getExtensionFilters()
-				.add(new FileChooser.ExtensionFilter("ExamWork contribution (*.examwork)", "*.examwork"));
-		File selected = chooser.showSaveDialog(primaryStage);
-		if (selected == null) {
-			return;
-		}
-		Path destination = selected.toPath().toAbsolutePath().normalize();
-		Path dataRoot = config.dataRoot().toAbsolutePath().normalize();
-		if (destination.startsWith(dataRoot)) {
-			showAlert(Alert.AlertType.ERROR, "Export Assignment Contribution",
-					"Choose a location outside the managed data directory.",
-					"Contribution packages are exchange files, not authoritative " + "application data.");
-			return;
-		}
-		if (Files.exists(destination, LinkOption.NOFOLLOW_LINKS)) {
-			showAlert(Alert.AlertType.ERROR, "Export Assignment Contribution", "The destination already exists.",
-					"Choose a new filename. Existing contribution archives " + "will not be overwritten.");
-			return;
-		}
-		Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
-		confirmation.initOwner(primaryStage);
-		confirmation.setTitle("Export Assignment Contribution");
-		confirmation.setHeaderText("Export saved changes from this assignment?");
-		confirmation.setContentText("Assignment: " + assignmentId + "\nExam: " + examId + "\nDestination: "
-				+ destination + "\n\nOnly newly captured contributor work will be exported."
-				+ "\n\nThis is the final submission for this assignment."
-				+ " Once successfully exported, the assignment becomes read-only"
-				+ " and disappears from the active assignment list."
-				+ "\n\nKeep the exported file so it can be sent again if necessary."
-				+ " The coordinator must issue a new assignment for further work.");
-		ButtonType exportButton = new ButtonType("Export Contribution", ButtonBar.ButtonData.OK_DONE);
-		confirmation.getButtonTypes().setAll(exportButton, ButtonType.CANCEL);
-		if (confirmation.showAndWait().orElse(ButtonType.CANCEL) != exportButton) {
-			return;
-		}
-		startAssignmentContributionExport(primaryStage, config, assignmentId, destination);
+		var context = activeAssignmentContext;
+		UUID assignmentId = context.session().assignmentId();
+		long examId = context.session().examLocalId();
+		String contributorName = context.session().contributorName();
+		Subject subject = context.subject();
+
+		// Resolve the saved-work delta and authoritative Exam
+		// identity before requesting an output filename.
+		runWorkPackagePreflight("Export Assignment Contribution", () -> {
+			SqliteDatabase database = new SqliteDatabase(config.databasePath());
+			ContributionExporter exporter = new ContributionExporter(database,
+					new ManagedDataLayout(config.dataRoot()));
+			exporter.preflight(assignmentId);
+			return new SqliteExamWriter(database).findExamsForSubject(subject).stream()
+					.filter(exam -> exam.getId() == examId).findFirst()
+					.orElseThrow(() -> new SQLException("The assigned Exam could not be found."));
+		}, exam -> chooseAssignmentContributionDestination(primaryStage, config, assignmentId, exam, contributorName));
 	}
 
 	private void showExportImportReceipt(Stage primaryStage, ApplicationConfig config) {
@@ -7844,20 +7931,7 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private String suggestContributorAssignmentFileName(Exam exam, String contributorName) {
-		Objects.requireNonNull(exam, "exam");
-		Objects.requireNonNull(contributorName, "contributorName");
-		String description = String.join("-", exam.getSubject().getName(), exam.getProvider().getName(),
-				Integer.toString(exam.getYear()), exam.getName(), contributorName);
-		String safe = description.replaceAll("[^A-Za-z0-9._-]+", "-").replaceAll("-{2,}", "-")
-				.replaceAll("^[._-]+|[._-]+$", "");
-		if (safe.isBlank()) {
-			safe = "Exam";
-		}
-		if (safe.length() > 140) {
-			safe = safe.substring(0, 140);
-		}
-		String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"));
-		return safe + "-" + timestamp + "-assignment.examwork";
+		return WorkPackageFileNames.assignment(exam, contributorName, LocalDateTime.now());
 	}
 
 	private void synchroniseActiveExamLifecycle(Exam updatedExam) {

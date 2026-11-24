@@ -375,6 +375,67 @@ class WorkAssignmentInstallationCoordinatorTest {
 	}
 
 	@Test
+	void issuancePreflightRejectsExamWithExistingActiveAssignment() throws Exception {
+		Fixture fixture = fixture();
+		WorkAssignmentIssuanceService issuer = new WorkAssignmentIssuanceService(fixture.sourceDatabase(),
+				new ManagedDataLayout(fixture.source().dataRoot()));
+		issuer.preflight(fixture.exam(), false);
+		UUID assignmentId = UUID.randomUUID();
+		Path destination = directory.resolve("existing-active-assignment.examwork");
+		WorkAssignmentExporter.Request request = new WorkAssignmentExporter.Request(fixture.exam(), assignmentId,
+				UUID.randomUUID(), "Integration Contributor", false, destination);
+		WorkAssignmentLedger.Assignment issued = issuer.issue(request);
+		assertEquals(assignmentId, issued.assignmentId());
+		assertEquals(WorkAssignmentLedger.State.ACTIVE, issued.state());
+		byte[] originalArchive = Files.readAllBytes(destination);
+		IOException failure = assertThrows(IOException.class, () -> issuer.preflight(fixture.exam(), false));
+		assertTrue(failure.getMessage().contains("already has an active work assignment"));
+
+		// Advisory validation must not alter the existing archive,
+		// register another assignment or change the original lifecycle.
+		assertArrayEquals(originalArchive, Files.readAllBytes(destination));
+		assertEquals(1, count(fixture.sourceDatabase(), "SELECT COUNT(*) FROM exam_work_assignments"));
+		fixture.sourceDatabase().verifyIntegrity();
+	}
+
+	@Test
+	void issuancePreflightRejectsMissingAnswerAssignmentWithoutPublishing() throws Exception {
+		Fixture fixture = fixture();
+		WorkAssignmentIssuanceService issuer = new WorkAssignmentIssuanceService(fixture.sourceDatabase(),
+				new ManagedDataLayout(fixture.source().dataRoot()));
+
+		// Establish that the original whole-Exam fixture is ready
+		// and that preflight does not register an assignment.
+		var ready = issuer.preflight(fixture.exam(), false);
+		assertEquals(2, ready.booklets().size());
+		assertEquals(1, ready.answerFiles().size());
+		assertEquals(0, count(fixture.sourceDatabase(), "SELECT COUNT(*) FROM exam_work_assignments"));
+
+		// Retain the registered Answer file and its physical PDF,
+		// but remove the booklet-to-Answer association.
+		execute(fixture.sourceDatabase(), """
+				UPDATE exam_booklets
+				SET answer_file_id = NULL
+				""");
+		assertTrue(Files.isRegularFile(fixture.sourceAnswerPdf()));
+		assertEquals(1, count(fixture.sourceDatabase(), "SELECT COUNT(*) FROM answer_files"));
+		IOException failure = assertThrows(IOException.class, () -> issuer.preflight(fixture.exam(), false));
+		assertTrue(failure.getMessage().contains("has no assigned Answer file"), failure.getMessage());
+		assertEquals(0, count(fixture.sourceDatabase(), "SELECT COUNT(*) FROM exam_work_assignments"));
+
+		// Final issuance must still independently reject the
+		// same invalid structure if preflight is bypassed.
+		Path destination = directory.resolve("unlinked-answer-assignment.examwork");
+		WorkAssignmentExporter.Request request = new WorkAssignmentExporter.Request(fixture.exam(), UUID.randomUUID(),
+				UUID.randomUUID(), "Integration Contributor", false, destination);
+		IOException finalFailure = assertThrows(IOException.class, () -> issuer.issue(request));
+		assertTrue(finalFailure.getMessage().contains("has no assigned Answer file"));
+		assertFalse(Files.exists(destination));
+		assertEquals(0, count(fixture.sourceDatabase(), "SELECT COUNT(*) FROM exam_work_assignments"));
+		fixture.sourceDatabase().verifyIntegrity();
+	}
+
+	@Test
 	void issuedAssignmentInstallsAndRestoresWithoutChangingBaseline() throws Exception {
 		Fixture fixture = fixture();
 		UUID assignmentId = UUID.randomUUID();

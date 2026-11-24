@@ -71,6 +71,25 @@ public class ContributionSnapshotReaderTest {
 	}
 
 	@Test
+	void contributionPreflightRejectsRemovedAssignment() throws Exception {
+		Fixture fixture = fixture();
+		SqliteDatabase database = fixture.contributorDatabase();
+		ContributionExporter exporter = new ContributionExporter(database,
+				new ManagedDataLayout(directory.resolve("contributor")));
+		ContributorAssignmentRemovalService removal = new ContributorAssignmentRemovalService(database);
+		removal.removeUnchanged(fixture.assignmentId());
+		IllegalStateException failure = assertThrows(IllegalStateException.class,
+				() -> exporter.preflight(fixture.assignmentId()));
+		assertTrue(failure.getMessage().contains("no longer available"));
+		var visibility = new SqliteContributorAssignmentVisibilityRepository(database);
+		assertEquals(SqliteContributorAssignmentVisibilityRepository.State.REMOVED,
+				visibility.find(fixture.assignmentId()).orElseThrow());
+		assertTrue(new SqliteContributionReturnLedger(database).findLatest(fixture.assignmentId()).isEmpty());
+		assertTrue(new SqliteContributorAssignmentSessionRepository(database).active().isEmpty());
+		database.verifyIntegrity();
+	}
+
+	@Test
 	void exportsOneFinalNewQuestionContributionAndRetainsBaseline() throws Exception {
 		Fixture fixture = fixture();
 		SqliteDatabase database = fixture.contributorDatabase();
@@ -223,6 +242,19 @@ public class ContributionSnapshotReaderTest {
 		ContributionExporter exporter = new ContributionExporter(database,
 				new ManagedDataLayout(directory.resolve("contributor")));
 		Path destination = directory.resolve("single-contribution.examwork");
+		SqliteContributionReturnLedger ledger = new SqliteContributionReturnLedger(database);
+		var sessions = new SqliteContributorAssignmentSessionRepository(database);
+
+		// An unchanged assignment is rejected before a destination
+		// is required, without publishing or changing its lifecycle.
+		IOException preflightFailure = assertThrows(IOException.class,
+				() -> exporter.preflight(fixture.assignmentId()));
+		assertTrue(preflightFailure.getMessage().contains("No contributor changes to export"));
+		assertTrue(ledger.findLatest(fixture.assignmentId()).isEmpty());
+		assertEquals(fixture.assignmentId(), sessions.active().orElseThrow().assignmentId());
+		assertFalse(Files.exists(destination));
+
+		// Bypassing advisory preflight must not permit empty export.
 		assertThrows(IOException.class, () -> exporter.export(fixture.assignmentId(), destination));
 		assertFalse(Files.exists(destination));
 		var original = snapshot(fixture, "empty-check.db");
@@ -233,20 +265,44 @@ public class ContributionSnapshotReaderTest {
 				UUID.fromString(question.values().path("classification_node_id").asText()));
 		executeOne(database, """
 				INSERT INTO questions (
-				    booklet_id, classification_node_id,
-				    question_code, question_text, marks,
+				    booklet_id,
+				    classification_node_id,
+				    question_code,
+				    question_text,
+				    marks,
 				    shared_context_capture_required
 				)
-				VALUES (?, ?, '2', 'Submitted new Question', 2, 0)
+				VALUES (
+				    ?, ?,
+				    '2',
+				    'Submitted new Question',
+				    2,
+				    0
+				)
 				""", bookletId, nodeId);
+
+		// Saved contributor work now passes preflight.
+		// Repeated advisory checks do not consume the assignment.
+		exporter.preflight(fixture.assignmentId());
+		exporter.preflight(fixture.assignmentId());
+		assertTrue(ledger.findLatest(fixture.assignmentId()).isEmpty());
+		assertEquals(fixture.assignmentId(), sessions.active().orElseThrow().assignmentId());
+		assertFalse(Files.exists(destination));
 		ExamWorkManifest first = exporter.export(fixture.assignmentId(), destination);
 		assertTrue(Files.isRegularFile(destination));
+
+		// Both the advisory and authoritative boundaries
+		// must reject another return after submission.
+		IllegalStateException submittedFailure = assertThrows(IllegalStateException.class,
+				() -> exporter.preflight(fixture.assignmentId()));
+		assertTrue(submittedFailure.getMessage().contains("already been submitted"));
 		assertThrows(IOException.class, () -> exporter.export(fixture.assignmentId(), destination));
 		assertThrows(IllegalStateException.class,
 				() -> exporter.export(fixture.assignmentId(), directory.resolve("second-submission.examwork")));
-		var recorded = new SqliteContributionReturnLedger(database).findLatest(fixture.assignmentId()).orElseThrow();
+		var recorded = ledger.findLatest(fixture.assignmentId()).orElseThrow();
 		assertEquals(first.packageId(), recorded.packageId());
 		assertEquals(1, recorded.returnNumber());
+		database.verifyIntegrity();
 	}
 
 	@Test
