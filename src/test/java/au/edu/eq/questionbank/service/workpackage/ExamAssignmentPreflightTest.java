@@ -133,6 +133,45 @@ class ExamAssignmentPreflightTest {
 	}
 
 	@Test
+	void rejectsExamPdfOutsideSubjectExamDirectory() throws Exception {
+		Fixture fixture = fixture();
+
+		// Begin with a valid, complete Exam structure.
+		assertEquals(1, fixture.preflight().check(fixture.exam(), false).booklets().size());
+		Path misplacedPdf = fixture.questionPdf().getParent().getParent().resolve("curriculum/questions.pdf");
+		Files.createDirectories(misplacedPdf.getParent());
+		Files.copy(fixture.questionPdf(), misplacedPdf);
+
+		// The replacement is a genuine readable PDF inside
+		// the correct Subject, but outside its Exam namespace.
+		execute(fixture.database(), """
+				UPDATE source_documents
+				SET relative_path =
+				    'subjects/Biology/curriculum/questions.pdf'
+				WHERE id = 51
+				""");
+		IOException failure = assertThrows(IOException.class, () -> fixture.preflight().check(fixture.exam(), false));
+		assertTrue(failure.getMessage().contains("unsafe Exam PDF path"));
+		assertTrue(failure.getMessage().contains("Question booklet Paper 1"));
+
+		// Refusal must not delete or overwrite either file.
+		assertTrue(Files.isRegularFile(fixture.questionPdf()));
+		assertTrue(Files.isRegularFile(misplacedPdf));
+		assertEquals(-1L, Files.mismatch(fixture.questionPdf(), misplacedPdf));
+
+		// Restoring the original persisted reference makes
+		// the same Exam eligible again.
+		execute(fixture.database(), """
+				UPDATE source_documents
+				SET relative_path =
+				    'subjects/Biology/exams/questions.pdf'
+				WHERE id = 51
+				""");
+		assertEquals(1, fixture.preflight().check(fixture.exam(), false).booklets().size());
+		fixture.database().verifyIntegrity();
+	}
+
+	@Test
 	void rejectsMissingAnswerPdf() throws Exception {
 		Fixture fixture = fixture();
 		Files.delete(fixture.answerPdf());

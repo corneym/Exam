@@ -20,6 +20,7 @@ import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
@@ -129,23 +130,27 @@ public final class ExamAssignmentPreflight {
 	private void requireManagedPdf(Subject subject, SourceDocument document, String description) throws IOException {
 		Path path;
 		try {
-			path = layout.resolve(document.getRelativePath());
+
+			// Use the same resolution contract as the capture
+			// workspace and contributor assignment asset gate.
+			path = new PdfStore(layout).resolve(document.getRelativePath());
 		} catch (IllegalArgumentException exception) {
-			throw new IOException("Assignment blocked: unsafe path for " + description, exception);
+			throw new IOException("Assignment blocked: unsafe Exam PDF path for " + description, exception);
 		}
 		Path subjectRoot = layout.subjectDirectory(subject.getName());
+		Path examsRoot = layout.examsDirectory(subject.getName());
 
-		// Only master-managed, Subject-owned source files may be issued.
-		if (!path.startsWith(subjectRoot) || !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
-				|| !Files.isReadable(path)) {
+		// Only master-managed, Subject-owned Exam files may be issued.
+		if (!path.startsWith(examsRoot) || path.equals(examsRoot)
+				|| !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) || !Files.isReadable(path)) {
 			throw new IOException(
 					"Assignment blocked: missing or unreadable " + description + ": " + document.getRelativePath());
 		}
 
-		// Physical containment protects against paths redirected through
-		// symbolic-link parent directories.
+		// Physical containment protects against paths redirected
+		// through symbolic-link parent directories.
 		if (!path.toRealPath().startsWith(subjectRoot.toRealPath())) {
-			throw new IOException("Assignment blocked: source file escapes Subject storage: " + description);
+			throw new IOException("Assignment blocked: source file escapes " + "Subject storage: " + description);
 		}
 		if (Files.size(path) == 0) {
 			throw new IOException("Assignment blocked: empty source file: " + description);

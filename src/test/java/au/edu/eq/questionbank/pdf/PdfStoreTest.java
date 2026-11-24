@@ -194,6 +194,52 @@ class PdfStoreTest {
 	}
 
 	@Test
+	void shortSubjectFirstPathsRemainReadableButCannotBeNewlyPersisted() throws Exception {
+		Path dataRoot = tempDir.resolve("data");
+		Path legacyPdfRoot = dataRoot.resolve("pdf");
+		ManagedDataLayout layout = new ManagedDataLayout(dataRoot);
+		PdfStore canonicalStore = new PdfStore(layout);
+		PdfStore transitionalStore = new PdfStore(layout, legacyPdfRoot);
+		String relativePath = "subjects/Biology/exams/questions.pdf";
+		Path managedPdf = dataRoot.resolve(relativePath);
+		Files.createDirectories(managedPdf.getParent());
+		Files.writeString(managedPdf, "Authoritative managed PDF");
+
+		// A file at the equivalent legacy location must never
+		// override the Subject-first managed source.
+		Path legacyDecoy = legacyPdfRoot.resolve(relativePath);
+		Files.createDirectories(legacyDecoy.getParent());
+		Files.writeString(legacyDecoy, "Unrelated legacy PDF");
+		assertEquals(managedPdf, canonicalStore.resolve(relativePath));
+		assertEquals(managedPdf, transitionalStore.resolve(relativePath));
+		assertEquals("Authoritative managed PDF", Files.readString(transitionalStore.resolve(relativePath)));
+		assertEquals("Unrelated legacy PDF", Files.readString(legacyDecoy));
+
+		// Compatibility with existing paths must not relax the
+		// canonical hierarchy required for newly persisted PDFs.
+		assertThrows(IllegalArgumentException.class, () -> canonicalStore.relativePath(managedPdf));
+		assertThrows(IllegalArgumentException.class, () -> transitionalStore.relativePath(managedPdf));
+		Path canonicalPdf = layout.examDirectory("Biology", "QCAA", 2025, "External Assessment")
+				.resolve("questions.pdf");
+		assertEquals("subjects/Biology/exams/QCAA/2025/" + "External Assessment/questions.pdf",
+				canonicalStore.relativePath(canonicalPdf));
+	}
+
+	@Test
+	void subjectFirstResolutionRetainsPathContainment() {
+		Path dataRoot = tempDir.resolve("data");
+		PdfStore store = new PdfStore(new ManagedDataLayout(dataRoot));
+		assertEquals(dataRoot.resolve("subjects/Biology/exams/questions.pdf"),
+				store.resolve("subjects\\Biology\\exams\\questions.pdf"));
+		assertThrows(IllegalArgumentException.class,
+				() -> store.resolve("subjects/Biology/exams/../../../" + "../outside.pdf"));
+		assertThrows(IllegalArgumentException.class, () -> store.resolve("C:\\outside\\questions.pdf"));
+		assertThrows(IllegalArgumentException.class, () -> store.resolve("/outside/questions.pdf"));
+		assertThrows(IllegalArgumentException.class, () -> store.resolve("subjects/Biology/curriculum/questions.pdf"));
+		assertThrows(IllegalArgumentException.class, () -> store.resolve("subjects/Biology/exams"));
+	}
+
+	@Test
 	void transitionalStoreDoesNotMisclassifyLegacySubjectNamedSubjects() {
 		Path dataRoot = tempDir.resolve("data").toAbsolutePath().normalize();
 		Path legacyPdfRoot = dataRoot.resolve("pdf");

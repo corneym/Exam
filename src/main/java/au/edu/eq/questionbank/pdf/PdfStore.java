@@ -5,8 +5,8 @@ import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.ManagedAssetPublicationLock;
+import au.edu.eq.questionbank.ManagedDataLayout;
 
 /**
  * Owns managed Exam-PDF destination construction, persisted-path conversion and
@@ -278,16 +278,21 @@ public class PdfStore {
 
 	/**
 	 * Lexically resolves a stored managed PDF path.
+	 *
 	 * <p>
-	 * Subject-first paths are relative to the application data root. During the
-	 * migration transition, older paths may instead remain relative to the former
-	 * dedicated PDF root.
+	 * Subject-first Exam paths are relative to the application data root. Existing
+	 * shorter paths beneath a Subject's Exam directory remain readable, while newly
+	 * persisted paths must use the canonical provider/year/assessment hierarchy.
+	 *
+	 * <p>
+	 * During the migration transition, older paths may instead remain relative to
+	 * the former dedicated PDF root.
 	 *
 	 * @param relativePath persisted managed source path
 	 * @return normalized absolute managed path
-	 * @throws NullPointerException     if {@code relativePath} is {@code null}
-	 * @throws IllegalArgumentException if the path is blank, absolute, or escapes
-	 *                                  its applicable managed root
+	 * @throws NullPointerException     if {@code relativePath} is null
+	 * @throws IllegalArgumentException if the path is blank, absolute, invalid or
+	 *                                  escapes its applicable managed root
 	 */
 	public Path resolve(String relativePath) {
 		if (relativePath == null) {
@@ -298,25 +303,27 @@ public class PdfStore {
 		}
 		if (managedDataLayout != null) {
 
-			// Resolve once through the common data-root boundary. This supplies portable
-			// separator handling plus absolute/traversal validation for both path
-			// generations before deciding which root owns the persisted path.
+			// Apply the common data-root containment and portable
+			// separator rules before determining the owning root.
 			Path dataRootPath = managedDataLayout.resolve(relativePath);
 			String normalizedRelativePath = managedDataLayout.relativePath(dataRootPath);
-			if (isSubjectFirstPath(normalizedRelativePath)) {
+			if (isSubjectFirstReadPath(normalizedRelativePath)) {
+
+				// Existing imported packages may use shorter Exam paths.
+				// They remain data-root-relative, not legacy-relative.
 				return dataRootPath;
 			}
 			if (pdfRoot == null) {
 				throw new IllegalArgumentException(
-						"Managed Exam PDF path must use the Subject-first Exam hierarchy: " + relativePath);
+						"Managed Exam PDF path must use " + "the Subject-first Exam hierarchy: " + relativePath);
 			}
 
-			// A path which is valid but does not have the canonical Subject-first shape is
-			// an old PDF-root-relative path during the migration transition.
+			// A path outside the Subject-first Exam namespace may
+			// belong to the former dedicated PDF-root hierarchy.
 			Path legacyPath = pdfRoot.resolve(Path.of(normalizedRelativePath)).normalize();
 			if (!legacyPath.startsWith(pdfRoot)) {
 				throw new IllegalArgumentException(
-						"PDF path must remain within the configured data root: " + relativePath);
+						"PDF path must remain within " + "the configured data root: " + relativePath);
 			}
 			return legacyPath;
 		}
@@ -326,7 +333,8 @@ public class PdfStore {
 		}
 		Path resolved = pdfRoot.resolve(path).normalize();
 		if (!resolved.startsWith(pdfRoot)) {
-			throw new IllegalArgumentException("PDF path must remain within the configured data root: " + relativePath);
+			throw new IllegalArgumentException(
+					"PDF path must remain within " + "the configured data root: " + relativePath);
 		}
 		return resolved;
 	}
@@ -367,6 +375,18 @@ public class PdfStore {
 		// Checking the structural marker as well as "subjects" prevents a legacy
 		// Subject literally named "subjects" from being mistaken for the new layout.
 		return components.length >= 7 && "subjects".equals(components[0]) && "exams".equals(components[2]);
+	}
+
+	private boolean isSubjectFirstReadPath(String relativePath) {
+		String portablePath = relativePath.replace('\\', '/');
+		String[] components = portablePath.split("/");
+
+		// Both canonical and shorter imported Exam paths use
+		// this reserved data-root-relative namespace.
+		//
+		// Retain the exams marker to distinguish the exceptional
+		// legacy case of a Subject literally named "subjects".
+		return components.length >= 4 && "subjects".equals(components[0]) && "exams".equals(components[2]);
 	}
 
 	private ManagedDataLayout requireSubjectFirstLayout() {

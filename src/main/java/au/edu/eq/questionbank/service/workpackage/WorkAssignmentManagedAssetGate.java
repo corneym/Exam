@@ -14,6 +14,7 @@ import java.util.Objects;
 
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ManagedDataLayout;
+import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkAssetIndex.Reference;
 
 /**
@@ -48,11 +49,15 @@ public final class WorkAssignmentManagedAssetGate {
 	}
 
 	/**
-	 * Classifies all validated assignment assets without publishing them.
+	 * /** Classifies all validated assignment assets without publishing them.
 	 *
 	 * <p>
 	 * The same managed file may be referenced by multiple Booklets or assignments,
 	 * provided its expected bytes are identical.
+	 *
+	 * <p>
+	 * Exam source PDFs must occupy the owning Subject's Exam namespace and resolve
+	 * to the same managed destination used by PdfStore.
 	 *
 	 * @param subjectName Subject identified by the assignment manifest
 	 * @param index       previously validated whole-Exam asset index
@@ -75,6 +80,7 @@ public final class WorkAssignmentManagedAssetGate {
 		}
 		String subjectPrefix = "subjects/" + subjectName + "/";
 		List<Decision> decisions = new ArrayList<>();
+		PdfStore pdfStore = new PdfStore(layout);
 		for (Reference reference : index.references()) {
 			if (!reference.managedPath().startsWith(subjectPrefix)) {
 				throw new IOException("Assignment asset belongs to another Subject: " + reference.managedPath());
@@ -87,6 +93,22 @@ public final class WorkAssignmentManagedAssetGate {
 					throw new IOException("Managed source document is not a PDF");
 				}
 				destination = layout.resolve(reference.managedPath());
+				if ("SOURCE_PDF".equals(reference.usage())) {
+
+					// Assignment publication and ordinary PDF access
+					// must agree on the exact managed destination.
+					try {
+						Path resolved = pdfStore.resolve(reference.managedPath());
+						if (!resolved.equals(destination) || !destination.startsWith(layout.examsDirectory(subjectName))
+								|| destination.equals(layout.examsDirectory(subjectName))) {
+							throw new IOException(
+									"Invalid assignment Exam PDF destination: " + reference.managedPath());
+						}
+					} catch (IllegalArgumentException failure) {
+						throw new IOException("Invalid assignment Exam PDF destination: " + reference.managedPath(),
+								failure);
+					}
+				}
 				disposition = inspectManagedFile(destination, reference.size(), reference.sha256());
 			}
 			case "EMBEDDED_QUESTION_PNG", "EMBEDDED_CONTEXT_PNG" -> {
