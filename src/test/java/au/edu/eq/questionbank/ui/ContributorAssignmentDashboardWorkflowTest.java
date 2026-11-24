@@ -16,6 +16,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -40,24 +41,37 @@ import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.TestPdf;
 import au.edu.eq.questionbank.model.Answer;
 import au.edu.eq.questionbank.model.AnswerFile;
+import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionRegion;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
+import au.edu.eq.questionbank.repository.assessment.SqliteQuestionCaptureService;
+import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
+import au.edu.eq.questionbank.repository.sqlite.SqliteContributorAssignmentVisibilityRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.service.audit.BookletCorpusStatus;
 import au.edu.eq.questionbank.service.audit.ExamCorpusStatus;
+import au.edu.eq.questionbank.service.audit.QuestionCorpusWorkItem;
 import au.edu.eq.questionbank.service.workpackage.ContributionSnapshotReader;
+import au.edu.eq.questionbank.service.workpackage.ContributorAssignmentRemovalService;
+import au.edu.eq.questionbank.service.workpackage.SqliteContributionReturnLedger;
 import au.edu.eq.questionbank.service.workpackage.SqliteContributorAssignmentSessionRepository;
 import au.edu.eq.questionbank.service.workpackage.WorkAssignmentExporter;
 import au.edu.eq.questionbank.service.workpackage.WorkAssignmentInstallationCoordinator;
 import au.edu.eq.questionbank.service.workpackage.WorkAssignmentIssuanceService;
+import au.edu.eq.questionbank.ui.audit.CorpusDashboardPane;
 import au.edu.eq.questionbank.ui.capture.AnswerCapturePane;
 import au.edu.eq.questionbank.ui.capture.QuestionCapturePane;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
@@ -301,37 +315,57 @@ class ContributorAssignmentDashboardWorkflowTest {
 	}
 
 	@Test
+	@SuppressWarnings("unchecked")
 	void curriculumRemainsReadOnlyAfterAssignmentRemoval(FxRobot robot) throws Exception {
 		awaitAssignedDashboard(robot);
 		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
 		Menu curriculum = menuBar.getMenus().stream().filter(menu -> "_Curriculum".equals(menu.getText())).findFirst()
 				.orElseThrow();
 		robot.interact(() -> assertTrue(curriculum.isDisable()));
-
-		// The underlying operation must enforce the same restriction
-		// as the menu, even when invoked directly.
 		Platform.runLater(() -> invoke("showCurriculumAuthoring",
 				new Class<?>[] { Stage.class, ApplicationConfig.class }, primaryStage, contributor));
 		acknowledgeDialog(robot, "Curriculum Authoring", "This Curriculum is read-only.");
-		Button remove = robot.lookup("#corpus-dashboard-remove-assignment").queryButton();
-		Platform.runLater(remove::fire);
-		DialogPane confirmation = awaitDialog(robot, "Remove Work Package");
-		robot.interact(() -> {
-			ButtonType removeType = confirmation.getButtonTypes().stream()
-					.filter(type -> type.getButtonData() == ButtonBar.ButtonData.OK_DONE).findFirst().orElseThrow();
-			((ButtonBase) confirmation.lookupButton(removeType)).fire();
-		});
-		acknowledgeDialog(robot, "Work Package Removed", "The unchanged assignment was removed");
+		var originalSession = sessions().active().orElseThrow();
+		var originalBaseline = sessions().readBaseline(assignmentId);
+		removeSelectedAssignment(robot);
 		assertTrue(sessions().active().isEmpty());
-		assertTrue(sessions().find(assignmentId).isPresent());
+		assertEquals(originalSession, sessions().find(assignmentId).orElseThrow());
+		assertTrue(Arrays.equals(originalBaseline.records(), sessions().readBaseline(assignmentId).records()));
+		assertTrue(Arrays.equals(originalBaseline.assets(), sessions().readBaseline(assignmentId).assets()));
+		SqliteDatabase database = new SqliteDatabase(contributor.databasePath());
+		assertEquals(SqliteContributorAssignmentVisibilityRepository.State.REMOVED,
+				new SqliteContributorAssignmentVisibilityRepository(database).find(assignmentId).orElseThrow());
+		robot.interact(() -> {
+			var root = primaryStage.getScene().getRoot();
+			ComboBox<?> assignments = field("assignmentSelector", ComboBox.class);
+			assertTrue(assignments.getItems().isEmpty());
+			assertNull(assignments.getValue());
+			CorpusDashboardPane dashboard = field("corpusDashboardPane", CorpusDashboardPane.class);
+			assertNotNull(dashboard);
+			TableView<?> exams = dashboardField(dashboard, "examTable", TableView.class);
+			TableView<?> booklets = dashboardField(dashboard, "bookletTable", TableView.class);
+			TableView<?> questionWork = dashboardField(dashboard, "questionTable", TableView.class);
+			assertTrue(exams.getItems().isEmpty());
+			assertTrue(booklets.getItems().isEmpty());
+			assertTrue(questionWork.getItems().isEmpty());
+			assertNull(exams.getSelectionModel().getSelectedItem());
+			assertNull(booklets.getSelectionModel().getSelectedItem());
+			assertTrue(dashboardField(dashboard, "addExamButton", Button.class).isDisabled());
+			assertTrue(dashboardField(dashboard, "addCurriculumButton", Button.class).isDisabled());
+			assertTrue(field("assignmentRemoveButton", Button.class).isDisabled());
+			assertTrue(curriculum.isDisable());
+		});
 
-		// Removing an assignment does not transfer authoritative
-		// ownership of the installed Subject to the contributor.
-		robot.interact(() -> assertTrue(curriculum.isDisable()));
+		// Retained contributor data remains externally authoritative.
 		Platform.runLater(() -> invoke("showCurriculumAuthoring",
 				new Class<?>[] { Stage.class, ApplicationConfig.class }, primaryStage, contributor));
 		acknowledgeDialog(robot, "Curriculum Authoring", "This Curriculum is read-only.");
-		SqliteDatabase database = new SqliteDatabase(contributor.databasePath());
+
+		// Removal changes visibility, not the persisted Exam corpus.
+		Subject subject = new Subject(originalSession.subjectLocalId(), "Biology");
+		assertTrue(new SqliteExamWriter(database).findExamsForSubject(subject).stream()
+				.anyMatch(exam -> exam.getId() == originalSession.examLocalId()));
+		assertTrue(Files.isRegularFile(assignmentArchive));
 		database.verifySchema();
 		database.verifyIntegrity();
 	}
@@ -613,6 +647,57 @@ class ContributorAssignmentDashboardWorkflowTest {
 	}
 
 	@Test
+	@SuppressWarnings("unchecked")
+	void obsoleteAssignmentRefreshCannotReplaceNewerSelection(FxRobot robot) throws Exception {
+		awaitAssignedDashboard(robot);
+		var first = sessions().active().orElseThrow();
+		var second = installSecondAssignment();
+		robot.interact(() -> invoke("refreshContributorAssignmentToolbar", new Class<?>[0]));
+		ComboBox<SqliteContributorAssignmentSessionRepository.Session> assignments = field("assignmentSelector",
+				ComboBox.class);
+		CorpusDashboardPane originalDashboard = field("corpusDashboardPane", CorpusDashboardPane.class);
+		Supplier<List<Question>> originalLoader = field("workingSubjectQuestionSnapshotLoader", Supplier.class);
+		CountDownLatch entered = new CountDownLatch(1);
+		CountDownLatch release = new CountDownLatch(1);
+		AtomicBoolean blockFirst = new AtomicBoolean(true);
+		AtomicReference<Thread> obsoleteWorker = new AtomicReference<>();
+		robot.interact(() -> setField("workingSubjectQuestionSnapshotLoader", (Supplier<List<Question>>) () -> {
+			if (blockFirst.compareAndSet(true, false)) {
+				obsoleteWorker.set(Thread.currentThread());
+				awaitBarrier(entered, release);
+			}
+			return originalLoader.get();
+		}));
+		try {
+			robot.interact(() -> assignments.getSelectionModel().select(second));
+			assertTrue(entered.await(10, TimeUnit.SECONDS));
+
+			// Supersede the blocked assignment refresh without waiting
+			// for its background retrieval to finish.
+			robot.interact(() -> assignments.getSelectionModel().select(first));
+			awaitDashboardExam(robot, first.examLocalId(), 2);
+			assertEquals(first.assignmentId(), sessions().active().orElseThrow().assignmentId());
+			release.countDown();
+			Thread worker = obsoleteWorker.get();
+			assertNotNull(worker);
+			worker.join(TimeUnit.SECONDS.toMillis(10));
+			assertFalse(worker.isAlive());
+			WaitForAsyncUtils.waitForFxEvents();
+			robot.interact(() -> {
+				assertTrue(originalDashboard == field("corpusDashboardPane", CorpusDashboardPane.class));
+				assertEquals(first.assignmentId(), assignments.getValue().assignmentId());
+				TableView<ExamCorpusStatus> exams = dashboardField(originalDashboard, "examTable", TableView.class);
+				assertEquals(1, exams.getItems().size());
+				assertEquals(first.examLocalId(), exams.getItems().getFirst().exam().getId());
+				assertFalse(originalDashboard.isDisabled());
+			});
+		} finally {
+			release.countDown();
+			robot.interact(() -> setField("workingSubjectQuestionSnapshotLoader", originalLoader));
+		}
+	}
+
+	@Test
 	void reimportClosesProgressDialogAndPreservesAssignment(FxRobot robot) throws Exception {
 		awaitAssignedDashboard(robot);
 		Method importMethod = QuestionBankApplication.class.getDeclaredMethod("startContributorAssignmentInstallation",
@@ -705,6 +790,126 @@ class ContributorAssignmentDashboardWorkflowTest {
 		database.verifyIntegrity();
 	}
 
+	@Test
+	@SuppressWarnings("unchecked")
+	void removingAssignmentActivatesRemainingExamWithoutReplacingDashboard(FxRobot robot) throws Exception {
+		awaitAssignedDashboard(robot);
+		var first = sessions().active().orElseThrow();
+		var second = installSecondAssignment();
+		robot.interact(() -> invoke("refreshContributorAssignmentToolbar", new Class<?>[0]));
+		CorpusDashboardPane originalDashboard = field("corpusDashboardPane", CorpusDashboardPane.class);
+		ComboBox<SqliteContributorAssignmentSessionRepository.Session> assignments = field("assignmentSelector",
+				ComboBox.class);
+
+		// Exercise an ordinary selector transition first.
+		robot.interact(() -> assignments.getSelectionModel().select(second));
+		awaitDashboardExam(robot, second.examLocalId(), 1);
+		robot.interact(() -> {
+			assertTrue(originalDashboard == field("corpusDashboardPane", CorpusDashboardPane.class));
+			TableView<BookletCorpusStatus> booklets = dashboardField(originalDashboard, "bookletTable",
+					TableView.class);
+			booklets.getSelectionModel().selectFirst();
+			assertEquals(second.examLocalId(),
+					booklets.getSelectionModel().getSelectedItem().booklet().getExam().getId());
+		});
+
+		// Return to the first assignment before removing it.
+		robot.interact(() -> assignments.getSelectionModel().select(first));
+		awaitDashboardExam(robot, first.examLocalId(), 2);
+		removeSelectedAssignment(robot);
+		awaitDashboardExam(robot, second.examLocalId(), 1);
+		assertEquals(second.assignmentId(), sessions().active().orElseThrow().assignmentId());
+		assertTrue(sessions().find(first.assignmentId()).isPresent());
+		robot.interact(() -> {
+			assertTrue(originalDashboard == field("corpusDashboardPane", CorpusDashboardPane.class));
+			assertEquals(1, assignments.getItems().size());
+			assertEquals(second.assignmentId(), assignments.getValue().assignmentId());
+			TableView<BookletCorpusStatus> booklets = dashboardField(originalDashboard, "bookletTable",
+					TableView.class);
+			assertNull(booklets.getSelectionModel().getSelectedItem());
+			assertTrue(booklets.getItems().stream()
+					.allMatch(status -> status.booklet().getExam().getId() == second.examLocalId()));
+			TableView<QuestionCorpusWorkItem> questionWork = dashboardField(originalDashboard, "questionTable",
+					TableView.class);
+			assertFalse(questionWork.getItems().isEmpty());
+			assertTrue(questionWork.getItems().stream()
+					.allMatch(item -> item.question().getExam().getId() == second.examLocalId()));
+			assertNull(questionWork.getSelectionModel().getSelectedItem());
+		});
+		SqliteDatabase database = new SqliteDatabase(contributor.databasePath());
+		var visibility = new SqliteContributorAssignmentVisibilityRepository(database);
+		assertEquals(SqliteContributorAssignmentVisibilityRepository.State.REMOVED,
+				visibility.find(first.assignmentId()).orElseThrow());
+		assertEquals(SqliteContributorAssignmentVisibilityRepository.State.ACTIVE,
+				visibility.find(second.assignmentId()).orElseThrow());
+		database.verifyIntegrity();
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void savedWorkDisablesRemovalAndSubmissionActivatesRemainingAssignment(FxRobot robot) throws Exception {
+		awaitAssignedDashboard(robot);
+		var first = sessions().active().orElseThrow();
+		var second = installSecondAssignment();
+		robot.interact(() -> invoke("refreshContributorAssignmentToolbar", new Class<?>[0]));
+		SqliteDatabase database = new SqliteDatabase(contributor.databasePath());
+		ContributorAssignmentRemovalService removal = new ContributorAssignmentRemovalService(database);
+		assertTrue(removal.canRemoveUnchanged(first.assignmentId()));
+		Subject subject = new Subject(first.subjectLocalId(), "Biology");
+		SqliteCurriculumRepository curriculum = new SqliteCurriculumRepository(database);
+		var syllabus = curriculum.findVersionsForSubject(subject).stream().filter(SyllabusVersion::isCurrent)
+				.findFirst().orElseThrow();
+		var classification = curriculum.findReviewNodes(syllabus).stream()
+				.filter(node -> node.getLevel() == CurriculumLevel.DESCRIPTOR).findFirst().orElseThrow();
+		SqliteExamWriter exams = new SqliteExamWriter(database);
+		Exam exam = exams.findExamsForSubject(subject).stream()
+				.filter(candidate -> candidate.getId() == first.examLocalId()).findFirst().orElseThrow();
+		ExamBooklet booklet = exams.findExamBooklets(exam).stream()
+				.filter(candidate -> "Paper 1".equals(candidate.getName())).findFirst().orElseThrow();
+
+		// Save real contributor work through the production capture service.
+		Question captured = new SqliteQuestionCaptureService(database)
+				.save(new SqliteQuestionCaptureService.Request(SqliteQuestionCaptureService.Operation.NEW, booklet,
+						null, "Q2", 1, List.of(new QuestionRegion(booklet, 1, 0.10, 0.30, 0.70, 0.12)), classification,
+						QuestionResponseType.MULTIPLE_CHOICE, null, null, false));
+		assertFalse(removal.canRemoveUnchanged(first.assignmentId()));
+		assertThrows(IllegalStateException.class, () -> removal.removeUnchanged(first.assignmentId()));
+		robot.interact(() -> invoke("refreshCorpusDashboardHome", new Class<?>[] { long.class }, -1L));
+		WaitForAsyncUtils.waitFor(15, TimeUnit.SECONDS, () -> WaitForAsyncUtils.asyncFx(() -> {
+			CorpusDashboardPane dashboard = field("corpusDashboardPane", CorpusDashboardPane.class);
+			TableView<QuestionCorpusWorkItem> work = dashboardField(dashboard, "questionTable", TableView.class);
+			return work.getItems().stream().anyMatch(item -> item.question().getId() == captured.getId());
+		}).get());
+		robot.interact(() -> assertTrue(field("assignmentRemoveButton", Button.class).isDisabled()));
+		Path contribution = assignmentArchive.getParent().resolve("submitted-first-assignment.examwork");
+		Platform.runLater(() -> invoke("startAssignmentContributionExport",
+				new Class<?>[] { Stage.class, ApplicationConfig.class, UUID.class, Path.class }, primaryStage,
+				contributor, first.assignmentId(), contribution));
+		acknowledgeDialog(robot, "Assignment Contribution Submitted",
+				"The contribution package was created and validated.");
+		assertTrue(Files.isRegularFile(contribution));
+		awaitDashboardExam(robot, second.examLocalId(), 1);
+		assertEquals(second.assignmentId(), sessions().active().orElseThrow().assignmentId());
+		var visibility = new SqliteContributorAssignmentVisibilityRepository(database);
+		assertEquals(SqliteContributorAssignmentVisibilityRepository.State.SUBMITTED,
+				visibility.find(first.assignmentId()).orElseThrow());
+		assertTrue(sessions().find(first.assignmentId()).isPresent());
+		assertFalse(removal.canRemoveUnchanged(first.assignmentId()));
+		assertTrue(new SqliteContributionReturnLedger(database).findLatest(first.assignmentId()).isPresent());
+		robot.interact(() -> {
+			ComboBox<SqliteContributorAssignmentSessionRepository.Session> assignments = field("assignmentSelector",
+					ComboBox.class);
+			assertEquals(1, assignments.getItems().size());
+			assertEquals(second.assignmentId(), assignments.getValue().assignmentId());
+		});
+
+		// The submitted Question remains durable, but is no longer part
+		// of the active contributor Dashboard.
+		assertTrue(new SqliteQuestionRepository(database).findAll().stream()
+				.anyMatch(question -> question.getId() == captured.getId()));
+		database.verifyIntegrity();
+	}
+
 	@Start
 	void start(Stage stage) throws Exception {
 		primaryStage = stage;
@@ -778,6 +983,23 @@ class ContributorAssignmentDashboardWorkflowTest {
 		});
 	}
 
+	@SuppressWarnings("unchecked")
+	private void awaitDashboardExam(FxRobot robot, long examId, int expectedBookletCount) throws Exception {
+		WaitForAsyncUtils.waitFor(15, TimeUnit.SECONDS, () -> WaitForAsyncUtils.asyncFx(() -> {
+			CorpusDashboardPane dashboard = field("corpusDashboardPane", CorpusDashboardPane.class);
+			if (dashboard == null || dashboard.isDisabled()) {
+				return false;
+			}
+			TableView<ExamCorpusStatus> exams = dashboardField(dashboard, "examTable", TableView.class);
+			TableView<BookletCorpusStatus> booklets = dashboardField(dashboard, "bookletTable", TableView.class);
+			return exams.getItems().size() == 1 && exams.getItems().getFirst().exam().getId() == examId
+					&& exams.getSelectionModel().getSelectedItem() != null
+					&& exams.getSelectionModel().getSelectedItem().exam().getId() == examId
+					&& booklets.getItems().size() == expectedBookletCount
+					&& booklets.getItems().stream().allMatch(status -> status.booklet().getExam().getId() == examId);
+		}).get());
+	}
+
 	private DialogPane awaitDialog(FxRobot robot, String title) throws Exception {
 		AtomicReference<DialogPane> result = new AtomicReference<>();
 		WaitForAsyncUtils.waitFor(15, TimeUnit.SECONDS, () -> {
@@ -796,6 +1018,16 @@ class ContributorAssignmentDashboardWorkflowTest {
 
 	private ApplicationBusyOverlay busyOverlay() {
 		return field("applicationBusyOverlay", ApplicationBusyOverlay.class);
+	}
+
+	private <T> T dashboardField(CorpusDashboardPane dashboard, String name, Class<T> type) {
+		try {
+			Field field = CorpusDashboardPane.class.getDeclaredField(name);
+			field.setAccessible(true);
+			return type.cast(field.get(dashboard));
+		} catch (ReflectiveOperationException failure) {
+			throw new IllegalStateException(failure);
+		}
 	}
 
 	private <T> T field(String name, Class<T> type) {
@@ -874,6 +1106,94 @@ class ContributorAssignmentDashboardWorkflowTest {
 			((ButtonBase) pane.lookupButton(pane.getButtonTypes().getFirst())).fire();
 			assertFalse(window.isShowing());
 		});
+	}
+
+	private SqliteContributorAssignmentSessionRepository.Session installSecondAssignment() throws Exception {
+		Path root = assignmentArchive.getParent();
+		ApplicationConfig coordinator = ApplicationConfig.fromDataRoot(root.resolve("coordinator"));
+		SqliteDatabase master = new SqliteDatabase(coordinator.databasePath());
+		ManagedDataLayout layout = new ManagedDataLayout(coordinator.dataRoot());
+		Path pdfRoot = layout.examDirectory("Biology", "QCAA", 2026, "Second Assessment");
+		Files.createDirectories(pdfRoot);
+		Path questionPdf = pdfRoot.resolve("questions.pdf");
+		Path answerPdf = pdfRoot.resolve("answers.pdf");
+		Files.write(questionPdf, TestPdf.bytes("Second Question PDF"));
+		Files.write(answerPdf, TestPdf.bytes("Second Answer PDF"));
+		try (Connection connection = master.openConnection(); Statement statement = connection.createStatement()) {
+			try (PreparedStatement insert = connection.prepareStatement("""
+					INSERT INTO source_documents (id, relative_path)
+					VALUES (?, ?)
+					""")) {
+				insert.setLong(1, 53);
+				insert.setString(2, layout.relativePath(questionPdf));
+				insert.executeUpdate();
+				insert.setLong(1, 54);
+				insert.setString(2, layout.relativePath(answerPdf));
+				insert.executeUpdate();
+			}
+			statement.execute("""
+					INSERT INTO exams (
+					    id,
+					    subject_id,
+					    provider_id,
+					    exam_year,
+					    exam_name,
+					    expected_question_booklet_count,
+					    expected_answer_file_count
+					)
+					VALUES (
+					    32, 1, 21, 2026, 'Second Assessment', 1, 1
+					)
+					""");
+			statement.execute("""
+					INSERT INTO answer_files (
+					    id,
+					    exam_id,
+					    source_document_id,
+					    answer_file_name
+					)
+					VALUES (72, 32, 54, 'Second Marking Guide')
+					""");
+			statement.execute("""
+					INSERT INTO exam_booklets (
+					    id,
+					    exam_id,
+					    source_document_id,
+					    answer_file_id,
+					    booklet_name
+					)
+					VALUES (63, 32, 53, 72, 'Second Paper')
+					""");
+			statement.execute("""
+					INSERT INTO questions (
+					    id,
+					    booklet_id,
+					    classification_node_id,
+					    question_code,
+					    question_text,
+					    marks,
+					    shared_context_capture_required
+					)
+					VALUES (
+					    82, 63, 103,
+					    '1', 'Existing Second Assessment Question', 3, 0
+					)
+					""");
+		}
+		Exam secondExam = new Exam(32, new Subject(1, "Biology"), new ExamProvider(21, "QCAA"), 2026,
+				"Second Assessment");
+		UUID secondId = UUID.randomUUID();
+		Path secondArchive = root.resolve("second-biology-assignment.examwork");
+		var request = new WorkAssignmentExporter.Request(secondExam, secondId, UUID.randomUUID(), "Test Contributor",
+				false, secondArchive);
+		new WorkAssignmentIssuanceService(master, layout).issue(request);
+		new WorkAssignmentInstallationCoordinator(contributor).install(secondArchive);
+
+// The installer selects its newly installed assignment.
+// Restore the existing application's selected assignment so
+// tests can exercise the real selector and lifecycle actions.
+		sessions().select(assignmentId);
+		return sessions().find(secondId).orElseThrow();
 	}
 
 	private Object invoke(String name, Class<?>[] types, Object... arguments) {
@@ -983,6 +1303,23 @@ class ContributorAssignmentDashboardWorkflowTest {
 	private Task<WorkAssignmentInstallationCoordinator.Result> realInstaller() {
 		return new ApplicationBackgroundTask<>(
 				() -> new WorkAssignmentInstallationCoordinator(contributor).install(assignmentArchive));
+	}
+
+	private void removeSelectedAssignment(FxRobot robot) throws Exception {
+		Button remove = field("assignmentRemoveButton", Button.class);
+		WaitForAsyncUtils.waitFor(15, TimeUnit.SECONDS,
+				() -> WaitForAsyncUtils.asyncFx(() -> !remove.isDisabled()).get());
+
+		// Schedule modal entry without blocking the test thread.
+		Platform.runLater(remove::fire);
+		DialogPane confirmation = awaitDialog(robot, "Remove Work Package");
+		robot.interact(() -> {
+			assertEquals("Remove this unchanged assignment?", confirmation.getHeaderText());
+			ButtonType removeType = confirmation.getButtonTypes().stream()
+					.filter(type -> type.getButtonData() == ButtonBar.ButtonData.OK_DONE).findFirst().orElseThrow();
+			((ButtonBase) confirmation.lookupButton(removeType)).fire();
+		});
+		acknowledgeDialog(robot, "Work Package Removed", "The unchanged assignment was removed");
 	}
 
 	private SqliteContributorAssignmentSessionRepository sessions() {

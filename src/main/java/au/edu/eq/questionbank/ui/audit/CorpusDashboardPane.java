@@ -262,6 +262,46 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	/**
+	 * Prepares this Dashboard for a contributor assignment transition without
+	 * reconstructing its layout.
+	 *
+	 * <p>
+	 * Previous ownership permissions and operational selections are invalidated
+	 * immediately. The Dashboard remains disabled until the application publishes
+	 * the replacement persistence and authority snapshot.
+	 *
+	 * @param examId next assigned Exam ID, or null when no assignment remains
+	 * @throws IllegalArgumentException if a supplied Exam ID is non-positive
+	 */
+	public void beginContributorAssignmentRefresh(Long examId) {
+		if (examId != null && examId < 1) {
+			throw new IllegalArgumentException("Assignment Exam ID must be positive");
+		}
+		setDisable(true);
+		setReadOnlyContext(coordinatorExamLocks, true);
+		assignmentExamId = examId;
+		contributorBaselineQuestionIds = Set.of();
+		contributorBaselineAnswerIds = Set.of();
+		if (examId == null) {
+
+			// Historical contributor records must not become ordinary work
+			// merely because the final active assignment has ended.
+			examStatuses = List.of();
+			questions = List.of();
+		}
+		examTable.getSelectionModel().clearSelection();
+		bookletTable.getSelectionModel().clearSelection();
+		questionTable.getSelectionModel().clearSelection();
+		changingScopeFilters = true;
+		try {
+			populateFilterOptions();
+		} finally {
+			changingScopeFilters = false;
+		}
+		clearFilters();
+	}
+
+	/**
 	 * Mounts this Dashboard's existing Curriculum controls in an external
 	 * application header without duplicating their state or handlers.
 	 *
@@ -488,7 +528,7 @@ public final class CorpusDashboardPane extends VBox {
 	 * <p>
 	 * The restriction applies to Exam lists, summary counts, Question Work,
 	 * structural actions and Exam lifecycle actions. Ordinary filters cannot
-	 * broaden it.
+	 * broaden it. Republishing an unchanged scope preserves existing filters.
 	 *
 	 * @param examId assigned local Exam ID, or null for ordinary mode
 	 * @throws IllegalArgumentException if the Exam is not in this Dashboard
@@ -503,11 +543,17 @@ public final class CorpusDashboardPane extends VBox {
 				throw new IllegalArgumentException("Assigned Exam is unavailable on the Dashboard: " + examId);
 			}
 		}
+		if (Objects.equals(assignmentExamId, examId)) {
+			return;
+		}
 		assignmentExamId = examId;
-
-		// Curriculum authoring is coordinator-owned. Classification
-		// of captured Questions remains available through Question Work.
 		addCurriculumButton.setDisable(importedSubjectReadOnly || assignmentExamId != null);
+		changingScopeFilters = true;
+		try {
+			populateFilterOptions();
+		} finally {
+			changingScopeFilters = false;
+		}
 		clearFilters();
 	}
 
@@ -557,6 +603,7 @@ public final class CorpusDashboardPane extends VBox {
 
 	/**
 	 * Supplies the immutable Answer identities from the issued assignment.
+	 * Republishing unchanged identities preserves current Question Work selections.
 	 *
 	 * @param answerIds positive local Answer identifiers
 	 * @throws NullPointerException     if the set or an element is null
@@ -570,7 +617,11 @@ public final class CorpusDashboardPane extends VBox {
 				throw new IllegalArgumentException("Answer IDs must be positive");
 			}
 		}
-		contributorBaselineAnswerIds = Set.copyOf(answerIds);
+		Set<Long> replacement = Set.copyOf(answerIds);
+		if (contributorBaselineAnswerIds.equals(replacement)) {
+			return;
+		}
+		contributorBaselineAnswerIds = replacement;
 		refreshQuestionWork();
 	}
 
@@ -579,8 +630,9 @@ public final class CorpusDashboardPane extends VBox {
 	 *
 	 * <p>
 	 * These Questions remain available for inspection but cannot be corrected by
-	 * the contributor. Questions created after assignment installation are not
-	 * included and retain their permitted capture actions.
+	 * the contributor. Questions created after assignment installation retain their
+	 * permitted capture actions. Republishing unchanged identities preserves
+	 * current Question Work selections.
 	 *
 	 * @param questionIds local IDs of coordinator-issued Questions
 	 * @throws NullPointerException     if the set or an element is null
@@ -594,7 +646,11 @@ public final class CorpusDashboardPane extends VBox {
 				throw new IllegalArgumentException("Question IDs must be positive");
 			}
 		}
-		contributorBaselineQuestionIds = Set.copyOf(questionIds);
+		Set<Long> replacement = Set.copyOf(questionIds);
+		if (contributorBaselineQuestionIds.equals(replacement)) {
+			return;
+		}
+		contributorBaselineQuestionIds = replacement;
 		refreshQuestionWork();
 	}
 
@@ -2210,14 +2266,17 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private void populateFilterOptions() {
+		List<ExamCorpusStatus> availableStatuses = examStatuses.stream()
+				.filter(status -> assignmentExamId == null || status.exam().getId() == assignmentExamId.longValue())
+				.toList();
 		Map<Long, ExamProvider> providers = new LinkedHashMap<>();
-		for (ExamCorpusStatus status : examStatuses) {
+		for (ExamCorpusStatus status : availableStatuses) {
 			ExamProvider provider = status.exam().getProvider();
 			providers.putIfAbsent(provider.getId(), provider);
 		}
 		providerBox.getItems().setAll(providers.values().stream()
 				.sorted(Comparator.comparing(ExamProvider::getName).thenComparingLong(ExamProvider::getId)).toList());
-		yearBox.getItems().setAll(examStatuses.stream().map(status -> status.exam().getYear()).distinct()
+		yearBox.getItems().setAll(availableStatuses.stream().map(status -> status.exam().getYear()).distinct()
 				.sorted(Comparator.reverseOrder()).toList());
 	}
 
@@ -2376,9 +2435,7 @@ public final class CorpusDashboardPane extends VBox {
 			examTable.getItems().setAll(filtered);
 			if (subjectWideQuestionWork) {
 
-				// No Exam may appear selected while Question Work contains
-				// Questions from several Exams. Clicking an Exam later
-				// establishes its own explicit narrower scope.
+				// Subject-wide Question Work has no selected Exam.
 				examTable.getSelectionModel().clearSelection();
 				clearSelectedExam();
 				return;
@@ -2392,10 +2449,12 @@ public final class CorpusDashboardPane extends VBox {
 				return;
 			}
 			if (!filtered.isEmpty()) {
+				ExamCorpusStatus first = filtered.getFirst();
+				examTable.getSelectionModel().select(first);
 
-				// Ordinary Dashboard entry retains its existing first-Exam
-				// selection when no headline drill-down is active.
-				examTable.getSelectionModel().selectFirst();
+				// Rebuild the Booklet presentation explicitly even when
+				// JavaFX retains the same selected table index.
+				showSelectedExam(first, null);
 				return;
 			}
 			examTable.getSelectionModel().clearSelection();

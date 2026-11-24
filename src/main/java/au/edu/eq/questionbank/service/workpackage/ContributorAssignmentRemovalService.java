@@ -41,6 +41,33 @@ public final class ContributorAssignmentRemovalService {
 	}
 
 	/**
+	 * Determines whether an active assignment remains eligible for unchanged
+	 * removal.
+	 *
+	 * <p>
+	 * This is an advisory check for presentation controls. Removal must still
+	 * independently validate the current assignment state and saved-work delta.
+	 *
+	 * @param assignmentId installed assignment UUID
+	 * @return whether the assignment is active and contains no saved changes
+	 * @throws SQLException         if assignment persistence cannot be inspected
+	 * @throws IOException          if a consistent snapshot cannot be inspected
+	 * @throws NullPointerException if the assignment identity is null
+	 */
+	public boolean canRemoveUnchanged(UUID assignmentId) throws SQLException, IOException {
+		Objects.requireNonNull(assignmentId, "assignmentId");
+		if (visibility.find(assignmentId).orElse(null) != State.ACTIVE) {
+			return false;
+		}
+		try {
+			requireNoSavedChanges(assignmentId);
+			return true;
+		} catch (IllegalStateException failure) {
+			return false;
+		}
+	}
+
+	/**
 	 * Makes a previously removed, still-unchanged assignment available again.
 	 *
 	 * <p>
