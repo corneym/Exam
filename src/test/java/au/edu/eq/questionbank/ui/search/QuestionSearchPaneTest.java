@@ -161,6 +161,61 @@ public class QuestionSearchPaneTest {
 	}
 
 	@Test
+	public void allQuestionsDisplaysAssessmentNameAndSelectedPreviewMarks(FxRobot robot) throws TimeoutException {
+		Question secondQuestion = new Question(9901, historicalQuestion.getBooklet(), "22", "Second Question", 1,
+				List.of(), historicalDescriptor, false);
+		replaceSearchPane(robot, curriculumRepository, retrievalService,
+				() -> List.of(historicalQuestion, secondQuestion));
+		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		Label previewHeading = robot.lookup("#question-search-preview-heading").queryAs(Label.class);
+		VBox previewSection = robot.lookup("#question-search-preview-section").queryAs(VBox.class);
+		ScrollPane previewScroll = robot.lookup("#question-search-preview-scroll").queryAs(ScrollPane.class);
+		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 2
+				&& results.getItems().stream().allMatch(result -> result.scope() == QuestionSearchScope.ALL_QUESTIONS));
+		QuestionSearchResult firstResult = results.getItems().stream()
+				.filter(result -> result.question().getId() == historicalQuestion.getId()).findFirst().orElseThrow();
+		QuestionSearchResult secondResult = results.getItems().stream()
+				.filter(result -> result.question().getId() == secondQuestion.getId()).findFirst().orElseThrow();
+		robot.interact(() -> {
+			results.getSelectionModel().select(firstResult);
+			results.applyCss();
+			results.layout();
+		});
+		WaitForAsyncUtils.waitForFxEvents();
+		ListCell<?> firstCell = robot.lookup(".list-cell")
+				.match(node -> node instanceof ListCell<?> cell && cell.getItem() == firstResult)
+				.queryAs(ListCell.class);
+		ListCell<?> secondCell = robot.lookup(".list-cell")
+				.match(node -> node instanceof ListCell<?> cell && cell.getItem() == secondResult)
+				.queryAs(ListCell.class);
+		robot.interact(() -> {
+
+			// List descriptions identify the complete Exam,
+			// but no longer contain the Question's marks.
+			assertEquals("QCAA 2020 External Assessment - Paper 1 - 21a", firstCell.getText());
+			assertEquals("QCAA 2020 External Assessment - Paper 1 - 22", secondCell.getText());
+			assertEquals("Question Preview — 3 marks", previewHeading.getText());
+
+			// The heading belongs to the preview section and
+			// appears above its actual image viewport.
+			assertEquals(previewSection, previewHeading.getParent());
+			assertTrue(previewSection.getChildren().indexOf(previewHeading) < previewSection.getChildren()
+					.indexOf(previewScroll));
+		});
+		robot.interact(() -> results.getSelectionModel().select(secondResult));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> "Question Preview — 1 mark".equals(previewHeading.getText()));
+
+		// Clearing the selection must not retain the previous
+		// Question's marks.
+		robot.interact(() -> results.getSelectionModel().clearSelection());
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> "Question Preview".equals(previewHeading.getText()));
+	}
+
+	@Test
 	public void allQuestionsScopeShowsWorkingSubjectWithoutCurriculumApplicability(FxRobot robot)
 			throws TimeoutException {
 		ComboBox<QuestionSearchScope> scopeBox = robot.lookup("#question-search-scope").queryComboBox();
@@ -1345,6 +1400,69 @@ public class QuestionSearchPaneTest {
 		assertTrue(resultsList.getItems().isEmpty());
 		assertTrue(detailsArea.getText().isBlank());
 		assertTrue(previewStatus.getText().isBlank());
+	}
+
+	@Test
+	public void inspectQuestionsDisplaysAssessmentNameAndRefreshesCorrectedMarks(FxRobot robot)
+			throws TimeoutException {
+		Question correctedQuestion = new Question(historicalQuestion.getId(), historicalQuestion.getBooklet(),
+				historicalQuestion.getQuestionCode(), historicalQuestion.getQuestionText(), 5,
+				historicalQuestion.getRegions(), historicalQuestion.getClassification(), false);
+		Exam otherExam = new Exam(9902, chemistry, historicalQuestion.getExam().getProvider(),
+				historicalQuestion.getExam().getYear(), "Other Assessment");
+		ExamBooklet otherBooklet = new ExamBooklet(9903, otherExam, "Paper 1",
+				new SourceDocument(9904, "Chemistry/2020/other-paper.pdf"));
+		Question otherQuestion = new Question(9905, otherBooklet, "21a", "Unrelated Question", 2, List.of(),
+				historicalDescriptor, false);
+		AtomicReference<List<Question>> source = new AtomicReference<>(List.of(historicalQuestion, otherQuestion));
+		QuestionSearchPane pane = replaceSearchPane(robot, curriculumRepository, retrievalService, source::get,
+				QuestionSearchNarrowing.forExam(historicalQuestion.getExam()));
+		ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+		Label previewHeading = robot.lookup("#question-search-preview-heading").queryAs(Label.class);
+		ComboBox<QuestionSearchScope> scope = robot.lookup("#question-search-scope").queryComboBox();
+		robot.interact(() -> scope.setValue(QuestionSearchScope.ALL_QUESTIONS));
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> results.getItems().size() == 1
+						&& results.getItems().getFirst().scope() == QuestionSearchScope.ALL_QUESTIONS
+						&& results.getItems().getFirst().question().getId() == historicalQuestion.getId());
+		robot.interact(() -> {
+			results.getSelectionModel().selectFirst();
+			results.applyCss();
+			results.layout();
+		});
+		WaitForAsyncUtils.waitForFxEvents();
+		QuestionSearchResult originalResult = results.getItems().getFirst();
+		ListCell<?> resultCell = robot.lookup(".list-cell")
+				.match(node -> node instanceof ListCell<?> cell && cell.getItem() == originalResult)
+				.queryAs(ListCell.class);
+		assertEquals("QCAA 2020 External Assessment - Paper 1 - 21a", resultCell.getText());
+		assertEquals("Question Preview — 3 marks", previewHeading.getText());
+
+		// Simulate successful Question metadata correction at the
+		// same persistence refresh boundary used by Inspect Questions.
+		robot.interact(() -> {
+			source.set(List.of(correctedQuestion, otherQuestion));
+			pane.refreshAfterEdit(historicalQuestion.getId());
+		});
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> pane.getSelectedQuestion() != null && pane.getSelectedQuestion().getMarks() == 5
+						&& "Question Preview — 5 marks".equals(previewHeading.getText()));
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(1, results.getItems().size());
+		assertEquals(historicalQuestion.getId(), pane.getSelectedQuestion().getId());
+		QuestionSearchResult refreshedResult = results.getItems().getFirst();
+		robot.interact(() -> {
+			results.applyCss();
+			results.layout();
+		});
+		ListCell<?> refreshedCell = robot.lookup(".list-cell")
+				.match(node -> node instanceof ListCell<?> cell && cell.getItem() == refreshedResult)
+				.queryAs(ListCell.class);
+
+		// Marks correction changes the preview heading without
+		// changing the source identity displayed in the list.
+		assertEquals("QCAA 2020 External Assessment - Paper 1 - 21a", refreshedCell.getText());
+		assertEquals("Question Preview — 5 marks", previewHeading.getText());
 	}
 
 	@Test

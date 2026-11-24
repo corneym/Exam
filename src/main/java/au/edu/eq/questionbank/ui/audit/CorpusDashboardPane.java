@@ -1073,13 +1073,18 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private StackPane buildCurriculumSection() {
-		HBox mappingReviewRow = new HBox(SPACING, createBoldLabel("Mapping review"), curriculumMappingSummaryLabel);
-		mappingReviewRow.setAlignment(Pos.CENTER_LEFT);
-		HBox.setHgrow(curriculumMappingSummaryLabel, Priority.ALWAYS);
-		HBox curriculumActionsRow = new HBox(SPACING, addCurriculumButton, mapCurriculumButton);
+		Label mappingReviewLabel = createBoldLabel("Mapping review");
+		mappingReviewLabel.setId("corpus-dashboard-mapping-review-label");
+		mappingReviewLabel.setMinWidth(Region.USE_PREF_SIZE);
+		HBox curriculumActionsRow = new HBox(SPACING, addCurriculumButton, mapCurriculumButton, mappingReviewLabel,
+				curriculumMappingSummaryLabel);
+		curriculumActionsRow.setId("corpus-dashboard-curriculum-actions-row");
 		curriculumActionsRow.setAlignment(Pos.CENTER_LEFT);
-		return createTitledSection("corpus-dashboard-curriculum-section", "CURRICULUM", mappingReviewRow,
-				curriculumActionsRow);
+
+		// Keep Curriculum actions at their natural widths and allow
+		// the mapping summary to occupy the remaining horizontal space.
+		HBox.setHgrow(curriculumMappingSummaryLabel, Priority.ALWAYS);
+		return createTitledSection("corpus-dashboard-curriculum-section", "CURRICULUM", curriculumActionsRow);
 	}
 
 	private SplitPane buildHierarchyRow() {

@@ -790,6 +790,31 @@ class CorpusDashboardPaneTest {
 	}
 
 	@Test
+	void curriculumSectionPlacesMappingReviewBesideActions(FxRobot robot) {
+		HBox actionsRow = robot.lookup("#corpus-dashboard-curriculum-actions-row").queryAs(HBox.class);
+		Button addCurriculum = robot.lookup("#corpus-dashboard-add-curriculum").queryButton();
+		Button mapCurriculum = robot.lookup("#corpus-dashboard-map-curriculum").queryButton();
+		Label mappingReviewLabel = robot.lookup("#corpus-dashboard-mapping-review-label").queryAs(Label.class);
+		Label mappingSummary = robot.lookup("#corpus-dashboard-mapping-review").queryAs(Label.class);
+		robot.interact(() -> {
+
+			// All four controls occupy one horizontal row,
+			// with the Mapping Review information after the buttons.
+			assertEquals(List.of(addCurriculum, mapCurriculum, mappingReviewLabel, mappingSummary),
+					actionsRow.getChildren());
+			assertEquals("Mapping review", mappingReviewLabel.getText());
+			assertEquals(Pos.CENTER_LEFT, actionsRow.getAlignment());
+			assertEquals(Priority.ALWAYS, HBox.getHgrow(mappingSummary));
+			assertTrue(mappingSummary.isWrapText());
+			assertTrue(mappingSummary.getText().contains("11/15 resolved"));
+			assertTrue(addCurriculum.isVisible());
+			assertTrue(mapCurriculum.isVisible());
+			assertTrue(mappingReviewLabel.isVisible());
+			assertTrue(mappingSummary.isVisible());
+		});
+	}
+
+	@Test
 	void curriculumSectionRoutesAuthoringAndMappingActions(FxRobot robot) {
 		AtomicReference<Boolean> addCalled = new AtomicReference<>(Boolean.FALSE);
 		AtomicReference<Boolean> mapCalled = new AtomicReference<>(Boolean.FALSE);

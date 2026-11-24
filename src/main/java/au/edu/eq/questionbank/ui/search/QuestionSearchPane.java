@@ -1275,8 +1275,21 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	private VBox createQuestionPreviewPane() {
-		Label label = new Label("Question preview");
+		Label label = new Label("Question Preview");
+		label.setId("question-search-preview-heading");
 		label.setStyle("-fx-font-weight: bold;");
+
+		// Marks belong to the selected Question rather than to the
+		// asynchronously rendered image. Binding the heading to the
+		// result selection also handles in-place metadata corrections.
+		label.textProperty().bind(Bindings.createStringBinding(() -> {
+			QuestionSearchResult selected = resultsList.getSelectionModel().getSelectedItem();
+			if (selected == null) {
+				return "Question Preview";
+			}
+			int marks = selected.question().getMarks();
+			return "Question Preview — " + marks + (marks == 1 ? " mark" : " marks");
+		}, resultsList.getSelectionModel().selectedItemProperty()));
 		ScrollPane previewPane = new ScrollPane(previewImageView);
 		previewPane.setId("question-search-preview-scroll");
 
@@ -2150,9 +2163,9 @@ public class QuestionSearchPane extends BorderPane {
 
 	private String questionSearchResultText(QuestionSearchResult result) {
 		Question question = result.question();
-		return question.getExam().getProvider().getName() + " " + question.getExam().getYear() + " — "
-				+ question.getBooklet().getName() + " — " + question.getQuestionCode() + " — " + question.getMarks()
-				+ " marks";
+		return question.getExam().getProvider().getName() + " " + question.getExam().getYear() + " "
+				+ question.getExam().getName() + " - " + question.getBooklet().getName() + " - "
+				+ question.getQuestionCode();
 	}
 
 	private void refreshAutomaticSearch() {
