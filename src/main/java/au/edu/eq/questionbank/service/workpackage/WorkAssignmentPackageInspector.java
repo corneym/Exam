@@ -81,7 +81,10 @@ public final class WorkAssignmentPackageInspector {
 		}
 		assets.requireMatchingManifest(manifest);
 		new WorkAssignmentScopeValidator().validate(manifest, records, context, assets);
+
 		PortableDomainRecordValidator.validate(manifest.subjectId(), records);
+
+		new AssignmentReconciliationEvidenceValidator().validate(manifest, context);
 
 		// Detect replacement of the archive between validation and
 		// inspection. The importer must still stage its own immutable
