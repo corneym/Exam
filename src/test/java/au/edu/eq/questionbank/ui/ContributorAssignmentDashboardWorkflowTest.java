@@ -429,7 +429,6 @@ class ContributorAssignmentDashboardWorkflowTest {
 	}
 
 	@Test
-	@SuppressWarnings("unchecked")
 	void curriculumRemainsReadOnlyAfterAssignmentRemoval(FxRobot robot) throws Exception {
 		awaitAssignedDashboard(robot);
 		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
