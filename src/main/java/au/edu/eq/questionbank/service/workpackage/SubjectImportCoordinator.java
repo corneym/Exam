@@ -29,6 +29,7 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteSubjectImportLedger.Coordi
 import au.edu.eq.questionbank.repository.sqlite.SqliteSubjectImportLedger.EntryKind;
 import au.edu.eq.questionbank.repository.sqlite.SqliteSubjectImportLedger.ItemEntry;
 import au.edu.eq.questionbank.repository.sqlite.SqliteSubjectImportLedger.ItemOutcome;
+import au.edu.eq.questionbank.repository.sqlite.SqliteSubjectImportLedger.OriginatingSnapshotEvidence;
 import au.edu.eq.questionbank.repository.sqlite.SqliteSubjectImportLedger.PackageEntry;
 import au.edu.eq.questionbank.repository.sqlite.SqliteSubjectImportLedger.PackageOutcome;
 import au.edu.eq.questionbank.service.backup.BackupException;
@@ -171,7 +172,7 @@ public final class SubjectImportCoordinator {
 						requireForeignKeyIntegrity(connection);
 						journal.verifyPublished(packageId);
 						gate.requireIntact(packageId, backup);
-						recordPackage(connection, plan, backup, approvalNote);
+						recordPackage(connection, plan, backup, approvalNote, decoded.manifest());
 						recordItems(connection, plan, canonical);
 						if (newSubject) {
 
@@ -350,11 +351,18 @@ public final class SubjectImportCoordinator {
 	}
 
 	/**
-	 * Records the terminal package result in the same graph transaction.
+	 * Records the terminal package result and originating freshness evidence in the
+	 * same graph transaction.
 	 */
-	private void recordPackage(Connection connection, SubjectImportApprovalPlan plan, Certificate backup, String note)
-			throws SQLException {
+	private void recordPackage(Connection connection, SubjectImportApprovalPlan plan, Certificate backup, String note,
+			ExamWorkManifest manifest) throws SQLException {
 		var incoming = plan.reviewedIncoming();
+		if (!manifest.packageId().equals(incoming.packageId())
+				|| !manifest.originInstallationId().equals(incoming.originInstallationId())
+				|| !manifest.subjectId().equals(incoming.subjectId())
+				|| !manifest.subjectName().equals(incoming.subjectName())) {
+			throw new SQLException("Decoded Subject snapshot differs from approved package");
+		}
 		String destinationFingerprint = plan.isNewSubjectInstallation() ? "0".repeat(64)
 				: plan.reviewedMaster().contentSha256();
 
@@ -364,7 +372,12 @@ public final class SubjectImportCoordinator {
 		PackageEntry entry = new PackageEntry(incoming.packageId(), incoming.archiveSha256(),
 				incoming.originInstallationId(), incoming.subjectId(), destinationFingerprint, plan.approvalSha256(),
 				PackageOutcome.APPLIED, backup.backupPath().toString(), note);
-		if (!ledger.recordPackage(connection, entry)) {
+
+		// The decoded manifest belongs to the already verified private archive.
+		// The approved fingerprint is bound to those exact bytes.
+		OriginatingSnapshotEvidence evidence = new OriginatingSnapshotEvidence(manifest.createdAt(),
+				incoming.contentSha256());
+		if (!ledger.recordPackage(connection, entry, evidence)) {
 			throw new SQLException("Package was recorded concurrently with import");
 		}
 	}

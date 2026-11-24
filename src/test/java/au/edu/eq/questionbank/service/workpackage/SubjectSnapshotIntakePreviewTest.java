@@ -14,18 +14,28 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
+import java.time.Instant;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 
+import org.apache.commons.compress.archivers.zip.ZipFile;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.ApplicationConfig;
+import au.edu.eq.questionbank.ApplicationVersion;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
+import au.edu.eq.questionbank.repository.sqlite.HistoricalSchemaFixture;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.repository.sqlite.SqliteImportedSubjectAuthorityRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteSubjectImportLedger;
+import au.edu.eq.questionbank.service.workpackage.ExamWorkArchiveWriter.EntrySource;
 import au.edu.eq.questionbank.service.workpackage.SubjectImportSnapshotFingerprint.Fingerprint;
 import au.edu.eq.questionbank.service.workpackage.SubjectImportSnapshotFingerprint.SnapshotEvidence;
+import au.edu.eq.questionbank.service.workpackage.SubjectSnapshotFreshness.Outcome;
 
 /**
  * Verifies one-file Subject inspection against independent installations.
@@ -53,6 +63,106 @@ class SubjectSnapshotIntakePreviewTest {
 		// Preview neither conflates those IDs nor changes the destination.
 		assertEquals(1, countSubjects(destination));
 		assertEquals("Chemistry", subjectName(destination, 1));
+	}
+
+	@Test
+	void migratedLegacyAuthorityCannotRefreshWithoutOriginatingFreshnessEvidence() throws Exception {
+		SqliteDatabase source = createDatabase("legacy-freshness-source");
+		insertSubject(source, 1, "Biology");
+		SqliteDatabase destination = createDatabase("legacy-freshness-destination");
+		ApplicationConfig config = ApplicationConfig.fromDataRoot(directory.resolve("legacy-freshness-destination"));
+		Path original = export(source, "legacy-freshness-source", 1, "legacy-freshness-original.examwork");
+		var preview = new SubjectSnapshotIntakePreview(destination);
+		var initial = preview.inspect(original);
+		assertTrue(new SubjectImportCoordinator(config).executeNewSubject(initial, original).applied());
+
+		// Reconstruct a genuine v48 destination with its imported graph and ledger
+		// intact, but without the subsequently introduced originating evidence.
+		try (Connection connection = destination.openConnection(); Statement statement = connection.createStatement()) {
+			HistoricalSchemaFixture.removeVersion49Objects(statement);
+			assertEquals(1, statement.executeUpdate("UPDATE schema_version SET version = 48 WHERE version = 49"));
+		}
+		destination.verifySchema();
+		destination.initialiseSchema();
+		var ledger = new SqliteSubjectImportLedger(destination);
+		assertTrue(ledger.find(initial.fingerprint().packageId()).isPresent());
+		assertTrue(ledger.findOriginatingSnapshotEvidence(initial.fingerprint().packageId()).isEmpty());
+		Path next = export(source, "legacy-freshness-source", 1, "legacy-freshness-next.examwork");
+		var inspection = preview.inspect(next);
+		var authority = preview.requireRefreshAuthority(inspection);
+		PackageFormatException failure = assertThrows(PackageFormatException.class,
+				() -> preview.requireRefreshEvidence(inspection, next));
+		assertTrue(failure.getMessage().contains("no recorded originating freshness evidence"));
+		assertEquals(initial.fingerprint().packageId(), authority.latestPackageId());
+		assertEquals(authority, new SqliteImportedSubjectAuthorityRepository(destination)
+				.find(authority.subjectLocalId()).orElseThrow());
+		assertEquals(1, countSubjects(destination));
+		assertTrue(ledger.find(inspection.fingerprint().packageId()).isEmpty());
+		destination.verifyIntegrity();
+	}
+
+	@Test
+	void persistedFreshnessRejectsOlderArchivesAndAllowsOnlyNewerSameAuthority() throws Exception {
+		SqliteDatabase source = createDatabase("durable-freshness-source");
+		insertSubject(source, 1, "Biology");
+		SqliteDatabase destination = createDatabase("durable-freshness-destination");
+		ApplicationConfig config = ApplicationConfig.fromDataRoot(directory.resolve("durable-freshness-destination"));
+		Path exported = export(source, "durable-freshness-source", 1, "durable-freshness-export.examwork");
+		Instant acceptedTime = Instant.parse("2026-11-20T01:00:00Z");
+		Path accepted = snapshotAt(exported, "durable-freshness-accepted.examwork", acceptedTime);
+		Path stale = snapshotAt(exported, "durable-freshness-stale.examwork", acceptedTime.minusSeconds(60));
+		Path equalTime = snapshotAt(exported, "durable-freshness-equal.examwork", acceptedTime);
+		Path newer = snapshotAt(exported, "durable-freshness-newer.examwork", acceptedTime.plusSeconds(60));
+		var preview = new SubjectSnapshotIntakePreview(destination);
+		var initial = preview.inspect(accepted);
+		var coordinator = new SubjectImportCoordinator(config);
+		assertTrue(coordinator.executeNewSubject(initial, accepted).applied());
+		var ledger = new SqliteSubjectImportLedger(destination);
+		var persisted = ledger.findOriginatingSnapshotEvidence(initial.fingerprint().packageId()).orElseThrow();
+		assertEquals(acceptedTime, persisted.createdAt());
+		assertEquals(initial.fingerprint().contentSha256(), persisted.contentSha256());
+		assertTrue(coordinator.executeNewSubject(initial, accepted).replay());
+		assertEquals(persisted,
+				ledger.findOriginatingSnapshotEvidence(initial.fingerprint().packageId()).orElseThrow());
+		var reopened = new SubjectSnapshotIntakePreview(new SqliteDatabase(config.databasePath()));
+		PackageFormatException old = assertThrows(PackageFormatException.class,
+				() -> reopened.requireRefreshEvidence(reopened.inspect(stale), stale));
+		assertTrue(old.getMessage().contains("older than"));
+		PackageFormatException equal = assertThrows(PackageFormatException.class,
+				() -> reopened.requireRefreshEvidence(reopened.inspect(equalTime), equalTime));
+		assertTrue(equal.getMessage().contains("same creation"));
+		var eligible = reopened.requireRefreshEvidence(reopened.inspect(newer), newer);
+		assertEquals(Outcome.NEWER_UNCHANGED, eligible.outcome());
+		assertEquals(initial.fingerprint(), eligible.accepted().fingerprint());
+		assertEquals(acceptedTime, eligible.accepted().createdAt());
+		assertEquals(acceptedTime.plusSeconds(60), eligible.incoming().createdAt());
+		assertThrows(PackageFormatException.class,
+				() -> reopened.requireRefreshEvidence(reopened.inspect(newer), stale));
+
+		// A genuine authoritative curriculum addition changes the semantic digest.
+		try (Connection connection = source.openConnection(); Statement statement = connection.createStatement()) {
+			statement.execute("""
+					INSERT INTO syllabus_versions (id, subject_id, syllabus_name, is_current)
+					VALUES (11, 1, 'Biology 2025', 1)
+					""");
+		}
+		Path changedExport = export(source, "durable-freshness-source", 1, "durable-freshness-changed-export.examwork");
+		Path changed = snapshotAt(changedExport, "durable-freshness-changed.examwork", acceptedTime.plusSeconds(120));
+		Path conflict = snapshotAt(changedExport, "durable-freshness-conflict.examwork", acceptedTime);
+		var changedEvidence = reopened.requireRefreshEvidence(reopened.inspect(changed), changed);
+		assertEquals(Outcome.NEWER_CHANGED, changedEvidence.outcome());
+		assertNotEquals(eligible.accepted().fingerprint().contentSha256(),
+				changedEvidence.incoming().fingerprint().contentSha256());
+		PackageFormatException conflicting = assertThrows(PackageFormatException.class,
+				() -> reopened.requireRefreshEvidence(reopened.inspect(conflict), conflict));
+		assertTrue(conflicting.getMessage().contains("different authoritative content"));
+		assertTrue(ledger.find(changedEvidence.incoming().fingerprint().packageId()).isEmpty());
+		assertEquals(1, countSubjects(destination));
+		assertEquals(initial.fingerprint().packageId(), eligible.authority().latestPackageId());
+		assertTrue(ledger.find(eligible.incoming().fingerprint().packageId()).isEmpty());
+		assertEquals(eligible.authority(), new SqliteImportedSubjectAuthorityRepository(destination)
+				.find(eligible.authority().subjectLocalId()).orElseThrow());
+		destination.verifyIntegrity();
 	}
 
 	@Test
@@ -406,6 +516,31 @@ class SubjectSnapshotIntakePreviewTest {
 			statement.setString(2, name);
 			assertEquals(1, statement.executeUpdate());
 		}
+	}
+
+	private Path snapshotAt(Path archive, String filename, Instant createdAt) throws Exception {
+		ExamWorkManifest original = new ExamWorkArchiveValidator().validate(archive, ApplicationVersion.current(),
+				SqliteDatabase.latestSchemaVersion());
+
+		// Rewrite only manifest identity and time; retain the validated real graph
+		// and asset bytes. Fixed instants avoid timing-dependent tests.
+		ExamWorkManifest replacement = new ExamWorkManifest(original.formatVersion(), UUID.randomUUID(),
+				original.packageType(), createdAt, original.originInstallationId(),
+				original.intendedMasterInstallationId(), original.subjectId(), original.subjectName(),
+				original.assignmentId(), original.baselineSnapshotId(), original.producerApplicationVersion(),
+				original.minimumReaderApplicationVersion(), original.producerSchemaVersion(),
+				original.minimumReaderSchemaVersion(), original.scope(), original.entries());
+		Path target = directory.resolve(filename);
+		try (ZipFile zip = ZipFile.builder().setPath(archive).get(); var output = Files.newOutputStream(target)) {
+			Map<String, EntrySource> sources = new HashMap<>();
+			for (var entry : original.entries()) {
+				sources.put(entry.path(), () -> zip.getInputStream(zip.getEntry(entry.path())));
+			}
+			new ExamWorkArchiveWriter().write(replacement, sources, output);
+		}
+		assertEquals(replacement, new ExamWorkArchiveValidator().validate(target, ApplicationVersion.current(),
+				SqliteDatabase.latestSchemaVersion()));
+		return target;
 	}
 
 	private String subjectName(SqliteDatabase database, long id) throws SQLException {

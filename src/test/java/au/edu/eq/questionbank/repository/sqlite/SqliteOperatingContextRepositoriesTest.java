@@ -96,7 +96,7 @@ class SqliteOperatingContextRepositoriesTest {
 		SqliteDatabase database = database("local.db");
 		insertSubject(database);
 		var authority = new SqliteImportedSubjectAuthorityRepository(database);
-		assertEquals(48, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		assertFalse(authority.isImported(1));
 		authority.requireLocallyAuthoritative(1);
 		database.verifySchema();

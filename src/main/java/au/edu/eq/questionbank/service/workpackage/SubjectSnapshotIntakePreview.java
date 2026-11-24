@@ -32,6 +32,8 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteSubjectImportLedger.Packag
 import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest.EntryRole;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest.ScopeLevel;
 import au.edu.eq.questionbank.service.workpackage.SubjectImportSnapshotFingerprint.Fingerprint;
+import au.edu.eq.questionbank.service.workpackage.SubjectImportSnapshotFingerprint.SnapshotEvidence;
+import au.edu.eq.questionbank.service.workpackage.SubjectSnapshotFreshness.Outcome;
 
 /**
  * Inspects one complete Subject snapshot against the destination database.
@@ -267,6 +269,45 @@ public final class SubjectSnapshotIntakePreview {
 		}
 	}
 
+	/**
+	 * Revalidates the incoming archive and compares its originating timestamp with
+	 * the latest accepted snapshot of the same imported Subject.
+	 *
+	 * <p>
+	 * Provenance, package history and originating evidence are read in one
+	 * consistent destination transaction. This read-only operation does not approve
+	 * or publish a refresh. Missing legacy freshness evidence fails closed.
+	 *
+	 * @param inspection      previously validated incoming snapshot
+	 * @param incomingArchive exact archive selected for refresh
+	 * @return eligible incoming and latest accepted originating evidence
+	 * @throws IOException          if archive validation or freshness eligibility
+	 *                              fails
+	 * @throws SQLException         if destination evidence cannot be read
+	 * @throws NullPointerException if either argument is null
+	 */
+	public RefreshEvidence requireRefreshEvidence(Inspection inspection, Path incomingArchive)
+			throws IOException, SQLException {
+		Objects.requireNonNull(inspection, "inspection");
+		Objects.requireNonNull(incomingArchive, "incomingArchive");
+		SnapshotEvidence incoming = new SubjectImportSnapshotFingerprint().inspectEvidence(incomingArchive);
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				RefreshEvidence result = requireRefreshEvidence(connection, inspection, incoming);
+				connection.commit();
+				return result;
+			} catch (SQLException | IOException | RuntimeException failure) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					failure.addSuppressed(rollbackFailure);
+				}
+				throw failure;
+			}
+		}
+	}
+
 	ImportedAuthority requireRefreshAuthority(Connection connection, Inspection inspection)
 			throws SQLException, PackageFormatException {
 		Objects.requireNonNull(connection, "connection");
@@ -333,6 +374,30 @@ public final class SubjectSnapshotIntakePreview {
 		return authority;
 	}
 
+	RefreshEvidence requireRefreshEvidence(Connection connection, Inspection inspection, SnapshotEvidence incoming)
+			throws SQLException, PackageFormatException {
+		Objects.requireNonNull(incoming, "incoming");
+		Objects.requireNonNull(inspection, "inspection");
+		if (!inspection.fingerprint().equals(incoming.fingerprint())) {
+			throw new PackageFormatException("Incoming Subject package differs from the inspected archive");
+		}
+
+		// Read the authority and its accepted originating evidence through the
+		// same transaction so a concurrent refresh cannot mix two package states.
+		ImportedAuthority authority = requireRefreshAuthority(connection, inspection);
+		var recorded = new SqliteSubjectImportLedger(database)
+				.findOriginatingSnapshotEvidence(connection, authority.latestPackageId())
+				.orElseThrow(() -> new PackageFormatException(
+						"The latest accepted snapshot has no recorded originating freshness evidence. "
+								+ "A refresh cannot proceed without verified evidence of that snapshot."));
+		SnapshotEvidence accepted = new SnapshotEvidence(new Fingerprint(authority.latestPackageId(),
+				authority.originInstallationId(), authority.originSubjectPortableId(),
+				incoming.fingerprint().subjectName(), recorded.contentSha256(), authority.archiveSha256()),
+				recorded.createdAt());
+		Outcome outcome = new SubjectSnapshotFreshness().requireNewer(accepted, incoming);
+		return new RefreshEvidence(authority, accepted, incoming, outcome);
+	}
+
 	private ExamWorkAssetIndex readAssets(ZipFile archive, ExamWorkJsonlCodec codec) throws IOException {
 		ZipArchiveEntry entry = archive.getEntry(ExamWorkAssetIndex.INDEX_PATH);
 		if (entry == null) {
@@ -362,6 +427,35 @@ public final class SubjectSnapshotIntakePreview {
 			throw new PackageFormatException("Subject snapshot contains no domain records.");
 		}
 		return List.copyOf(records);
+	}
+
+	/**
+	 * Read-only evidence of a chronologically eligible refresh candidate.
+	 *
+	 * @param authority imported Subject authority observed during inspection
+	 * @param accepted  latest accepted originating snapshot evidence
+	 * @param incoming  verified incoming snapshot evidence
+	 * @param outcome   chronological eligibility classification
+	 */
+	public record RefreshEvidence(ImportedAuthority authority, SnapshotEvidence accepted, SnapshotEvidence incoming,
+			Outcome outcome) {
+
+		/**
+		 * Validates complete eligible refresh evidence.
+		 *
+		 * @throws NullPointerException     if any component is null
+		 * @throws IllegalArgumentException if the outcome is not an eligible newer
+		 *                                  snapshot
+		 */
+		public RefreshEvidence {
+			Objects.requireNonNull(authority, "authority");
+			Objects.requireNonNull(accepted, "accepted");
+			Objects.requireNonNull(incoming, "incoming");
+			Objects.requireNonNull(outcome, "outcome");
+			if (outcome != Outcome.NEWER_CHANGED && outcome != Outcome.NEWER_UNCHANGED) {
+				throw new IllegalArgumentException("Refresh evidence requires an eligible newer snapshot");
+			}
+		}
 	}
 
 	/**

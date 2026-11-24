@@ -16,6 +16,7 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -44,8 +45,15 @@ import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteSharedQuestionContextRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.HistoricalSchemaFixture;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteImportedSubjectAuthorityRepository;
+import au.edu.eq.questionbank.repository.sqlite.SqliteSubjectImportLedger;
+import au.edu.eq.questionbank.repository.sqlite.SqliteSubjectImportLedger.OriginatingSnapshotEvidence;
+import au.edu.eq.questionbank.repository.sqlite.SqliteSubjectImportLedger.PackageEntry;
+import au.edu.eq.questionbank.repository.sqlite.SqliteSubjectImportLedger.PackageOutcome;
 
 class DefaultRestoreExecutorTest {
 
@@ -104,6 +112,67 @@ class DefaultRestoreExecutorTest {
 	@Test
 	void fullBackupRestoresImageOnlyAndMixedSharedContext() throws Exception {
 		assertSharedContextBackupRoundTrip(BackupKind.FULL);
+	}
+
+	@Test
+	void fullBackupRestoresOriginatingSnapshotEvidenceAndLegacyUnknownEvidence() throws Exception {
+		ApplicationConfig source = createDataSet("freshness-backup-source", "Chemistry", "source-pdf",
+				"source-curriculum");
+		SqliteDatabase sourceDatabase = new SqliteDatabase(source.databasePath());
+		var ledger = new SqliteSubjectImportLedger(sourceDatabase);
+		var authorityRepository = new SqliteImportedSubjectAuthorityRepository(sourceDatabase);
+		UUID origin = UUID.randomUUID();
+		UUID subject = UUID.randomUUID();
+		var legacy = new PackageEntry(UUID.randomUUID(), "a".repeat(64), origin, subject, "b".repeat(64),
+				"c".repeat(64), PackageOutcome.APPLIED, tempDir.resolve("legacy-pre-import.zip").toString(),
+				"Legacy import");
+		var current = new PackageEntry(UUID.randomUUID(), "d".repeat(64), origin, subject, "e".repeat(64),
+				"f".repeat(64), PackageOutcome.APPLIED, tempDir.resolve("current-pre-import.zip").toString(),
+				"Current import");
+		var freshness = new OriginatingSnapshotEvidence(Instant.parse("2026-11-20T01:02:03.123456789Z"),
+				"1".repeat(64));
+		long subjectId;
+		try (Connection connection = sourceDatabase.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("SELECT id FROM subjects")) {
+			assertTrue(result.next());
+			subjectId = result.getLong(1);
+			assertFalse(result.next());
+		}
+		try (Connection connection = sourceDatabase.openConnection()) {
+			connection.setAutoCommit(false);
+			assertTrue(ledger.recordPackage(connection, legacy));
+			authorityRepository.recordImported(connection, subjectId, legacy.packageId());
+			assertTrue(ledger.recordPackage(connection, current, freshness));
+			authorityRepository.recordImported(connection, subjectId, current.packageId());
+			connection.commit();
+		}
+		var authority = authorityRepository.find(subjectId).orElseThrow();
+		var identity = new SqlitePortableIdentityRepository(sourceDatabase).requireByLocalId(EntityType.SUBJECT,
+				subjectId);
+		BackupResult backup = new DefaultBackupService(source, "Test")
+				.createBackup(BackupRequest.full(tempDir.resolve("freshness-backups")));
+		ApplicationConfig target = createDataSet("freshness-backup-target", "Original Chemistry", "old-pdf",
+				"old-curriculum");
+		try (RestorePreparation preparation = new DefaultRestoreService(target).prepareRestore(backup.backupPath())) {
+			assertEquals(49, preparation.manifest().databaseSchemaVersion());
+			new DefaultRestoreExecutor(target, "Test").applyRestore(preparation, new CountingCloseable());
+		}
+		SqliteDatabase restored = new SqliteDatabase(target.databasePath());
+		restored.initialiseSchema();
+		assertEquals(49, restored.schemaVersion());
+		var restoredLedger = new SqliteSubjectImportLedger(restored);
+		assertEquals(legacy, restoredLedger.find(legacy.packageId()).orElseThrow());
+		assertEquals(current, restoredLedger.find(current.packageId()).orElseThrow());
+		assertTrue(restoredLedger.findOriginatingSnapshotEvidence(legacy.packageId()).isEmpty());
+		assertEquals(freshness, restoredLedger.findOriginatingSnapshotEvidence(current.packageId()).orElseThrow());
+		assertEquals(authority, new SqliteImportedSubjectAuthorityRepository(restored).find(subjectId).orElseThrow());
+		assertEquals(identity,
+				new SqlitePortableIdentityRepository(restored).requireByLocalId(EntityType.SUBJECT, subjectId));
+		assertEquals("source-pdf", Files.readString(
+				target.dataRoot().resolve("subjects/Chemistry/exams/QCAA/2025/External Assessment/exam.pdf")));
+		restored.verifySchema();
+		restored.verifyIntegrity();
 	}
 
 	@Test
@@ -230,6 +299,65 @@ class DefaultRestoreExecutorTest {
 		assertFalse(columnExists(reopenedDatabase, "source_questions", "preamble_status"));
 		assertEquals(1, readIntegerValue(reopenedDatabase, "questions", "shared_context_capture_required"));
 		assertEquals("PRESENT", readTextValue(reopenedDatabase, "source_questions", "shared_context_status"));
+	}
+
+	@Test
+	void restoresVersion48BackupAndMigratesWithoutInventingFreshness() throws Exception {
+		ApplicationConfig source = createDataSet("legacy-v48-source", "Chemistry", "legacy-pdf", "legacy-curriculum");
+		SqliteDatabase sourceDatabase = new SqliteDatabase(source.databasePath());
+		var entry = new PackageEntry(UUID.randomUUID(), "a".repeat(64), UUID.randomUUID(), UUID.randomUUID(),
+				"b".repeat(64), "c".repeat(64), PackageOutcome.APPLIED,
+				tempDir.resolve("legacy-v48-pre-import.zip").toString(), "Legacy imported Subject");
+		long subjectId;
+		try (Connection connection = sourceDatabase.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet rows = statement.executeQuery("SELECT id FROM subjects")) {
+			assertTrue(rows.next());
+			subjectId = rows.getLong(1);
+			assertFalse(rows.next());
+		}
+		var ledger = new SqliteSubjectImportLedger(sourceDatabase);
+		var authorities = new SqliteImportedSubjectAuthorityRepository(sourceDatabase);
+		try (Connection connection = sourceDatabase.openConnection()) {
+			connection.setAutoCommit(false);
+			assertTrue(ledger.recordPackage(connection, entry));
+			authorities.recordImported(connection, subjectId, entry.packageId());
+			try (Statement statement = connection.createStatement()) {
+				HistoricalSchemaFixture.removeVersion49Objects(statement);
+				assertEquals(1, statement.executeUpdate("UPDATE schema_version SET version = 48 WHERE version = 49"));
+			}
+			connection.commit();
+		}
+		var authority = authorities.find(subjectId).orElseThrow();
+		var identity = new SqlitePortableIdentityRepository(sourceDatabase).requireByLocalId(EntityType.SUBJECT,
+				subjectId);
+		sourceDatabase.verifySchema();
+		sourceDatabase.verifyIntegrity();
+		BackupResult backup = new DefaultBackupService(source, "Test")
+				.createBackup(BackupRequest.full(tempDir.resolve("legacy-v48-backups")));
+		assertEquals(48, sourceDatabase.schemaVersion());
+		ApplicationConfig target = createDataSet("legacy-v48-target", "Original Chemistry", "old-pdf",
+				"old-curriculum");
+		try (RestorePreparation preparation = new DefaultRestoreService(target).prepareRestore(backup.backupPath())) {
+			assertEquals(48, preparation.manifest().databaseSchemaVersion());
+			assertEquals(48, new SqliteDatabase(preparation.databasePath()).schemaVersion());
+			new DefaultRestoreExecutor(target, "Test").applyRestore(preparation, new CountingCloseable());
+		}
+		SqliteDatabase restored = new SqliteDatabase(target.databasePath());
+		assertEquals(48, restored.schemaVersion());
+		restored.initialiseSchema();
+		assertEquals(49, restored.schemaVersion());
+		var restoredLedger = new SqliteSubjectImportLedger(restored);
+		assertEquals(entry, restoredLedger.find(entry.packageId()).orElseThrow());
+		assertTrue(restoredLedger.findOriginatingSnapshotEvidence(entry.packageId()).isEmpty());
+		assertEquals(authority, new SqliteImportedSubjectAuthorityRepository(restored).find(subjectId).orElseThrow());
+		assertEquals(identity,
+				new SqlitePortableIdentityRepository(restored).requireByLocalId(EntityType.SUBJECT, subjectId));
+		assertEquals("legacy-pdf", Files.readString(
+				target.dataRoot().resolve("subjects/Chemistry/exams/QCAA/2025/External Assessment/exam.pdf")));
+		restored.initialiseSchema();
+		restored.verifySchema();
+		restored.verifyIntegrity();
 	}
 
 	private void assertSharedContextBackupRoundTrip(BackupKind kind) throws Exception {
