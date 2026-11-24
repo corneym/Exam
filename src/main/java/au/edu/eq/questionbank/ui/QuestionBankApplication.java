@@ -423,6 +423,7 @@ public class QuestionBankApplication extends Application {
 	private MenuItem subjectSnapshotExportMenuItem;
 	private boolean packageImportInProgress;
 	private final StackPane corpusDashboardCurriculumHost = new StackPane();
+	private Menu curriculumMenu;
 
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
@@ -783,6 +784,20 @@ public class QuestionBankApplication extends Application {
 				"Save, clear or cancel the current Question, Shared Context or Answer work "
 						+ "before returning to the Corpus Dashboard.");
 		return false;
+	}
+
+	private boolean allowCurriculumModification(String title) {
+		if (workingSubject == null) {
+			showAlert(Alert.AlertType.WARNING, title, "No Subject is selected.",
+					"Select a Subject on the Corpus Dashboard.");
+			return false;
+		}
+		if (isWorkingSubjectSnapshotExportRestricted()) {
+			showAlert(Alert.AlertType.WARNING, title, "This Curriculum is read-only.",
+					"Curriculum changes must be made in the " + "authoritative coordinator installation.");
+			return false;
+		}
+		return true;
 	}
 
 	private boolean allowExamAssetsTransition() {
@@ -2232,15 +2247,16 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private Menu createCurriculumMenu(Stage primaryStage, ApplicationConfig config) {
-		Menu curriculumMenu = createMenu("_Curriculum");
+		curriculumMenu = createMenu("_Curriculum");
 		MenuItem authorItem = createMenuItem("_Author / Edit...", () -> showCurriculumAuthoring(primaryStage, config));
-
-		// Retain the existing id so any UI automation referring to this menu action
-		// remains compatible.
 		authorItem.setId("author-curriculum-pdf");
-		curriculumMenu.getItems().addAll(createMenuItem("_Import...", () -> importCurriculum(primaryStage, config)),
-				authorItem, new SeparatorMenuItem(),
-				createMenuItem("_Review Mappings...", () -> reviewCurriculumMappings(primaryStage, config)));
+		MenuItem importItem = createMenuItem("_Import...", () -> importCurriculum(primaryStage, config));
+		importItem.setId("import-curriculum");
+		MenuItem mappingItem = createMenuItem("_Review Mappings...",
+				() -> reviewCurriculumMappings(primaryStage, config));
+		mappingItem.setId("review-curriculum-mappings");
+		curriculumMenu.getItems().addAll(importItem, authorItem, new SeparatorMenuItem(), mappingItem);
+		curriculumMenu.setDisable(isWorkingSubjectSnapshotExportRestricted());
 		return curriculumMenu;
 	}
 
@@ -2271,35 +2287,22 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private Menu createExportMenu(Stage primaryStage, ApplicationConfig config) {
-
 		Menu exportMenu = createMenu("E_xport");
-
 		subjectSnapshotExportMenuItem = createMenuItem("Export Working _Subject Snapshot...",
 				() -> showExportWorkingSubjectSnapshot(primaryStage, config));
-
 		subjectSnapshotExportMenuItem.setId("export-subject-snapshot");
-
 		contributionExportMenuItem = createMenuItem("Export Assignment _Contribution...",
 				() -> showExportAssignmentContribution(primaryStage, config));
-
 		contributionExportMenuItem.setId("export-assignment-contribution");
-
 		revisionExportMenuItem = createMenuItem("_Revision HTML...",
 				() -> showRevisionExportDialog(primaryStage, config));
-
 		revisionExportMenuItem.setId("export-revision-html");
-
 		scormExportMenuItem = createMenuItem("Revision _SCORM...", () -> showScormExportDialog(primaryStage, config));
-
 		scormExportMenuItem.setId("export-revision-scorm");
-
 		exportMenu.getItems().setAll(subjectSnapshotExportMenuItem, contributionExportMenuItem, new SeparatorMenuItem(),
 				revisionExportMenuItem, scormExportMenuItem);
-
 		subjectSnapshotExportMenuItem.setDisable(activeAssignmentContext != null);
-
 		contributionExportMenuItem.setDisable(activeAssignmentContext == null);
-
 		return exportMenu;
 	}
 
@@ -3207,9 +3210,7 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void importCurriculum(Stage primaryStage, ApplicationConfig config) {
-		if (workingSubject == null) {
-			showAlert(Alert.AlertType.WARNING, "Curriculum Import", "No Subject is selected.",
-					"Select a Subject on the Corpus Dashboard before importing curriculum.");
+		if (!allowCurriculumModification("Curriculum Import")) {
 			return;
 		}
 		Subject subject = workingSubject;
@@ -3579,26 +3580,19 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private Set<Long> loadContributorBaselineIds(UUID assignmentId, EntityType type) throws SQLException, IOException {
-
 		Objects.requireNonNull(assignmentId, "assignmentId");
 		Objects.requireNonNull(type, "type");
-
 		byte[] baseline = contributorAssignments.readBaseline(assignmentId).records();
-
 		List<ExchangeRecord> records = new ExamWorkJsonlCodec().readRecords(new ByteArrayInputStream(baseline));
-
 		Set<UUID> issuedIds = records.stream().filter(record -> type.name().equals(record.recordType()))
 				.map(ExchangeRecord::recordId).collect(Collectors.toUnmodifiableSet());
-
 		SqliteDatabase database = new SqliteDatabase(applicationConfig.databasePath());
-
 		return new SqlitePortableIdentityRepository(database).findAllByLocalId(type).entrySet().stream()
 				.filter(entry -> issuedIds.contains(entry.getValue().portableId())).map(Map.Entry::getKey)
 				.collect(Collectors.toUnmodifiableSet());
 	}
 
 	private Set<Long> loadContributorBaselineQuestionIds(UUID assignmentId) throws SQLException, IOException {
-
 		return loadContributorBaselineIds(assignmentId, EntityType.QUESTION);
 	}
 
@@ -4747,9 +4741,7 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void reviewCurriculumMappings(Stage primaryStage, ApplicationConfig config) {
-		if (workingSubject == null) {
-			showAlert(Alert.AlertType.WARNING, "Curriculum Mapping", "No Subject is selected.",
-					"Select a Subject on the Corpus Dashboard before reviewing curriculum mappings.");
+		if (!allowCurriculumModification("Curriculum Mapping")) {
 			return;
 		}
 		Subject subject = workingSubject;
@@ -5215,14 +5207,15 @@ public class QuestionBankApplication extends Application {
 		try {
 			applyDashboardAuthority(dashboard, snapshot);
 			if (activeAssignmentContext != null) {
-
 				UUID assignmentId = activeAssignmentContext.session().assignmentId();
-
+				Set<Long> baselineQuestionIds = loadContributorBaselineQuestionIds(assignmentId);
+				Set<Long> baselineAnswerIds = loadContributorBaselineIds(assignmentId, EntityType.ANSWER);
 				dashboard.setAssignmentExamScope(activeAssignmentContext.session().examLocalId());
-
-				dashboard.setContributorBaselineQuestionIds(loadContributorBaselineQuestionIds(assignmentId));
-
-				dashboard.setContributorBaselineAnswerIds(loadContributorBaselineIds(assignmentId, EntityType.ANSWER));
+				dashboard.setContributorBaselineQuestionIds(baselineQuestionIds);
+				dashboard.setContributorBaselineAnswerIds(baselineAnswerIds);
+				answerCapturePane.setContributorBaselineAnswerIds(baselineAnswerIds);
+			} else {
+				answerCapturePane.setContributorBaselineAnswerIds(Set.of());
 			}
 		} catch (SQLException | IOException failure) {
 
@@ -5320,9 +5313,7 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void showCurriculumAuthoring(Stage primaryStage, ApplicationConfig config) {
-		if (workingSubject == null) {
-			showAlert(Alert.AlertType.WARNING, "Curriculum Authoring", "No Subject is selected.",
-					"Select a Subject on the Corpus Dashboard before opening curriculum authoring.");
+		if (!allowCurriculumModification("Curriculum Authoring")) {
 			return;
 		}
 		Subject subject = workingSubject;
@@ -5368,9 +5359,7 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void showDashboardAddCurriculum(Stage primaryStage, ApplicationConfig config) {
-		if (workingSubject == null) {
-			showAlert(Alert.AlertType.WARNING, "Add Curriculum", "No Subject is selected.",
-					"Select or add a Subject on the Corpus Dashboard first.");
+		if (!allowCurriculumModification("Add Curriculum")) {
 			return;
 		}
 		Subject subject = workingSubject;
@@ -6093,6 +6082,10 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void showNewCurriculumAuthoring(Stage primaryStage, ApplicationConfig config, Subject subject) {
+		if (workingSubject == null || subject.getId() != workingSubject.getId()
+				|| !allowCurriculumModification("Curriculum Authoring")) {
+			return;
+		}
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
 		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
 		CurriculumDraftLoader draftLoader = new CurriculumDraftLoader(
@@ -6190,38 +6183,26 @@ public class QuestionBankApplication extends Application {
 					.isImported(workingSubject.getId());
 			boolean contributorSubject = contributorAssignments != null && contributorAssignments.findAll().stream()
 					.anyMatch(session -> session.subjectLocalId() == workingSubject.getId());
-
 			if (activeAssignmentContext != null && !imported) {
-
 				var session = activeAssignmentContext.session();
-
 				long assignedExamId = session.examLocalId();
-
 				Set<Long> baselineQuestionIds = loadContributorBaselineQuestionIds(session.assignmentId());
-
 				Set<Long> baselineAnswerIds = loadContributorBaselineIds(session.assignmentId(), EntityType.ANSWER);
 
 				// Each predicate protects its own entity type.
 				// Records belonging to other Exams remain read-only.
 				dialog.setReadOnlyQuestionPredicate(question -> question.getExam().getId() != assignedExamId
 						|| baselineQuestionIds.contains(question.getId()));
-
 				dialog.setReadOnlyAnswerPredicate(question -> question.getExam().getId() != assignedExamId
 						|| !question.hasAnswer() || baselineAnswerIds.contains(question.getAnswer().getId()));
-
 			} else {
-
 				dialog.setReadOnlyQuestionPredicate(question -> imported || contributorSubject
 						|| assignedExamIds.contains(question.getExam().getId()));
 			}
-
 		} catch (SQLException | IOException failure) {
-
 			dialog.dispose();
-
 			showAlert(Alert.AlertType.ERROR, "Search Questions",
 					"Question editing permissions could not be established.", failureMessage(failure));
-
 			return;
 		}
 		showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
@@ -7750,15 +7731,20 @@ public class QuestionBankApplication extends Application {
 
 	private void updateContributorAssignmentActions() {
 		var selected = assignmentSelector.getValue();
-		assignmentSelector.setDisable(contributionExportRunning || contributorRemovalRunning);
-		assignmentRemoveButton.setDisable(selected == null || contributionExportRunning || contributorRemovalRunning);
+		boolean busy = contributionExportRunning || contributorRemovalRunning;
+		assignmentSelector.setDisable(busy);
+		assignmentRemoveButton.setDisable(selected == null || busy);
 		if (contributionExportMenuItem != null) {
-			contributionExportMenuItem.setDisable(
-					activeAssignmentContext == null || contributionExportRunning || contributorRemovalRunning);
+			contributionExportMenuItem.setDisable(activeAssignmentContext == null || busy);
 		}
-		if (subjectSnapshotExportMenuItem != null) {
-			subjectSnapshotExportMenuItem.setDisable(isWorkingSubjectSnapshotExportRestricted()
-					|| contributionExportRunning || contributorRemovalRunning);
+		if (subjectSnapshotExportMenuItem != null || curriculumMenu != null) {
+			boolean restricted = isWorkingSubjectSnapshotExportRestricted() || busy;
+			if (subjectSnapshotExportMenuItem != null) {
+				subjectSnapshotExportMenuItem.setDisable(restricted);
+			}
+			if (curriculumMenu != null) {
+				curriculumMenu.setDisable(restricted);
+			}
 		}
 	}
 

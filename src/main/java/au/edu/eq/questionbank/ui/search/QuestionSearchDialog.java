@@ -186,7 +186,6 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	 * @throws NullPointerException if the predicate is null
 	 */
 	public void setReadOnlyAnswerPredicate(Predicate<Question> predicate) {
-
 		readOnlyAnswerPredicate.set(Objects.requireNonNull(predicate, "predicate"));
 	}
 
@@ -221,32 +220,28 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	private void configureActionButtonBindings(Button editQuestionButton, Button splitQuestionButton,
 			Button editMetadataButton, Button recaptureSharedContextButton, Button editAnswerButton) {
 		editQuestionButton.disableProperty()
-				.bind(Bindings.createBooleanBinding(
-						() -> searchPane.getSelectedQuestion() == null || searchPane.isSelectedQuestionReadOnly(),
+				.bind(Bindings.createBooleanBinding(() -> isQuestionReadOnly(searchPane.getSelectedQuestion()),
 						searchPane.selectedResultProperty(), readOnlyQuestionPredicate));
 		splitQuestionButton.disableProperty().bind(Bindings.createBooleanBinding(() -> {
 			Question selected = searchPane.getSelectedQuestion();
-			return searchPane.isSelectedQuestionReadOnly() || searchPane.isClassificationDirty() || selected == null
-					|| selected.hasSourceQuestion() || selected.hasSharedContext();
+			return isQuestionReadOnly(selected) || searchPane.isClassificationDirty() || selected.hasSourceQuestion()
+					|| selected.hasSharedContext();
 		}, searchPane.selectedResultProperty(), searchPane.classificationDirtyProperty(), readOnlyQuestionPredicate));
 		editMetadataButton.disableProperty()
 				.bind(Bindings.createBooleanBinding(
-						() -> searchPane.getSelectedQuestion() == null || searchPane.isSelectedQuestionReadOnly()
+						() -> isQuestionReadOnly(searchPane.getSelectedQuestion())
 								|| searchPane.isClassificationDirty(),
 						searchPane.selectedResultProperty(), searchPane.classificationDirtyProperty(),
 						readOnlyQuestionPredicate));
 		recaptureSharedContextButton.disableProperty().bind(Bindings.createBooleanBinding(() -> {
 			Question selected = searchPane.getSelectedQuestion();
-			return searchPane.isSelectedQuestionReadOnly() || searchPane.isClassificationDirty() || selected == null
+			return isQuestionReadOnly(selected) || searchPane.isClassificationDirty()
 					|| (!selected.hasSharedContext() && !selected.hasSourceQuestion());
 		}, searchPane.selectedResultProperty(), searchPane.classificationDirtyProperty(), readOnlyQuestionPredicate));
 		editAnswerButton.disableProperty().bind(Bindings.createBooleanBinding(() -> {
-
 			Question selected = searchPane.getSelectedQuestion();
-
 			return selected == null || !selected.hasAnswer() || searchPane.isClassificationDirty()
 					|| isAnswerReadOnly(selected);
-
 		}, searchPane.selectedResultProperty(), searchPane.classificationDirtyProperty(), readOnlyQuestionPredicate,
 				readOnlyAnswerPredicate));
 	}
@@ -381,11 +376,8 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	}
 
 	private void configureResultConversion() {
-
 		setResultConverter(buttonType -> {
-
 			Question selected = searchPane.getSelectedQuestion();
-
 			if (selected == null) {
 				return null;
 			}
@@ -393,34 +385,26 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 			// An editable contributor Answer can belong to an
 			// otherwise read-only coordinator Question.
 			if (buttonType == editAnswerButtonType) {
-
 				if (!selected.hasAnswer() || isAnswerReadOnly(selected) || searchPane.isClassificationDirty()) {
 					return null;
 				}
-
 				return new EditRequest(selected, EditTarget.ANSWER);
 			}
-
 			if (searchPane.isSelectedQuestionReadOnly()) {
 				return null;
 			}
-
 			if (buttonType == editQuestionButtonType) {
 				return new EditRequest(selected, EditTarget.QUESTION);
 			}
-
 			if (buttonType == splitQuestionButtonType) {
 				return new EditRequest(selected, EditTarget.SPLIT);
 			}
-
 			if (buttonType == editMetadataButtonType) {
 				return new EditRequest(selected, EditTarget.METADATA);
 			}
-
 			if (buttonType == recaptureSharedContextButtonType) {
 				return new EditRequest(selected, EditTarget.SHARED_CONTEXT);
 			}
-
 			return null;
 		});
 	}
@@ -546,18 +530,22 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	}
 
 	private boolean isAnswerReadOnly(Question question) {
-
+		Predicate<Question> predicate = readOnlyAnswerPredicate.get();
 		if (question == null || question.getExam().isComplete()) {
 			return true;
 		}
 
-		Predicate<Question> predicate = readOnlyAnswerPredicate.get();
+		// Unless independent Answer authority has been supplied,
+		// inherit the ordinary Question ownership restrictions.
+		return predicate == null ? isQuestionReadOnly(question) : predicate.test(question);
+	}
 
-		if (predicate == null) {
-			return searchPane.isSelectedQuestionReadOnly();
-		}
+	private boolean isQuestionReadOnly(Question question) {
 
-		return predicate.test(question);
+		// Read the actual observable property used by the Dialog's
+		// bindings so subsequent permission changes invalidate them.
+		Predicate<Question> predicate = readOnlyQuestionPredicate.get();
+		return question == null || question.getExam().isComplete() || predicate.test(question);
 	}
 
 	private boolean isRememberedPositionVisible() {

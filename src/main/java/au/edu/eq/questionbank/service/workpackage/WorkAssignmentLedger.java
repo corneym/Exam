@@ -344,7 +344,6 @@ public final class WorkAssignmentLedger {
 				throw new PackageFormatException("Assignment must have exactly one context record");
 			}
 			ExchangeRecord context = contexts.getFirst();
-
 			if (!context.recordType().equals("WORK_ASSIGNMENT_CONTEXT")
 					|| !context.recordId().equals(manifest.assignmentId())
 					|| !Objects.equals(context.revisionId(), manifest.baselineSnapshotId())) {

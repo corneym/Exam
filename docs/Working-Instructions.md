@@ -34,38 +34,106 @@ If I tell you that I have committed, pushed, merged, changed branch, or otherwis
 
 Do not assume that code shown earlier in the conversation is still current when the repository can be checked.
 
-### How I make code changes
+### How I make code changes — mandatory complete-declaration rule
 
 Assume that I make Java changes manually in Eclipse.
 
-For every Java code-change instruction, give:
+To minimise implementation time, editing errors and discrepancies between working copies, all Java code changes MUST be supplied as complete declaration additions, replacements or deletions.
 
-- `Class: <fully-qualified-class-name>`;
-- `Method: <actual method name/signature>` when editing an existing method, including enough scope information to locate it;
-- exactly one operation label: `ADD`, `DELETE`, `REPLACE`, or `EDIT`;
-- exact copy/paste-ready code.
+This rule is mandatory and takes precedence over any conflicting instruction elsewhere in this document.
 
-Omit the filename when the class name makes it obvious.
+#### Permitted operations
 
-For an `EDIT` instruction, give exact starting and ending bounds for the edit.
+Only the following three operation labels are permitted:
 
-Omit placement instructions unless class scope materially matters. Omit import instructions. Let Eclipse organise methods and imports.
+- **ADD** — Supply a complete new declaration.
+- **REPLACE** — Supply the complete replacement declaration.
+- **DELETE** — Identify the complete existing declaration to be removed.
 
-Do not use fully qualified type names in Java snippets. Let me choose the import.
+The permitted declaration types are:
 
-Do not use vague directions such as “put this near...” or “add this somewhere below...”.
+- Classes
+- Interfaces
+- Records
+- Enums
+- Constructors
+- Methods
+- Fields and field constants
 
-For new methods, do not tell me where to insert them within the class. State only that the change is at class scope when that matters.
+The operation label **EDIT** is prohibited.
 
-Prefer smaller methods, explicit responsibilities, fewer anonymous classes, and less “just one more thing” inside an existing method.
+#### Mandatory requirements
 
-If a change is inside an `if`, loop, callback, `try` block, lambda, or other nested structure, identify the exact block being changed.
+1. Never instruct me to insert, replace or delete individual statements, expressions, comments or blocks within an existing method or constructor.
 
-Prefer complete methods or complete replacement sections whenever fragments could be ambiguous.
+2. Even when a change involves only one character or one line, supply the entire replacement method, constructor or field declaration.
 
-Include inline `//` comments that explain the algorithmic meaning of non-obvious code. Do not use `/* ... */` comments for algorithmic explanation.
+3. Every replacement must include all unchanged code belonging to that declaration. Never use ellipses, placeholders, omitted sections or instructions to retain portions of an existing declaration.
 
-When tests contain nested helper classes or fixtures, distinguish the outer test class from the nested class explicitly.
+4. Immediately beneath the declaration heading, display exactly one permitted operation in bold: **ADD**, **REPLACE** or **DELETE**. The operation EDIT is prohibited. Every ADD and REPLACE must supply the complete declaration, including annotations and Javadoc where applicable.
+
+5. When several changes affect the same declaration, consolidate them into one complete replacement. Never require me to revisit the same declaration multiple times within an implementation batch.
+
+6. When adding a declaration, supply its complete implementation, including all required annotations and Javadoc.
+
+7. When deleting a declaration, identify its exact signature and owning class. Do not instruct me to delete individual statements within it.
+
+8. When changing a record, enum, interface or complete class, supply the entire replacement declaration if the change cannot be expressed through complete member additions, replacements or deletions.
+
+9. When renaming a declaration, identify the existing declaration in the heading and supply the complete replacement under the new name.
+
+10. Before supplying a REPLACE or DELETE instruction, verify that the identified declaration actually exists in the current repository or confirmed working-tree state.
+
+11. Before supplying an ADD instruction, verify that the declaration does not already exist.
+
+12. Inspect the current implementation before constructing every replacement. Preserve all existing behaviour that is not explicitly being changed.
+
+13. Group all changes by owning class and follow the declaration ordering rules elsewhere in this document.
+
+14. Omit import instructions. Let Eclipse organise imports.
+
+15. Do not use fully qualified type names inside Java code snippets.
+
+16. Include inline // comments explaining non-obvious algorithmic decisions.
+
+17. Explicitly distinguish outer classes from nested classes, including test fixtures.
+
+18. Supply larger, coherent implementation batches wherever practical, with complete production declarations and their corresponding regression tests.
+
+#### Prohibited instruction patterns
+
+Never use instructions such as:
+
+- Insert this code before or after a particular statement.
+- Replace the following section of a method.
+- Change this line.
+- Remove this block.
+- Retain the remainder of the method.
+- Retain the existing method body.
+- Retain the existing Javadoc.
+- Add this statement inside the existing loop, conditional or callback.
+- Apply the same change to another method.
+- Use the method supplied in an earlier response.
+
+Instead, provide the complete affected declaration using ADD, REPLACE or DELETE.
+
+#### Pre-delivery compliance gate
+
+Before delivering any implementation batch, inspect every proposed code change and confirm that:
+
+- Every operation is ADD, REPLACE or DELETE.
+- Every addition and replacement contains a complete declaration.
+- Every replacement and deletion targets an existing declaration.
+- Every addition targets a declaration that does not already exist.
+- No declaration is replaced more than once within the batch.
+- No partial-method changes or omitted code remain.
+- All required annotations and Javadoc are included.
+- All existing unrelated behaviour is preserved.
+- Production changes and corresponding regression tests are included.
+
+If any instruction fails this compliance gate, correct it before presenting the implementation batch.
+
+There are no exceptions to the complete-declaration rule for small changes, compilation corrections, debugging, test changes, Javadoc corrections or subsequent implementation batches.
 
 ### Mandatory visual formatting for Java code changes
 

@@ -507,7 +507,7 @@ public final class CorpusDashboardPane extends VBox {
 
 		// Curriculum authoring is coordinator-owned. Classification
 		// of captured Questions remains available through Question Work.
-		addCurriculumButton.setDisable(assignmentExamId != null);
+		addCurriculumButton.setDisable(importedSubjectReadOnly || assignmentExamId != null);
 		clearFilters();
 	}
 
@@ -563,20 +563,14 @@ public final class CorpusDashboardPane extends VBox {
 	 * @throws IllegalArgumentException if an identifier is not positive
 	 */
 	public void setContributorBaselineAnswerIds(Set<Long> answerIds) {
-
 		Objects.requireNonNull(answerIds, "answerIds");
-
 		for (Long id : answerIds) {
-
 			Objects.requireNonNull(id, "answerIds element");
-
 			if (id < 1) {
 				throw new IllegalArgumentException("Answer IDs must be positive");
 			}
 		}
-
 		contributorBaselineAnswerIds = Set.copyOf(answerIds);
-
 		refreshQuestionWork();
 	}
 
@@ -1144,15 +1138,12 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private boolean canCaptureAnswer(Question question) {
-
 		if (question == null || isExamReadOnly(question.getExam().getId())) {
 			return false;
 		}
-
 		if (assignmentExamId == null) {
 			return true;
 		}
-
 		if (question.getExam().getId() != assignmentExamId.longValue()) {
 			return false;
 		}
@@ -1299,18 +1290,14 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private void completeSelectedAnswer() {
-
 		QuestionCorpusWorkItem selected = singleSelectedQuestionWorkItem();
-
 		if (selected == null || !canCaptureAnswer(selected.question())) {
 			return;
 		}
-
 		if (isMissingMcqExplanation(selected.question())) {
 			mcqExplanationCaptureHandler.accept(selected.question());
 			return;
 		}
-
 		if (canCompleteSelectedAnswer(selected)) {
 			answerCaptureHandler.accept(selected.question());
 		}
@@ -2018,17 +2005,13 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private Question firstMissingAnswerQuestion() {
-
 		BookletCorpusStatus selected = bookletTable.getSelectionModel().getSelectedItem();
-
 		if (selected == null) {
 			return null;
 		}
-
 		QuestionCorpusFilter filter = new QuestionCorpusFilter(workingSubject.getId(), null, null,
 				selected.booklet().getId(), QuestionCorpusCompletionFilter.INCOMPLETE,
 				QuestionCorpusProblem.MISSING_ANSWER);
-
 		return QuestionCorpusQueue.build(questions, filter).stream().filter(item -> canCaptureAnswer(item.question()))
 				.filter(item -> item.status().questionContentCaptured() && item.status().sharedContextResolved()
 						&& item.status().responseTypeResolved())
@@ -2036,11 +2019,9 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private Question firstMissingMcqExplanationQuestion(BookletCorpusStatus bookletStatus) {
-
 		if (bookletStatus == null || !bookletStatus.mcqExplanationCoverage().explanationCapable()) {
 			return null;
 		}
-
 		return questions.stream().filter(question -> question.getBooklet().getId() == bookletStatus.booklet().getId())
 				.filter(this::canCaptureAnswer).filter(this::isMissingMcqExplanation)
 				.sorted(QuestionSourceOrder.comparator()).findFirst().orElse(null);
@@ -2800,42 +2781,27 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private void updateQuestionActionState() {
-
 		QuestionCorpusWorkItem selected = singleSelectedQuestionWorkItem();
-
 		if (selected == null || importedSubjectReadOnly || isSelectedExamReadOnly()) {
-
 			completeSelectedQuestionButton.setDisable(true);
-
 			completeSelectedAnswerButton.setText("Complete Selected Answer");
-
 			completeSelectedAnswerButton.setDisable(true);
-
 			return;
 		}
-
 		Question question = selected.question();
 
 		// Evaluate Question and Answer permissions separately.
 		completeSelectedQuestionButton
 				.setDisable(isQuestionReadOnly(question) || !canCompleteSelectedQuestion(selected));
-
 		if (isMissingMcqExplanation(question)) {
-
 			completeSelectedAnswerButton.setText("Capture Explanation");
-
 			completeSelectedAnswerButton
 					.setTooltip(new Tooltip("Capture the missing MCQ explanation " + "for the selected Question."));
-
 			completeSelectedAnswerButton.setDisable(!canCaptureAnswer(question));
-
 		} else {
-
 			completeSelectedAnswerButton.setText("Complete Selected Answer");
-
 			completeSelectedAnswerButton
 					.setTooltip(new Tooltip("Complete the missing Answer " + "for the selected Question."));
-
 			completeSelectedAnswerButton
 					.setDisable(!canCaptureAnswer(question) || !canCompleteSelectedAnswer(selected));
 		}

@@ -56,6 +56,7 @@ import javafx.concurrent.Task;
 import javafx.concurrent.Worker;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonBase;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
@@ -149,6 +150,42 @@ class ContributorAssignmentDashboardWorkflowTest {
 		assertEquals(assignmentId, sessions().active().orElseThrow().assignmentId());
 		assertFalse(contribution.isDisable());
 		assertTrue(snapshot.isDisable());
+	}
+
+	@Test
+	void curriculumRemainsReadOnlyAfterAssignmentRemoval(FxRobot robot) throws Exception {
+		awaitAssignedDashboard(robot);
+		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
+		Menu curriculum = menuBar.getMenus().stream().filter(menu -> "_Curriculum".equals(menu.getText())).findFirst()
+				.orElseThrow();
+		robot.interact(() -> assertTrue(curriculum.isDisable()));
+
+		// The underlying operation must enforce the same restriction
+		// as the menu, even when invoked directly.
+		Platform.runLater(() -> invoke("showCurriculumAuthoring",
+				new Class<?>[] { Stage.class, ApplicationConfig.class }, primaryStage, contributor));
+		acknowledgeDialog(robot, "Curriculum Authoring", "This Curriculum is read-only.");
+		Button remove = robot.lookup("#corpus-dashboard-remove-assignment").queryButton();
+		Platform.runLater(remove::fire);
+		DialogPane confirmation = awaitDialog(robot, "Remove Work Package");
+		robot.interact(() -> {
+			ButtonType removeType = confirmation.getButtonTypes().stream()
+					.filter(type -> type.getButtonData() == ButtonBar.ButtonData.OK_DONE).findFirst().orElseThrow();
+			((ButtonBase) confirmation.lookupButton(removeType)).fire();
+		});
+		acknowledgeDialog(robot, "Work Package Removed", "The unchanged assignment was removed");
+		assertTrue(sessions().active().isEmpty());
+		assertTrue(sessions().find(assignmentId).isPresent());
+
+		// Removing an assignment does not transfer authoritative
+		// ownership of the installed Subject to the contributor.
+		robot.interact(() -> assertTrue(curriculum.isDisable()));
+		Platform.runLater(() -> invoke("showCurriculumAuthoring",
+				new Class<?>[] { Stage.class, ApplicationConfig.class }, primaryStage, contributor));
+		acknowledgeDialog(robot, "Curriculum Authoring", "This Curriculum is read-only.");
+		SqliteDatabase database = new SqliteDatabase(contributor.databasePath());
+		database.verifySchema();
+		database.verifyIntegrity();
 	}
 
 	@Test

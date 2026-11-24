@@ -332,6 +332,57 @@ class QuestionSearchDialogTest {
 		}
 	}
 
+	@Test
+	void contributorAnswerEditingIsIndependentOfQuestionEditing(FxRobot robot) throws TimeoutException {
+		Subject subject = new Subject(100, "Chemistry");
+		Question question = scopeTestQuestion(subject, 1000);
+		question.setAnswer(new Answer(2000, "Contributor answer", List.of()));
+		AtomicInteger searchLoads = new AtomicInteger();
+		QuestionSearchDialog[] holder = new QuestionSearchDialog[1];
+		robot.interact(() -> {
+			holder[0] = createScopeTestDialog(subject, List.of(question), QuestionSearchNarrowing.unrestricted(),
+					searchLoads);
+			holder[0].setReadOnlyQuestionPredicate(candidate -> true);
+			holder[0].setReadOnlyAnswerPredicate(candidate -> false);
+			holder[0].show();
+		});
+		QuestionSearchDialog dialog = holder[0];
+		try {
+			ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+					() -> onFx(robot, () -> !results.getItems().isEmpty()));
+			Button editQuestion = robot.lookup("#question-search-edit-question").queryButton();
+			Button editAnswer = robot.lookup("#question-search-edit-answer").queryButton();
+			robot.interact(() -> {
+				results.getSelectionModel().selectFirst();
+
+				// A contributor-owned Answer may be corrected
+				// without changing its issued parent Question.
+				assertTrue(editQuestion.isDisabled());
+				assertFalse(editAnswer.isDisabled());
+				ButtonType answerType = dialog.getDialogPane().getButtonTypes().stream()
+						.filter(type -> dialog.getDialogPane().lookupButton(type) == editAnswer).findFirst()
+						.orElseThrow();
+				var request = dialog.getResultConverter().call(answerType);
+				assertNotNull(request);
+				assertEquals(QuestionSearchDialog.EditTarget.ANSWER, request.target());
+				assertEquals(question.getId(), request.question().getId());
+
+				// Issued Answers must be protected independently.
+				dialog.setReadOnlyAnswerPredicate(candidate -> true);
+				assertTrue(editAnswer.isDisabled());
+				assertNull(dialog.getResultConverter().call(answerType));
+
+				// Contributor-owned Questions remain editable.
+				dialog.setReadOnlyQuestionPredicate(candidate -> false);
+				assertFalse(editQuestion.isDisabled());
+				assertTrue(editAnswer.isDisabled());
+			});
+		} finally {
+			robot.interact(dialog::close);
+		}
+	}
+
 	@ParameterizedTest
 	@ValueSource(booleans = { false, true })
 	void descriptorQueueRetainsQuestionsAfterFailedSaveAndCancelledClose(boolean dashboardQueue, FxRobot robot)

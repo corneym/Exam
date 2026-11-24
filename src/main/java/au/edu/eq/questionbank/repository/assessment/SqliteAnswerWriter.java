@@ -434,6 +434,7 @@ public final class SqliteAnswerWriter {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
+
 				// Answer ownership is independent of parent Question
 				// ownership. The existing relationship is verified below.
 				new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.ANSWER, answerId);
