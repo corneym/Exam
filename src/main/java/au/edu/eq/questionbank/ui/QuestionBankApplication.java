@@ -195,10 +195,11 @@ import au.edu.eq.questionbank.service.workpackage.MasterContributionReceiptExpor
 import au.edu.eq.questionbank.service.workpackage.MasterContributionReviewPlanner;
 import au.edu.eq.questionbank.service.workpackage.SqliteContributorAssignmentSessionRepository;
 import au.edu.eq.questionbank.service.workpackage.SubjectImportBackupGate;
-import au.edu.eq.questionbank.service.workpackage.SubjectImportSnapshotFingerprint;
+import au.edu.eq.questionbank.service.workpackage.SubjectImportCoordinator;
 import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationPreviewService;
 import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationReview;
 import au.edu.eq.questionbank.service.workpackage.SubjectSnapshotExporter;
+import au.edu.eq.questionbank.service.workpackage.SubjectSnapshotIntakePreview;
 import au.edu.eq.questionbank.service.workpackage.WorkAssignmentExporter;
 import au.edu.eq.questionbank.service.workpackage.WorkAssignmentInstallationCoordinator;
 import au.edu.eq.questionbank.service.workpackage.WorkAssignmentIssuanceService;
@@ -6282,6 +6283,47 @@ public class QuestionBankApplication extends Application {
 		openCurriculumAuthoringWindow(primaryStage, config, database, session);
 	}
 
+	private void showNewSubjectSnapshotApproval(Stage primaryStage, ApplicationConfig config, Path incomingArchive,
+			SubjectSnapshotIntakePreview.Inspection inspection) {
+		Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+		confirmation.initOwner(primaryStage);
+		confirmation.setTitle("Import Subject Snapshot");
+		confirmation.setHeaderText("Import " + inspection.fingerprint().subjectName());
+		confirmation.getDialogPane().setId("subject-snapshot-import-confirmation");
+		confirmation.setContentText("""
+				This Subject will be imported as a new read-only Subject.
+
+				Syllabus versions: %d
+				Curriculum nodes: %d
+				Curriculum mappings: %d
+				Exams: %d
+				Question booklets: %d
+				Answer booklets: %d
+				Questions: %d
+				Answers: %d
+				Shared contexts: %d
+				Assets: %d
+
+				The originating installation remains authoritative.
+				Existing Subjects will not be changed.
+
+				A verified full backup will be created automatically
+				before the import.
+				""".formatted(inspection.count("SYLLABUS_VERSION"), inspection.count("CURRICULUM_NODE"),
+				inspection.count("CURRICULUM_MAPPING"), inspection.count("EXAM"), inspection.count("EXAM_BOOKLET"),
+				inspection.count("ANSWER_FILE"), inspection.count("QUESTION"), inspection.count("ANSWER"),
+				inspection.count("SHARED_QUESTION_CONTEXT"), inspection.assets().references().size()));
+		confirmation.setResizable(true);
+		confirmation.getDialogPane().setPrefWidth(520);
+		ButtonType importButton = new ButtonType("Import Subject", ButtonBar.ButtonData.OK_DONE);
+		confirmation.getButtonTypes().setAll(importButton, ButtonType.CANCEL);
+		if (confirmation.showAndWait().orElse(ButtonType.CANCEL) != importButton) {
+			packageImportInProgress = false;
+			return;
+		}
+		startNewSubjectSnapshotInstallation(primaryStage, config, incomingArchive, inspection);
+	}
+
 	private void showOptions(Stage primaryStage, ApplicationConfig config) {
 		boolean currentDiagnosticsPreference;
 		try {
@@ -7446,81 +7488,162 @@ public class QuestionBankApplication extends Application {
 	private void startLiveSubjectSnapshotReview(Stage primaryStage, ApplicationConfig config, Path incomingArchive) {
 		if (activeAssignmentContext != null) {
 			packageImportInProgress = false;
-			showAlert(Alert.AlertType.WARNING, "Import Subject Snapshot", "Exit contributor assignment mode first.",
-					"An ordinary Subject snapshot must not alter or activate "
-							+ "an installed contributor assignment.");
+			showAlert(Alert.AlertType.WARNING, "Import Subject Snapshot", "A contributor assignment is active.",
+					"A Subject snapshot cannot be imported " + "while working on an active contributor assignment.");
 			return;
 		}
-		Task<PreparedSubjectReview> task = new ApplicationBackgroundTask<>(() -> {
-			var fingerprint = new SubjectImportSnapshotFingerprint().inspect(incomingArchive);
-			long masterSubjectId = findMasterSubjectId(config, fingerprint.subjectName());
-			Path directory = Files.createTempDirectory(config.dataRoot(), ".examwork-master-review-");
-			Path masterArchive = directory.resolve("master.examwork");
-			try {
+		Task<SubjectSnapshotIntakePreview.Inspection> task = new ApplicationBackgroundTask<>(() -> {
+			SqliteDatabase database = new SqliteDatabase(config.databasePath());
 
-				// The authoritative master is exported privately by the
-				// application. The user supplies only the incoming package.
-				new SubjectSnapshotExporter(new SqliteDatabase(config.databasePath()),
-						new ManagedDataLayout(config.dataRoot())).export(masterSubjectId, masterArchive);
-				var preview = new SubjectReconciliationPreviewService().preview(masterArchive, incomingArchive);
-				return new PreparedSubjectReview(directory, masterArchive, preview);
-			} catch (Exception failure) {
-				try {
-					Files.deleteIfExists(masterArchive);
-					Files.deleteIfExists(directory);
-				} catch (IOException cleanupFailure) {
-					failure.addSuppressed(cleanupFailure);
-				}
-				throw failure;
-			}
+			// Inspect one complete incoming Subject.
+			// No existing local master snapshot is required.
+			return new SubjectSnapshotIntakePreview(database).inspect(incomingArchive);
 		});
 		Alert progress = new Alert(Alert.AlertType.INFORMATION);
 		progress.initOwner(primaryStage);
-		progress.setTitle("Comparing Subject Package");
-		progress.setHeaderText("Comparing the incoming Subject with the current master");
-		progress.setContentText("Preparing a read-only master snapshot and validating "
-				+ "the incoming records. No changes will be imported.");
+		progress.setTitle("Inspecting Subject Snapshot");
+		progress.setHeaderText("Validating the incoming Subject");
+		progress.setContentText(
+				"Checking the Subject records, assets and " + "destination database. No data is being imported.");
 		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
 		progress.getButtonTypes().setAll(new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE));
 		task.setOnSucceeded(_ -> {
 			progress.close();
-			PreparedSubjectReview prepared = task.getValue();
-			boolean handedOff = false;
 			try {
-				SubjectReconciliationReview review = new SubjectReconciliationReview(prepared.preview());
-				SubjectReconciliationReviewDialog dialog = new SubjectReconciliationReviewDialog(primaryStage, review,
-						config.dataRoot());
-				dialog.showAndWait();
-				if (dialog.importRequested()) {
-					SubjectImportReviewWorkflow workflow = new SubjectImportReviewWorkflow(primaryStage, config,
-							dialog.review(), prepared.masterArchive(), incomingArchive,
-							() -> refreshCorpusDashboardHome(-1L), () -> cleanupPreparedSubjectReview(prepared));
+				var inspection = task.getValue();
+				switch (inspection.state()) {
+				case NEW_SUBJECT -> showNewSubjectSnapshotApproval(primaryStage, config, incomingArchive, inspection);
+				case ALREADY_IMPORTED -> {
+					packageImportInProgress = false;
+					showAlert(Alert.AlertType.INFORMATION, "Import Subject Snapshot",
+							"This Subject snapshot has already been imported.",
+							inspection.fingerprint().subjectName() + " requires no changes.");
+				}
+				case EXISTING_SUBJECT -> {
+					packageImportInProgress = false;
 
-					// Once handed off, the approval workflow owns the
-					// temporary master snapshot until its last operation.
-					handedOff = true;
-					workflow.run();
+					// Existing Subject refresh requires its own
+					// provenance-aware approval and transaction.
+					// Never redirect to legacy reconciliation.
+					showAlert(Alert.AlertType.WARNING, "Import Subject Snapshot", "This Subject already exists.",
+							"The incoming snapshot belongs to " + inspection.fingerprint().subjectName()
+									+ ". Existing Subjects cannot be " + "overwritten through new Subject import.");
 				}
-			} finally {
-				if (!handedOff) {
-					cleanupPreparedSubjectReview(prepared);
 				}
+			} catch (RuntimeException failure) {
+				packageImportInProgress = false;
+				showAlert(Alert.AlertType.ERROR, "Import Subject Snapshot",
+						"The Subject import preview could not be displayed.", failureMessage(failure));
 			}
 		});
 		task.setOnFailed(_ -> {
 			packageImportInProgress = false;
 			progress.close();
-			showAlert(Alert.AlertType.ERROR, "Subject Import Preview", "The incoming Subject could not be compared.",
+			showAlert(Alert.AlertType.ERROR, "Subject Import Preview", "The incoming Subject could not be validated.",
 					failureMessage(task.getException()));
 		});
 		task.setOnCancelled(_ -> {
 			packageImportInProgress = false;
 			progress.close();
 		});
-		Thread worker = new Thread(task, "examwork-live-master-subject-preview");
+		Thread worker = new Thread(task, "examwork-subject-snapshot-preview");
 		worker.setDaemon(true);
 		progress.show();
-		worker.start();
+		try {
+			worker.start();
+		} catch (RuntimeException failure) {
+			packageImportInProgress = false;
+			progress.close();
+			showAlert(Alert.AlertType.ERROR, "Subject Import Preview", "The Subject inspection could not be started.",
+					failureMessage(failure));
+		}
+	}
+
+	private void startNewSubjectSnapshotInstallation(Stage primaryStage, ApplicationConfig config, Path incomingArchive,
+			SubjectSnapshotIntakePreview.Inspection inspection) {
+		if (activeAssignmentContext != null) {
+			packageImportInProgress = false;
+			showAlert(Alert.AlertType.WARNING, "Import Subject Snapshot", "A contributor assignment is active.",
+					"The approved Subject import cannot proceed.");
+			return;
+		}
+		String subjectName = inspection.fingerprint().subjectName();
+		Task<SubjectImportCoordinator.Result> task = new ApplicationBackgroundTask<>(() -> {
+
+			// The service revalidates the approved archive,
+			// destination absence, provider identities and
+			// backup evidence before committing.
+			return new SubjectImportCoordinator(config).executeNewSubject(inspection, incomingArchive);
+		});
+		Alert progress = new Alert(Alert.AlertType.INFORMATION);
+		progress.initOwner(primaryStage);
+		progress.setTitle("Importing Subject Snapshot");
+		progress.setHeaderText("Importing " + subjectName);
+		progress.setContentText("Creating a verified full backup and " + "installing the Subject records and assets.");
+		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
+
+		// Publication must finish through its normal transaction
+		// and recovery boundaries. Closing the progress presentation
+		// does not cancel an installation already in progress.
+		progress.getButtonTypes().setAll(new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE));
+		task.setOnSucceeded(_ -> {
+			progress.close();
+			var result = task.getValue();
+			if (!result.applied()) {
+				packageImportInProgress = false;
+				showAlert(Alert.AlertType.WARNING, "Import Subject Snapshot", "The Subject was not imported.",
+						"No successful import was recorded.");
+				return;
+			}
+			try {
+
+				// Reload the ordinary Subject choices from
+				// persistence. No assignment context is activated.
+				curriculumSelectorPane.refreshSubjects();
+				examMetadataPane.refreshSubjects();
+				refreshAndShowCorpusDashboardHome();
+			} catch (RuntimeException failure) {
+				packageImportInProgress = false;
+
+				// Publication has already committed. A presentation
+				// failure must not be reported as an import rollback.
+				showAlert(Alert.AlertType.ERROR, "Subject Imported", subjectName + " was imported.",
+						"The import completed, but the Dashboard " + "could not be refreshed.\n\n"
+								+ failureMessage(failure));
+				return;
+			}
+			packageImportInProgress = false;
+			if (result.replay()) {
+				showAlert(Alert.AlertType.INFORMATION, "Subject Already Imported",
+						subjectName + " is already available.", "No duplicate records were created.");
+				return;
+			}
+			showAlert(Alert.AlertType.INFORMATION, "Subject Imported", subjectName + " is now available.",
+					"Select the Subject from the ordinary " + "Working Subject selector.\n\n"
+							+ "The imported Subject is read-only.\n\n" + "Pre-import backup:\n"
+							+ result.backupArchivePath());
+		});
+		task.setOnFailed(_ -> {
+			packageImportInProgress = false;
+			progress.close();
+			showAlert(Alert.AlertType.ERROR, "Subject Import Failed", subjectName + " could not be imported.",
+					failureMessage(task.getException()));
+		});
+		task.setOnCancelled(_ -> {
+			packageImportInProgress = false;
+			progress.close();
+		});
+		Thread worker = new Thread(task, "examwork-new-subject-installation");
+		worker.setDaemon(true);
+		progress.show();
+		try {
+			worker.start();
+		} catch (RuntimeException failure) {
+			packageImportInProgress = false;
+			progress.close();
+			showAlert(Alert.AlertType.ERROR, "Subject Import Failed", "The Subject installation could not be started.",
+					failureMessage(failure));
+		}
 	}
 
 	private void startQuestionSplitFromSearch(Stage primaryStage, QuestionSearchDialog searchDialog, Question question,

@@ -69,6 +69,7 @@ import au.edu.eq.questionbank.service.workpackage.ContributorAssignmentRemovalSe
 import au.edu.eq.questionbank.service.workpackage.ExamWorkPackageType;
 import au.edu.eq.questionbank.service.workpackage.SqliteContributionReturnLedger;
 import au.edu.eq.questionbank.service.workpackage.SqliteContributorAssignmentSessionRepository;
+import au.edu.eq.questionbank.service.workpackage.SubjectSnapshotExporter;
 import au.edu.eq.questionbank.service.workpackage.WorkAssignmentExporter;
 import au.edu.eq.questionbank.service.workpackage.WorkAssignmentInstallationCoordinator;
 import au.edu.eq.questionbank.service.workpackage.WorkAssignmentIssuanceService;
@@ -116,6 +117,58 @@ class ContributorAssignmentDashboardWorkflowTest {
 			Thread.currentThread().interrupt();
 			throw new IllegalStateException("Test worker interrupted", exception);
 		}
+	}
+
+	@Test
+	void activeAssignmentPreventsOrdinarySubjectSnapshotImport(FxRobot robot) throws Exception {
+		awaitAssignedDashboard(robot);
+		SqliteDatabase database = new SqliteDatabase(contributor.databasePath());
+		var originalSession = sessions().active().orElseThrow();
+		var originalBaseline = sessions().readBaseline(assignmentId);
+		int originalQuestionCount = new SqliteQuestionRepository(database).findAll().size();
+		Path sourceRoot = assignmentArchive.getParent().resolve("snapshot-source");
+		Files.createDirectories(sourceRoot);
+		ApplicationConfig source = ApplicationConfig.fromDataRoot(sourceRoot);
+		SqliteDatabase sourceDatabase = new SqliteDatabase(source.databasePath());
+		sourceDatabase.initialiseSchema();
+		try (Connection connection = sourceDatabase.openConnection();
+				Statement statement = connection.createStatement()) {
+			statement.execute("""
+					INSERT INTO subjects (id, subject_name)
+					VALUES (1, 'Chemistry')
+					""");
+		}
+		Path archive = assignmentArchive.getParent().resolve("chemistry-snapshot.examwork");
+		new SubjectSnapshotExporter(sourceDatabase, new ManagedDataLayout(sourceRoot)).export(1L, archive);
+
+		// Exercise the actual Subject import boundary with a valid
+		// archive while an unrelated contributor assignment is active.
+		Platform.runLater(() -> invoke("startWorkPackageImport",
+				new Class<?>[] { Stage.class, ApplicationConfig.class, Path.class, ExamWorkPackageType.class },
+				primaryStage, contributor, archive, ExamWorkPackageType.SUBJECT_SNAPSHOT));
+		DialogPane rejection = awaitDialog(robot, "Import Subject Snapshot");
+		robot.interact(() -> {
+			assertEquals("A contributor assignment is active.", rejection.getHeaderText());
+			assertFalse(field("packageImportInProgress", Boolean.class));
+			((ButtonBase) rejection.lookupButton(ButtonType.OK)).fire();
+		});
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(originalSession, sessions().active().orElseThrow());
+		assertTrue(Arrays.equals(originalBaseline.records(), sessions().readBaseline(assignmentId).records()));
+		assertTrue(Arrays.equals(originalBaseline.assets(), sessions().readBaseline(assignmentId).assets()));
+		assertEquals(originalQuestionCount, new SqliteQuestionRepository(database).findAll().size());
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				var result = statement.executeQuery("""
+						SELECT COUNT(*)
+						FROM subjects
+						WHERE subject_name = 'Chemistry'
+						""")) {
+			assertTrue(result.next());
+			assertEquals(0, result.getInt(1));
+		}
+		assertControlsReleased(robot);
+		database.verifyIntegrity();
 	}
 
 	@Test

@@ -10,6 +10,8 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -21,6 +23,7 @@ import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteImportedSubjectAuthorityRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteSubjectImportLedger;
 import au.edu.eq.questionbank.repository.sqlite.SqliteSubjectImportLedger.CoordinatorDecision;
 import au.edu.eq.questionbank.repository.sqlite.SqliteSubjectImportLedger.EntryKind;
@@ -77,9 +80,14 @@ public final class SubjectImportCoordinator {
 	 * Filesystem modifications outside the managed publication protocol must not
 	 * run concurrently.
 	 *
-	 * @param masterSubjectId existing master Subject local ID reviewed in preview
+	 * <p>
+	 * New Subject installations require an absent destination Subject and register
+	 * imported authority within the graph transaction.
+	 *
+	 * @param masterSubjectId existing master Subject local ID reviewed in preview,
+	 *                        or zero for a new Subject
 	 * @param plan            complete coordinator-approved import plan
-	 * @param incomingArchive original contributor Subject archive
+	 * @param incomingArchive original Subject archive
 	 * @param backupDirectory safe full-backup destination
 	 * @param approvalNote    non-blank coordinator audit rationale
 	 * @return committed or previously applied import result
@@ -89,30 +97,43 @@ public final class SubjectImportCoordinator {
 	 */
 	public Result execute(long masterSubjectId, SubjectImportApprovalPlan plan, Path incomingArchive,
 			Path backupDirectory, String approvalNote) throws SQLException, IOException, BackupException {
-		if (masterSubjectId < 1) {
-			throw new IllegalArgumentException("masterSubjectId must be positive");
-		}
 		Objects.requireNonNull(plan, "plan");
 		Objects.requireNonNull(incomingArchive, "incomingArchive");
 		Objects.requireNonNull(backupDirectory, "backupDirectory");
+		boolean newSubject = plan.isNewSubjectInstallation();
+		if (newSubject ? masterSubjectId != 0 : masterSubjectId < 1) {
+			throw new IllegalArgumentException(
+					"Destination Subject ID does not match " + "the approved import operation");
+		}
 		if (approvalNote == null || approvalNote.isBlank() || approvalNote.length() > 4000) {
 			throw new IllegalArgumentException("Import approval needs 1–4000 characters of rationale");
 		}
 		UUID packageId = plan.reviewedIncoming().packageId();
 		try (var lock = ManagedAssetPublicationLock.acquire(config.dataRoot())) {
 			ManagedAssetPublicationRecovery.recoverPending(config, lock);
+
+			// Even an idempotent replay must identify the exact
+			// archive that was originally reviewed.
+			plan.requireFreshIncoming(incomingArchive);
 			var existing = ledger.find(packageId);
 			if (existing.isPresent()) {
 				PackageEntry previous = existing.get();
 				if (!previous.archiveSha256().equals(plan.reviewedIncoming().archiveSha256())
-						|| !previous.approvalSha256().equals(plan.approvalSha256())) {
-					throw new IOException("Package identity already recorded with different approval or bytes");
+						|| (!newSubject && !previous.approvalSha256().equals(plan.approvalSha256()))) {
+					throw new IOException("Package identity already recorded " + "with different approval or bytes");
 				}
 				return new Result(packageId, previous.outcome() == PackageOutcome.APPLIED, true,
 						previous.backupArchivePath());
 			}
+			if (newSubject) {
+				UUID localInstallationId = new SqlitePortableIdentityRepository(database).installationId();
+				if (localInstallationId.equals(plan.reviewedIncoming().originInstallationId())) {
+					throw new IOException("Cannot import a Subject snapshot " + "from the current installation");
+				}
+			}
 
-			// A verified full backup always precedes staging and publication.
+			// A verified full backup always precedes staging
+			// and managed-file publication.
 			SubjectImportBackupGate gate = new SubjectImportBackupGate(config);
 			Certificate backup = gate.createVerifiedFullBackup(packageId, backupDirectory);
 			StagedPackage staged = new SubjectImportAssetStager(config).stage(plan, backup, incomingArchive);
@@ -128,10 +149,18 @@ public final class SubjectImportCoordinator {
 					connection.setAutoCommit(false);
 					try {
 						reserveWriter(connection);
+						if (newSubject) {
 
-						// Re-export under the SQLite write reservation to prevent
-						// any intervening SQLite writer changing reviewed state.
-						requireFreshMaster(masterSubjectId, plan);
+							// The destination must remain absent
+							// after acquiring the SQLite write reservation.
+							requireNewSubjectDestination(connection, plan.reviewedIncoming().subjectName());
+							requireNewSubjectProviders(connection, plan, decoded);
+						} else {
+
+							// Preserve the existing reconciliation
+							// stale-master protection.
+							requireFreshMaster(masterSubjectId, plan);
+						}
 						gate.requireIntact(packageId, backup);
 						journal.publishFiles(packageId);
 						Map<Key, UUID> canonical = writer.apply(connection, plan, staged, decoded, approvalNote);
@@ -140,6 +169,12 @@ public final class SubjectImportCoordinator {
 						gate.requireIntact(packageId, backup);
 						recordPackage(connection, plan, backup, approvalNote);
 						recordItems(connection, plan, canonical);
+						if (newSubject) {
+
+							// Authority and the terminal import ledger
+							// must commit with the imported graph.
+							recordNewSubjectAuthority(connection, plan, canonical);
+						}
 						connection.commit();
 						committed = true;
 					} catch (SQLException | IOException | RuntimeException failure) {
@@ -152,8 +187,8 @@ public final class SubjectImportCoordinator {
 					}
 				}
 
-				// A cleanup failure after commit is not an import rollback.
-				// The next invocation will recover the committed journal.
+				// Cleanup failure after commit is not a rollback.
+				// The next invocation can recover the committed journal.
 				try {
 					journal.recover(packageId, lock);
 				} catch (SQLException | IOException cleanupFailure) {
@@ -175,6 +210,57 @@ public final class SubjectImportCoordinator {
 				throw failure;
 			}
 		}
+	}
+
+	/**
+	 * Installs an approved complete snapshot of a previously absent Subject.
+	 *
+	 * <p>
+	 * Shared examination providers are resolved without overwriting their existing
+	 * values. A verified full backup is created automatically beneath the managed
+	 * pre-import backup directory.
+	 *
+	 * <p>
+	 * An identical previously applied package is reported as a replay.
+	 *
+	 * @param inspection      previously validated and approved snapshot
+	 * @param incomingArchive archive selected during preview
+	 * @return committed installation or idempotent replay result
+	 * @throws SQLException    if destination inspection or persistence fails
+	 * @throws IOException     if validation or publication fails
+	 * @throws BackupException if the required full backup fails
+	 */
+	public Result executeNewSubject(SubjectSnapshotIntakePreview.Inspection inspection, Path incomingArchive)
+			throws SQLException, IOException, BackupException {
+		Objects.requireNonNull(inspection, "inspection");
+		Objects.requireNonNull(incomingArchive, "incomingArchive");
+
+		// Revalidate the exact approved archive before deriving
+		// provider resolutions or inspecting the destination.
+		new SubjectImportSnapshotFingerprint().requireSamePackage(inspection.fingerprint(), incomingArchive);
+		var existing = ledger.find(inspection.fingerprint().packageId());
+		if (existing.isPresent()) {
+			PackageEntry previous = existing.orElseThrow();
+			if (!previous.archiveSha256().equals(inspection.fingerprint().archiveSha256())) {
+				throw new IOException("Package identity already recorded " + "with different archive bytes");
+			}
+			if (previous.outcome() != PackageOutcome.APPLIED) {
+				throw new IOException("This package was previously rejected");
+			}
+			return new Result(previous.packageId(), true, true, previous.backupArchivePath());
+		}
+		if (inspection.state() != SubjectSnapshotIntakePreview.State.NEW_SUBJECT) {
+			throw new IOException("The approved operation is not " + "a new Subject installation");
+		}
+		Map<UUID, UUID> providers;
+		try (Connection connection = database.openConnection()) {
+			providers = resolveNewSubjectProviders(connection, inspection.records());
+		}
+		SubjectImportApprovalPlan plan = SubjectImportApprovalPlan.prepareNewSubject(inspection, providers);
+		Path backupDirectory = config.dataRoot().resolve("backups").resolve("pre-import");
+		Files.createDirectories(backupDirectory);
+		return execute(0L, plan, incomingArchive, backupDirectory,
+				"Approved complete authoritative Subject installation");
 	}
 
 	/**
@@ -245,15 +331,35 @@ public final class SubjectImportCoordinator {
 		}
 	}
 
+	private void recordNewSubjectAuthority(Connection connection, SubjectImportApprovalPlan plan,
+			Map<Key, UUID> canonical) throws SQLException {
+		Key subjectKey = SubjectReconciliationReview.recordKey("SUBJECT", plan.reviewedIncoming().subjectId());
+		UUID canonicalSubjectId = canonical.get(subjectKey);
+		if (canonicalSubjectId == null) {
+			throw new SQLException("Imported Subject has no canonical identity");
+		}
+		long subjectLocalId = new SqlitePortableIdentityRepository(database)
+				.findByPortableId(connection, EntityType.SUBJECT, canonicalSubjectId)
+				.orElseThrow(() -> new SQLException("Imported Subject identity is missing")).localId();
+		new SqliteImportedSubjectAuthorityRepository(database).recordImported(connection, subjectLocalId,
+				plan.reviewedIncoming().packageId());
+	}
+
 	/**
 	 * Records the terminal package result in the same graph transaction.
 	 */
 	private void recordPackage(Connection connection, SubjectImportApprovalPlan plan, Certificate backup, String note)
 			throws SQLException {
 		var incoming = plan.reviewedIncoming();
+		String destinationFingerprint = plan.isNewSubjectInstallation() ? "0".repeat(64)
+				: plan.reviewedMaster().contentSha256();
+
+		// An absent destination has no previous Subject content.
+		// The zero digest records that condition without fabricating
+		// an existing master snapshot.
 		PackageEntry entry = new PackageEntry(incoming.packageId(), incoming.archiveSha256(),
-				incoming.originInstallationId(), incoming.subjectId(), plan.reviewedMaster().contentSha256(),
-				plan.approvalSha256(), PackageOutcome.APPLIED, backup.backupPath().toString(), note);
+				incoming.originInstallationId(), incoming.subjectId(), destinationFingerprint, plan.approvalSha256(),
+				PackageOutcome.APPLIED, backup.backupPath().toString(), note);
 		if (!ledger.recordPackage(connection, entry)) {
 			throw new SQLException("Package was recorded concurrently with import");
 		}
@@ -291,6 +397,57 @@ public final class SubjectImportCoordinator {
 		}
 	}
 
+	private void requireNewSubjectDestination(Connection connection, String subjectName) throws SQLException {
+		Objects.requireNonNull(connection, "connection");
+		Objects.requireNonNull(subjectName, "subjectName");
+		if (connection.getAutoCommit()) {
+			throw new IllegalStateException("New Subject installation requires " + "a caller-owned transaction");
+		}
+		if (subjectName.isBlank()) {
+			throw new IllegalArgumentException("Subject name must not be blank");
+		}
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT id
+				FROM subjects
+				WHERE subject_name = ? COLLATE NOCASE
+				""")) {
+			statement.setString(1, subjectName);
+			try (ResultSet result = statement.executeQuery()) {
+
+				// The absence observed during preview must still
+				// hold after the SQLite writer has been reserved.
+				// An existing Subject must never be implicitly
+				// converted into an imported Subject.
+				if (result.next()) {
+					throw new SQLException("A Subject named " + subjectName + " already exists. "
+							+ "The new Subject import cannot proceed.");
+				}
+			}
+		}
+	}
+
+	private void requireNewSubjectProviders(Connection connection, SubjectImportApprovalPlan plan,
+			DecodedPackage decoded) throws SQLException {
+		Map<UUID, UUID> current = resolveNewSubjectProviders(connection, decoded.records());
+		Map<UUID, UUID> approved = new HashMap<>();
+		for (Action action : plan.actions()) {
+			if (!"RECORD".equals(action.key().kind()) || !action.key().value().startsWith("EXAM_PROVIDER:")) {
+				continue;
+			}
+			if (action.operation() == SubjectImportApprovalPlan.Operation.LINK_ALIAS) {
+				approved.put(action.incomingId(), action.masterId());
+			} else if (action.operation() != SubjectImportApprovalPlan.Operation.INSERT_RECORD) {
+				throw new SQLException("Unsupported new Subject provider operation");
+			}
+		}
+
+		// Reject provider state that changed between approval
+		// planning and the reserved installation transaction.
+		if (!approved.equals(current)) {
+			throw new SQLException("Shared examination providers changed " + "since import preparation");
+		}
+	}
+
 	/**
 	 * Binds an SQLite write reservation to the existing transaction.
 	 */
@@ -304,6 +461,48 @@ public final class SubjectImportCoordinator {
 				throw new SQLException("Cannot reserve authoritative master writer");
 			}
 		}
+	}
+
+	private Map<UUID, UUID> resolveNewSubjectProviders(Connection connection, List<ExchangeRecord> records)
+			throws SQLException {
+		Map<UUID, UUID> resolved = new HashMap<>();
+		SqlitePortableIdentityRepository identities = new SqlitePortableIdentityRepository(database);
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT id, provider_name
+				FROM exam_providers
+				WHERE provider_name = ? COLLATE NOCASE
+				""")) {
+			for (ExchangeRecord record : records) {
+				if (!"EXAM_PROVIDER".equals(record.recordType())) {
+					continue;
+				}
+				String providerName = record.values().path("provider_name").asText();
+				if (providerName.isBlank()) {
+					throw new SQLException("Incoming examination provider has no name");
+				}
+				statement.setString(1, providerName);
+				try (ResultSet result = statement.executeQuery()) {
+					if (!result.next()) {
+						continue;
+					}
+					long localId = result.getLong("id");
+					String existingName = result.getString("provider_name");
+
+					// Do not silently treat a differing name as
+					// identical provider content.
+					if (!providerName.equals(existingName)) {
+						throw new SQLException("Examination provider naming conflict: " + providerName);
+					}
+					if (result.next()) {
+						throw new SQLException("Ambiguous shared examination provider: " + providerName);
+					}
+					UUID canonicalId = identities.findByLocalId(connection, EntityType.EXAM_PROVIDER, localId)
+							.orElseThrow(() -> new SQLException("Shared provider identity is missing")).portableId();
+					resolved.put(record.recordId(), canonicalId);
+				}
+			}
+		}
+		return Map.copyOf(resolved);
 	}
 
 	/**
