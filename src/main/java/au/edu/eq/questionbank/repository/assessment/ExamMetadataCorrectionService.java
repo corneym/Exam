@@ -95,11 +95,17 @@ public final class ExamMetadataCorrectionService {
 	/**
 	 * Corrects one Exam and relocates all managed booklet and Answer PDFs to the
 	 * authoritative corrected Exam directory.
+	 *
 	 * <p>
 	 * The corrected Provider, Year and Assessment identify the destination for
 	 * every managed source owned exclusively by the Exam. Filesystem moves are
 	 * completed before Exam metadata and SourceDocument paths are committed
-	 * together in SQLite. If persistence fails, completed file moves are reversed.
+	 * together in SQLite.
+	 *
+	 * <p>
+	 * Existing applicability-review confirmations are preserved because the
+	 * original managed PDFs are relocated without changing their contents. If
+	 * persistence fails, completed file moves are reversed.
 	 *
 	 * @param exam           persisted Exam whose metadata and managed sources are
 	 *                       being corrected
@@ -134,8 +140,9 @@ public final class ExamMetadataCorrectionService {
 					continue;
 				}
 
-				// Move without REPLACE_EXISTING. A concurrently-created destination must
-				// stop the correction rather than overwrite another managed source.
+				// Move without REPLACE_EXISTING. A concurrently-created
+				// destination must stop the correction rather than overwrite
+				// another managed source.
 				Files.createDirectories(relocation.destination().getParent());
 				Files.move(relocation.source(), relocation.destination());
 				completedMoves.add(relocation);
@@ -144,16 +151,22 @@ public final class ExamMetadataCorrectionService {
 			for (Relocation relocation : relocations) {
 				replacementPaths.put(relocation.sourceDocumentId(), relocation.relativeDestination());
 			}
-			Exam corrected = examWriter.correctExamMetadataAndSourceDocumentPaths(exam, providerName, year,
-					assessmentName, replacementPaths);
 
-			// Files become authoritative only after the metadata/path transaction commits.
+			// These are relocations of the existing PDFs, not replacements
+			// of their contents. Preserve existing applicability reviews
+			// within the metadata and source-path transaction.
+			Exam corrected = examWriter.correctExamMetadataAndSourceDocumentPaths(exam, providerName, year,
+					assessmentName, replacementPaths, true);
+
+			// Files become authoritative only after the metadata/path
+			// transaction commits.
 			pruneEmptySourceDirectories(completedMoves);
 			return new Result(corrected, replacementPaths);
 		} catch (SQLException | IOException | RuntimeException failure) {
 
-			// Filesystem and SQLite cannot share one transaction. Reverse every completed
-			// move when persistence or a later relocation fails.
+			// Filesystem and SQLite cannot share one transaction.
+			// Reverse every completed move when persistence or a later
+			// relocation fails.
 			rollbackMoves(completedMoves, failure);
 			throw failure;
 		}

@@ -123,6 +123,10 @@ public final class SqliteExamWriter {
 	 * Corrects Exam metadata and the persisted paths of source documents belonging
 	 * to that correction in one SQLite transaction.
 	 *
+	 * <p>
+	 * Source-document path changes retain the ordinary applicability-review
+	 * invalidation behaviour.
+	 *
 	 * @param exam                existing persisted Exam
 	 * @param providerName        corrected non-blank provider name
 	 * @param year                corrected positive assessment year
@@ -138,29 +142,7 @@ public final class SqliteExamWriter {
 	 */
 	public Exam correctExamMetadataAndSourceDocumentPaths(Exam exam, String providerName, int year, String name,
 			Map<Long, String> sourceDocumentPaths) throws SQLException {
-		validateExamCorrection(exam, providerName, year, name);
-		if (sourceDocumentPaths == null) {
-			throw new NullPointerException("sourceDocumentPaths");
-		}
-		try (Connection connection = database.openConnection()) {
-			connection.setAutoCommit(false);
-			try {
-				Exam corrected = correctExamMetadata(connection, exam, providerName, year, name);
-
-				// Source paths are part of the same transaction as the Exam correction so
-				// SQLite can never commit one without the other.
-				updateSourceDocumentPaths(connection, sourceDocumentPaths);
-				connection.commit();
-				return corrected;
-			} catch (SQLException | RuntimeException exception) {
-				try {
-					connection.rollback();
-				} catch (SQLException rollbackFailure) {
-					exception.addSuppressed(rollbackFailure);
-				}
-				throw exception;
-			}
-		}
+		return correctExamMetadataAndSourceDocumentPaths(exam, providerName, year, name, sourceDocumentPaths, false);
 	}
 
 	/**
@@ -1304,6 +1286,62 @@ public final class SqliteExamWriter {
 		}
 	}
 
+	/**
+	 * Corrects Exam metadata and source-document paths atomically.
+	 *
+	 * <p>
+	 * Review preservation is reserved for the managed PDF relocation workflow,
+	 * where existing files have been moved without changing their contents.
+	 * Ordinary source replacement must not request review preservation.
+	 *
+	 * @param exam                         existing persisted Exam
+	 * @param providerName                 corrected provider name
+	 * @param year                         corrected assessment year
+	 * @param name                         corrected assessment name
+	 * @param sourceDocumentPaths          replacement source-document paths
+	 * @param preserveApplicabilityReviews whether unchanged source relocation
+	 *                                     permits existing reviews to be retained
+	 * @return corrected Exam
+	 * @throws SQLException if persistence fails
+	 */
+	Exam correctExamMetadataAndSourceDocumentPaths(Exam exam, String providerName, int year, String name,
+			Map<Long, String> sourceDocumentPaths, boolean preserveApplicabilityReviews) throws SQLException {
+		validateExamCorrection(exam, providerName, year, name);
+		if (sourceDocumentPaths == null) {
+			throw new NullPointerException("sourceDocumentPaths");
+		}
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				Exam corrected = correctExamMetadata(connection, exam, providerName, year, name);
+				List<Long> reviewedBookletIds = List.of();
+				if (preserveApplicabilityReviews) {
+					requireExclusiveExamSources(connection, exam.getId(), sourceDocumentPaths);
+
+					// Capture only confirmations that actually exist before
+					// the source-path updates invoke the invalidation triggers.
+					reviewedBookletIds = findReviewedBookletIds(connection, exam.getId());
+				}
+
+				// Metadata, source paths and preserved reviews must commit
+				// together or roll back together.
+				updateSourceDocumentPaths(connection, sourceDocumentPaths);
+				if (preserveApplicabilityReviews) {
+					restoreApplicabilityReviews(connection, reviewedBookletIds);
+				}
+				connection.commit();
+				return corrected;
+			} catch (SQLException | RuntimeException exception) {
+				try {
+					connection.rollback();
+				} catch (SQLException rollbackFailure) {
+					exception.addSuppressed(rollbackFailure);
+				}
+				throw exception;
+			}
+		}
+	}
+
 	Exam findExam(Connection connection, Subject subject, ExamProvider provider, int year, String name)
 			throws SQLException {
 		if (connection == null) {
@@ -1943,6 +1981,26 @@ public final class SqliteExamWriter {
 		return List.copyOf(matches);
 	}
 
+	private List<Long> findReviewedBookletIds(Connection connection, long examId) throws SQLException {
+		List<Long> reviewedBookletIds = new ArrayList<>();
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT r.booklet_id
+				FROM booklet_applicability_reviews r
+				JOIN exam_booklets b
+				  ON b.id = r.booklet_id
+				WHERE b.exam_id = ?
+				ORDER BY r.booklet_id
+				""")) {
+			statement.setLong(1, examId);
+			try (ResultSet result = statement.executeQuery()) {
+				while (result.next()) {
+					reviewedBookletIds.add(result.getLong("booklet_id"));
+				}
+			}
+		}
+		return List.copyOf(reviewedBookletIds);
+	}
+
 	private Integer readNullableInteger(ResultSet result, String columnName) throws SQLException {
 
 		// ResultSet#getInt maps SQL NULL to zero, so inspect wasNull before exposing
@@ -1987,6 +2045,69 @@ public final class SqliteExamWriter {
 									+ "an explicit Applicability Reviewed confirmation.");
 				}
 			}
+		}
+	}
+
+	private void requireExclusiveExamSources(Connection connection, long examId, Map<Long, String> sourceDocumentPaths)
+			throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT exam_id
+				FROM exam_booklets
+				WHERE source_document_id = ?
+
+				UNION
+
+				SELECT exam_id
+				FROM answer_files
+				WHERE source_document_id = ?
+				""")) {
+			for (Long sourceDocumentId : sourceDocumentPaths.keySet()) {
+				if (sourceDocumentId == null || sourceDocumentId < 1) {
+					throw new IllegalArgumentException("Source document id must be positive");
+				}
+				statement.setLong(1, sourceDocumentId);
+				statement.setLong(2, sourceDocumentId);
+				boolean ownedByExam = false;
+				try (ResultSet result = statement.executeQuery()) {
+					while (result.next()) {
+						long owningExamId = result.getLong("exam_id");
+
+						// Recheck ownership inside the write transaction.
+						// Filesystem planning alone cannot establish that
+						// another Exam does not now reference this source.
+						if (owningExamId != examId) {
+							throw new IllegalStateException(
+									"Source document is also used by another exam: " + sourceDocumentId);
+						}
+						ownedByExam = true;
+					}
+				}
+				if (!ownedByExam) {
+					throw new IllegalArgumentException(
+							"Source document does not belong to the corrected exam: " + sourceDocumentId);
+				}
+			}
+		}
+	}
+
+	private void restoreApplicabilityReviews(Connection connection, List<Long> reviewedBookletIds) throws SQLException {
+		if (reviewedBookletIds.isEmpty()) {
+			return;
+		}
+		try (PreparedStatement statement = connection.prepareStatement("""
+				INSERT INTO booklet_applicability_reviews
+				    (booklet_id)
+				VALUES (?)
+				ON CONFLICT(booklet_id) DO NOTHING
+				""")) {
+
+			// Restore existing human confirmations only. Never create
+			// confirmations for booklets that were previously unreviewed.
+			for (long bookletId : reviewedBookletIds) {
+				statement.setLong(1, bookletId);
+				statement.addBatch();
+			}
+			statement.executeBatch();
 		}
 	}
 
