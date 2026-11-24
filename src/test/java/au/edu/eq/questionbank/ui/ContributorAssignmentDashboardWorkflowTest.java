@@ -2,6 +2,7 @@ package au.edu.eq.questionbank.ui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -12,12 +13,15 @@ import java.lang.reflect.Proxy;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
@@ -35,22 +39,28 @@ import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.TestPdf;
 import au.edu.eq.questionbank.model.Answer;
+import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.Exam;
+import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.repository.assessment.QuestionRepository;
+import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
+import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.audit.ExamCorpusStatus;
+import au.edu.eq.questionbank.service.workpackage.ContributionSnapshotReader;
 import au.edu.eq.questionbank.service.workpackage.SqliteContributorAssignmentSessionRepository;
 import au.edu.eq.questionbank.service.workpackage.WorkAssignmentExporter;
 import au.edu.eq.questionbank.service.workpackage.WorkAssignmentInstallationCoordinator;
 import au.edu.eq.questionbank.service.workpackage.WorkAssignmentIssuanceService;
 import au.edu.eq.questionbank.ui.capture.AnswerCapturePane;
 import au.edu.eq.questionbank.ui.capture.QuestionCapturePane;
+import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import javafx.application.Platform;
 import javafx.concurrent.Task;
 import javafx.concurrent.Worker;
@@ -150,6 +160,111 @@ class ContributorAssignmentDashboardWorkflowTest {
 		assertEquals(assignmentId, sessions().active().orElseThrow().assignmentId());
 		assertFalse(contribution.isDisable());
 		assertTrue(snapshot.isDisable());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void contributorCanInspectAssignedExamAssetsWithoutChangingStructure(FxRobot robot) throws Exception {
+		awaitAssignedDashboard(robot);
+		SqliteDatabase database = new SqliteDatabase(contributor.databasePath());
+		var session = sessions().active().orElseThrow();
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, examWriter);
+		Subject subject = new Subject(session.subjectLocalId(), "Biology");
+		Exam exam = examWriter.findExamsForSubject(subject).stream()
+				.filter(candidate -> candidate.getId() == session.examLocalId()).findFirst().orElseThrow();
+		List<ExamBooklet> booklets = examWriter.findExamBooklets(exam);
+		List<AnswerFile> answerFiles = answerWriter.findAnswerFiles(exam);
+		assertEquals(2, booklets.size());
+		assertEquals(1, answerFiles.size());
+		AnswerFile answerFile = answerFiles.getFirst();
+		Path beforePath = Files.createTempDirectory("exam-assets-before-").resolve("snapshot.db");
+		database.createConsistentSnapshot(beforePath);
+		var before = new ContributionSnapshotReader(beforePath).read(assignmentId);
+		Button inspect = robot.lookup("#corpus-dashboard-manage-exam-assets").queryButton();
+		assertFalse(inspect.isDisabled());
+		assertEquals("Inspect Exam / Assets", inspect.getText());
+		fireExamAssetsAction(inspect, "Open Exam Assets");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> WaitForAsyncUtils
+						.asyncFx(() -> primaryStage.getScene().getRoot().lookup("#exam-assets-exam") != null)
+						.get(3, TimeUnit.SECONDS));
+
+		// Use direct scene-graph lookup on the FX thread rather
+		// than nesting TestFX lookup operations inside interact().
+		robot.interact(() -> {
+			var root = primaryStage.getScene().getRoot();
+			ComboBox<Exam> examBox = (ComboBox<Exam>) root.lookup("#exam-assets-exam");
+			assertEquals(1, examBox.getItems().size());
+			assertEquals(exam.getId(), examBox.getValue().getId());
+			assertTrue(examBox.isDisabled(), "Assignment scope must remain fixed");
+			List<String> protectedControls = List.of("#exam-assets-edit", "#exam-assets-add-new-exam",
+					"#exam-assets-add-question-booklet", "#exam-assets-add-answer-booklet",
+					"#exam-assets-legacy-import", "#exam-assets-provider", "#exam-assets-year",
+					"#exam-assets-assessment", "#exam-assets-expected-question-booklets",
+					"#exam-assets-expected-answer-booklets");
+			for (String selector : protectedControls) {
+				Node control = root.lookup(selector);
+				assertNotNull(control, selector);
+				assertTrue(control.isDisabled(), selector + " must remain read-only");
+			}
+			for (ExamBooklet booklet : booklets) {
+				long id = booklet.getId();
+				List<String> protectedBookletControls = List.of("#exam-assets-question-edit-" + id,
+						"#exam-assets-question-delete-" + id, "#exam-assets-question-save-" + id,
+						"#exam-assets-question-name-" + id, "#exam-assets-question-expected-" + id,
+						"#exam-assets-question-answer-" + id, "#exam-assets-question-format-mcq-" + id,
+						"#exam-assets-question-format-written-" + id, "#exam-assets-question-format-both-" + id);
+				for (String selector : protectedBookletControls) {
+					Node control = root.lookup(selector);
+					assertNotNull(control, selector);
+					assertTrue(control.isDisabled(), selector + " must remain read-only");
+				}
+				ComboBox<?> association = (ComboBox<?>) root.lookup("#exam-assets-question-answer-" + id);
+				assertNotNull(association.getValue());
+				assertEquals("Marking Guide", association.getValue().toString());
+				assertFalse(root.lookup("#exam-assets-question-view-" + id).isDisabled());
+				assertFalse(root.lookup("#exam-assets-question-select-" + id).isDisabled());
+			}
+			assertTrue(root.lookup("#exam-assets-answer-delete-" + answerFile.getId()).isDisabled());
+			assertTrue(root.lookup("#exam-assets-answer-explanations-" + answerFile.getId()).isDisabled());
+		});
+		PdfWorkspacePane pdfWorkspace = field("pdfWorkspace", PdfWorkspacePane.class);
+
+		// Verify that the actual Question PDF can be inspected.
+		Button questionView = robot.lookup("#exam-assets-question-view-" + booklets.getFirst().getId()).queryButton();
+		fireExamAssetsAction(questionView, "View Question PDF");
+		robot.interact(() -> {
+			assertEquals(PdfWorkspacePane.DocumentMode.VIEWER, pdfWorkspace.getDisplayedDocument());
+			assertEquals(1, pdfWorkspace.getCurrentPageNumber());
+		});
+
+		// Verify that the associated Answer PDF can also be inspected.
+		Button answerView = robot.lookup("#exam-assets-answer-view-" + answerFile.getId()).queryButton();
+		assertFalse(answerView.isDisabled());
+		fireExamAssetsAction(answerView, "View Answer PDF");
+		robot.interact(() -> {
+			assertEquals(PdfWorkspacePane.DocumentMode.VIEWER, pdfWorkspace.getDisplayedDocument());
+			assertEquals(1, pdfWorkspace.getCurrentPageNumber());
+		});
+
+		// Inspection must not acquire a structural transaction.
+		Button returnButton = robot.lookup("#exam-assets-return-dashboard").queryButton();
+		assertFalse(returnButton.isDisabled());
+		fireExamAssetsAction(returnButton, "Return to Dashboard");
+		awaitAssignedDashboard(robot);
+		assertEquals(assignmentId, sessions().active().orElseThrow().assignmentId());
+		Path afterPath = beforePath.resolveSibling("after.db");
+		database.createConsistentSnapshot(afterPath);
+		var after = new ContributionSnapshotReader(afterPath).read(assignmentId);
+
+		// Inspecting either PDF must not modify authoritative records
+		// or generate contribution candidates.
+		assertEquals(before.currentRecords(), after.currentRecords(),
+				"Inspection must not alter the authoritative Exam graph");
+		assertTrue(after.delta().candidates().isEmpty());
+		database.verifySchema();
+		database.verifyIntegrity();
 	}
 
 	@Test
@@ -421,12 +536,13 @@ class ContributorAssignmentDashboardWorkflowTest {
 		assertEquals(session.examLocalId(), installedExam.getId());
 		assertEquals("External Assessment", installedExam.getName());
 
-		// Local integer IDs are installation-specific; portable UUID identity
-		// must survive assignment installation and application restart.
+		// Portable UUID identity must survive installation and restart.
 		var identity = new SqlitePortableIdentityRepository(contributorDatabase).requireByLocalId(EntityType.EXAM,
 				installedExam.getId());
 		assertEquals(session.examPortableId(), identity.portableId());
-		assertTrue(robot.lookup("#corpus-dashboard-manage-exam-assets").queryButton().isDisabled());
+		Button inspect = robot.lookup("#corpus-dashboard-manage-exam-assets").queryButton();
+		assertFalse(inspect.isDisabled());
+		assertEquals("Inspect Exam / Assets", inspect.getText());
 		assertTrue(robot.lookup("#corpus-dashboard-create-contributor-assignment").queryButton().isDisabled());
 		ComboBox<SqliteContributorAssignmentSessionRepository.Session> assignments = robot
 				.lookup("#corpus-dashboard-assignment-selector").queryAs(ComboBox.class);
@@ -437,8 +553,7 @@ class ContributorAssignmentDashboardWorkflowTest {
 			assertNull(primaryStage.getScene().getRoot().lookup("#corpus-dashboard-switch-assignment"));
 		});
 
-		// A new application instance against the same data installation must
-		// restore the active assignment automatically, with no Switch action.
+		// Restart against the same contributor installation.
 		robot.interact(() -> {
 			try {
 				application.stop();
@@ -459,6 +574,9 @@ class ContributorAssignmentDashboardWorkflowTest {
 		assertEquals(assignmentId,
 				new SqliteContributorAssignmentSessionRepository(new SqliteDatabase(contributor.databasePath()))
 						.active().orElseThrow().assignmentId());
+		Button restoredInspect = robot.lookup("#corpus-dashboard-manage-exam-assets").queryButton();
+		assertFalse(restoredInspect.isDisabled());
+		assertEquals("Inspect Exam / Assets", restoredInspect.getText());
 	}
 
 	@Test
@@ -657,6 +775,65 @@ class ContributorAssignmentDashboardWorkflowTest {
 		}
 	}
 
+	private void fireExamAssetsAction(Button button, String actionDescription) throws Exception {
+		CompletableFuture<Void> completion = new CompletableFuture<>();
+		AtomicReference<String> unexpectedDialog = new AtomicReference<>();
+
+		// Keep the test thread available while an application action
+		// potentially enters a modal JavaFX event loop.
+		Platform.runLater(() -> {
+			try {
+				assertFalse(button.isDisabled(), actionDescription + " is disabled");
+				button.fire();
+				completion.complete(null);
+			} catch (Throwable failure) {
+				completion.completeExceptionally(failure);
+			}
+		});
+		long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+		while (!completion.isDone() && System.nanoTime() < deadline) {
+			try {
+				completion.get(100, TimeUnit.MILLISECONDS);
+			} catch (TimeoutException pending) {
+
+				// Detect and dismiss unexpected application alerts
+				// rather than leaving their showAndWait loop blocked.
+				WaitForAsyncUtils.asyncFx(() -> {
+					for (Window window : List.copyOf(Window.getWindows())) {
+						if (!(window instanceof Stage stage) || !stage.isShowing() || stage.getScene() == null
+								|| !(stage.getScene().getRoot() instanceof DialogPane pane)) {
+							continue;
+						}
+						String content = pane.getContent() instanceof TextArea area ? area.getText()
+								: pane.getContentText();
+						unexpectedDialog.compareAndSet(null,
+								stage.getTitle() + ": " + pane.getHeaderText() + "\n" + content);
+						Node dismiss = pane.lookupButton(ButtonType.CANCEL);
+						if (dismiss == null) {
+							dismiss = pane.lookupButton(ButtonType.CLOSE);
+						}
+						if (dismiss == null) {
+							dismiss = pane.lookupButton(ButtonType.OK);
+						}
+						if (dismiss instanceof ButtonBase dismissButton) {
+							dismissButton.fire();
+						} else {
+
+							// An unexpected custom modal must not
+							// prevent the test harness from terminating.
+							stage.hide();
+						}
+					}
+					return null;
+				}).get(3, TimeUnit.SECONDS);
+			}
+		}
+		assertTrue(completion.isDone(), actionDescription + " did not finish within 15 seconds");
+		completion.get(1, TimeUnit.SECONDS);
+		assertNull(unexpectedDialog.get(),
+				actionDescription + " opened an unexpected dialog:\n" + unexpectedDialog.get());
+	}
+
 	private void hideInstallationProgress(FxRobot robot) throws Exception {
 		DialogPane pane = awaitDialog(robot, "Import Contributor Assignment");
 		robot.interact(() -> {
@@ -677,7 +854,11 @@ class ContributorAssignmentDashboardWorkflowTest {
 	}
 
 	private void prepareMaster(SqliteDatabase database, Path dataRoot) throws Exception {
-		Path pdfRoot = dataRoot.resolve("subjects/Biology/exams");
+
+		// Use the same canonical managed hierarchy as ordinary
+		// Exam Assets intake.
+		ManagedDataLayout layout = new ManagedDataLayout(dataRoot);
+		Path pdfRoot = layout.examDirectory("Biology", "QCAA", 2025, "External Assessment");
 		Files.createDirectories(pdfRoot);
 		Files.write(pdfRoot.resolve("questions.pdf"), TestPdf.bytes("Question PDF fixture"));
 		Files.write(pdfRoot.resolve("answers.pdf"), TestPdf.bytes("Answer PDF fixture"));
@@ -710,12 +891,20 @@ class ContributorAssignmentDashboardWorkflowTest {
 					INSERT INTO exam_providers (id, provider_name)
 					VALUES (21, 'QCAA')
 					""");
-			statement.execute("""
+
+			// Persist the exact paths generated by ManagedDataLayout
+			// rather than maintaining separate hardcoded path strings.
+			try (PreparedStatement insert = connection.prepareStatement("""
 					INSERT INTO source_documents (id, relative_path)
-					VALUES
-					  (51, 'subjects/Biology/exams/questions.pdf'),
-					  (52, 'subjects/Biology/exams/answers.pdf')
-					""");
+					VALUES (?, ?)
+					""")) {
+				insert.setLong(1, 51);
+				insert.setString(2, layout.relativePath(pdfRoot.resolve("questions.pdf")));
+				insert.executeUpdate();
+				insert.setLong(1, 52);
+				insert.setString(2, layout.relativePath(pdfRoot.resolve("answers.pdf")));
+				insert.executeUpdate();
+			}
 			statement.execute("""
 					INSERT INTO exams (
 					    id, subject_id, provider_id,

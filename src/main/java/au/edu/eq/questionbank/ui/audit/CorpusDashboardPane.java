@@ -2698,7 +2698,11 @@ public final class CorpusDashboardPane extends VBox {
 		boolean locked = selected && isSelectedExamReadOnly();
 		boolean complete = selected && selectedExam.declaredCaptureState() == ExamCaptureState.COMPLETE;
 		boolean coordinatorContext = assignmentExamId == null;
-		manageExamAssetsButton.setDisable(!selected || !coordinatorContext || locked);
+
+		// Contributors may inspect the assigned Exam structure.
+		// The destination workspace enforces read-only authority.
+		manageExamAssetsButton.setText(coordinatorContext ? "Manage Exam / Assets" : "Inspect Exam / Assets");
+		manageExamAssetsButton.setDisable(!selected || locked);
 		createContributorAssignmentButton.setDisable(!selected || !coordinatorContext || locked || complete);
 		boolean hasActiveLock = selected && coordinatorExamLocks.containsKey(selectedExam.exam().getId());
 		closeContributorAssignmentButton.setDisable(!coordinatorContext || importedSubjectReadOnly || !hasActiveLock);

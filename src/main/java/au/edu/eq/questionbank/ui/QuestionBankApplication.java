@@ -1633,6 +1633,19 @@ public class QuestionBankApplication extends Application {
 		updateContributorAssignmentActions();
 	}
 
+	private void configureExamAssetsAuthority() throws SQLException {
+		boolean subjectReadOnly = isWorkingSubjectSnapshotExportRestricted();
+		SqliteDatabase database = new SqliteDatabase(applicationConfig.databasePath());
+		Set<Long> lockedExamIds = new SqliteCoordinatorExamLockRepository(database)
+				.findForSubject(workingSubject.getId()).keySet();
+		Long assignedExamId = activeAssignmentContext == null ? null
+				: Long.valueOf(activeAssignmentContext.session().examLocalId());
+
+		// Structural authority is established before the workspace
+		// is populated from persistence.
+		examAssetsPane.setStructureAuthority(subjectReadOnly, lockedExamIds, assignedExamId);
+	}
+
 	private void configurePdfWorkspace() {
 		pdfWorkspace.setSelectionAvailable(this::isRegionSelectionAvailable);
 		pdfWorkspace.setSelectionHandler(this::handleRegionSelection);
@@ -5564,9 +5577,6 @@ public class QuestionBankApplication extends Application {
 		if (!allowExamAssetsTransition()) {
 			return;
 		}
-
-		// Change Exam may be invoked from Dashboard-owned Capture. Retain that session
-		// instead of discarding the only route back to the home screen.
 		Runnable dashboardReturnHandler = corpusDashboardCaptureReturnHandler;
 		if (workingSubject == null) {
 			showAlert(Alert.AlertType.WARNING, "Exam / Assets", "No Working Subject is selected.",
@@ -5575,18 +5585,23 @@ public class QuestionBankApplication extends Application {
 		}
 		try (PerformanceOperation navigation = performanceRecorder.start("examAssets.open.general")) {
 			try {
-
-				// Always reconstruct structural state from persistence before exposing it.
+				configureExamAssetsAuthority();
 				examAssetsPane.clearCorpusDashboardReturnHandler();
-				measureExamAssetsPersistence("examAssets.open.general", navigation.id(),
-						() -> examAssetsPane.refresh(workingSubject));
+				measureExamAssetsPersistence("examAssets.open.general", navigation.id(), () -> {
+					if (activeAssignmentContext == null) {
+						examAssetsPane.refresh(workingSubject);
+					} else {
+
+						// Change Exam must not escape the currently
+						// selected contributor assignment.
+						examAssetsPane.showForCorrection(workingSubject,
+								activeAssignmentContext.session().examLocalId(), null);
+					}
+				});
 				bindExamAssetsDashboardReturn(dashboardReturnHandler);
 				setWorkspaceMode(examAssetsPane);
-			} catch (SQLException exception) {
+			} catch (SQLException | IllegalArgumentException | IllegalStateException exception) {
 				navigation.failed();
-
-				// Capture remains mounted if loading fails, so its existing Dashboard
-				// session must remain untouched.
 				examAssetsPane.clearCorpusDashboardReturnHandler();
 				showAlert(Alert.AlertType.ERROR, "Exam / Assets", "Exam assets could not be loaded.",
 						exception.getMessage());
@@ -5604,23 +5619,25 @@ public class QuestionBankApplication extends Application {
 		if (!allowExamAssetsTransition()) {
 			return;
 		}
-
-		// This overload is a fresh structural route, normally from Dashboard Home.
 		clearCorpusDashboardCaptureReturn();
 		if (workingSubject == null || exam.getSubject().getId() != workingSubject.getId()) {
 			showAlert(Alert.AlertType.WARNING, "Exam / Assets", "The requested Exam is outside the Working Subject.",
-					"Return to the Dashboard for the current Working Subject and try again.");
+					"Return to the Dashboard for the current " + "Working Subject and try again.");
+			return;
+		}
+		if (activeAssignmentContext != null && exam.getId() != activeAssignmentContext.session().examLocalId()) {
+			showAlert(Alert.AlertType.WARNING, "Exam / Assets",
+					"The requested Exam is outside the selected assignment.",
+					"Select the required contributor assignment first.");
 			return;
 		}
 		try (PerformanceOperation navigation = performanceRecorder.start("examAssets.open.selected")) {
 			try {
+				configureExamAssetsAuthority();
 				examAssetsPane.clearCorpusDashboardReturnHandler();
 				measureExamAssetsPersistence("examAssets.open.selected", navigation.id(),
 						() -> examAssetsPane.showForCorrection(workingSubject, exam.getId(),
 								booklet == null ? null : Long.valueOf(booklet.getId())));
-
-				// Dashboard ownership is retained at application level so selecting a
-				// booklet can later transfer the same Return action into Capture.
 				bindExamAssetsDashboardReturn(returnHandler);
 				setWorkspaceMode(examAssetsPane);
 			} catch (SQLException | IllegalArgumentException | IllegalStateException exception) {
@@ -5640,22 +5657,23 @@ public class QuestionBankApplication extends Application {
 		if (!allowExamAssetsTransition()) {
 			return;
 		}
-
-		// Add Exam starts a fresh Dashboard-owned structural transaction.
 		clearCorpusDashboardCaptureReturn();
 		if (workingSubject == null) {
 			showAlert(Alert.AlertType.WARNING, "Exam / Assets", "No Subject is selected.",
 					"Select or add a Subject on the Corpus Dashboard first.");
 			return;
 		}
+		if (isWorkingSubjectSnapshotExportRestricted()) {
+			showAlert(Alert.AlertType.WARNING, "Exam / Assets", "This Subject is read-only.",
+					"New Exams must be created in the " + "authoritative coordinator installation.");
+			return;
+		}
 		try (PerformanceOperation navigation = performanceRecorder.start("examAssets.open.new")) {
 			try {
+				configureExamAssetsAuthority();
 				examAssetsPane.clearCorpusDashboardReturnHandler();
 				measureExamAssetsPersistence("examAssets.open.new", navigation.id(),
 						() -> examAssetsPane.showForNewExam(workingSubject));
-
-				// Saving or cancelling structural work restores Return availability.
-				// The same session survives if the new booklet is subsequently activated.
 				bindExamAssetsDashboardReturn(this::refreshAndShowCorpusDashboardHome);
 				setWorkspaceMode(examAssetsPane);
 			} catch (SQLException | IllegalStateException exception) {
@@ -6003,9 +6021,13 @@ public class QuestionBankApplication extends Application {
 		if (!allowExamAssetsTransition()) {
 			return;
 		}
+		if (isWorkingSubjectSnapshotExportRestricted()) {
+			showAlert(Alert.AlertType.WARNING, "Legacy Question Import", "This Subject is read-only.",
+					"Legacy imports must be performed in the " + "authoritative coordinator installation.");
+			return;
+		}
 
-		// Exam/Assets is already the authoritative structural workspace. The existing
-		// importer owns syllabus/workbook selection, preflight and persistence.
+		// Exam Assets remains the authoritative structural workspace.
 		importLegacyQuestionMetadata(primaryStage(), applicationConfig, false);
 	}
 

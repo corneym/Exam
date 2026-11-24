@@ -144,22 +144,38 @@ class CorpusDashboardPaneTest {
 		Button lifecycle = robot.lookup("#corpus-dashboard-exam-lifecycle").queryButton();
 		Button captureQuestions = robot.lookup("#corpus-dashboard-capture-questions").queryButton();
 		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
-		robot.interact(() -> pane.setAssignmentExamScope(fixture.activeExam.getId()));
+		AtomicReference<Exam> requestedExam = new AtomicReference<>();
+		AtomicReference<ExamBooklet> requestedBooklet = new AtomicReference<>();
+		robot.interact(() -> {
+			pane.setExamAssetsHandler((exam, booklet) -> {
+				requestedExam.set(exam);
+				requestedBooklet.set(booklet);
+			});
+			pane.setAssignmentExamScope(fixture.activeExam.getId());
+		});
 		assertTrue(addExam.isDisable());
 		assertTrue(addCurriculum.isDisable());
 		assertTrue(mapCurriculum.isDisable());
-		assertTrue(manageAssets.isDisable());
 		assertTrue(lifecycle.isDisable());
 
-		// The assigned active Exam still permits Question capture.
+		// Assigned Exam assets remain accessible for inspection.
+		assertFalse(manageAssets.isDisable());
+		assertEquals("Inspect Exam / Assets", manageAssets.getText());
 		robot.interact(() -> booklets.getSelectionModel().select(fixture.activePaperStatus));
 		assertFalse(captureQuestions.isDisable());
+		robot.interact(manageAssets::fire);
+		assertNotNull(requestedExam.get());
+		assertNotNull(requestedBooklet.get());
+		assertEquals(fixture.activeExam.getId(), requestedExam.get().getId());
+		assertEquals(fixture.activePaper.getId(), requestedBooklet.get().getId());
 
-		// Exiting assignment mode restores coordinator controls.
+		// Exiting assignment mode restores ordinary
+		// coordinator management controls.
 		robot.interact(() -> pane.setAssignmentExamScope(null));
 		assertFalse(addExam.isDisable());
 		assertFalse(addCurriculum.isDisable());
 		assertFalse(mapCurriculum.isDisable());
+		assertEquals("Manage Exam / Assets", manageAssets.getText());
 	}
 
 	@Test

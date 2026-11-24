@@ -342,8 +342,8 @@ class QuestionSearchDialogTest {
 		robot.interact(() -> {
 			holder[0] = createScopeTestDialog(subject, List.of(question), QuestionSearchNarrowing.unrestricted(),
 					searchLoads);
-			holder[0].setReadOnlyQuestionPredicate(candidate -> true);
-			holder[0].setReadOnlyAnswerPredicate(candidate -> false);
+			holder[0].setReadOnlyQuestionPredicate(_ -> true);
+			holder[0].setReadOnlyAnswerPredicate(_ -> false);
 			holder[0].show();
 		});
 		QuestionSearchDialog dialog = holder[0];
@@ -369,12 +369,12 @@ class QuestionSearchDialogTest {
 				assertEquals(question.getId(), request.question().getId());
 
 				// Issued Answers must be protected independently.
-				dialog.setReadOnlyAnswerPredicate(candidate -> true);
+				dialog.setReadOnlyAnswerPredicate(_ -> true);
 				assertTrue(editAnswer.isDisabled());
 				assertNull(dialog.getResultConverter().call(answerType));
 
 				// Contributor-owned Questions remain editable.
-				dialog.setReadOnlyQuestionPredicate(candidate -> false);
+				dialog.setReadOnlyQuestionPredicate(_ -> false);
 				assertFalse(editQuestion.isDisabled());
 				assertTrue(editAnswer.isDisabled());
 			});
