@@ -25,6 +25,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.stage.Modality;
 import javafx.stage.Window;
@@ -69,7 +70,17 @@ final class MasterContributionReviewDialog extends Dialog<ButtonType> {
 				textColumn("MCQ explanations", row -> Long.toString(row.mcqExplanations()), 135),
 				textColumn("Shared contexts", row -> Long.toString(row.sharedContexts()), 115));
 		summaries.setFixedCellSize(28);
-		summaries.setPrefHeight(Math.min(200, 32 + preview.booklets().size() * 28));
+
+		// Reserve room for the column header, table borders and
+		// up to five complete summary rows. Larger collections
+		// retain the normal TableView vertical scrollbar.
+		int visibleSummaryRows = Math.max(1, Math.min(5, preview.booklets().size()));
+		double summaryHeight = 36 + visibleSummaryRows * summaries.getFixedCellSize();
+		summaries.setMinHeight(summaryHeight);
+		summaries.setPrefHeight(summaryHeight);
+		summaries.setMaxHeight(summaryHeight);
+		summaries.setPlaceholder(new Label("No returned work to summarise."));
+		VBox.setVgrow(summaries, Priority.NEVER);
 		Label detailHeading = new Label("Returned work");
 		detailHeading.setStyle("-fx-font-weight: bold;");
 		TableView<ReturnedItem> details = new TableView<>(FXCollections.observableArrayList(preview.items()));
@@ -78,9 +89,18 @@ final class MasterContributionReviewDialog extends Dialog<ButtonType> {
 		details.getColumns().setAll(textColumn("Booklet", ReturnedItem::booklet, 180),
 				textColumn("Question / Item", ReturnedItem::item, 180),
 				textColumn("Returned work", ReturnedItem::description, 310));
+
+		// The detailed list must yield available vertical space
+		// without compressing or hiding the summary table.
+		details.setMinHeight(100);
+		details.setPrefHeight(220);
 		Label notice = new Label();
 		notice.setId("contribution-review-notice");
 		notice.setWrapText(true);
+
+		// Preserve the complete merge/backup explanation when
+		// JavaFX calculates the preferred dialog height.
+		notice.setMinHeight(Region.USE_PREF_SIZE);
 		getDialogPane().getButtonTypes().setAll(MERGE, ButtonType.CANCEL);
 		Button mergeButton = (Button) getDialogPane().lookupButton(MERGE);
 		mergeButton.setId("contribution-review-merge");
@@ -103,7 +123,12 @@ final class MasterContributionReviewDialog extends Dialog<ButtonType> {
 		content.setPadding(new Insets(12));
 		VBox.setVgrow(details, Priority.ALWAYS);
 		getDialogPane().setContent(content);
-		getDialogPane().setPrefSize(850, 650);
+
+		// Allow the preferred dialog size to accommodate the
+		// summary and explanation instead of shrinking them.
+		getDialogPane().setPrefWidth(850);
+		getDialogPane().setPrefHeight(Math.max(650, 570 + summaryHeight));
+		setResizable(true);
 		setResultConverter(button -> button);
 	}
 

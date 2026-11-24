@@ -132,16 +132,20 @@ class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
 				.orElseThrow();
 		Menu exportMenu = menuBar.getMenus().stream().filter(menu -> "E_xport".equals(menu.getText())).findFirst()
 				.orElseThrow();
-		MenuItem packageImport = importMenu.getItems().stream()
-				.filter(item -> "import-subject-work-package".equals(item.getId())).findFirst().orElseThrow();
+
+		// Each supported archive type has its own explicit import
+		// operation. The former automatically routed command is absent.
+		assertEquals(List.of("import-subject-snapshot", "import-work-assignment", "import-contribution"),
+				importMenu.getItems().stream().map(MenuItem::getId).toList());
+		assertEquals(List.of("Import _Subject Snapshot...", "Import _Work Assignment...", "Import _Contribution..."),
+				importMenu.getItems().stream().map(MenuItem::getText).toList());
+		assertTrue(importMenu.getItems().stream().noneMatch(MenuItem::isDisable));
 		MenuItem subjectExport = exportMenu.getItems().stream()
 				.filter(item -> "export-subject-snapshot".equals(item.getId())).findFirst().orElseThrow();
 		MenuItem contributionExport = exportMenu.getItems().stream()
 				.filter(item -> "export-assignment-contribution".equals(item.getId())).findFirst().orElseThrow();
-		assertEquals("Import _Subject / Work Package...", packageImport.getText());
 		assertEquals("Export Working _Subject Snapshot...", subjectExport.getText());
 		assertEquals("Export Assignment _Contribution...", contributionExport.getText());
-		assertFalse(packageImport.isDisable());
 
 		// No assignment exists in the ordinary application fixture.
 		assertTrue(contributionExport.isDisable());
@@ -150,8 +154,12 @@ class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertFalse(exportMenu.getItems().stream().anyMatch(item -> "export-import-receipt".equals(item.getId())));
 
 		// Do not duplicate package commands under File.
-		assertFalse(fileMenu.getItems().stream().anyMatch(item -> item.getId() != null
-				&& (item.getId().contains("subject-snapshot") || item.getId().contains("contributor-assignment"))));
+		assertFalse(
+				fileMenu.getItems().stream()
+						.anyMatch(item -> item.getId() != null && (item.getId().contains("subject-snapshot")
+								|| item.getId().contains("contributor-assignment")
+								|| item.getId().contains("import-work-assignment")
+								|| item.getId().contains("import-contribution"))));
 		assertFalse(
 				fileMenu.getItems().stream().anyMatch(item -> "file-review-subject-snapshots".equals(item.getId())));
 		ComboBox<Subject> subjectPicker = robot.lookup("#curriculum-subject").queryAs(ComboBox.class);

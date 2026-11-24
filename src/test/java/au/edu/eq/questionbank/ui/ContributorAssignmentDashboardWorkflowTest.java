@@ -66,6 +66,7 @@ import au.edu.eq.questionbank.service.audit.ExamCorpusStatus;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusWorkItem;
 import au.edu.eq.questionbank.service.workpackage.ContributionSnapshotReader;
 import au.edu.eq.questionbank.service.workpackage.ContributorAssignmentRemovalService;
+import au.edu.eq.questionbank.service.workpackage.ExamWorkPackageType;
 import au.edu.eq.questionbank.service.workpackage.SqliteContributionReturnLedger;
 import au.edu.eq.questionbank.service.workpackage.SqliteContributorAssignmentSessionRepository;
 import au.edu.eq.questionbank.service.workpackage.WorkAssignmentExporter;
@@ -115,6 +116,66 @@ class ContributorAssignmentDashboardWorkflowTest {
 			Thread.currentThread().interrupt();
 			throw new IllegalStateException("Test worker interrupted", exception);
 		}
+	}
+
+	@Test
+	void assignmentArchiveCannotEnterSubjectOrContributionImport(FxRobot robot) throws Exception {
+		awaitAssignedDashboard(robot);
+		SqliteDatabase database = new SqliteDatabase(contributor.databasePath());
+		var sessionRepository = sessions();
+		var originalSession = sessionRepository.active().orElseThrow();
+		var originalBaseline = sessionRepository.readBaseline(assignmentId);
+		long originalQuestionCount = new SqliteQuestionRepository(database).findAll().size();
+		byte[] originalArchive = Files.readAllBytes(assignmentArchive);
+
+		// The misleading filename must not override the manifest.
+		Path renamedArchive = assignmentArchive.getParent().resolve("misleading-contribution.examwork");
+		Files.copy(assignmentArchive, renamedArchive);
+		for (ExamWorkPackageType wrongType : List.of(ExamWorkPackageType.SUBJECT_SNAPSHOT,
+				ExamWorkPackageType.CONTRIBUTION)) {
+
+			// Exercise the application boundary immediately after
+			// file selection, without opening an OS-native chooser.
+			Platform.runLater(() -> invoke("startWorkPackageImport",
+					new Class<?>[] { Stage.class, ApplicationConfig.class, Path.class, ExamWorkPackageType.class },
+					primaryStage, contributor, renamedArchive, wrongType));
+			DialogPane rejection = awaitDialog(robot, "Invalid Work Package");
+			robot.interact(() -> {
+				assertEquals("The selected package could not be validated " + "for this import.",
+						rejection.getHeaderText());
+				TextArea message = (TextArea) rejection.getContent();
+				assertTrue(message.getText().contains(WorkPackageImportRoute.title(wrongType)));
+				assertTrue(message.getText().contains("contains a Work Assignment archive"));
+				assertTrue(message.getText().contains("Use Import Work Assignment"));
+				assertFalse(field("packageImportInProgress", Boolean.class));
+				((ButtonBase) rejection.lookupButton(ButtonType.OK)).fire();
+			});
+			WaitForAsyncUtils.waitForFxEvents();
+			assertEquals(originalSession, sessionRepository.active().orElseThrow());
+			assertEquals(originalQuestionCount, new SqliteQuestionRepository(database).findAll().size());
+			assertTrue(
+					Arrays.equals(originalBaseline.records(), sessionRepository.readBaseline(assignmentId).records()));
+			assertTrue(Arrays.equals(originalBaseline.assets(), sessionRepository.readBaseline(assignmentId).assets()));
+			assertTrue(new SqliteContributionReturnLedger(database).findLatest(assignmentId).isEmpty());
+			assertTrue(Arrays.equals(originalArchive, Files.readAllBytes(renamedArchive)));
+			assertTrue(Arrays.equals(originalArchive, Files.readAllBytes(assignmentArchive)));
+		}
+
+		// Both refusals must release the import workflow so the
+		// correct assignment route can still be used.
+		Platform.runLater(() -> invoke("startWorkPackageImport",
+				new Class<?>[] { Stage.class, ApplicationConfig.class, Path.class, ExamWorkPackageType.class },
+				primaryStage, contributor, renamedArchive, ExamWorkPackageType.WORK_ASSIGNMENT));
+		DialogPane confirmation = awaitDialog(robot, "Import Contributor Assignment");
+		robot.interact(() -> {
+			assertEquals("Install the supplied Exam and activate contributor mode?", confirmation.getHeaderText());
+			((ButtonBase) confirmation.lookupButton(ButtonType.CANCEL)).fire();
+		});
+		WaitForAsyncUtils.waitForFxEvents();
+		assertEquals(assignmentId, sessionRepository.active().orElseThrow().assignmentId());
+		assertFalse(field("packageImportInProgress", Boolean.class));
+		assertControlsReleased(robot);
+		database.verifyIntegrity();
 	}
 
 	@Test

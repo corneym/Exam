@@ -184,9 +184,9 @@ import au.edu.eq.questionbank.service.revision.RevisionPresentationPlanner;
 import au.edu.eq.questionbank.service.workpackage.ContributionExporter;
 import au.edu.eq.questionbank.service.workpackage.ContributorAssignmentDashboardContextResolver;
 import au.edu.eq.questionbank.service.workpackage.ContributorAssignmentRemovalService;
-import au.edu.eq.questionbank.service.workpackage.ExamWorkArchiveValidator;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkJsonlCodec;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest;
+import au.edu.eq.questionbank.service.workpackage.ExamWorkPackageType;
 import au.edu.eq.questionbank.service.workpackage.ExchangeRecord;
 import au.edu.eq.questionbank.service.workpackage.MasterContributionApplicationCoordinator;
 import au.edu.eq.questionbank.service.workpackage.MasterContributionDecisionLedger;
@@ -2452,10 +2452,16 @@ public class QuestionBankApplication extends Application {
 
 	private Menu createImportMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu importMenu = createMenu("_Import");
-		MenuItem packageItem = createMenuItem("Import _Subject / Work Package...",
-				() -> showImportSubjectWorkPackage(primaryStage, config));
-		packageItem.setId("import-subject-work-package");
-		importMenu.getItems().setAll(packageItem);
+		MenuItem subjectItem = createMenuItem("Import _Subject Snapshot...",
+				() -> showImportWorkPackage(primaryStage, config, ExamWorkPackageType.SUBJECT_SNAPSHOT));
+		subjectItem.setId("import-subject-snapshot");
+		MenuItem assignmentItem = createMenuItem("Import _Work Assignment...",
+				() -> showImportWorkPackage(primaryStage, config, ExamWorkPackageType.WORK_ASSIGNMENT));
+		assignmentItem.setId("import-work-assignment");
+		MenuItem contributionItem = createMenuItem("Import _Contribution...",
+				() -> showImportWorkPackage(primaryStage, config, ExamWorkPackageType.CONTRIBUTION));
+		contributionItem.setId("import-contribution");
+		importMenu.getItems().setAll(subjectItem, assignmentItem, contributionItem);
 		return importMenu;
 	}
 
@@ -6131,97 +6137,25 @@ public class QuestionBankApplication extends Application {
 		dialog.showAndWait();
 	}
 
-	private void showImportContributorAssignment(Stage primaryStage, ApplicationConfig config) {
-		if (contributorAssignmentInstallationRequest != 0 || contributorAssignmentIssuanceRunning
-				|| applicationBusyOverlay.isBusy()) {
-			return;
-		}
-		if (!allowWorkingSubjectChange()) {
-			return;
-		}
-		FileChooser chooser = new FileChooser();
-		chooser.setTitle("Import Contributor Assignment");
-		chooser.getExtensionFilters()
-				.add(new FileChooser.ExtensionFilter("ExamWork assignment (*.examwork)", "*.examwork"));
-		File selected = chooser.showOpenDialog(primaryStage);
-		if (selected == null) {
-			return;
-		}
-		confirmContributorAssignmentInstallation(primaryStage, config, selected.toPath());
-	}
-
-	private void showImportSubjectWorkPackage(Stage primaryStage, ApplicationConfig config) {
+	private void showImportWorkPackage(Stage primaryStage, ApplicationConfig config, ExamWorkPackageType expectedType) {
 		if (packageImportInProgress || contributorAssignmentInstallationRequest != 0
-				|| contributorAssignmentIssuanceRunning || contributionExportRunning
+				|| contributorAssignmentIssuanceRunning || contributionExportRunning || contributorRemovalRunning
 				|| applicationBusyOverlay.isBusy()) {
 			return;
 		}
 		if (!allowWorkingSubjectChange()) {
 			return;
 		}
+		String title = WorkPackageImportRoute.title(expectedType);
 		FileChooser chooser = new FileChooser();
-		chooser.setTitle("Import Subject / Work Package");
+		chooser.setTitle(title);
 		chooser.getExtensionFilters()
 				.add(new FileChooser.ExtensionFilter("ExamWork packages (*.examwork)", "*.examwork"));
 		File selected = chooser.showOpenDialog(primaryStage);
 		if (selected == null) {
 			return;
 		}
-		Path archive = selected.toPath().toAbsolutePath().normalize();
-		packageImportInProgress = true;
-		Task<ExamWorkManifest> task = new ApplicationBackgroundTask<>(() -> {
-			SqliteDatabase database = new SqliteDatabase(config.databasePath());
-
-			// Routing occurs only after the common archive validator has
-			// checked the complete manifest and declared archive contents.
-			return new ExamWorkArchiveValidator().validate(archive, ApplicationVersion.current(),
-					database.schemaVersion());
-		});
-		Alert progress = new Alert(Alert.AlertType.INFORMATION);
-		progress.initOwner(primaryStage);
-		progress.setTitle("Inspecting Work Package");
-		progress.setHeaderText("Validating the selected exchange archive");
-		progress.setContentText("No Subject, Exam or contributor records are being changed.");
-		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
-		progress.getButtonTypes().setAll(new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE));
-		task.setOnSucceeded(_ -> {
-			progress.close();
-			try {
-				switch (task.getValue().packageType()) {
-				case SUBJECT_SNAPSHOT -> startLiveSubjectSnapshotReview(primaryStage, config, archive);
-				case WORK_ASSIGNMENT -> {
-					packageImportInProgress = false;
-					confirmContributorAssignmentInstallation(primaryStage, config, archive);
-				}
-				case CONTRIBUTION -> startCoordinatorContributionReview(primaryStage, config, archive);
-				case IMPORT_RECEIPT -> {
-					packageImportInProgress = false;
-					showAlert(Alert.AlertType.INFORMATION, "Import Receipt",
-							"Receipt acknowledgement is not yet available.",
-							"The archive has been validated but no data " + "has been changed. Contributor receipt "
-									+ "acknowledgement is implemented " + "in the next batch.");
-				}
-				}
-			} catch (RuntimeException failure) {
-				packageImportInProgress = false;
-				showAlert(Alert.AlertType.ERROR, "Import Subject / Work Package",
-						"The selected workflow could not be started.", failureMessage(failure));
-			}
-		});
-		task.setOnFailed(_ -> {
-			packageImportInProgress = false;
-			progress.close();
-			showAlert(Alert.AlertType.ERROR, "Invalid Work Package", "The selected package could not be validated.",
-					failureMessage(task.getException()));
-		});
-		task.setOnCancelled(_ -> {
-			packageImportInProgress = false;
-			progress.close();
-		});
-		Thread worker = new Thread(task, "examwork-package-inspection");
-		worker.setDaemon(true);
-		progress.show();
-		worker.start();
+		startWorkPackageImport(primaryStage, config, selected.toPath().toAbsolutePath().normalize(), expectedType);
 	}
 
 	private void showLatestPerformanceReport() {
@@ -7928,6 +7862,77 @@ public class QuestionBankApplication extends Application {
 		startWorkingSubjectCaptureRefresh(subject, generation);
 		startWorkingSubjectExamAssetsRefresh(subject, generation);
 		startWorkingSubjectDashboardRefresh(subject, generation);
+	}
+
+	private void startWorkPackageImport(Stage primaryStage, ApplicationConfig config, Path archive,
+			ExamWorkPackageType expectedType) {
+		if (packageImportInProgress || contributorAssignmentInstallationRequest != 0
+				|| contributorAssignmentIssuanceRunning || contributionExportRunning || contributorRemovalRunning
+				|| applicationBusyOverlay.isBusy()) {
+			return;
+		}
+		String title = WorkPackageImportRoute.title(expectedType);
+		packageImportInProgress = true;
+		Task<ExamWorkManifest> task = new ApplicationBackgroundTask<>(() -> {
+			SqliteDatabase database = new SqliteDatabase(config.databasePath());
+
+			// Validate both archive integrity and the explicitly
+			// requested import operation before any intake.
+			return WorkPackageImportRoute.validate(archive, ApplicationVersion.current(), database.schemaVersion(),
+					expectedType);
+		});
+		Alert progress = new Alert(Alert.AlertType.INFORMATION);
+		progress.initOwner(primaryStage);
+		progress.setTitle("Inspecting Work Package");
+		progress.setHeaderText("Validating the selected exchange archive");
+		progress.setContentText("No Subject, Exam or contributor records are being changed.");
+		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
+		progress.getButtonTypes().setAll(new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE));
+		task.setOnSucceeded(_ -> {
+			progress.close();
+			try {
+
+				// The validated manifest has already been checked against
+				// the requested operation. Never automatically redirect a
+				// mismatched archive into another import workflow.
+				switch (task.getValue().packageType()) {
+				case SUBJECT_SNAPSHOT -> startLiveSubjectSnapshotReview(primaryStage, config, archive);
+				case WORK_ASSIGNMENT -> {
+					packageImportInProgress = false;
+					confirmContributorAssignmentInstallation(primaryStage, config, archive);
+				}
+				case CONTRIBUTION -> startCoordinatorContributionReview(primaryStage, config, archive);
+				case IMPORT_RECEIPT ->
+					throw new IllegalStateException("Import receipt acknowledgement is not available.");
+				}
+			} catch (RuntimeException failure) {
+				packageImportInProgress = false;
+				showAlert(Alert.AlertType.ERROR, title, "The selected workflow could not be started.",
+						failureMessage(failure));
+			}
+		});
+		task.setOnFailed(_ -> {
+			packageImportInProgress = false;
+			progress.close();
+			showAlert(Alert.AlertType.ERROR, "Invalid Work Package",
+					"The selected package could not be validated for this import.",
+					failureMessage(task.getException()));
+		});
+		task.setOnCancelled(_ -> {
+			packageImportInProgress = false;
+			progress.close();
+		});
+		Thread worker = new Thread(task, "examwork-package-inspection");
+		worker.setDaemon(true);
+		progress.show();
+		try {
+			worker.start();
+		} catch (RuntimeException failure) {
+			packageImportInProgress = false;
+			progress.close();
+			showAlert(Alert.AlertType.ERROR, title, "The package inspection could not be started.",
+					failureMessage(failure));
+		}
 	}
 
 	private String suggestContributorAssignmentFileName(Exam exam, String contributorName) {
