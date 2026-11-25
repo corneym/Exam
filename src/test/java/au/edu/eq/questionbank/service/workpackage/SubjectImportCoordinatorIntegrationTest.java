@@ -27,6 +27,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.ApplicationConfig;
+import au.edu.eq.questionbank.ManagedAssetPublicationLock;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.repository.sqlite.SqliteImportedSubjectAuthorityRepository;
@@ -355,6 +356,75 @@ class SubjectImportCoordinatorIntegrationTest {
 	}
 
 	@Test
+	void refreshDecodeRejectsAlteredEmbeddedBytes() throws Exception {
+		RefreshStagingFixture fixture = createRefreshStagingFixture();
+
+		var approval = fixture.plan().approve("Approve authoritative refresh");
+		var stager = new SubjectImportAssetStager(fixture.destination());
+
+		try (var lock = ManagedAssetPublicationLock.acquire(fixture.destination().dataRoot())) {
+
+			var backup = new SubjectImportBackupGate(fixture.destination()).createVerifiedFullBackup(
+					fixture.plan().evidence().incoming().fingerprint().packageId(),
+					directory.resolve("refresh-backups"));
+
+			var staged = stager.stageRefresh(approval, backup, fixture.newer(), lock);
+
+			var embedded = staged.assets().stream()
+					.filter(asset -> asset.kind() == SubjectImportAssetStager.AssetKind.EMBEDDED_PNG).findFirst()
+					.orElseThrow();
+
+			// Preserve metadata but alter the actual staged image bytes.
+			byte[] changed = Files.readAllBytes(embedded.stagedPath());
+			changed[changed.length - 1] ^= 1;
+
+			Files.write(embedded.stagedPath(), changed);
+
+			var writer = new SubjectImportGraphWriter(fixture.destinationDatabase());
+
+			assertThrows(IOException.class, () -> writer.decodeRefresh(staged, approval));
+
+			assertFalse(Files.exists(staged.directory().resolve("publication.properties")));
+
+			assertEquals("Biology question document",
+					Files.readString(fixture.destination().dataRoot().resolve("subjects/Biology/exams/questions.pdf")));
+		}
+
+		assertRefreshDestinationUnchanged(fixture);
+	}
+
+	@Test
+	void refreshDecodeRejectsDifferentApproval() throws Exception {
+		RefreshStagingFixture fixture = createRefreshStagingFixture();
+
+		var approval = fixture.plan().approve("Approve authoritative refresh");
+		var differentApproval = fixture.plan().approve("Different approval rationale");
+
+		var stager = new SubjectImportAssetStager(fixture.destination());
+
+		try (var lock = ManagedAssetPublicationLock.acquire(fixture.destination().dataRoot())) {
+
+			var backup = new SubjectImportBackupGate(fixture.destination()).createVerifiedFullBackup(
+					fixture.plan().evidence().incoming().fingerprint().packageId(),
+					directory.resolve("refresh-backups"));
+
+			var staged = stager.stageRefresh(approval, backup, fixture.newer(), lock);
+
+			var writer = new SubjectImportGraphWriter(fixture.destinationDatabase());
+
+			assertNotNull(writer.decodeRefresh(staged, approval));
+
+			assertThrows(IOException.class, () -> writer.decodeRefresh(staged, differentApproval));
+
+			assertThrows(IOException.class, () -> stager.publicationStage(staged, differentApproval));
+
+			assertFalse(Files.exists(staged.directory().resolve("publication.properties")));
+		}
+
+		assertRefreshDestinationUnchanged(fixture);
+	}
+
+	@Test
 	void refreshEligibilityPreservesImportedAuthorityAndUnrelatedSubjects() throws Exception {
 		ApplicationConfig destination = ApplicationConfig.fromDataRoot(directory.resolve("refresh-eligible-target"));
 		Files.createDirectories(destination.dataRoot());
@@ -510,6 +580,246 @@ class SubjectImportCoordinatorIntegrationTest {
 		}
 		assertImportedSubjectGraph(database, destination, "Biology");
 		database.verifyIntegrity();
+	}
+
+	@Test
+	void refreshStagesNormalisedGraphAndPublishesOnlyChangedManagedFiles() throws Exception {
+		RefreshStagingFixture fixture = createRefreshStagingFixture();
+
+		var approval = fixture.plan().approve("Approve authoritative refresh");
+
+		var stager = new SubjectImportAssetStager(fixture.destination());
+		var writer = new SubjectImportGraphWriter(fixture.destinationDatabase());
+
+		var preview = new SubjectSnapshotIntakePreview(fixture.destinationDatabase());
+
+		var incoming = preview.inspect(fixture.newer());
+
+		Path subjectDirectory = fixture.destination().dataRoot().resolve("subjects/Biology/exams");
+
+		Path questions = subjectDirectory.resolve("questions.pdf");
+		Path answers = subjectDirectory.resolve("answers.pdf");
+		Path retired = subjectDirectory.resolve("retired-notes.txt");
+		Path added = subjectDirectory.resolve("new-notes.txt");
+
+		try (var lock = ManagedAssetPublicationLock.acquire(fixture.destination().dataRoot())) {
+
+			var backup = new SubjectImportBackupGate(fixture.destination()).createVerifiedFullBackup(
+					fixture.plan().evidence().incoming().fingerprint().packageId(),
+					directory.resolve("refresh-backups"));
+
+			var staged = stager.stageRefresh(approval, backup, fixture.newer(), lock);
+
+			assertEquals(approval.approvalSha256(), staged.approvalSha256());
+
+			assertEquals("Biology question document", Files.readString(questions));
+
+			assertEquals("Retired authoritative notes", Files.readString(retired));
+
+			assertFalse(Files.exists(added));
+
+			var decoded = writer.decodeRefresh(staged, approval);
+
+			var question = decoded.records().stream().filter(record -> "QUESTION".equals(record.recordType()))
+					.findFirst().orElseThrow();
+
+			assertEquals(3, question.values().path("marks").asInt());
+
+			var originatingQuestion = incoming.records().stream()
+					.filter(record -> "QUESTION".equals(record.recordType())).findFirst().orElseThrow();
+
+			UUID canonicalQuestion = fixture.plan().identities()
+					.get(new SubjectRefreshChangeClassifier.RecordKey("QUESTION", originatingQuestion.recordId()));
+
+			assertEquals(canonicalQuestion, question.recordId());
+
+			var originatingImage = incoming.assets().references().stream()
+					.filter(reference -> "EMBEDDED_QUESTION_PNG".equals(reference.usage())).findFirst().orElseThrow();
+
+			UUID canonicalImage = fixture.plan().identities().get(new SubjectRefreshChangeClassifier.RecordKey(
+					originatingImage.ownerType(), originatingImage.ownerId()));
+
+			var decodedImage = decoded.index().references().stream()
+					.filter(reference -> "EMBEDDED_QUESTION_PNG".equals(reference.usage())).findFirst().orElseThrow();
+
+			assertEquals(canonicalImage, decodedImage.ownerId());
+
+			assertTrue(decodedImage.managedPath().contains(canonicalImage.toString()));
+
+			var stagedImage = staged.assets().stream()
+					.filter(asset -> asset.managedPath().equals(decodedImage.managedPath())).findFirst().orElseThrow();
+
+			assertEquals(SubjectImportAssetStager.AssetKind.EMBEDDED_PNG, stagedImage.kind());
+
+			assertArrayEquals(PNG, Files.readAllBytes(stagedImage.stagedPath()));
+
+			assertFalse(Files.exists(fixture.destination().dataRoot().resolve(decodedImage.managedPath())));
+
+			assertEquals(2L, staged.assets().stream()
+					.filter(asset -> asset.kind() == SubjectImportAssetStager.AssetKind.EMBEDDED_PNG).count());
+
+			// Unchanged files remain available to the graph writer.
+			assertTrue(staged.assets().stream().anyMatch(asset -> asset.managedPath().endsWith("/answers.pdf")));
+
+			var physicalChanges = stager.managedRefreshChanges(fixture.plan());
+
+			assertEquals(3, physicalChanges.size());
+
+			assertTrue(physicalChanges.stream().anyMatch(change -> change.managedPath().endsWith("/questions.pdf")
+					&& change.kind() == SubjectRefreshChangeClassifier.ChangeKind.UPDATE));
+
+			assertTrue(physicalChanges.stream().anyMatch(change -> change.managedPath().endsWith("/retired-notes.txt")
+					&& change.kind() == SubjectRefreshChangeClassifier.ChangeKind.REMOVE));
+
+			assertTrue(physicalChanges.stream().anyMatch(change -> change.managedPath().endsWith("/new-notes.txt")
+					&& change.kind() == SubjectRefreshChangeClassifier.ChangeKind.ADD));
+
+			var publication = stager.publicationStage(staged, approval);
+
+			// Only the addition and replacement have incoming managed-file bytes.
+			assertEquals(2, publication.assets().size());
+
+			assertTrue(publication.assets().stream()
+					.allMatch(asset -> asset.kind() == SubjectImportAssetStager.AssetKind.MANAGED_FILE));
+
+			assertFalse(publication.assets().stream().anyMatch(asset -> asset.managedPath().endsWith("/answers.pdf")));
+
+			var journal = new SubjectImportPublicationJournal(fixture.destination());
+
+			try (Connection connection = fixture.destinationDatabase().openConnection()) {
+				connection.setAutoCommit(false);
+
+				try (Statement statement = connection.createStatement()) {
+					assertEquals(1, statement.executeUpdate("""
+							UPDATE installation_identity
+							SET installation_id = installation_id
+							WHERE singleton_id = 1
+							"""));
+				}
+
+				// Exercise comparison regeneration while the actual destination
+				// SQLite writer reservation is held.
+				var regenerated = preview.previewRefresh(staged.archive(),
+						new ManagedDataLayout(fixture.destination().dataRoot()));
+
+				approval.requireUnchanged(regenerated);
+
+				assertEquals(approval.approvalSha256(), regenerated.approve(approval.approvalNote()).approvalSha256());
+
+				journal.prepareRefresh(publication, backup, physicalChanges, lock);
+
+				journal.publishFiles(staged.packageId());
+				journal.verifyPublished(staged.packageId());
+
+				assertEquals("Updated authoritative question document", Files.readString(questions));
+
+				assertEquals("New authoritative notes", Files.readString(added));
+
+				assertFalse(Files.exists(retired));
+
+				assertEquals("Biology answer document", Files.readString(answers));
+
+				// No graph transaction has committed. Recovery must therefore
+				// restore all original managed assets.
+				connection.rollback();
+			}
+
+			assertFalse(journal.recover(staged.packageId(), lock));
+
+			assertFalse(Files.exists(staged.directory()));
+		}
+
+		assertRefreshDestinationUnchanged(fixture);
+
+		assertEquals("Biology answer document", Files.readString(answers));
+
+		fixture.destinationDatabase().verifyIntegrity();
+	}
+
+	@Test
+	void refreshStagingRejectsDamagedBackup() throws Exception {
+		RefreshStagingFixture fixture = createRefreshStagingFixture();
+
+		var approval = fixture.plan().approve("Approve authoritative refresh");
+
+		try (var lock = ManagedAssetPublicationLock.acquire(fixture.destination().dataRoot())) {
+
+			var backup = new SubjectImportBackupGate(fixture.destination()).createVerifiedFullBackup(
+					fixture.plan().evidence().incoming().fingerprint().packageId(),
+					directory.resolve("refresh-backups"));
+
+			Files.writeString(backup.backupPath(), "Damaged full backup");
+
+			assertThrows(IOException.class, () -> new SubjectImportAssetStager(fixture.destination())
+					.stageRefresh(approval, backup, fixture.newer(), lock));
+
+			assertFalse(Files.exists(refreshStageDirectory(fixture)));
+		}
+
+		assertRefreshDestinationUnchanged(fixture);
+	}
+
+	@Test
+	void refreshStagingRejectsOccupiedAddition() throws Exception {
+		RefreshStagingFixture fixture = createRefreshStagingFixture();
+
+		var approval = fixture.plan().approve("Approve authoritative refresh");
+
+		Path occupied = fixture.destination().dataRoot().resolve("subjects/Biology/exams/new-notes.txt");
+
+		Files.writeString(occupied, "Independently created destination file");
+
+		try (var lock = ManagedAssetPublicationLock.acquire(fixture.destination().dataRoot())) {
+
+			var backup = new SubjectImportBackupGate(fixture.destination()).createVerifiedFullBackup(
+					fixture.plan().evidence().incoming().fingerprint().packageId(),
+					directory.resolve("refresh-backups"));
+
+			assertThrows(IOException.class, () -> new SubjectImportAssetStager(fixture.destination())
+					.stageRefresh(approval, backup, fixture.newer(), lock));
+
+			assertFalse(Files.exists(refreshStageDirectory(fixture)));
+		}
+
+		assertEquals("Independently created destination file", Files.readString(occupied));
+
+		Files.delete(occupied);
+
+		assertRefreshDestinationUnchanged(fixture);
+	}
+
+	@Test
+	void refreshStagingRejectsValidArchiveSubstitution() throws Exception {
+		RefreshStagingFixture fixture = createRefreshStagingFixture();
+
+		var approval = fixture.plan().approve("Approve authoritative refresh");
+
+		// Produce a different valid archive from the same originating installation.
+		Files.writeString(fixture.source().dataRoot().resolve("subjects/Biology/exams/new-notes.txt"),
+				"Different authoritative notes");
+
+		Path substituted = directory.resolve("substituted-refresh.examwork");
+
+		new SubjectSnapshotExporter(new SqliteDatabase(fixture.source().databasePath()),
+				new ManagedDataLayout(fixture.source().dataRoot())).export(1L, substituted);
+
+		assertNotNull(new SubjectImportSnapshotFingerprint().inspect(substituted));
+
+		assertThrows(PackageFormatException.class, () -> approval.requireFreshIncoming(substituted));
+
+		try (var lock = ManagedAssetPublicationLock.acquire(fixture.destination().dataRoot())) {
+
+			var backup = new SubjectImportBackupGate(fixture.destination()).createVerifiedFullBackup(
+					fixture.plan().evidence().incoming().fingerprint().packageId(),
+					directory.resolve("refresh-backups"));
+
+			assertThrows(PackageFormatException.class, () -> new SubjectImportAssetStager(fixture.destination())
+					.stageRefresh(approval, backup, substituted, lock));
+
+			assertFalse(Files.exists(refreshStageDirectory(fixture)));
+		}
+
+		assertRefreshDestinationUnchanged(fixture);
 	}
 
 	/**
@@ -707,6 +1017,46 @@ class SubjectImportCoordinatorIntegrationTest {
 	}
 
 	/**
+	 * Verifies that staging, rejected decoding and uncommitted publication have not
+	 * changed the original imported Subject graph or authority.
+	 */
+	private void assertRefreshDestinationUnchanged(RefreshStagingFixture fixture) throws Exception {
+		Path subjectDirectory = fixture.destination().dataRoot().resolve("subjects/Biology/exams");
+
+		assertEquals("Biology question document", Files.readString(subjectDirectory.resolve("questions.pdf")));
+
+		assertEquals("Biology answer document", Files.readString(subjectDirectory.resolve("answers.pdf")));
+
+		assertEquals("Retired authoritative notes", Files.readString(subjectDirectory.resolve("retired-notes.txt")));
+
+		assertFalse(Files.exists(subjectDirectory.resolve("new-notes.txt")));
+
+		try (Connection connection = fixture.destinationDatabase().openConnection()) {
+
+			assertEquals(1, count(connection, "SELECT COUNT(*) FROM subjects"));
+
+			assertEquals(1, count(connection, "SELECT COUNT(*) FROM questions WHERE marks = 2"));
+
+			assertEquals(1, count(connection, "SELECT COUNT(*) FROM questions"));
+
+			assertEquals(1, count(connection, "SELECT COUNT(*) FROM question_images"));
+
+			assertEquals(1, count(connection, "SELECT COUNT(*) FROM shared_question_context_images"));
+
+			assertEquals(1, count(connection, "SELECT COUNT(*) FROM subject_import_packages"));
+		}
+
+		var authorities = new SqliteImportedSubjectAuthorityRepository(fixture.destinationDatabase());
+
+		long subjectId = fixture.plan().evidence().authority().subjectLocalId();
+
+		assertEquals(fixture.plan().evidence().authority(), authorities.find(subjectId).orElseThrow());
+
+		assertTrue(new SqliteSubjectImportLedger(fixture.destinationDatabase())
+				.find(fixture.plan().evidence().incoming().fingerprint().packageId()).isEmpty());
+	}
+
+	/**
 	 * Counts selected rows in a disposable SQLite connection.
 	 */
 	private int count(Connection connection, String sql) throws Exception {
@@ -727,6 +1077,79 @@ class SubjectImportCoordinatorIntegrationTest {
 		new SubjectSnapshotExporter(database, new ManagedDataLayout(source.dataRoot())).export(1L, archive);
 		assertTrue(Files.isRegularFile(archive));
 		return archive;
+	}
+
+	/**
+	 * Creates independent originating and destination installations with a
+	 * successfully imported Biology Subject and a newer authoritative snapshot.
+	 *
+	 * <p>
+	 * The newer snapshot changes a Question, replaces a managed PDF, adds an
+	 * inventoried file and removes an existing inventoried file. Embedded Question
+	 * and Shared Context images remain available for graph reconstruction.
+	 */
+	private RefreshStagingFixture createRefreshStagingFixture() throws Exception {
+		ApplicationConfig source = ApplicationConfig.fromDataRoot(directory.resolve("refresh-staging-source"));
+
+		ApplicationConfig destination = ApplicationConfig
+				.fromDataRoot(directory.resolve("refresh-staging-destination"));
+
+		Files.createDirectories(source.dataRoot());
+		Files.createDirectories(destination.dataRoot());
+
+		SqliteDatabase sourceDatabase = new SqliteDatabase(source.databasePath());
+
+		SqliteDatabase destinationDatabase = new SqliteDatabase(destination.databasePath());
+
+		sourceDatabase.initialiseSchema();
+		destinationDatabase.initialiseSchema();
+
+		seedSource(sourceDatabase, source, "Biology");
+
+		Path sourceAssets = source.dataRoot().resolve("subjects/Biology/exams");
+
+		Files.writeString(sourceAssets.resolve("retired-notes.txt"), "Retired authoritative notes");
+
+		var exporter = new SubjectSnapshotExporter(sourceDatabase, new ManagedDataLayout(source.dataRoot()));
+
+		Path original = directory.resolve("refresh-original.examwork");
+
+		exporter.export(1L, original);
+
+		var preview = new SubjectSnapshotIntakePreview(destinationDatabase);
+
+		var coordinator = new SubjectImportCoordinator(destination);
+
+		assertTrue(coordinator.executeNewSubject(preview.inspect(original), original).applied());
+
+		// Make authoritative changes only in the originating installation.
+		execute(sourceDatabase, """
+				UPDATE questions
+				SET marks = 3
+				WHERE id = 81
+				""");
+
+		Files.writeString(sourceAssets.resolve("questions.pdf"), "Updated authoritative question document");
+
+		Files.writeString(sourceAssets.resolve("new-notes.txt"), "New authoritative notes");
+
+		Files.delete(sourceAssets.resolve("retired-notes.txt"));
+
+		Path newer = directory.resolve("refresh-newer.examwork");
+
+		exporter.export(1L, newer);
+
+		var plan = preview.previewRefresh(newer, new ManagedDataLayout(destination.dataRoot()));
+
+		assertTrue(plan.hasContentChanges());
+
+		assertEquals(1L, plan.countAssets(SubjectRefreshChangeClassifier.ChangeKind.ADD));
+
+		assertEquals(1L, plan.countAssets(SubjectRefreshChangeClassifier.ChangeKind.UPDATE));
+
+		assertEquals(1L, plan.countAssets(SubjectRefreshChangeClassifier.ChangeKind.REMOVE));
+
+		return new RefreshStagingFixture(source, destination, destinationDatabase, newer, plan);
 	}
 
 	/**
@@ -795,6 +1218,14 @@ class SubjectImportCoordinatorIntegrationTest {
 		Fingerprint reviewedIncoming = new SubjectImportSnapshotFingerprint().inspect(incoming);
 		SubjectImportApprovalPlan plan = SubjectImportApprovalPlan.prepare(review, reviewedMaster, reviewedIncoming);
 		return new Fixture(master, incoming, plan);
+	}
+
+	/**
+	 * Locates the expected private staging directory for the approved refresh.
+	 */
+	private Path refreshStageDirectory(RefreshStagingFixture fixture) {
+		return fixture.destination().dataRoot().resolve(".subject-import-staging")
+				.resolve(fixture.plan().evidence().incoming().fingerprint().packageId().toString());
 	}
 
 	/**
@@ -963,6 +1394,20 @@ class SubjectImportCoordinatorIntegrationTest {
 				INSERT INTO booklet_applicability_reviews (booklet_id)
 				VALUES (61)
 				""");
+	}
+
+	/**
+	 * Independent originating and destination installations for approved Subject
+	 * refresh staging regressions.
+	 *
+	 * @param source              originating application configuration
+	 * @param destination         imported Subject installation
+	 * @param destinationDatabase authoritative destination database
+	 * @param newer               newer originating Subject snapshot
+	 * @param plan                reviewed refresh comparison
+	 */
+	private record RefreshStagingFixture(ApplicationConfig source, ApplicationConfig destination,
+			SqliteDatabase destinationDatabase, Path newer, SubjectRefreshPlan plan) {
 	}
 
 	/** Complete independent contributor and master fixture. */

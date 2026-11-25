@@ -1,6 +1,14 @@
 package au.edu.eq.questionbank.service.workpackage;
 
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.security.DigestOutputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.Comparator;
 import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -60,6 +68,139 @@ public record SubjectRefreshPlan(SubjectSnapshotIntakePreview.RefreshEvidence ev
 	}
 
 	/**
+	 * Calculates a deterministic fingerprint of the complete approved refresh.
+	 *
+	 * <p>
+	 * The digest includes originating evidence, destination authority, destination
+	 * content, identity mappings, record changes, asset changes and the explicit
+	 * approval rationale.
+	 *
+	 * @return lowercase SHA-256 approval fingerprint
+	 * @throws IOException if canonical record serialisation fails
+	 */
+	public String approvalSha256() throws IOException {
+		MessageDigest digest;
+		try {
+			digest = MessageDigest.getInstance("SHA-256");
+		} catch (NoSuchAlgorithmException failure) {
+			throw new IllegalStateException("SHA-256 is unavailable", failure);
+		}
+
+		try (DataOutputStream output = new DataOutputStream(
+				new DigestOutputStream(OutputStream.nullOutputStream(), digest))) {
+			output.writeUTF("subject-refresh-approval-v1");
+
+			var authority = plan.evidence().authority();
+
+			output.writeLong(authority.subjectLocalId());
+			output.writeUTF(authority.originInstallationId().toString());
+			output.writeUTF(authority.originSubjectPortableId().toString());
+			output.writeUTF(authority.latestPackageId().toString());
+			output.writeUTF(authority.archiveSha256());
+			output.writeUTF(authority.importedAt().toString());
+
+			writeSnapshotEvidence(output, plan.evidence().accepted());
+			writeSnapshotEvidence(output, plan.evidence().incoming());
+
+			output.writeUTF(plan.evidence().outcome().name());
+			output.writeUTF(plan.destinationContentSha256());
+			output.writeUTF(approvalNote);
+
+			var mappings = plan.identities().entrySet().stream().sorted(Comparator.comparing(
+					(Map.Entry<SubjectRefreshChangeClassifier.RecordKey, UUID> entry) -> entry.getKey().recordType())
+					.thenComparing(entry -> entry.getKey().recordId())).toList();
+
+			output.writeInt(mappings.size());
+
+			for (var mapping : mappings) {
+				output.writeUTF(mapping.getKey().recordType());
+				output.writeUTF(mapping.getKey().recordId().toString());
+				output.writeUTF(mapping.getValue().toString());
+			}
+
+			var records = plan.recordChanges().stream()
+					.sorted(Comparator
+							.comparing(
+									(SubjectRefreshChangeClassifier.RecordChange change) -> change.key().recordType())
+							.thenComparing(change -> change.key().recordId()))
+					.toList();
+
+			output.writeInt(records.size());
+
+			ExamWorkJsonlCodec codec = new ExamWorkJsonlCodec();
+
+			for (var change : records) {
+				output.writeUTF(change.key().recordType());
+				output.writeUTF(change.key().recordId().toString());
+				output.writeUTF(change.kind().name());
+
+				writeRecord(output, codec, change.current());
+				writeRecord(output, codec, change.incoming());
+			}
+
+			var assets = plan.assetChanges().stream()
+					.sorted(Comparator.comparing(SubjectRefreshChangeClassifier.AssetChange::managedPath)).toList();
+
+			output.writeInt(assets.size());
+
+			for (var change : assets) {
+				output.writeUTF(change.managedPath());
+				output.writeUTF(change.kind().name());
+
+				writeAssetContent(output, change.current());
+				writeAssetContent(output, change.incoming());
+			}
+		}
+
+		return HexFormat.of().formatHex(digest.digest());
+	}
+
+	/**
+	 * Requires the supplied archive to retain the exact originating evidence
+	 * reviewed and approved for this refresh.
+	 *
+	 * @param archive incoming Subject snapshot
+	 * @throws IOException          if archive validation fails or the approved
+	 *                              archive has changed
+	 * @throws NullPointerException if archive is null
+	 */
+	public void requireFreshIncoming(Path archive) throws IOException {
+		Objects.requireNonNull(archive, "archive");
+
+		var actual = new SubjectImportSnapshotFingerprint().inspectEvidence(archive);
+
+		if (!plan.evidence().incoming().equals(actual)) {
+			throw new PackageFormatException("Incoming Subject refresh archive changed after approval");
+		}
+	}
+
+	/**
+	 * Writes an unambiguous binary representation of optional asset evidence.
+	 */
+	private static void writeAssetContent(DataOutputStream output, SubjectRefreshChangeClassifier.AssetContent content)
+			throws IOException {
+		output.writeBoolean(content != null);
+
+		if (content != null) {
+			output.writeUTF(content.sha256());
+			output.writeLong(content.size());
+		}
+	}
+
+	/**
+	 * Includes an optional portable record using the existing canonical JSONL
+	 * representation rather than relying on JSON property insertion order.
+	 */
+	private static void writeRecord(DataOutputStream output, ExamWorkJsonlCodec codec, ExchangeRecord record)
+			throws IOException {
+		output.writeBoolean(record != null);
+
+		if (record != null) {
+			codec.writeRecords(List.of(record), output);
+		}
+	}
+
+	/**
 	 * Creates an explicit approval of this exact reviewed plan.
 	 *
 	 * @param approvalNote non-blank approval rationale
@@ -68,6 +209,23 @@ public record SubjectRefreshPlan(SubjectSnapshotIntakePreview.RefreshEvidence ev
 	 */
 	public Approval approve(String approvalNote) {
 		return new Approval(this, approvalNote);
+	}
+
+	/**
+	 * Writes the exact archive, originating identity and semantic snapshot evidence
+	 * associated with one side of the refresh.
+	 */
+	private static void writeSnapshotEvidence(DataOutputStream output,
+			SubjectImportSnapshotFingerprint.SnapshotEvidence evidence) throws IOException {
+		var fingerprint = evidence.fingerprint();
+
+		output.writeUTF(fingerprint.packageId().toString());
+		output.writeUTF(fingerprint.originInstallationId().toString());
+		output.writeUTF(fingerprint.subjectId().toString());
+		output.writeUTF(fingerprint.subjectName());
+		output.writeUTF(fingerprint.contentSha256());
+		output.writeUTF(fingerprint.archiveSha256());
+		output.writeUTF(evidence.createdAt().toString());
 	}
 
 	/**
