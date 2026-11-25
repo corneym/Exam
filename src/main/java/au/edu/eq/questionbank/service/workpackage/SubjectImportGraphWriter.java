@@ -134,6 +134,12 @@ public final class SubjectImportGraphWriter {
 	/**
 	 * Inserts an approved Subject graph in the caller's open transaction.
 	 *
+	 * <p>
+	 * A new authoritative Subject installation preserves originating revision
+	 * identifiers for newly inserted records while retaining the generated
+	 * canonical entity identities. Existing shared records and legacy
+	 * reconciliation retain their destination revisions.
+	 *
 	 * @param connection   caller-owned transaction; commit and rollback are
 	 *                     external
 	 * @param plan         approved import plan
@@ -141,7 +147,8 @@ public final class SubjectImportGraphWriter {
 	 * @param decoded      independently validated decoded Subject graph
 	 * @param approvalNote non-blank coordinator approval note for the import
 	 * @return canonical identities resolved or inserted for accepted records
-	 * @throws SQLException if persistence, relationships or aliasing fail
+	 * @throws SQLException if persistence, relationships, revisions or aliasing
+	 *                      fail
 	 * @throws IOException  if staged binary content or paths cannot be verified
 	 */
 	public Map<Key, UUID> apply(Connection connection, SubjectImportApprovalPlan plan, StagedPackage staged,
@@ -250,6 +257,21 @@ public final class SubjectImportGraphWriter {
 				continue;
 			}
 			insertChildren(connection, EntityType.EXAM_BOOKLET, localIds.get(key), record, decoded, staged, localIds);
+		}
+		if (plan.isNewSubjectInstallation()) {
+
+			// Restore authoritative revisions only after every scalar,
+			// relationship and child write has finished firing triggers.
+			// Existing shared records must retain their local revisions.
+			for (EntityType type : ORDER) {
+				for (ExchangeRecord record : ordered.getOrDefault(type, List.of())) {
+					Key key = SubjectReconciliationReview.recordKey(type.name(), record.recordId());
+					if (actions.get(key).operation() != Operation.INSERT_RECORD) {
+						continue;
+					}
+					restoreNewSubjectRevision(connection, type, localIds.get(key), canonicalIds.get(key), record);
+				}
+			}
 		}
 
 		// Record origin aliases only after the complete graph has been
@@ -2005,6 +2027,21 @@ public final class SubjectImportGraphWriter {
 				throw new SQLException("Cannot restore authoritative assignment revision");
 			}
 		}
+	}
+
+	private void restoreNewSubjectRevision(Connection connection, EntityType type, long localId, UUID canonicalId,
+			ExchangeRecord record) throws SQLException {
+		if (canonicalId == null || record.revisionId() == null) {
+			throw new SQLException("Missing canonical identity or authoritative revision for new Subject record: "
+					+ record.recordId());
+		}
+
+		// The originating entity identity is represented locally by an
+		// alias. Reuse the existing revision-restoration mechanism with
+		// the generated canonical identity rather than rebinding it.
+		ExchangeRecord canonicalRecord = new ExchangeRecord(record.recordVersion(), record.recordType(), canonicalId,
+				record.revisionId(), record.baselineRevisionId(), record.values());
+		restoreAssignmentRevision(connection, type, localId, canonicalRecord);
 	}
 
 	/**

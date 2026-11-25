@@ -28,6 +28,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
@@ -193,11 +194,15 @@ import au.edu.eq.questionbank.service.workpackage.MasterContributionDecisionLedg
 import au.edu.eq.questionbank.service.workpackage.MasterContributionIntake;
 import au.edu.eq.questionbank.service.workpackage.MasterContributionReceiptExporter;
 import au.edu.eq.questionbank.service.workpackage.MasterContributionReviewPlanner;
+import au.edu.eq.questionbank.service.workpackage.PackageFormatException;
 import au.edu.eq.questionbank.service.workpackage.SqliteContributorAssignmentSessionRepository;
 import au.edu.eq.questionbank.service.workpackage.SubjectImportBackupGate;
 import au.edu.eq.questionbank.service.workpackage.SubjectImportCoordinator;
 import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationPreviewService;
 import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationReview;
+import au.edu.eq.questionbank.service.workpackage.SubjectRefreshChangeClassifier;
+import au.edu.eq.questionbank.service.workpackage.SubjectRefreshChangeClassifier.ChangeKind;
+import au.edu.eq.questionbank.service.workpackage.SubjectRefreshPlan;
 import au.edu.eq.questionbank.service.workpackage.SubjectSnapshotExporter;
 import au.edu.eq.questionbank.service.workpackage.SubjectSnapshotIntakePreview;
 import au.edu.eq.questionbank.service.workpackage.WorkAssignmentExporter;
@@ -2716,6 +2721,184 @@ public class QuestionBankApplication extends Application {
 		refreshActiveExamContext();
 	}
 
+	private String describeRefreshRecord(SubjectRefreshChangeClassifier.RecordChange change) {
+		var record = change.incoming() == null ? change.current() : change.incoming();
+		var values = record.values();
+		List<String> labels = new ArrayList<>();
+		for (String field : List.of("subject_name", "syllabus_name", "curriculum_code", "curriculum_name",
+				"provider_name", "exam_year", "exam_name", "booklet_name", "answer_file_name", "question_code",
+				"source_question_code", "relative_path")) {
+			String value = values.path(field).asText("");
+			if (!value.isBlank()) {
+				labels.add(value);
+			}
+		}
+		String description = refreshRecordTypeLabel(change.key().recordType());
+		if (!labels.isEmpty()) {
+			description += " — " + String.join(" / ", labels);
+		}
+		return description + " [" + change.key().recordId() + "]";
+	}
+
+	private String describeSubjectRefresh(SubjectRefreshPlan plan) {
+		var evidence = plan.evidence();
+		var authority = evidence.authority();
+		var incoming = evidence.incoming();
+		var accepted = evidence.accepted();
+		StringBuilder message = new StringBuilder();
+		message.append("""
+				REFRESH ELIGIBILITY
+
+				Subject: %s
+
+				Eligible newer snapshot from the established originating authority.
+
+				Originating installation:
+				%s
+
+				Originating Subject identity:
+				%s
+
+				Latest accepted snapshot: %s
+				Incoming snapshot: %s
+
+				Accepted package: %s
+				Incoming package: %s
+
+				The originating installation remains authoritative.
+				The destination Subject will remain read-only.
+
+				""".formatted(incoming.fingerprint().subjectName(), authority.originInstallationId(),
+				authority.originSubjectPortableId(), accepted.createdAt(), incoming.createdAt(),
+				accepted.fingerprint().packageId(), incoming.fingerprint().packageId()));
+		if (plan.hasContentChanges()) {
+			message.append("The reviewed comparison contains authoritative changes.\n\n");
+		} else {
+			message.append("""
+					The reviewed content is unchanged.
+
+					Approval will advance the accepted snapshot evidence
+					without changing the existing records or asset bytes.
+
+					""");
+		}
+		message.append("RECORD COMPARISON\n\n");
+		message.append("""
+				Record totals:
+				Additions: %d
+				Updates: %d
+				Removals: %d
+				Revision-only changes: %d
+				Unchanged: %d
+
+				""".formatted(plan.countRecords(ChangeKind.ADD), plan.countRecords(ChangeKind.UPDATE),
+				plan.countRecords(ChangeKind.REMOVE), plan.countRecords(ChangeKind.REVISION_ONLY),
+				plan.countRecords(ChangeKind.UNCHANGED)));
+
+		// Present all represented entity types, including those whose
+		// content remains unchanged.
+		List<String> recordTypes = plan.recordChanges().stream().map(change -> change.key().recordType()).distinct()
+				.sorted().toList();
+		for (String recordType : recordTypes) {
+			message.append("""
+					%s:
+					    Additions: %d, Updates: %d, Removals: %d
+					    Revision-only changes: %d, Unchanged: %d
+
+					""".formatted(refreshRecordTypeLabel(recordType), plan.countRecords(recordType, ChangeKind.ADD),
+					plan.countRecords(recordType, ChangeKind.UPDATE), plan.countRecords(recordType, ChangeKind.REMOVE),
+					plan.countRecords(recordType, ChangeKind.REVISION_ONLY),
+					plan.countRecords(recordType, ChangeKind.UNCHANGED)));
+		}
+		message.append("CHANGED RECORDS\n\n");
+		boolean changedRecords = false;
+		for (var change : plan.recordChanges()) {
+			if (change.kind() == ChangeKind.UNCHANGED) {
+				continue;
+			}
+			changedRecords = true;
+			message.append(refreshChangeLabel(change.kind())).append(": ").append(describeRefreshRecord(change))
+					.append('\n');
+			if (change.kind() == ChangeKind.UPDATE) {
+				var before = change.current().values();
+				var after = change.incoming().values();
+				Set<String> fields = new TreeSet<>();
+				before.fieldNames().forEachRemaining(fields::add);
+				after.fieldNames().forEachRemaining(fields::add);
+
+				// Report changed domain fields rather than repeating
+				// the complete unchanged record.
+				for (String field : fields) {
+					var previous = before.get(field);
+					var replacement = after.get(field);
+					if (!Objects.equals(previous, replacement)) {
+						message.append("    ").append(field.replace('_', ' ')).append(": ").append(previous)
+								.append(" → ").append(replacement).append('\n');
+					}
+				}
+			} else if (change.kind() == ChangeKind.REVISION_ONLY) {
+				message.append("    Previous revision: ").append(change.current().revisionId()).append('\n')
+						.append("    Authoritative revision: ").append(change.incoming().revisionId()).append('\n');
+			}
+			message.append('\n');
+		}
+		if (!changedRecords) {
+			message.append("No changed records.\n\n");
+		}
+		message.append("MANAGED ASSET COMPARISON\n\n");
+		message.append("""
+				Asset totals:
+				Additions: %d
+				Updates: %d
+				Removals: %d
+				Unchanged: %d
+
+				Revision-only changes do not apply to binary assets.
+
+				""".formatted(plan.countAssets(ChangeKind.ADD), plan.countAssets(ChangeKind.UPDATE),
+				plan.countAssets(ChangeKind.REMOVE), plan.countAssets(ChangeKind.UNCHANGED)));
+		boolean changedAssets = false;
+		for (var change : plan.assetChanges()) {
+			if (change.kind() == ChangeKind.UNCHANGED) {
+				continue;
+			}
+			changedAssets = true;
+			message.append(refreshChangeLabel(change.kind())).append(": ").append(change.managedPath()).append('\n');
+			if (change.current() != null) {
+				message.append("    Existing size: ").append(change.current().size()).append(" bytes\n");
+			}
+			if (change.incoming() != null) {
+				message.append("    Incoming size: ").append(change.incoming().size()).append(" bytes\n");
+			}
+			message.append('\n');
+		}
+		if (!changedAssets) {
+			message.append("No changed managed assets.\n\n");
+		}
+		message.append("""
+				APPROVAL AND BACKUP
+
+				Approval applies to this complete reviewed comparison.
+
+				Records and managed assets absent from the newer authoritative
+				snapshot may be removed from this imported Subject.
+
+				Subject names cannot change during refresh.
+
+				Unrelated Subjects and their protected resources must not be changed.
+
+				A verified full backup will be created automatically
+				before publication.
+
+				The application will revalidate the archive, authority and
+				destination state before committing the approved refresh.
+
+				Cancelling now will not change the database, publish assets
+				or create a backup.
+				""");
+		return message.toString();
+	}
+
 	private String diagnosticRuntimeKind() {
 		String configured = System.getProperty("eqb.performance.runtimeKind", "unknown");
 		return switch (configured) {
@@ -3075,6 +3258,30 @@ public class QuestionBankApplication extends Application {
 		if (scormExportMenuItem != null) {
 			scormExportMenuItem.setDisable(false);
 		}
+	}
+
+	private void finishSubjectSnapshotRefresh(Alert progress, String subjectName,
+			SubjectImportCoordinator.Result result, Throwable refreshFailure) {
+		SubjectImportReviewWorkflow.dismissCompletedProgress(progress);
+		packageImportInProgress = false;
+		if (refreshFailure != null) {
+
+			// Publication has committed. A subsequent application
+			// presentation failure must not be described as a rollback.
+			showAlert(Alert.AlertType.ERROR, "Subject Refreshed", subjectName + " was refreshed.",
+					"The authoritative refresh completed, but the application "
+							+ "could not reload its current Subject data.\n\n" + failureMessage(refreshFailure),
+					refreshFailure);
+			return;
+		}
+		if (result.replay()) {
+			showAlert(Alert.AlertType.INFORMATION, "Subject Already Refreshed", subjectName + " is already up to date.",
+					"No duplicate records were created and no additional " + "backup was required.");
+			return;
+		}
+		showAlert(Alert.AlertType.INFORMATION, "Subject Refreshed", subjectName + " has been refreshed.",
+				"The approved authoritative snapshot has been imported.\n\n" + "The Subject remains read-only.\n\n"
+						+ "Pre-import backup:\n" + result.backupArchivePath());
 	}
 
 	private void focusStoredQuestionRegions(Question question) {
@@ -4286,6 +4493,16 @@ public class QuestionBankApplication extends Application {
 		refreshCorpusDashboardHome(-1L);
 	}
 
+	private String refreshChangeLabel(ChangeKind kind) {
+		return switch (kind) {
+		case ADD -> "Addition";
+		case UPDATE -> "Update";
+		case REMOVE -> "Removal";
+		case REVISION_ONLY -> "Revision-only change";
+		case UNCHANGED -> "Unchanged";
+		};
+	}
+
 	private void refreshContributorAssignmentContext(ContributorAssignmentDashboardContextResolver.Context context,
 			boolean refreshSubjects, Consumer<Throwable> completionHandler) {
 		Objects.requireNonNull(completionHandler, "completionHandler");
@@ -4439,6 +4656,11 @@ public class QuestionBankApplication extends Application {
 			showAlert(Alert.AlertType.ERROR, "Exam / Assets",
 					"The asset was deleted, but Exam / Assets could not be refreshed.", failureMessage(exception));
 		}
+	}
+
+	private String refreshRecordTypeLabel(String recordType) {
+		String label = recordType.toLowerCase(Locale.ROOT).replace('_', ' ');
+		return Character.toUpperCase(label.charAt(0)) + label.substring(1);
 	}
 
 	private void removeContributorAssignment() {
@@ -6760,6 +6982,48 @@ public class QuestionBankApplication extends Application {
 		worker.start();
 	}
 
+	private void showSubjectRefreshApproval(Stage primaryStage, ApplicationConfig config, Path incomingArchive,
+			SubjectRefreshPlan plan) {
+		if (activeAssignmentContext != null) {
+			packageImportInProgress = false;
+			showAlert(Alert.AlertType.WARNING, "Import Subject Snapshot", "A contributor assignment is active.",
+					"A Subject snapshot cannot be refreshed while working " + "on an active contributor assignment.");
+			return;
+		}
+		Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+		confirmation.initOwner(primaryStage);
+		confirmation.setTitle("Refresh Subject Snapshot");
+		confirmation.setHeaderText("Refresh " + plan.evidence().incoming().fingerprint().subjectName());
+		confirmation.getDialogPane().setId("subject-snapshot-refresh-confirmation");
+		TextArea comparison = new TextArea(describeSubjectRefresh(plan));
+		comparison.setId("subject-snapshot-refresh-comparison");
+		comparison.setEditable(false);
+		comparison.setWrapText(true);
+		comparison.setPrefColumnCount(85);
+		comparison.setPrefRowCount(26);
+		comparison.setMaxWidth(Double.MAX_VALUE);
+		comparison.setMaxHeight(Double.MAX_VALUE);
+		confirmation.getDialogPane().setContent(comparison);
+		confirmation.getDialogPane().setPrefWidth(760);
+		confirmation.setResizable(true);
+		ButtonType approveButton = new ButtonType("Approve Subject Refresh", ButtonBar.ButtonData.OK_DONE);
+		confirmation.getButtonTypes().setAll(approveButton, ButtonType.CANCEL);
+
+		// Display the beginning of the authority and eligibility evidence
+		// rather than positioning the comparison at the final paragraph.
+		comparison.positionCaret(0);
+		if (confirmation.showAndWait().orElse(ButtonType.CANCEL) != approveButton) {
+			packageImportInProgress = false;
+			return;
+		}
+
+		// Only an explicit affirmative dialog result creates an approval.
+		// The approval remains bound to the exact immutable comparison.
+		SubjectRefreshPlan.Approval approval = plan
+				.approve("Authoritative Subject refresh explicitly approved " + "through Import Subject Snapshot.");
+		startSubjectSnapshotRefreshInstallation(primaryStage, config, incomingArchive, approval);
+	}
+
 	private void showVersionInformation(ApplicationConfig config) {
 		String applicationVersion = applicationVersion();
 		String javaVersion = System.getProperty("java.version", "Unknown");
@@ -7520,14 +7784,11 @@ public class QuestionBankApplication extends Application {
 							inspection.fingerprint().subjectName() + " requires no changes.");
 				}
 				case EXISTING_SUBJECT -> {
-					packageImportInProgress = false;
 
-					// Existing Subject refresh requires its own
-					// provenance-aware approval and transaction.
-					// Never redirect to legacy reconciliation.
-					showAlert(Alert.AlertType.WARNING, "Import Subject Snapshot", "This Subject already exists.",
-							"The incoming snapshot belongs to " + inspection.fingerprint().subjectName()
-									+ ". Existing Subjects cannot be " + "overwritten through new Subject import.");
+					// A name collision does not authorise an overwrite.
+					// The dedicated refresh service establishes provenance,
+					// chronological eligibility and the exact comparison.
+					startSubjectSnapshotRefreshPreview(primaryStage, config, incomingArchive, inspection);
 				}
 				}
 			} catch (RuntimeException failure) {
@@ -7750,6 +8011,176 @@ public class QuestionBankApplication extends Application {
 			operation.failed();
 			operation.close();
 			throw failure;
+		}
+	}
+
+	private void startSubjectSnapshotRefreshInstallation(Stage primaryStage, ApplicationConfig config,
+			Path incomingArchive, SubjectRefreshPlan.Approval approval) {
+		if (activeAssignmentContext != null) {
+			packageImportInProgress = false;
+			showAlert(Alert.AlertType.WARNING, "Refresh Subject Snapshot", "A contributor assignment is active.",
+					"The approved Subject refresh cannot proceed.");
+			return;
+		}
+		if (!allowWorkingSubjectChange()) {
+			packageImportInProgress = false;
+			return;
+		}
+		var evidence = approval.plan().evidence();
+		String subjectName = evidence.incoming().fingerprint().subjectName();
+		try {
+
+			// Release any PDF handles belonging to the current imported
+			// Subject before its managed files can be replaced or removed.
+			// This occurs only after explicit approval.
+			if (workingSubject != null && workingSubject.getId() == evidence.authority().subjectLocalId()) {
+				pdfWorkspace.clearDocuments();
+			}
+		} catch (RuntimeException failure) {
+			packageImportInProgress = false;
+			showAlert(Alert.AlertType.ERROR, "Subject Refresh Failed", "The Subject refresh could not be started.",
+					failureMessage(failure), failure);
+			return;
+		}
+		Task<SubjectImportCoordinator.Result> task = new ApplicationBackgroundTask<>(() -> {
+
+			// The coordinator owns exact approval revalidation,
+			// automatic backup, transactional graph publication,
+			// managed-file recovery and authority advancement.
+			return new SubjectImportCoordinator(config).executeRefresh(approval, incomingArchive);
+		});
+		Alert progress = new Alert(Alert.AlertType.INFORMATION);
+		progress.initOwner(primaryStage);
+		progress.setTitle("Refreshing Subject Snapshot");
+		progress.setHeaderText("Refreshing " + subjectName);
+		progress.setContentText("Revalidating the approved comparison, creating a verified "
+				+ "full backup and publishing the authoritative changes.\n\n"
+				+ "Publication cannot be cancelled once started.");
+		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
+
+		// Do not allow ordinary application navigation or cancellation
+		// while managed-file and database publication are in progress.
+		progress.getButtonTypes().clear();
+		progress.setOnCloseRequest(event -> event.consume());
+		task.setOnSucceeded(_ -> {
+			var result = task.getValue();
+			if (!result.applied()) {
+				SubjectImportReviewWorkflow.dismissCompletedProgress(progress);
+				packageImportInProgress = false;
+				showAlert(Alert.AlertType.WARNING, "Refresh Subject Snapshot", "The Subject was not refreshed.",
+						"No successful refresh was recorded.");
+				return;
+			}
+			progress.setHeaderText("Reloading Subject data");
+			progress.setContentText("Publication has completed. Reloading the Working Subject, "
+					+ "curriculum, capture queues and Corpus Dashboard.");
+			try {
+				examMetadataPane.refreshSubjects();
+
+				// Reuse the existing complete operating-context reload.
+				// A null assignment context retains ordinary Subject mode.
+				// The new generation invalidates retained pre-refresh data.
+				refreshContributorAssignmentContext(null, true,
+						failure -> finishSubjectSnapshotRefresh(progress, subjectName, result, failure));
+			} catch (RuntimeException failure) {
+				finishSubjectSnapshotRefresh(progress, subjectName, result, failure);
+			}
+		});
+		task.setOnFailed(_ -> {
+			SubjectImportReviewWorkflow.dismissCompletedProgress(progress);
+			packageImportInProgress = false;
+			Throwable failure = task.getException();
+			showAlert(Alert.AlertType.ERROR, "Subject Refresh Failed", subjectName + " could not be refreshed.",
+					failureMessage(failure), failure);
+		});
+		task.setOnCancelled(_ -> {
+			SubjectImportReviewWorkflow.dismissCompletedProgress(progress);
+			packageImportInProgress = false;
+			showAlert(Alert.AlertType.WARNING, "Subject Refresh Snapshot", "The refresh task was cancelled.",
+					"Check the recorded import outcome before retrying.");
+		});
+		Thread worker = new Thread(task, "examwork-subject-refresh-installation");
+		worker.setDaemon(true);
+		progress.show();
+		try {
+			worker.start();
+		} catch (RuntimeException failure) {
+			SubjectImportReviewWorkflow.dismissCompletedProgress(progress);
+			packageImportInProgress = false;
+			showAlert(Alert.AlertType.ERROR, "Subject Refresh Failed", "The Subject refresh could not be started.",
+					failureMessage(failure), failure);
+		}
+	}
+
+	private void startSubjectSnapshotRefreshPreview(Stage primaryStage, ApplicationConfig config, Path incomingArchive,
+			SubjectSnapshotIntakePreview.Inspection inspection) {
+		Task<SubjectRefreshPlan> task = new ApplicationBackgroundTask<>(() -> {
+			SqliteDatabase database = new SqliteDatabase(config.databasePath());
+			SubjectSnapshotIntakePreview preview = new SubjectSnapshotIntakePreview(database);
+
+			// Refuse locally authoritative Subjects and incompatible
+			// originating identities before constructing the comparison.
+			preview.requireRefreshAuthority(inspection);
+			SubjectRefreshPlan plan = preview.previewRefresh(incomingArchive, new ManagedDataLayout(config.dataRoot()));
+
+			// The initial inspection and the complete comparison
+			// must describe the same incoming archive.
+			if (!inspection.fingerprint().equals(plan.evidence().incoming().fingerprint())) {
+				throw new PackageFormatException("The incoming Subject snapshot changed " + "during inspection.");
+			}
+			return plan;
+		});
+		Alert progress = new Alert(Alert.AlertType.INFORMATION);
+		progress.initOwner(primaryStage);
+		progress.setTitle("Comparing Subject Snapshot");
+		progress.setHeaderText("Checking refresh eligibility for " + inspection.fingerprint().subjectName());
+		progress.setContentText("Checking the originating authority, snapshot freshness, "
+				+ "record identities and managed assets.\n\n" + "No destination data is being changed.");
+		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
+		progress.getButtonTypes().clear();
+		progress.setOnCloseRequest(event -> event.consume());
+		task.setOnSucceeded(_ -> {
+			SubjectImportReviewWorkflow.dismissCompletedProgress(progress);
+			try {
+				showSubjectRefreshApproval(primaryStage, config, incomingArchive, task.getValue());
+			} catch (RuntimeException failure) {
+				packageImportInProgress = false;
+				showAlert(Alert.AlertType.ERROR, "Refresh Subject Snapshot",
+						"The Subject refresh comparison could not be displayed.", failureMessage(failure), failure);
+			}
+		});
+		task.setOnFailed(_ -> {
+			SubjectImportReviewWorkflow.dismissCompletedProgress(progress);
+			packageImportInProgress = false;
+			Throwable failure = task.getException();
+			if (failure instanceof PackageFormatException) {
+
+				// Preserve the existing locally authoritative Subject
+				// collision warning while explaining why the dedicated
+				// refresh operation was refused.
+				showAlert(Alert.AlertType.WARNING, "Import Subject Snapshot", "This Subject already exists.",
+						"The incoming snapshot belongs to " + inspection.fingerprint().subjectName()
+								+ ". Existing Subjects cannot be overwritten " + "through new Subject import.\n\n"
+								+ "Authoritative refresh refused:\n" + failureMessage(failure));
+			} else {
+				showAlert(Alert.AlertType.ERROR, "Subject Refresh Preview",
+						"The Subject refresh comparison could not be completed.", failureMessage(failure), failure);
+			}
+		});
+		task.setOnCancelled(_ -> {
+			SubjectImportReviewWorkflow.dismissCompletedProgress(progress);
+			packageImportInProgress = false;
+		});
+		Thread worker = new Thread(task, "examwork-subject-refresh-preview");
+		worker.setDaemon(true);
+		progress.show();
+		try {
+			worker.start();
+		} catch (RuntimeException failure) {
+			SubjectImportReviewWorkflow.dismissCompletedProgress(progress);
+			packageImportInProgress = false;
+			showAlert(Alert.AlertType.ERROR, "Subject Refresh Preview",
+					"The Subject refresh comparison could not be started.", failureMessage(failure), failure);
 		}
 	}
 

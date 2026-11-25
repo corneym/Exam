@@ -1511,6 +1511,80 @@ class SubjectImportCoordinatorIntegrationTest {
 	}
 
 	@Test
+	void refreshPreviewImmediatelyAfterNewSubjectInstallationIsUnchanged() throws Exception {
+		ApplicationConfig destination = ApplicationConfig
+				.fromDataRoot(directory.resolve("refresh-initial-destination"));
+		Files.createDirectories(destination.dataRoot());
+		SqliteDatabase database = new SqliteDatabase(destination.databasePath());
+		database.initialiseSchema();
+		execute(database, """
+				INSERT INTO exam_providers (id, provider_name)
+				VALUES (100, 'QCAA')
+				""");
+		var identities = new SqlitePortableIdentityRepository(database);
+		var originalProvider = identities.findByLocalId(SqlitePortableIdentityRepository.EntityType.EXAM_PROVIDER, 100L)
+				.orElseThrow();
+		Path original = createIndependentSnapshot("Biology", "refresh-initial-source");
+		var preview = new SubjectSnapshotIntakePreview(database);
+		var coordinator = new SubjectImportCoordinator(destination);
+		var initialInspection = preview.inspect(original);
+		assertEquals(SubjectSnapshotIntakePreview.State.NEW_SUBJECT, initialInspection.state());
+		var installation = coordinator.executeNewSubject(initialInspection, original);
+		assertTrue(installation.applied());
+		assertFalse(installation.replay());
+		long subjectId = findSubjectId(database, "Biology");
+		var authorities = new SqliteImportedSubjectAuthorityRepository(database);
+		var originalAuthority = authorities.find(subjectId).orElseThrow();
+		ApplicationConfig source = ApplicationConfig.fromDataRoot(directory.resolve("refresh-initial-source"));
+		SqliteDatabase sourceDatabase = new SqliteDatabase(source.databasePath());
+		Path newer = directory.resolve("refresh-initial-newer.examwork");
+
+		// Export another package immediately after initial installation.
+		// No intervening refresh or originating data mutation may occur.
+		new SubjectSnapshotExporter(sourceDatabase, new ManagedDataLayout(source.dataRoot())).export(1L, newer);
+		var plan = preview.previewRefresh(newer, new ManagedDataLayout(destination.dataRoot()));
+		assertEquals(SubjectSnapshotFreshness.Outcome.NEWER_UNCHANGED, plan.evidence().outcome());
+		assertFalse(plan.hasContentChanges(),
+				() -> "Unexpected record changes: " + plan.recordChanges().stream()
+						.filter(change -> change.kind() != SubjectRefreshChangeClassifier.ChangeKind.UNCHANGED).toList()
+						+ "\nUnexpected asset changes: "
+						+ plan.assetChanges().stream()
+								.filter(change -> change.kind() != SubjectRefreshChangeClassifier.ChangeKind.UNCHANGED)
+								.toList());
+		for (var change : plan.recordChanges()) {
+			assertEquals(SubjectRefreshChangeClassifier.ChangeKind.UNCHANGED, change.kind());
+			assertEquals(change.current().revisionId(), change.incoming().revisionId());
+			assertEquals(change.current().recordId(), change.incoming().recordId());
+			assertEquals(change.current().values(), change.incoming().values());
+		}
+		assertTrue(plan.assetChanges().stream()
+				.allMatch(change -> change.kind() == SubjectRefreshChangeClassifier.ChangeKind.UNCHANGED));
+		assertEquals(originalProvider, identities
+				.findByLocalId(SqlitePortableIdentityRepository.EntityType.EXAM_PROVIDER, 100L).orElseThrow());
+		assertEquals(originalAuthority, authorities.find(subjectId).orElseThrow());
+		long backupsBeforeRefresh = countRefreshBackups(destination);
+		var result = coordinator.executeRefresh(
+				plan.approve("Approve identical snapshot following initial Subject installation"), newer);
+		assertTrue(result.applied());
+		assertFalse(result.replay());
+		assertEquals(backupsBeforeRefresh + 1, countRefreshBackups(destination));
+		var refreshedAuthority = authorities.find(subjectId).orElseThrow();
+		assertEquals(result.packageId(), refreshedAuthority.latestPackageId());
+		assertEquals(originalAuthority.originInstallationId(), refreshedAuthority.originInstallationId());
+		assertEquals(originalAuthority.originSubjectPortableId(), refreshedAuthority.originSubjectPortableId());
+		assertEquals(originalProvider, identities
+				.findByLocalId(SqlitePortableIdentityRepository.EntityType.EXAM_PROVIDER, 100L).orElseThrow());
+		assertImportedSubjectGraph(database, destination, "Biology");
+		try (Connection connection = database.openConnection()) {
+			assertEquals(1, count(connection, "SELECT COUNT(*) FROM subjects"));
+			assertEquals(1, count(connection, "SELECT COUNT(*) FROM exam_providers"));
+			assertEquals(1, count(connection, "SELECT COUNT(*) FROM questions"));
+			assertEquals(2, count(connection, "SELECT COUNT(*) FROM subject_import_packages"));
+		}
+		database.verifyIntegrity();
+	}
+
+	@Test
 	void refreshPreviewPreservesSharedProviderAndOtherSubjects() throws Exception {
 		Path biology = createIndependentSnapshot("Biology", "refresh-provider-biology");
 		Path chemistry = createIndependentSnapshot("Chemistry", "refresh-provider-chemistry");

@@ -223,7 +223,7 @@ class SubjectImportPublicationJournalTest {
 		byte[] independentlyChanged = "Independently changed PDF".getBytes(StandardCharsets.UTF_8);
 		Files.write(fixture.destination(), independentlyChanged);
 		try (var lock = ManagedAssetPublicationLock.acquire(fixture.config().dataRoot());
-				var reservation = new ManagedAssetRecoveryReferences(fixture.config(), lock)) {
+				var _ = new ManagedAssetRecoveryReferences(fixture.config(), lock)) {
 			assertThrows(IOException.class, () -> fixture.journal().prepareRefresh(fixture.staged(), fixture.backup(),
 					List.of(refreshChange(fixture, SubjectRefreshChangeClassifier.ChangeKind.UPDATE)), lock));
 		}
@@ -244,7 +244,7 @@ class SubjectImportPublicationJournalTest {
 				new SubjectRefreshChangeClassifier.AssetContent(checksum(originalBytes()), originalBytes().length),
 				null);
 		try (var lock = ManagedAssetPublicationLock.acquire(fixture.config().dataRoot());
-				var reservation = new ManagedAssetRecoveryReferences(fixture.config(), lock)) {
+				var _ = new ManagedAssetRecoveryReferences(fixture.config(), lock)) {
 			assertThrows(IOException.class,
 					() -> fixture.journal().prepareRefresh(
 							refreshStage(fixture, SubjectRefreshChangeClassifier.ChangeKind.REMOVE), fixture.backup(),
@@ -259,7 +259,7 @@ class SubjectImportPublicationJournalTest {
 	void refreshPreparationRejectsUnapprovedStagedAssets() throws Exception {
 		Fixture fixture = fixture();
 		try (var lock = ManagedAssetPublicationLock.acquire(fixture.config().dataRoot());
-				var reservation = new ManagedAssetRecoveryReferences(fixture.config(), lock)) {
+				var _ = new ManagedAssetRecoveryReferences(fixture.config(), lock)) {
 			assertThrows(IOException.class,
 					() -> fixture.journal().prepareRefresh(fixture.staged(), fixture.backup(), List.of(), lock));
 		}
@@ -271,7 +271,7 @@ class SubjectImportPublicationJournalTest {
 	void refreshPreparedReplacementPreservesOriginalWithoutPublication() throws Exception {
 		Fixture fixture = fixture(true);
 		try (var lock = ManagedAssetPublicationLock.acquire(fixture.config().dataRoot());
-				var reservation = new ManagedAssetRecoveryReferences(fixture.config(), lock)) {
+				var _ = new ManagedAssetRecoveryReferences(fixture.config(), lock)) {
 			fixture.journal().prepareRefresh(fixture.staged(), fixture.backup(),
 					List.of(refreshChange(fixture, SubjectRefreshChangeClassifier.ChangeKind.UPDATE)), lock);
 			Path retained = fixture.staged().directory().resolve("assets/original-00000.bin");
@@ -292,7 +292,7 @@ class SubjectImportPublicationJournalTest {
 		// Deliberately simulate an inconsistent committed package whose graph failed
 		// to remove the authoritative reference.
 		SqliteDatabase database = new SqliteDatabase(fixture.config().databasePath());
-		try (var lock = ManagedAssetPublicationLock.acquire(fixture.config().dataRoot());
+		try (var _ = ManagedAssetPublicationLock.acquire(fixture.config().dataRoot());
 				Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			recordApplied(fixture, connection);
