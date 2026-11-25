@@ -466,9 +466,7 @@ class SubjectImportCoordinatorIntegrationTest {
 	@Test
 	void refreshGraphAddsNewRecordAndPreservesExistingCanonicalIdentity() throws Exception {
 		RefreshStagingFixture fixture = createRefreshStagingFixture();
-
 		SqliteDatabase sourceDatabase = new SqliteDatabase(fixture.source().databasePath());
-
 		SqliteDatabase destinationDatabase = fixture.destinationDatabase();
 
 		// Introduce a genuinely new authoritative SourceQuestion.
@@ -480,108 +478,74 @@ class SubjectImportCoordinatorIntegrationTest {
 				)
 				VALUES (92, 61, '2')
 				""");
-
 		Path incoming = directory.resolve("refresh-with-new-source-question.examwork");
-
 		new SubjectSnapshotExporter(sourceDatabase, new ManagedDataLayout(fixture.source().dataRoot())).export(1L,
 				incoming);
-
 		ManagedDataLayout layout = new ManagedDataLayout(fixture.destination().dataRoot());
-
 		var preview = new SubjectSnapshotIntakePreview(destinationDatabase);
-
 		var plan = preview.previewRefresh(incoming, layout);
 		var approval = plan.approve("Approve new authoritative record");
-
 		var newRecord = plan.recordChanges().stream()
 				.filter(change -> change.kind() == SubjectRefreshChangeClassifier.ChangeKind.ADD)
 				.filter(change -> "SOURCE_QUESTION".equals(change.key().recordType())).findFirst().orElseThrow();
-
 		var questionChange = plan.recordChanges().stream()
 				.filter(change -> "QUESTION".equals(change.key().recordType())).findFirst().orElseThrow();
-
 		var identities = new SqlitePortableIdentityRepository(destinationDatabase);
-
 		var originalQuestion = identities
 				.findByPortableId(SqlitePortableIdentityRepository.EntityType.QUESTION, questionChange.key().recordId())
 				.orElseThrow();
-
 		var providerChange = plan.recordChanges().stream()
 				.filter(change -> "EXAM_PROVIDER".equals(change.key().recordType())).findFirst().orElseThrow();
-
 		var originalProvider = identities.findByPortableId(SqlitePortableIdentityRepository.EntityType.EXAM_PROVIDER,
 				providerChange.key().recordId()).orElseThrow();
-
 		var stager = new SubjectImportAssetStager(fixture.destination());
-
 		var writer = new SubjectImportGraphWriter(destinationDatabase);
-
 		try (var lock = ManagedAssetPublicationLock.acquire(fixture.destination().dataRoot())) {
 			var backup = new SubjectImportBackupGate(fixture.destination()).createVerifiedFullBackup(
 					plan.evidence().incoming().fingerprint().packageId(), directory.resolve("graph-addition-backups"));
-
 			var staged = stager.stageRefresh(approval, backup, incoming, lock);
-
 			try (Connection connection = destinationDatabase.openConnection()) {
 				connection.setAutoCommit(false);
-
 				var result = writer.applyRefreshGraph(connection, approval, staged, layout, lock);
-
 				long addedId = result.get(newRecord.key());
-
 				assertTrue(addedId > 0);
-
 				var addedIdentity = identities
 						.findByLocalId(connection, SqlitePortableIdentityRepository.EntityType.SOURCE_QUESTION, addedId)
 						.orElseThrow();
-
 				assertEquals(newRecord.key().recordId(), addedIdentity.portableId());
-
 				assertEquals(newRecord.incoming().revisionId(), addedIdentity.revisionId());
-
 				var updatedQuestion = identities.findByPortableId(connection,
 						SqlitePortableIdentityRepository.EntityType.QUESTION, questionChange.key().recordId())
 						.orElseThrow();
-
 				assertEquals(originalQuestion.localId(), updatedQuestion.localId());
-
 				assertEquals(originalQuestion.portableId(), updatedQuestion.portableId());
-
 				assertEquals(questionChange.incoming().revisionId(), updatedQuestion.revisionId());
-
 				var updatedProvider = identities.findByPortableId(connection,
 						SqlitePortableIdentityRepository.EntityType.EXAM_PROVIDER, providerChange.key().recordId())
 						.orElseThrow();
-
 				assertEquals(originalProvider, updatedProvider);
-
 				assertEquals(2, count(connection, """
 						SELECT COUNT(*)
 						FROM source_questions
 						"""));
-
 				assertEquals(1, count(connection, """
 						SELECT COUNT(*)
 						FROM source_questions
 						WHERE source_question_code = '2'
 						"""));
-
 				assertEquals(1, count(connection, """
 						SELECT COUNT(*)
 						FROM questions
 						WHERE marks = 3
 						"""));
-
 				var originatingKey = plan.identities().entrySet().stream()
 						.filter(entry -> "SOURCE_QUESTION".equals(entry.getKey().recordType()))
 						.filter(entry -> newRecord.key().recordId().equals(entry.getValue())).map(Map.Entry::getKey)
 						.findFirst().orElseThrow();
-
 				var alias = new SqlitePortableAliasRepository(destinationDatabase)
 						.findAlias(connection, plan.evidence().incoming().fingerprint().originInstallationId(),
 								SqlitePortableIdentityRepository.EntityType.SOURCE_QUESTION, originatingKey.recordId())
 						.orElseThrow();
-
 				assertEquals(addedIdentity.portableId(), alias);
 
 				// This increment does not yet publish the package ledger.
@@ -589,26 +553,21 @@ class SubjectImportCoordinatorIntegrationTest {
 				connection.rollback();
 			}
 		}
-
 		assertRefreshDestinationUnchanged(fixture);
-
 		try (Connection connection = destinationDatabase.openConnection()) {
 			assertEquals(1, count(connection, """
 					SELECT COUNT(*)
 					FROM source_questions
 					"""));
 		}
-
 		assertTrue(identities.findByPortableId(SqlitePortableIdentityRepository.EntityType.SOURCE_QUESTION,
 				newRecord.key().recordId()).isEmpty());
-
 		destinationDatabase.verifyIntegrity();
 	}
 
 	@Test
 	void refreshGraphRejectsManagedAssetReferencedByUnrelatedSubject() throws Exception {
 		RefreshStagingFixture fixture = createRefreshStagingFixture();
-
 		SqliteDatabase database = fixture.destinationDatabase();
 
 		// Create a second Subject whose syllabus references the same
@@ -635,39 +594,26 @@ class SubjectImportCoordinatorIntegrationTest {
 				    'subjects/Biology/exams/questions.pdf'
 				)
 				""");
-
 		ManagedDataLayout layout = new ManagedDataLayout(fixture.destination().dataRoot());
-
 		var preview = new SubjectSnapshotIntakePreview(database);
-
 		var plan = preview.previewRefresh(fixture.newer(), layout);
-
 		var approval = plan.approve("Approve Biology refresh subject to ownership checks");
-
 		var stager = new SubjectImportAssetStager(fixture.destination());
-
 		var writer = new SubjectImportGraphWriter(database);
-
 		try (var lock = ManagedAssetPublicationLock.acquire(fixture.destination().dataRoot())) {
 			var backup = new SubjectImportBackupGate(fixture.destination()).createVerifiedFullBackup(
 					plan.evidence().incoming().fingerprint().packageId(), directory.resolve("shared-path-backups"));
-
 			var staged = stager.stageRefresh(approval, backup, fixture.newer(), lock);
-
 			try (Connection connection = database.openConnection()) {
 				connection.setAutoCommit(false);
-
 				IOException failure = assertThrows(IOException.class,
 						() -> writer.applyRefreshGraph(connection, approval, staged, layout, lock));
-
 				assertTrue(failure.getMessage().contains("referenced outside the Subject"));
-
 				assertEquals(1, count(connection, """
 						SELECT COUNT(*)
 						FROM questions
 						WHERE marks = 2
 						"""));
-
 				assertEquals(1, count(connection, """
 						SELECT COUNT(*)
 						FROM syllabus_versions
@@ -675,23 +621,18 @@ class SubjectImportCoordinatorIntegrationTest {
 						  AND source_pdf_path =
 						      'subjects/Biology/exams/questions.pdf'
 						"""));
-
 				connection.rollback();
 			}
 		}
-
 		assertEquals("Biology question document",
 				Files.readString(layout.resolve("subjects/Biology/exams/questions.pdf")));
-
 		database.verifyIntegrity();
 	}
 
 	@Test
 	void refreshGraphRejectsSourceDocumentSharedWithAnotherSubject() throws Exception {
 		RefreshStagingFixture fixture = createRefreshStagingFixture();
-
 		SqliteDatabase database = fixture.destinationDatabase();
-
 		execute(database, """
 				INSERT INTO subjects (
 				    id,
@@ -730,123 +671,460 @@ class SubjectImportCoordinatorIntegrationTest {
 				WHERE relative_path =
 				      'subjects/Biology/exams/questions.pdf'
 				""");
-
 		ManagedDataLayout layout = new ManagedDataLayout(fixture.destination().dataRoot());
-
 		var preview = new SubjectSnapshotIntakePreview(database);
-
 		var plan = preview.previewRefresh(fixture.newer(), layout);
-
 		var approval = plan.approve("Approve refresh subject to shared document protection");
-
 		var stager = new SubjectImportAssetStager(fixture.destination());
-
 		var writer = new SubjectImportGraphWriter(database);
-
 		try (var lock = ManagedAssetPublicationLock.acquire(fixture.destination().dataRoot())) {
 			var backup = new SubjectImportBackupGate(fixture.destination()).createVerifiedFullBackup(
 					plan.evidence().incoming().fingerprint().packageId(), directory.resolve("shared-document-backups"));
-
 			var staged = stager.stageRefresh(approval, backup, fixture.newer(), lock);
-
 			try (Connection connection = database.openConnection()) {
 				connection.setAutoCommit(false);
-
 				Exception failure = assertThrows(Exception.class,
 						() -> writer.applyRefreshGraph(connection, approval, staged, layout, lock));
-
 				assertTrue(failure instanceof SQLException || failure instanceof IOException);
-
 				assertTrue(failure.getMessage().contains("shared SourceDocument")
 						|| failure.getMessage().contains("referenced outside the Subject"));
-
 				assertEquals(1, count(connection, """
 						SELECT COUNT(*)
 						FROM exam_booklets
 						WHERE id = 9993
 						"""));
-
 				assertEquals(1, count(connection, """
 						SELECT COUNT(*)
 						FROM questions
 						WHERE marks = 2
 						"""));
-
 				connection.rollback();
 			}
 		}
-
 		assertEquals("Biology question document",
 				Files.readString(layout.resolve("subjects/Biology/exams/questions.pdf")));
+		database.verifyIntegrity();
+	}
 
+	@Test
+	void refreshGraphRemovesImageAndPreservesQuestionIdentity() throws Exception {
+		RefreshStagingFixture original = createRefreshStagingFixture();
+		SqliteDatabase sourceDatabase = new SqliteDatabase(original.source().databasePath());
+		var sourceIdentities = new SqlitePortableIdentityRepository(sourceDatabase);
+		var originatingImage = sourceIdentities
+				.requireByLocalId(SqlitePortableIdentityRepository.EntityType.QUESTION_IMAGE, 131L);
+		execute(sourceDatabase, """
+				DELETE FROM question_content_parts
+				WHERE question_id = 81
+				  AND image_id = 131
+				""", """
+				DELETE FROM question_images
+				WHERE id = 131
+				""");
+		RefreshStagingFixture fixture = exportRefreshRemovalFixture(original, "refresh-remove-image.examwork");
+		SubjectRefreshPlan plan = fixture.plan();
+		var imageRemoval = plan.recordChanges().stream()
+				.filter(change -> change.kind() == SubjectRefreshChangeClassifier.ChangeKind.REMOVE)
+				.filter(change -> "QUESTION_IMAGE".equals(change.key().recordType())).findFirst().orElseThrow();
+		var questionChange = plan.recordChanges().stream()
+				.filter(change -> "QUESTION".equals(change.key().recordType())).findFirst().orElseThrow();
+		assertEquals(1L, plan.countRecords(SubjectRefreshChangeClassifier.ChangeKind.REMOVE));
+		var approval = plan.approve("Approve authoritative image removal");
+		SqliteDatabase database = fixture.destinationDatabase();
+		var identities = new SqlitePortableIdentityRepository(database);
+		var originalImage = identities.findByPortableId(SqlitePortableIdentityRepository.EntityType.QUESTION_IMAGE,
+				imageRemoval.key().recordId()).orElseThrow();
+		var originalQuestion = identities
+				.findByPortableId(SqlitePortableIdentityRepository.EntityType.QUESTION, questionChange.key().recordId())
+				.orElseThrow();
+		ManagedDataLayout layout = new ManagedDataLayout(fixture.destination().dataRoot());
+		var stager = new SubjectImportAssetStager(fixture.destination());
+		var writer = new SubjectImportGraphWriter(database);
+		try (var lock = ManagedAssetPublicationLock.acquire(fixture.destination().dataRoot())) {
+			var backup = new SubjectImportBackupGate(fixture.destination()).createVerifiedFullBackup(
+					plan.evidence().incoming().fingerprint().packageId(), directory.resolve("image-removal-backups"));
+			var staged = stager.stageRefresh(approval, backup, fixture.newer(), lock);
+			try (Connection connection = database.openConnection()) {
+				connection.setAutoCommit(false);
+				var applied = writer.applyRefreshGraph(connection, approval, staged, layout, lock);
+				assertFalse(applied.containsKey(imageRemoval.key()));
+				assertEquals(originalQuestion.localId(), applied.get(questionChange.key()).longValue());
+				assertEquals(0, count(connection, """
+						SELECT COUNT(*)
+						FROM question_images
+						"""));
+				assertEquals(1, count(connection, """
+						SELECT COUNT(*)
+						FROM question_content_parts
+						WHERE content_type = 'PDF_REGION'
+						"""));
+				assertEquals(0, count(connection, """
+						SELECT COUNT(*)
+						FROM question_content_parts
+						WHERE content_type = 'IMAGE'
+						"""));
+
+				// The unrelated shared-context image must survive.
+				assertEquals(1, count(connection, """
+						SELECT COUNT(*)
+						FROM shared_question_context_images
+						"""));
+				assertTrue(identities.findByPortableId(connection,
+						SqlitePortableIdentityRepository.EntityType.QUESTION_IMAGE, originalImage.portableId())
+						.isEmpty());
+				try (PreparedStatement statement = connection.prepareStatement("""
+						SELECT
+						    entity_type,
+						    local_id,
+						    revision_id
+						FROM portable_entity_retirements
+						WHERE portable_id = ?
+						""")) {
+					statement.setString(1, originalImage.portableId().toString());
+					try (ResultSet rows = statement.executeQuery()) {
+						assertTrue(rows.next());
+						assertEquals("QUESTION_IMAGE", rows.getString("entity_type"));
+						assertEquals(originalImage.localId(), rows.getLong("local_id"));
+						assertEquals(originalImage.revisionId().toString(), rows.getString("revision_id"));
+						assertFalse(rows.next());
+					}
+				}
+				var alias = new SqlitePortableAliasRepository(database).findAlias(connection,
+						plan.evidence().authority().originInstallationId(),
+						SqlitePortableIdentityRepository.EntityType.QUESTION_IMAGE, originatingImage.portableId())
+						.orElseThrow();
+				assertEquals(originalImage.portableId(), alias);
+				var survivingQuestion = identities.findByPortableId(connection,
+						SqlitePortableIdentityRepository.EntityType.QUESTION, originalQuestion.portableId())
+						.orElseThrow();
+				assertEquals(originalQuestion.localId(), survivingQuestion.localId());
+				assertEquals(questionChange.incoming().revisionId(), survivingQuestion.revisionId());
+
+				// The graph operation does not yet own terminal publication.
+				connection.rollback();
+			}
+		}
+		assertRefreshDestinationUnchanged(original);
+		assertEquals(originalImage,
+				identities.findByPortableId(SqlitePortableIdentityRepository.EntityType.QUESTION_IMAGE,
+						originalImage.portableId()).orElseThrow());
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void refreshGraphReplacesQuestionWithNewIdentityAndSameQuestionCode() throws Exception {
+		RefreshStagingFixture original = createRefreshStagingFixture();
+		SqliteDatabase sourceDatabase = new SqliteDatabase(original.source().databasePath());
+
+		// Remove the original Question and its dependent Answer and image
+		// entities in the originating authoritative installation.
+		execute(sourceDatabase, """
+				DELETE FROM answer_regions
+				WHERE answer_id = 141
+				""", """
+				DELETE FROM answers
+				WHERE id = 141
+				""", """
+				DELETE FROM question_content_parts
+				WHERE question_id = 81
+				""", """
+				DELETE FROM question_regions
+				WHERE question_id = 81
+				""", """
+				DELETE FROM question_images
+				WHERE id = 131
+				""", """
+				DELETE FROM questions
+				WHERE id = 81
+				""");
+
+		// The replacement has the same displayed question code but a
+		// genuinely new portable identity.
+		execute(sourceDatabase, """
+				INSERT INTO questions (
+				    id,
+				    booklet_id,
+				    classification_node_id,
+				    question_code,
+				    question_text,
+				    marks,
+				    shared_context_capture_required,
+				    source_question_id,
+				    shared_context_id
+				)
+				VALUES (
+				    82,
+				    61,
+				    103,
+				    '1',
+				    'Authoritative replacement Question',
+				    5,
+				    0,
+				    91,
+				    121
+				)
+				""", """
+				INSERT INTO question_regions (
+				    question_id,
+				    region_order,
+				    booklet_id,
+				    page_number,
+				    x,
+				    y,
+				    width,
+				    height
+				)
+				VALUES (
+				    82, 0, 61, 2,
+				    0.1, 0.2, 0.5, 0.3
+				)
+				""", """
+				INSERT INTO question_content_parts (
+				    question_id,
+				    content_order,
+				    content_type,
+				    region_order
+				)
+				VALUES (82, 0, 'PDF_REGION', 0)
+				""");
+		RefreshStagingFixture fixture = exportRefreshRemovalFixture(original, "refresh-replacement-question.examwork");
+		var plan = fixture.plan();
+		assertEquals(3L, plan.countRecords(SubjectRefreshChangeClassifier.ChangeKind.REMOVE));
+		assertEquals(1L, plan.countRecords("QUESTION", SubjectRefreshChangeClassifier.ChangeKind.ADD));
+		var removedQuestion = plan.recordChanges().stream()
+				.filter(change -> "QUESTION".equals(change.key().recordType()))
+				.filter(change -> change.kind() == SubjectRefreshChangeClassifier.ChangeKind.REMOVE).findFirst()
+				.orElseThrow();
+		var addedQuestion = plan.recordChanges().stream().filter(change -> "QUESTION".equals(change.key().recordType()))
+				.filter(change -> change.kind() == SubjectRefreshChangeClassifier.ChangeKind.ADD).findFirst()
+				.orElseThrow();
+		var approval = plan.approve("Approve authoritative Question replacement");
+		SqliteDatabase database = fixture.destinationDatabase();
+		var identities = new SqlitePortableIdentityRepository(database);
+		ManagedDataLayout layout = new ManagedDataLayout(fixture.destination().dataRoot());
+		var stager = new SubjectImportAssetStager(fixture.destination());
+		var writer = new SubjectImportGraphWriter(database);
+		try (var lock = ManagedAssetPublicationLock.acquire(fixture.destination().dataRoot())) {
+			var backup = new SubjectImportBackupGate(fixture.destination()).createVerifiedFullBackup(
+					plan.evidence().incoming().fingerprint().packageId(),
+					directory.resolve("question-replacement-backups"));
+			var staged = stager.stageRefresh(approval, backup, fixture.newer(), lock);
+			try (Connection connection = database.openConnection()) {
+				connection.setAutoCommit(false);
+				var applied = writer.applyRefreshGraph(connection, approval, staged, layout, lock);
+				assertFalse(applied.containsKey(removedQuestion.key()));
+				long replacementLocalId = applied.get(addedQuestion.key());
+				var replacement = identities.findByLocalId(connection,
+						SqlitePortableIdentityRepository.EntityType.QUESTION, replacementLocalId).orElseThrow();
+				assertEquals(addedQuestion.key().recordId(), replacement.portableId());
+				assertEquals(addedQuestion.incoming().revisionId(), replacement.revisionId());
+				assertFalse(removedQuestion.key().recordId().equals(replacement.portableId()));
+				assertEquals(1, count(connection, """
+						SELECT COUNT(*)
+						FROM questions
+						"""));
+				assertEquals(1, count(connection, """
+						SELECT COUNT(*)
+						FROM questions
+						WHERE question_code = '1'
+						  AND marks = 5
+						  AND question_text =
+						      'Authoritative replacement Question'
+						"""));
+				assertEquals(0, count(connection, """
+						SELECT COUNT(*)
+						FROM answers
+						"""));
+				assertEquals(0, count(connection, """
+						SELECT COUNT(*)
+						FROM answer_regions
+						"""));
+				assertEquals(0, count(connection, """
+						SELECT COUNT(*)
+						FROM question_images
+						"""));
+				assertEquals(1, count(connection, """
+						SELECT COUNT(*)
+						FROM question_regions
+						"""));
+				assertEquals(1, count(connection, """
+						SELECT COUNT(*)
+						FROM question_content_parts
+						"""));
+				assertEquals(1, count(connection, """
+						SELECT COUNT(*)
+						FROM source_questions
+						"""));
+				assertEquals(1, count(connection, """
+						SELECT COUNT(*)
+						FROM shared_question_contexts
+						"""));
+
+				// Verify retirement of all three removed portable entities.
+				for (var change : plan.recordChanges()) {
+					if (change.kind() != SubjectRefreshChangeClassifier.ChangeKind.REMOVE) {
+						continue;
+					}
+					try (PreparedStatement statement = connection.prepareStatement("""
+							SELECT revision_id
+							FROM portable_entity_retirements
+							WHERE portable_id = ?
+							  AND entity_type = ?
+							""")) {
+						statement.setString(1, change.key().recordId().toString());
+						statement.setString(2, change.key().recordType());
+						try (ResultSet rows = statement.executeQuery()) {
+							assertTrue(rows.next());
+							assertEquals(change.current().revisionId().toString(), rows.getString(1));
+							assertFalse(rows.next());
+						}
+					}
+				}
+				connection.rollback();
+			}
+		}
+		assertRefreshDestinationUnchanged(original);
+		assertTrue(identities
+				.findByPortableId(SqlitePortableIdentityRepository.EntityType.QUESTION, addedQuestion.key().recordId())
+				.isEmpty());
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void refreshGraphRollsBackPartialRemovalWhenDeletionFails() throws Exception {
+		RefreshStagingFixture original = createRefreshStagingFixture();
+		SqliteDatabase sourceDatabase = new SqliteDatabase(original.source().databasePath());
+		execute(sourceDatabase, """
+				DELETE FROM question_content_parts
+				WHERE question_id = 81
+				  AND image_id = 131
+				""", """
+				DELETE FROM question_images
+				WHERE id = 131
+				""");
+		RefreshStagingFixture fixture = exportRefreshRemovalFixture(original, "refresh-image-removal-failure.examwork");
+		SqliteDatabase database = fixture.destinationDatabase();
+		var plan = fixture.plan();
+		var approval = plan.approve("Approve refresh with injected deletion failure");
+		var imageRemoval = plan.recordChanges().stream()
+				.filter(change -> "QUESTION_IMAGE".equals(change.key().recordType()))
+				.filter(change -> change.kind() == SubjectRefreshChangeClassifier.ChangeKind.REMOVE).findFirst()
+				.orElseThrow();
+
+		// Inject a persistence failure after the refresh has begun
+		// changing the Question and its child collections.
+		execute(database, """
+				CREATE TRIGGER test_refresh_image_delete_failure
+				BEFORE DELETE ON question_images
+				BEGIN
+				    SELECT RAISE(
+				        ABORT,
+				        'Injected refresh image deletion failure'
+				    );
+				END
+				""");
+		ManagedDataLayout layout = new ManagedDataLayout(fixture.destination().dataRoot());
+		var stager = new SubjectImportAssetStager(fixture.destination());
+		var writer = new SubjectImportGraphWriter(database);
+		var identities = new SqlitePortableIdentityRepository(database);
+		try (var lock = ManagedAssetPublicationLock.acquire(fixture.destination().dataRoot())) {
+			var backup = new SubjectImportBackupGate(fixture.destination()).createVerifiedFullBackup(
+					plan.evidence().incoming().fingerprint().packageId(), directory.resolve("removal-failure-backups"));
+			var staged = stager.stageRefresh(approval, backup, fixture.newer(), lock);
+			try (Connection connection = database.openConnection()) {
+				connection.setAutoCommit(false);
+				SQLException failure = assertThrows(SQLException.class,
+						() -> writer.applyRefreshGraph(connection, approval, staged, layout, lock));
+				assertTrue(failure.getMessage().contains("Injected refresh image deletion failure"));
+
+				// Verify the internal savepoint rollback before the
+				// caller explicitly rolls back its transaction.
+				assertEquals(1, count(connection, """
+						SELECT COUNT(*)
+						FROM questions
+						WHERE marks = 2
+						"""));
+				assertEquals(0, count(connection, """
+						SELECT COUNT(*)
+						FROM questions
+						WHERE marks = 3
+						"""));
+				assertEquals(1, count(connection, """
+						SELECT COUNT(*)
+						FROM question_images
+						"""));
+				assertEquals(2, count(connection, """
+						SELECT COUNT(*)
+						FROM question_content_parts
+						"""));
+				var survivingImage = identities.findByPortableId(connection,
+						SqlitePortableIdentityRepository.EntityType.QUESTION_IMAGE, imageRemoval.key().recordId())
+						.orElseThrow();
+				assertEquals(imageRemoval.current().revisionId(), survivingImage.revisionId());
+				try (PreparedStatement statement = connection.prepareStatement("""
+						SELECT COUNT(*)
+						FROM portable_entity_retirements
+						WHERE portable_id = ?
+						""")) {
+					statement.setString(1, imageRemoval.key().recordId().toString());
+					try (ResultSet rows = statement.executeQuery()) {
+						assertTrue(rows.next());
+						assertEquals(0, rows.getInt(1));
+					}
+				}
+				connection.rollback();
+			}
+		}
+		execute(database, """
+				DROP TRIGGER test_refresh_image_delete_failure
+				""");
+		assertRefreshDestinationUnchanged(original);
 		database.verifyIntegrity();
 	}
 
 	@Test
 	void refreshGraphUpdatesExistingQuestionWithoutIndependentCommit() throws Exception {
 		RefreshStagingFixture fixture = createRefreshStagingFixture();
-
 		var plan = fixture.plan();
-
 		var approval = plan.approve("Approve authoritative graph updates");
-
 		SqliteDatabase database = fixture.destinationDatabase();
-
 		ManagedDataLayout layout = new ManagedDataLayout(fixture.destination().dataRoot());
-
 		var stager = new SubjectImportAssetStager(fixture.destination());
-
 		var writer = new SubjectImportGraphWriter(database);
-
 		var questionChange = plan.recordChanges().stream()
 				.filter(change -> "QUESTION".equals(change.key().recordType())).findFirst().orElseThrow();
-
 		var identities = new SqlitePortableIdentityRepository(database);
-
 		var originalQuestion = identities
 				.findByPortableId(SqlitePortableIdentityRepository.EntityType.QUESTION, questionChange.key().recordId())
 				.orElseThrow();
-
 		try (var lock = ManagedAssetPublicationLock.acquire(fixture.destination().dataRoot())) {
 			var backup = new SubjectImportBackupGate(fixture.destination()).createVerifiedFullBackup(
 					plan.evidence().incoming().fingerprint().packageId(), directory.resolve("graph-update-backups"));
-
 			var staged = stager.stageRefresh(approval, backup, fixture.newer(), lock);
-
 			try (Connection connection = database.openConnection()) {
 				connection.setAutoCommit(false);
-
 				var result = writer.applyRefreshGraph(connection, approval, staged, layout, lock);
-
 				assertEquals(originalQuestion.localId(), result.get(questionChange.key()).longValue());
-
 				assertEquals(1, count(connection, """
 						SELECT COUNT(*)
 						FROM questions
 						WHERE marks = 3
 						"""));
-
 				assertEquals(0, count(connection, """
 						SELECT COUNT(*)
 						FROM questions
 						WHERE marks = 2
 						"""));
-
 				var updatedIdentity = identities.findByPortableId(connection,
 						SqlitePortableIdentityRepository.EntityType.QUESTION, questionChange.key().recordId())
 						.orElseThrow();
-
 				assertEquals(originalQuestion.localId(), updatedIdentity.localId());
-
 				assertEquals(originalQuestion.portableId(), updatedIdentity.portableId());
-
 				assertEquals(questionChange.incoming().revisionId(), updatedIdentity.revisionId());
-
 				assertEquals(1, count(connection, """
 						SELECT COUNT(*)
 						FROM question_images
 						"""));
-
 				assertEquals(1, count(connection, """
 						SELECT COUNT(*)
 						FROM shared_question_context_images
@@ -857,13 +1135,10 @@ class SubjectImportCoordinatorIntegrationTest {
 				connection.rollback();
 			}
 		}
-
 		assertRefreshDestinationUnchanged(fixture);
-
 		assertEquals(originalQuestion, identities
 				.findByPortableId(SqlitePortableIdentityRepository.EntityType.QUESTION, questionChange.key().recordId())
 				.orElseThrow());
-
 		database.verifyIntegrity();
 	}
 
@@ -1425,6 +1700,23 @@ class SubjectImportCoordinatorIntegrationTest {
 				statement.execute(script);
 			}
 		}
+	}
+
+	/**
+	 * Exports the modified originating graph and obtains a fresh approved
+	 * comparison against the unchanged destination installation.
+	 */
+	private RefreshStagingFixture exportRefreshRemovalFixture(RefreshStagingFixture original, String filename)
+			throws Exception {
+		SqliteDatabase sourceDatabase = new SqliteDatabase(original.source().databasePath());
+		Path incoming = directory.resolve(filename);
+		new SubjectSnapshotExporter(sourceDatabase, new ManagedDataLayout(original.source().dataRoot())).export(1L,
+				incoming);
+		var preview = new SubjectSnapshotIntakePreview(original.destinationDatabase());
+		var plan = preview.previewRefresh(incoming, new ManagedDataLayout(original.destination().dataRoot()));
+		assertTrue(plan.hasContentChanges());
+		return new RefreshStagingFixture(original.source(), original.destination(), original.destinationDatabase(),
+				incoming, plan);
 	}
 
 	private long findSubjectId(SqliteDatabase database, String subject) throws SQLException {
