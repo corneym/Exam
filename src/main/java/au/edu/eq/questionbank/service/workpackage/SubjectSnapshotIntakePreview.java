@@ -2,17 +2,26 @@ package au.edu.eq.questionbank.service.workpackage;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.security.DigestOutputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -21,9 +30,13 @@ import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
 import org.apache.commons.compress.archivers.zip.ZipFile;
 
 import au.edu.eq.questionbank.ApplicationVersion;
+import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableAliasRepository;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableContentRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
+import au.edu.eq.questionbank.repository.identity.SqliteSubjectGraphReader;
+import au.edu.eq.questionbank.repository.identity.SqliteSubjectPortableRecordReader;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.repository.sqlite.SqliteImportedSubjectAuthorityRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteImportedSubjectAuthorityRepository.ImportedAuthority;
@@ -229,6 +242,76 @@ public final class SubjectSnapshotIntakePreview {
 	}
 
 	/**
+	 * Constructs a complete read-only refresh comparison for an existing imported
+	 * Subject.
+	 *
+	 * <p>
+	 * The incoming archive is inspected from a private copy. Destination records,
+	 * authority evidence and identity mappings are read from one consistent SQLite
+	 * snapshot. Managed assets are independently collected and verified.
+	 *
+	 * <p>
+	 * This operation neither approves nor publishes any changes.
+	 *
+	 * @param incomingArchive incoming authoritative Subject snapshot
+	 * @param layout          destination managed-data layout
+	 * @return immutable refresh comparison
+	 * @throws IOException          if archive or asset validation fails
+	 * @throws SQLException         if destination inspection fails
+	 * @throws NullPointerException if either argument is null
+	 */
+	public SubjectRefreshPlan previewRefresh(Path incomingArchive, ManagedDataLayout layout)
+			throws IOException, SQLException {
+		Objects.requireNonNull(incomingArchive, "incomingArchive");
+		Objects.requireNonNull(layout, "layout");
+		Path source = incomingArchive.toAbsolutePath().normalize();
+		if (!Files.isRegularFile(source, LinkOption.NOFOLLOW_LINKS)
+				|| !source.getFileName().toString().endsWith(".examwork")) {
+			throw new PackageFormatException("Choose an ordinary .examwork Subject snapshot file.");
+		}
+		if (Files.size(source) > 512L * 1024 * 1024) {
+			throw new PackageFormatException("Subject archive exceeds maximum compressed size.");
+		}
+		Path stagingDirectory = Files.createTempDirectory("examwork-refresh-preview-");
+		try {
+			Path privateArchive = stagingDirectory.resolve("incoming.examwork");
+			Files.copy(source, privateArchive, LinkOption.NOFOLLOW_LINKS);
+			Path databaseSnapshot = stagingDirectory.resolve("destination.db");
+			database.createConsistentSnapshot(databaseSnapshot);
+			SqliteDatabase snapshotDatabase = SqliteDatabase.readOnly(databaseSnapshot);
+			var snapshotPreview = new SubjectSnapshotIntakePreview(snapshotDatabase);
+			Inspection inspection = snapshotPreview.inspect(privateArchive);
+			var incomingEvidence = new SubjectImportSnapshotFingerprint().inspectEvidence(privateArchive);
+			try (Connection connection = snapshotDatabase.openConnection()) {
+				connection.setAutoCommit(false);
+				RefreshEvidence evidence = snapshotPreview.requireRefreshEvidence(connection, inspection,
+						incomingEvidence);
+				long subjectId = evidence.authority().subjectLocalId();
+				var graph = new SqliteSubjectGraphReader(databaseSnapshot).read(subjectId);
+				List<ExchangeRecord> current = new SqliteSubjectPortableRecordReader(databaseSnapshot).read(graph);
+				var collector = new SubjectAssetCollector(snapshotDatabase, layout, stagingDirectory);
+				ExamWorkAssetIndex currentAssets = collector.collect(graph).index();
+				var mappings = new SubjectRefreshAliasResolver(snapshotDatabase).resolve(connection,
+						evidence.incoming().fingerprint().originInstallationId(), current, inspection.records());
+				var normaliser = new SubjectRefreshIdentityNormaliser();
+				List<ExchangeRecord> incoming = normaliser.normalise(inspection.records(), mappings);
+				ExamWorkAssetIndex incomingAssets = normaliser.normaliseAssets(inspection.assets(), mappings);
+				var classifier = new SubjectRefreshChangeClassifier();
+				List<ExchangeRecord> comparisonCurrent = includeExistingSharedProviders(connection, snapshotDatabase,
+						current, incoming);
+				List<ExchangeRecord> comparisonIncoming = preserveSharedProviders(comparisonCurrent, incoming);
+				var recordChanges = classifier.compareRecords(comparisonCurrent, comparisonIncoming);
+				var assetChanges = classifier.compareAssets(currentAssets, incomingAssets);
+				String destinationDigest = fingerprintDestination(comparisonCurrent, currentAssets);
+				connection.commit();
+				return new SubjectRefreshPlan(evidence, destinationDigest, mappings, recordChanges, assetChanges);
+			}
+		} finally {
+			deleteRefreshStaging(stagingDirectory);
+		}
+	}
+
+	/**
 	 * Establishes whether an inspected snapshot belongs to an existing imported
 	 * Subject owned by the same originating authority.
 	 *
@@ -396,6 +479,105 @@ public final class SubjectSnapshotIntakePreview {
 				recorded.createdAt());
 		Outcome outcome = new SubjectSnapshotFreshness().requireNewer(accepted, incoming);
 		return new RefreshEvidence(authority, accepted, incoming, outcome);
+	}
+
+	private void deleteRefreshStaging(Path directory) throws IOException {
+		try (var paths = Files.walk(directory)) {
+			for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
+				Files.deleteIfExists(path);
+			}
+		}
+	}
+
+	private String fingerprintDestination(List<ExchangeRecord> records, ExamWorkAssetIndex assets) throws IOException {
+		MessageDigest digest;
+		try {
+			digest = MessageDigest.getInstance("SHA-256");
+		} catch (NoSuchAlgorithmException failure) {
+			throw new IllegalStateException("SHA-256 is unavailable", failure);
+		}
+		var codec = new ExamWorkJsonlCodec();
+		List<ExchangeRecord> orderedRecords = records.stream()
+				.sorted(Comparator.comparing(ExchangeRecord::recordType).thenComparing(ExchangeRecord::recordId))
+				.toList();
+		try (DigestOutputStream output = new DigestOutputStream(OutputStream.nullOutputStream(), digest)) {
+			codec.writeRecords(orderedRecords, output);
+
+			// Separate the two structured sections so their combined
+			// digest cannot depend on ambiguous section boundaries.
+			output.write(0);
+			codec.writeAssetIndex(assets, output);
+		}
+		return HexFormat.of().formatHex(digest.digest());
+	}
+
+	private List<ExchangeRecord> includeExistingSharedProviders(Connection connection, SqliteDatabase snapshotDatabase,
+			List<ExchangeRecord> current, List<ExchangeRecord> incoming) throws SQLException, PackageFormatException {
+		List<ExchangeRecord> comparison = new ArrayList<>(current);
+		Set<UUID> representedProviders = current.stream().filter(record -> "EXAM_PROVIDER".equals(record.recordType()))
+				.map(ExchangeRecord::recordId).collect(Collectors.toCollection(HashSet::new));
+		var identities = new SqlitePortableIdentityRepository(snapshotDatabase);
+		var content = new SqlitePortableContentRepository(snapshotDatabase);
+		for (ExchangeRecord record : incoming) {
+			if (!"EXAM_PROVIDER".equals(record.recordType()) || representedProviders.contains(record.recordId())) {
+				continue;
+			}
+			var identity = identities.findByPortableId(connection, EntityType.EXAM_PROVIDER, record.recordId());
+			if (identity.isPresent()) {
+
+				// The provider exists globally but was not previously
+				// referenced by this particular Subject.
+				ExchangeRecord existing = content.snapshot(EntityType.EXAM_PROVIDER, identity.orElseThrow().localId())
+						.record();
+				if (!existing.recordId().equals(record.recordId())) {
+					throw new PackageFormatException("Shared provider identity changed " + "during refresh inspection");
+				}
+				comparison.add(existing);
+				representedProviders.add(existing.recordId());
+			}
+		}
+		return List.copyOf(comparison);
+	}
+
+	private List<ExchangeRecord> preserveSharedProviders(List<ExchangeRecord> current, List<ExchangeRecord> incoming)
+			throws PackageFormatException {
+		Map<UUID, ExchangeRecord> existingProviders = new HashMap<>();
+		for (ExchangeRecord record : current) {
+			if ("EXAM_PROVIDER".equals(record.recordType())) {
+				existingProviders.put(record.recordId(), record);
+			}
+		}
+		List<ExchangeRecord> comparison = new ArrayList<>();
+		Set<UUID> representedProviders = new HashSet<>();
+		for (ExchangeRecord record : incoming) {
+			if (!"EXAM_PROVIDER".equals(record.recordType())) {
+				comparison.add(record);
+				continue;
+			}
+			representedProviders.add(record.recordId());
+			ExchangeRecord existing = existingProviders.get(record.recordId());
+			if (existing == null) {
+				comparison.add(record);
+				continue;
+			}
+			if (!existing.values().equals(record.values())) {
+				throw new PackageFormatException(
+						"Incoming snapshot would modify " + "shared examination provider: " + record.recordId());
+			}
+
+			// A shared provider retains its destination revision.
+			// Importing one Subject cannot revise shared reference data.
+			comparison.add(existing);
+		}
+		for (ExchangeRecord existing : existingProviders.values()) {
+			if (!representedProviders.contains(existing.recordId())) {
+
+				// Absence from one Subject's new graph does not
+				// authorise deletion of a globally shared provider.
+				comparison.add(existing);
+			}
+		}
+		return List.copyOf(comparison);
 	}
 
 	private ExamWorkAssetIndex readAssets(ZipFile archive, ExamWorkJsonlCodec codec) throws IOException {

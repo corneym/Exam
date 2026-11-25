@@ -449,7 +449,7 @@ class ContributorAssignmentDashboardWorkflowTest {
 		assertEquals(SqliteContributorAssignmentVisibilityRepository.State.REMOVED,
 				new SqliteContributorAssignmentVisibilityRepository(database).find(assignmentId).orElseThrow());
 		robot.interact(() -> {
-			var root = primaryStage.getScene().getRoot();
+			var _ = primaryStage.getScene().getRoot();
 			ComboBox<?> assignments = field("assignmentSelector", ComboBox.class);
 			assertTrue(assignments.getItems().isEmpty());
 			assertNull(assignments.getValue());

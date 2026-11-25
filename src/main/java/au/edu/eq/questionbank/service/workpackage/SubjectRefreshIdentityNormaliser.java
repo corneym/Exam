@@ -14,7 +14,6 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-import au.edu.eq.questionbank.service.workpackage.ExamWorkAssetIndex.Reference;
 import au.edu.eq.questionbank.service.workpackage.SubjectRefreshChangeClassifier.RecordKey;
 
 /**
@@ -36,12 +35,14 @@ public final class SubjectRefreshIdentityNormaliser {
 			Map.entry("provider_id", "EXAM_PROVIDER"), Map.entry("syllabus_version_id", "SYLLABUS_VERSION"),
 			Map.entry("parent_id", "CURRICULUM_NODE"), Map.entry("classification_node_id", "CURRICULUM_NODE"),
 			Map.entry("source_node_id", "CURRICULUM_NODE"), Map.entry("target_node_id", "CURRICULUM_NODE"),
+			Map.entry("current_curriculum_node_id", "CURRICULUM_NODE"),
+			Map.entry("target_syllabus_version_id", "SYLLABUS_VERSION"),
 			Map.entry("source_document_id", "SOURCE_DOCUMENT"), Map.entry("exam_id", "EXAM"),
 			Map.entry("answer_file_id", "ANSWER_FILE"), Map.entry("booklet_id", "EXAM_BOOKLET"),
 			Map.entry("source_question_id", "SOURCE_QUESTION"),
 			Map.entry("shared_context_id", "SHARED_QUESTION_CONTEXT"),
 			Map.entry("pending_mcq_shared_context_id", "SHARED_QUESTION_CONTEXT"), Map.entry("question_id", "QUESTION"),
-			Map.entry("image_id", "QUESTION_IMAGE"));
+			Map.entry("answer_id", "ANSWER"), Map.entry("image_id", "QUESTION_IMAGE"));
 
 	/**
 	 * Creates a stateless portable identity normaliser.
@@ -105,32 +106,46 @@ public final class SubjectRefreshIdentityNormaliser {
 	}
 
 	/**
-	 * Normalises portable asset owner identities.
+	 * Normalises portable asset owners and reserved embedded image paths.
 	 *
 	 * <p>
-	 * Managed paths, content digests, sizes, media types and usage values remain
-	 * unchanged. Unowned inventoried files remain unowned.
+	 * Ordinary managed filesystem paths, content digests, sizes, media types and
+	 * usage values remain unchanged. Embedded image paths are translated into the
+	 * canonical owner identity namespace.
 	 *
 	 * @param assets     originating asset inventory
 	 * @param identities originating-to-target portable identity mapping
 	 * @return normalised immutable asset inventory
-	 * @throws PackageFormatException if an owner identity cannot be resolved
+	 * @throws PackageFormatException if an owner or embedded path is invalid
 	 * @throws NullPointerException   if either argument is null
 	 */
-	public ExamWorkAssetIndex normaliseAssets(ExamWorkAssetIndex assets, Map<RecordKey, UUID> identities)
-			throws PackageFormatException {
+	public ExamWorkAssetIndex normaliseAssets(ExamWorkAssetIndex assets,
+			Map<SubjectRefreshChangeClassifier.RecordKey, UUID> identities) throws PackageFormatException {
 		Objects.requireNonNull(assets, "assets");
 		Objects.requireNonNull(identities, "identities");
-		Map<RecordKey, UUID> mappings = Map.copyOf(identities);
-		List<Reference> references = new ArrayList<>();
-		for (Reference reference : assets.references()) {
+		Map<SubjectRefreshChangeClassifier.RecordKey, UUID> mappings = Map.copyOf(identities);
+		List<ExamWorkAssetIndex.Reference> references = new ArrayList<>();
+		for (ExamWorkAssetIndex.Reference reference : assets.references()) {
 			UUID targetOwner = null;
+			String managedPath = reference.managedPath();
 			if (reference.ownerId() != null) {
-				targetOwner = requireIdentity(mappings, new RecordKey(reference.ownerType(), reference.ownerId()));
+				targetOwner = requireIdentity(mappings,
+						new SubjectRefreshChangeClassifier.RecordKey(reference.ownerType(), reference.ownerId()));
+				if (managedPath.contains("/exams/_examwork_embedded/")) {
+					String sourceOwner = reference.ownerId().toString();
+					if (!managedPath.contains(sourceOwner)) {
+						throw new PackageFormatException("Embedded asset path does not contain "
+								+ "its originating owner identity: " + managedPath);
+					}
+
+					// Reserved embedded paths are identity-derived.
+					// Ordinary managed filenames must not be rewritten.
+					managedPath = managedPath.replace(sourceOwner, targetOwner.toString());
+				}
 			}
-			references.add(
-					new Reference(reference.archivePath(), reference.sha256(), reference.size(), reference.mediaType(),
-							reference.managedPath(), reference.ownerType(), targetOwner, reference.usage()));
+			references
+					.add(new ExamWorkAssetIndex.Reference(reference.archivePath(), reference.sha256(), reference.size(),
+							reference.mediaType(), managedPath, reference.ownerType(), targetOwner, reference.usage()));
 		}
 		try {
 			return new ExamWorkAssetIndex(references);

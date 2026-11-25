@@ -49,18 +49,18 @@ public final class SubjectRefreshAliasResolver {
 	}
 
 	/**
-	 * Resolves Subject-owned originating records against the current destination
-	 * graph.
+	 * Resolves originating records against the current destination Subject graph
+	 * and the shared examination provider registry.
 	 *
 	 * <p>
-	 * Shared exam providers must be resolved separately. This method rejects
-	 * incoming provider records rather than implicitly granting authority over
-	 * globally shared records.
+	 * Existing Subject-owned aliases must resolve inside the selected graph. Shared
+	 * providers may resolve outside that graph but must retain their existing
+	 * canonical names.
 	 *
 	 * @param connection           caller-owned transactional connection
 	 * @param originInstallationId originating installation identity
 	 * @param current              current destination Subject records
-	 * @param incoming             incoming Subject-owned records
+	 * @param incoming             incoming authoritative records
 	 * @return immutable originating-to-comparison identity mappings
 	 * @throws SQLException           if database identity lookup fails
 	 * @throws PackageFormatException if identity resolution is unsafe
@@ -93,18 +93,17 @@ public final class SubjectRefreshAliasResolver {
 				throw new PackageFormatException("Duplicate originating record: " + sourceKey);
 			}
 			var entityType = requireEntityType(record.recordType());
-			if (entityType == SqlitePortableIdentityRepository.EntityType.EXAM_PROVIDER) {
-				throw new PackageFormatException("Shared exam providers require separate " + "refresh reconciliation");
-			}
 			Optional<UUID> alias = aliases.findAlias(connection, originInstallationId, entityType, record.recordId());
 			UUID target;
-			if (alias.isPresent()) {
+			if (entityType == SqlitePortableIdentityRepository.EntityType.EXAM_PROVIDER) {
+				target = resolveSharedProvider(connection, originInstallationId, record, alias);
+			} else if (alias.isPresent()) {
 				target = alias.orElseThrow();
 				requireActiveGraphIdentity(connection, entityType, target, currentKeys);
 			} else {
 
-				// Matching UUIDs alone do not establish authority.
-				// Retired identities must also remain reserved.
+				// An identical UUID does not establish authority.
+				// Previously retired identities remain reserved.
 				target = record.recordId();
 				if (currentIds.contains(target) || hasAllocatedIdentity(connection, target)) {
 					throw new PackageFormatException("Unmapped originating identity " + "collides with an allocated "
@@ -192,5 +191,66 @@ public final class SubjectRefreshAliasResolver {
 				}
 			}
 		}
+	}
+
+	private UUID resolveSharedProvider(Connection connection, UUID originInstallationId, ExchangeRecord record,
+			Optional<UUID> alias) throws SQLException, PackageFormatException {
+		String providerName = record.values().path("provider_name").asText();
+		if (providerName.isBlank()) {
+			throw new PackageFormatException("Incoming examination provider has no name");
+		}
+		var providerType = SqlitePortableIdentityRepository.EntityType.EXAM_PROVIDER;
+		if (alias.isPresent()) {
+			UUID canonicalId = alias.orElseThrow();
+			var identity = identities.findByPortableId(connection, providerType, canonicalId)
+					.orElseThrow(() -> new PackageFormatException(
+							"Shared provider alias points to a " + "missing or retired identity"));
+			try (PreparedStatement statement = connection.prepareStatement("""
+					SELECT provider_name
+					FROM exam_providers
+					WHERE id = ?
+					""")) {
+				statement.setLong(1, identity.localId());
+				try (ResultSet result = statement.executeQuery()) {
+					if (!result.next() || !providerName.equals(result.getString("provider_name"))) {
+						throw new PackageFormatException("Examination provider naming conflict: " + providerName);
+					}
+				}
+			}
+			return canonicalId;
+		}
+		requireUnusedOriginIdentity(connection, originInstallationId, record.recordId());
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT id, provider_name
+				FROM exam_providers
+				WHERE provider_name = ? COLLATE NOCASE
+				""")) {
+			statement.setString(1, providerName);
+			try (ResultSet result = statement.executeQuery()) {
+				if (result.next()) {
+					long localId = result.getLong("id");
+					if (!providerName.equals(result.getString("provider_name"))) {
+						throw new PackageFormatException("Examination provider naming conflict: " + providerName);
+					}
+					if (result.next()) {
+						throw new PackageFormatException("Ambiguous shared examination provider: " + providerName);
+					}
+
+					// Providers are shared reference data.
+					// Reuse the existing provider without changing it.
+					return identities.findByLocalId(connection, providerType, localId)
+							.orElseThrow(() -> new PackageFormatException("Shared provider identity is missing"))
+							.portableId();
+				}
+			}
+		}
+
+		// No existing provider matches. The incoming identity
+		// is provisional until the approved import allocates it.
+		if (hasAllocatedIdentity(connection, record.recordId())) {
+			throw new PackageFormatException(
+					"Unmapped originating provider identity " + "collides with an allocated destination identity");
+		}
+		return record.recordId();
 	}
 }

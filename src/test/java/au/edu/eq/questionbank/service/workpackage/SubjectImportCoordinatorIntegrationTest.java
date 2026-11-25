@@ -414,6 +414,73 @@ class SubjectImportCoordinatorIntegrationTest {
 	}
 
 	@Test
+	void refreshPreviewDetectsAddedAndChangedManagedAssets() throws Exception {
+		Path original = createIndependentSnapshot("Biology", "refresh-assets-source");
+		ApplicationConfig destination = ApplicationConfig.fromDataRoot(directory.resolve("refresh-assets-destination"));
+		Files.createDirectories(destination.dataRoot());
+		SqliteDatabase database = new SqliteDatabase(destination.databasePath());
+		database.initialiseSchema();
+		var preview = new SubjectSnapshotIntakePreview(database);
+		new SubjectImportCoordinator(destination).executeNewSubject(preview.inspect(original), original);
+		ApplicationConfig source = ApplicationConfig.fromDataRoot(directory.resolve("refresh-assets-source"));
+		Path retainedFile = source.dataRoot().resolve("subjects/Biology/exams/refresh-notes.txt");
+		Files.writeString(retainedFile, "New authoritative notes");
+		Path newer = directory.resolve("refresh-assets-newer.examwork");
+		new SubjectSnapshotExporter(new SqliteDatabase(source.databasePath()), new ManagedDataLayout(source.dataRoot()))
+				.export(1L, newer);
+		var plan = preview.previewRefresh(newer, new ManagedDataLayout(destination.dataRoot()));
+		var addition = plan.assetChanges().stream()
+				.filter(change -> change.managedPath().endsWith("/refresh-notes.txt")).findFirst().orElseThrow();
+		assertEquals(SubjectRefreshChangeClassifier.ChangeKind.ADD, addition.kind());
+		assertFalse(Files.exists(destination.dataRoot().resolve("subjects/Biology/exams/refresh-notes.txt")));
+		var approval = plan.approve("Accept authoritative asset changes");
+		approval.requireUnchanged(preview.previewRefresh(newer, new ManagedDataLayout(destination.dataRoot())));
+
+		// Alter destination inventory after the coordinator's review.
+		Path unexpected = destination.dataRoot().resolve("subjects/Biology/exams/unexpected.txt");
+		Files.writeString(unexpected, "Changed destination inventory");
+		var regenerated = preview.previewRefresh(newer, new ManagedDataLayout(destination.dataRoot()));
+		assertThrows(PackageFormatException.class, () -> approval.requireUnchanged(regenerated));
+		assertTrue(Files.exists(unexpected));
+		try (Connection connection = database.openConnection()) {
+			assertEquals(1, count(connection, "SELECT COUNT(*) FROM subject_import_packages"));
+			assertEquals(1, count(connection, "SELECT COUNT(*) FROM subjects"));
+		}
+	}
+
+	@Test
+	void refreshPreviewPreservesSharedProviderAndOtherSubjects() throws Exception {
+		Path biology = createIndependentSnapshot("Biology", "refresh-provider-biology");
+		Path chemistry = createIndependentSnapshot("Chemistry", "refresh-provider-chemistry");
+		ApplicationConfig destination = ApplicationConfig
+				.fromDataRoot(directory.resolve("refresh-provider-destination"));
+		Files.createDirectories(destination.dataRoot());
+		SqliteDatabase database = new SqliteDatabase(destination.databasePath());
+		database.initialiseSchema();
+		var preview = new SubjectSnapshotIntakePreview(database);
+		var coordinator = new SubjectImportCoordinator(destination);
+		coordinator.executeNewSubject(preview.inspect(biology), biology);
+		coordinator.executeNewSubject(preview.inspect(chemistry), chemistry);
+		ApplicationConfig source = ApplicationConfig.fromDataRoot(directory.resolve("refresh-provider-biology"));
+		Path newer = directory.resolve("refresh-provider-newer.examwork");
+		new SubjectSnapshotExporter(new SqliteDatabase(source.databasePath()), new ManagedDataLayout(source.dataRoot()))
+				.export(1L, newer);
+		var plan = preview.previewRefresh(newer, new ManagedDataLayout(destination.dataRoot()));
+		assertEquals(0L, plan.countRecords("EXAM_PROVIDER", SubjectRefreshChangeClassifier.ChangeKind.UPDATE));
+		assertEquals(0L, plan.countRecords("EXAM_PROVIDER", SubjectRefreshChangeClassifier.ChangeKind.REMOVE));
+		assertEquals(0L, plan.countRecords("EXAM_PROVIDER", SubjectRefreshChangeClassifier.ChangeKind.ADD));
+		assertEquals(1L, plan.countRecords("EXAM_PROVIDER", SubjectRefreshChangeClassifier.ChangeKind.UNCHANGED));
+		try (Connection connection = database.openConnection()) {
+			assertEquals(2, count(connection, "SELECT COUNT(*) FROM subjects"));
+			assertEquals(2, count(connection, "SELECT COUNT(*) FROM exams"));
+			assertEquals(1, count(connection, "SELECT COUNT(*) FROM exam_providers"));
+			assertEquals(2, count(connection, "SELECT COUNT(*) FROM subject_import_packages"));
+		}
+		assertImportedSubjectGraph(database, destination, "Biology");
+		assertImportedSubjectGraph(database, destination, "Chemistry");
+	}
+
+	@Test
 	void refreshRejectsDifferentOriginInstallation() throws Exception {
 		ApplicationConfig destination = ApplicationConfig
 				.fromDataRoot(directory.resolve("refresh-wrong-origin-target"));
