@@ -92,6 +92,30 @@ The operation label **EDIT** is prohibited.
 
 14. Omit import instructions. Let Eclipse organise imports.
 
+#### Ambiguous type imports
+
+When supplying Java code:
+
+- Inspect the repository for ambiguous type names used in
+  new or replacement declarations.
+- Explicitly identify the declaring class of every ambiguous
+  nested record, enum, interface or class.
+- Provide the exact required import statement for each
+  ambiguous type, grouped by the class being modified.
+- Identify any ambiguous static imports.
+- Do not rely on Eclipse to select the correct type when
+  multiple candidates exist.
+- Where two identically named nested types are required
+  within the same class, qualify them using their enclosing
+  class names.
+- Continue to omit ordinary, unambiguous import instructions.
+
+These requirements take precedence over the general
+instruction to omit imports.
+
+Include ambiguous type resolution in the mandatory
+pre-delivery compliance gate.
+
 15. Do not use fully qualified type names inside Java code snippets.
 
 16. Include inline // comments explaining non-obvious algorithmic decisions.

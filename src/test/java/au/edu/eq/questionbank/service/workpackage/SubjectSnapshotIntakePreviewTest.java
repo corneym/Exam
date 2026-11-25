@@ -17,6 +17,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -24,10 +25,15 @@ import org.apache.commons.compress.archivers.zip.ZipFile;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ApplicationVersion;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableAliasRepository;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.sqlite.HistoricalSchemaFixture;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.repository.sqlite.SqliteImportedSubjectAuthorityRepository;
@@ -196,6 +202,185 @@ class SubjectSnapshotIntakePreviewTest {
 		assertEquals("Biology", bioInspection.fingerprint().subjectName());
 		assertEquals("Physics", physicsInspection.fingerprint().subjectName());
 		assertEquals(0, countSubjects(destination));
+	}
+
+	@Test
+	void refreshAliasResolverAcceptsNewUnallocatedIdentity() throws Exception {
+		SqliteDatabase database = createDatabase("refresh-new-identity");
+		UUID origin = UUID.randomUUID();
+		UUID incomingId = UUID.randomUUID();
+		ExchangeRecord incoming = new ExchangeRecord(ExchangeRecord.CURRENT_RECORD_VERSION, "SUBJECT", incomingId,
+				UUID.randomUUID(), null, JsonNodeFactory.instance.objectNode().put("subject_name", "Biology"));
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			var result = new SubjectRefreshAliasResolver(database).resolve(connection, origin, List.of(),
+					List.of(incoming));
+			var key = new SubjectRefreshChangeClassifier.RecordKey("SUBJECT", incomingId);
+			assertEquals(1, result.size());
+			assertEquals(incomingId, result.get(key));
+			assertThrows(UnsupportedOperationException.class, result::clear);
+			connection.rollback();
+		}
+	}
+
+	@Test
+	void refreshAliasResolverRejectsAliasOutsideDestinationGraph() throws Exception {
+		SqliteDatabase database = createDatabase("refresh-outside-graph");
+		insertSubject(database, 1L, "Biology");
+		insertSubject(database, 2L, "Chemistry");
+		var identities = new SqlitePortableIdentityRepository(database);
+		UUID chemistryId = identities.requireByLocalId(SqlitePortableIdentityRepository.EntityType.SUBJECT, 2L)
+				.portableId();
+		UUID biologyId = identities.requireByLocalId(SqlitePortableIdentityRepository.EntityType.SUBJECT, 1L)
+				.portableId();
+		UUID origin = UUID.randomUUID();
+		UUID incomingId = UUID.randomUUID();
+		var aliases = new SqlitePortableAliasRepository(database);
+		aliases.approveAlias(origin, SqlitePortableIdentityRepository.EntityType.SUBJECT, incomingId, chemistryId,
+				"Test unrelated Subject alias");
+		ExchangeRecord current = new ExchangeRecord(ExchangeRecord.CURRENT_RECORD_VERSION, "SUBJECT", biologyId,
+				UUID.randomUUID(), null, JsonNodeFactory.instance.objectNode().put("subject_name", "Biology"));
+		ExchangeRecord incoming = new ExchangeRecord(ExchangeRecord.CURRENT_RECORD_VERSION, "SUBJECT", incomingId,
+				UUID.randomUUID(), null, JsonNodeFactory.instance.objectNode().put("subject_name", "Biology"));
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			var failure = assertThrows(PackageFormatException.class, () -> new SubjectRefreshAliasResolver(database)
+					.resolve(connection, origin, List.of(current), List.of(incoming)));
+			assertTrue(failure.getMessage().contains("outside the current"));
+			connection.rollback();
+		}
+	}
+
+	@Test
+	void refreshAliasResolverRejectsAutoCommitConnection() throws Exception {
+		SqliteDatabase database = createDatabase("refresh-autocommit");
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(true);
+			assertThrows(IllegalStateException.class, () -> new SubjectRefreshAliasResolver(database)
+					.resolve(connection, UUID.randomUUID(), List.of(), List.of()));
+		}
+	}
+
+	@Test
+	void refreshAliasResolverRejectsDuplicateCanonicalTargets() throws Exception {
+		SqliteDatabase database = createDatabase("refresh-duplicate-target");
+		insertSubject(database, 1L, "Biology");
+		var identities = new SqlitePortableIdentityRepository(database);
+		UUID canonicalId = identities.requireByLocalId(SqlitePortableIdentityRepository.EntityType.SUBJECT, 1L)
+				.portableId();
+		UUID origin = UUID.randomUUID();
+		UUID firstId = UUID.randomUUID();
+		UUID secondId = UUID.randomUUID();
+		var aliases = new SqlitePortableAliasRepository(database);
+		aliases.approveAlias(origin, SqlitePortableIdentityRepository.EntityType.SUBJECT, firstId, canonicalId,
+				"First test alias");
+		aliases.approveAlias(origin, SqlitePortableIdentityRepository.EntityType.SUBJECT, secondId, canonicalId,
+				"Second test alias");
+		ObjectNode values = JsonNodeFactory.instance.objectNode().put("subject_name", "Biology");
+		ExchangeRecord current = new ExchangeRecord(ExchangeRecord.CURRENT_RECORD_VERSION, "SUBJECT", canonicalId,
+				UUID.randomUUID(), null, values);
+		ExchangeRecord first = new ExchangeRecord(ExchangeRecord.CURRENT_RECORD_VERSION, "SUBJECT", firstId,
+				UUID.randomUUID(), null, values);
+		ExchangeRecord second = new ExchangeRecord(ExchangeRecord.CURRENT_RECORD_VERSION, "SUBJECT", secondId,
+				UUID.randomUUID(), null, values);
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			var failure = assertThrows(PackageFormatException.class, () -> new SubjectRefreshAliasResolver(database)
+					.resolve(connection, origin, List.of(current), List.of(first, second)));
+			assertTrue(failure.getMessage().contains("Multiple originating records"));
+			connection.rollback();
+		}
+	}
+
+	@Test
+	void refreshAliasResolverRejectsUnmappedAllocatedIdentity() throws Exception {
+		SqliteDatabase database = createDatabase("refresh-unmapped-collision");
+		insertSubject(database, 1L, "Chemistry");
+		var identities = new SqlitePortableIdentityRepository(database);
+		UUID allocatedId = identities.requireByLocalId(SqlitePortableIdentityRepository.EntityType.SUBJECT, 1L)
+				.portableId();
+		ExchangeRecord incoming = new ExchangeRecord(ExchangeRecord.CURRENT_RECORD_VERSION, "SUBJECT", allocatedId,
+				UUID.randomUUID(), null, JsonNodeFactory.instance.objectNode().put("subject_name", "Biology"));
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			var failure = assertThrows(PackageFormatException.class, () -> new SubjectRefreshAliasResolver(database)
+					.resolve(connection, UUID.randomUUID(), List.of(), List.of(incoming)));
+			assertTrue(failure.getMessage().contains("collides with an allocated"));
+			connection.rollback();
+		}
+	}
+
+	@Test
+	void refreshAliasResolverReservesRetiredCanonicalIdentities() throws Exception {
+		SqliteDatabase database = createDatabase("refresh-retired-identity");
+		insertSubject(database, 1L, "Biology");
+		var identities = new SqlitePortableIdentityRepository(database);
+		UUID canonicalId = identities.requireByLocalId(SqlitePortableIdentityRepository.EntityType.SUBJECT, 1L)
+				.portableId();
+		UUID origin = UUID.randomUUID();
+		UUID incomingId = UUID.randomUUID();
+		new SqlitePortableAliasRepository(database).approveAlias(origin,
+				SqlitePortableIdentityRepository.EntityType.SUBJECT, incomingId, canonicalId,
+				"Original imported identity");
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try (PreparedStatement statement = connection.prepareStatement("""
+					DELETE FROM subjects
+					WHERE id = ?
+					""")) {
+				statement.setLong(1, 1L);
+				statement.executeUpdate();
+			}
+			assertTrue(identities
+					.findByPortableId(connection, SqlitePortableIdentityRepository.EntityType.SUBJECT, canonicalId)
+					.isEmpty());
+			ObjectNode values = JsonNodeFactory.instance.objectNode().put("subject_name", "Biology");
+			ExchangeRecord previouslyAliased = new ExchangeRecord(ExchangeRecord.CURRENT_RECORD_VERSION, "SUBJECT",
+					incomingId, UUID.randomUUID(), null, values);
+			ExchangeRecord reusingRetiredUuid = new ExchangeRecord(ExchangeRecord.CURRENT_RECORD_VERSION, "SUBJECT",
+					canonicalId, UUID.randomUUID(), null, values);
+			var resolver = new SubjectRefreshAliasResolver(database);
+			var retiredAliasFailure = assertThrows(PackageFormatException.class,
+					() -> resolver.resolve(connection, origin, List.of(), List.of(previouslyAliased)));
+			assertTrue(retiredAliasFailure.getMessage().contains("missing or retired"));
+			var uuidReuseFailure = assertThrows(PackageFormatException.class,
+					() -> resolver.resolve(connection, origin, List.of(), List.of(reusingRetiredUuid)));
+			assertTrue(uuidReuseFailure.getMessage().contains("collides with an allocated"));
+			connection.rollback();
+		}
+	}
+
+	@Test
+	void refreshAliasResolverResolvesApprovedCanonicalIdentity() throws Exception {
+		SqliteDatabase database = createDatabase("refresh-approved-alias");
+		insertSubject(database, 1L, "Biology");
+		var identities = new SqlitePortableIdentityRepository(database);
+		UUID canonicalId = identities.requireByLocalId(SqlitePortableIdentityRepository.EntityType.SUBJECT, 1L)
+				.portableId();
+		UUID origin = UUID.randomUUID();
+		UUID incomingId = UUID.randomUUID();
+		var aliases = new SqlitePortableAliasRepository(database);
+		aliases.approveAlias(origin, SqlitePortableIdentityRepository.EntityType.SUBJECT, incomingId, canonicalId,
+				"Approved Subject import");
+		ObjectNode values = JsonNodeFactory.instance.objectNode().put("subject_name", "Biology");
+		UUID revision = UUID.randomUUID();
+		ExchangeRecord current = new ExchangeRecord(ExchangeRecord.CURRENT_RECORD_VERSION, "SUBJECT", canonicalId,
+				revision, null, values);
+		ExchangeRecord incoming = new ExchangeRecord(ExchangeRecord.CURRENT_RECORD_VERSION, "SUBJECT", incomingId,
+				revision, null, values);
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			var mappings = new SubjectRefreshAliasResolver(database).resolve(connection, origin, List.of(current),
+					List.of(incoming));
+			var key = new SubjectRefreshChangeClassifier.RecordKey("SUBJECT", incomingId);
+			assertEquals(canonicalId, mappings.get(key));
+			var normalised = new SubjectRefreshIdentityNormaliser().normalise(List.of(incoming), mappings);
+			var changes = new SubjectRefreshChangeClassifier().compareRecords(List.of(current), normalised);
+			assertEquals(1, changes.size());
+			assertEquals(SubjectRefreshChangeClassifier.ChangeKind.UNCHANGED, changes.getFirst().kind());
+			assertEquals(canonicalId, changes.getFirst().key().recordId());
+			connection.rollback();
+		}
 	}
 
 	@Test
