@@ -14,6 +14,7 @@ import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
+import au.edu.eq.questionbank.repository.sqlite.SqliteImportedSubjectAuthorityRepository;
 
 /**
  * Stores completed descriptor and subtopic mapping reviews in SQLite. Each
@@ -72,6 +73,7 @@ public final class SqliteCurriculumMappingReviewWriter {
 			connection.setAutoCommit(false);
 			try {
 				validatePersistentSourceAndTargetVersion(connection, source, targetVersion);
+				requireLocallyAuthoritative(connection, source);
 				for (CurriculumNode target : targets) {
 					validatePersistentTarget(connection, source, targetVersion, target);
 					confirmMapping(connection, source, target);
@@ -112,6 +114,7 @@ public final class SqliteCurriculumMappingReviewWriter {
 			connection.setAutoCommit(false);
 			try {
 				validatePersistentSourceAndTargetVersion(connection, source, targetVersion);
+				requireLocallyAuthoritative(connection, source);
 
 				// A first NO_MATCH review cannot coexist with confirmed links to this target
 				// syllabus.
@@ -161,6 +164,7 @@ public final class SqliteCurriculumMappingReviewWriter {
 			connection.setAutoCommit(false);
 			try {
 				validatePersistentSourceAndTargetVersion(connection, source, targetVersion);
+				requireLocallyAuthoritative(connection, source);
 				requireExistingReview(connection, source, targetVersion);
 
 				// Replace links only for this target version; a later failure restores the
@@ -202,6 +206,7 @@ public final class SqliteCurriculumMappingReviewWriter {
 			connection.setAutoCommit(false);
 			try {
 				validatePersistentSourceAndTargetVersion(connection, source, targetVersion);
+				requireLocallyAuthoritative(connection, source);
 				requireExistingReview(connection, source, targetVersion);
 				deleteMappings(connection, source, targetVersion);
 				updateReviewOutcome(connection, source, targetVersion, CurriculumMappingReviewOutcome.NO_MATCH);
@@ -297,6 +302,11 @@ public final class SqliteCurriculumMappingReviewWriter {
 				}
 			}
 		}
+	}
+
+	private void requireLocallyAuthoritative(Connection connection, CurriculumNode source) throws SQLException {
+		new SqliteImportedSubjectAuthorityRepository(database).requireLocallyAuthoritative(connection,
+				source.getSyllabusVersion().getSubject().getId());
 	}
 
 	private void rollback(Connection connection, Exception failure) {

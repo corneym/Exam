@@ -258,23 +258,65 @@ class WorkAssignmentInstallationCoordinatorTest {
 		Fixture fixture = fixture();
 		var installer = new WorkAssignmentInstallationCoordinator(fixture.contributor());
 		installer.install(fixture.archive());
+
+		// Create a genuinely independent Exam using the
+		// existing Subject, curriculum and source documents.
+		execute(fixture.sourceDatabase(), """
+				INSERT INTO exams (
+				    id, subject_id, provider_id,
+				    exam_year, exam_name,
+				    expected_question_booklet_count,
+				    expected_answer_file_count
+				)
+				VALUES (
+				    32, 1, 21, 2025, 'Practice Assessment',
+				    1, 1
+				)
+				""");
+		execute(fixture.sourceDatabase(), """
+				INSERT INTO answer_files (
+				    id, exam_id, source_document_id, answer_file_name
+				)
+				VALUES (72, 32, 52, 'Marking Guide')
+				""");
+		execute(fixture.sourceDatabase(), """
+				INSERT INTO exam_booklets (
+				    id, exam_id, source_document_id,
+				    answer_file_id, booklet_name
+				)
+				VALUES (63, 32, 51, 72, 'Paper 1')
+				""");
+		Exam secondExam = new Exam(32, new Subject(1, "Biology"), new ExamProvider(21, "QCAA"), 2025,
+				"Practice Assessment");
 		UUID secondAssignmentId = UUID.randomUUID();
 		Path secondArchive = directory.resolve("second-assignment.examwork");
-		export(fixture, secondAssignmentId, secondArchive);
+		new WorkAssignmentExporter(fixture.sourceDatabase(), new ManagedDataLayout(fixture.source().dataRoot()))
+				.export(new WorkAssignmentExporter.Request(secondExam, secondAssignmentId, UUID.randomUUID(),
+						"Integration Contributor", false, secondArchive));
 		var second = installer.install(secondArchive);
 		assertFalse(second.replay());
-		assertEquals(2, count(fixture.contributorDatabase(), "SELECT COUNT(*) FROM contributor_assignment_sessions"));
+		SqliteDatabase database = fixture.contributorDatabase();
+		assertEquals(2, count(database, "SELECT COUNT(*) FROM contributor_assignment_sessions"));
+		assertEquals(2, count(database, "SELECT COUNT(*) FROM exams"));
+		assertEquals(3, count(database, "SELECT COUNT(*) FROM exam_booklets"));
+		assertEquals(2, count(database, "SELECT COUNT(*) FROM answer_files"));
 
-		// An Exam with two Booklets and one shared AnswerFile
-		// must not be duplicated when another assignment uses it.
-		assertEquals(1, count(fixture.contributorDatabase(), "SELECT COUNT(*) FROM exams"));
-		assertEquals(2, count(fixture.contributorDatabase(), "SELECT COUNT(*) FROM exam_booklets"));
-		assertEquals(1, count(fixture.contributorDatabase(), "SELECT COUNT(*) FROM answer_files"));
-		var sessions = new SqliteContributorAssignmentSessionRepository(fixture.contributorDatabase());
+		// The two independent Exams reuse the same two
+		// source-document records and managed PDF files.
+		assertEquals(2, count(database, "SELECT COUNT(*) FROM source_documents"));
+		var sessions = new SqliteContributorAssignmentSessionRepository(database);
 		assertTrue(sessions.find(fixture.assignmentId()).isPresent());
 		assertTrue(sessions.find(secondAssignmentId).isPresent());
-		assertTrue(sessions.active().isPresent());
-		fixture.contributorDatabase().verifyIntegrity();
+		assertEquals(secondAssignmentId, sessions.active().orElseThrow().assignmentId());
+
+		// Switching back to the first assignment must
+		// remain possible without duplicating its graph.
+		assertTrue(installer.install(fixture.archive()).replay());
+		assertEquals(fixture.assignmentId(), sessions.active().orElseThrow().assignmentId());
+		assertEquals(2, count(database, "SELECT COUNT(*) FROM source_documents"));
+		assertAllCommittedFilesVerified(fixture, 2);
+		database.verifySchema();
+		database.verifyIntegrity();
 	}
 
 	@Test
@@ -330,6 +372,67 @@ class WorkAssignmentInstallationCoordinatorTest {
 		assertTrue(failure.getMessage().contains("missing or unreadable"));
 		assertFalse(Files.exists(destination));
 		assertEquals(0, count(fixture.sourceDatabase(), "SELECT COUNT(*) " + "FROM exam_work_assignments"));
+	}
+
+	@Test
+	void issuancePreflightRejectsExamWithExistingActiveAssignment() throws Exception {
+		Fixture fixture = fixture();
+		WorkAssignmentIssuanceService issuer = new WorkAssignmentIssuanceService(fixture.sourceDatabase(),
+				new ManagedDataLayout(fixture.source().dataRoot()));
+		issuer.preflight(fixture.exam(), false);
+		UUID assignmentId = UUID.randomUUID();
+		Path destination = directory.resolve("existing-active-assignment.examwork");
+		WorkAssignmentExporter.Request request = new WorkAssignmentExporter.Request(fixture.exam(), assignmentId,
+				UUID.randomUUID(), "Integration Contributor", false, destination);
+		WorkAssignmentLedger.Assignment issued = issuer.issue(request);
+		assertEquals(assignmentId, issued.assignmentId());
+		assertEquals(WorkAssignmentLedger.State.ACTIVE, issued.state());
+		byte[] originalArchive = Files.readAllBytes(destination);
+		IOException failure = assertThrows(IOException.class, () -> issuer.preflight(fixture.exam(), false));
+		assertTrue(failure.getMessage().contains("already has an active work assignment"));
+
+		// Advisory validation must not alter the existing archive,
+		// register another assignment or change the original lifecycle.
+		assertArrayEquals(originalArchive, Files.readAllBytes(destination));
+		assertEquals(1, count(fixture.sourceDatabase(), "SELECT COUNT(*) FROM exam_work_assignments"));
+		fixture.sourceDatabase().verifyIntegrity();
+	}
+
+	@Test
+	void issuancePreflightRejectsMissingAnswerAssignmentWithoutPublishing() throws Exception {
+		Fixture fixture = fixture();
+		WorkAssignmentIssuanceService issuer = new WorkAssignmentIssuanceService(fixture.sourceDatabase(),
+				new ManagedDataLayout(fixture.source().dataRoot()));
+
+		// Establish that the original whole-Exam fixture is ready
+		// and that preflight does not register an assignment.
+		var ready = issuer.preflight(fixture.exam(), false);
+		assertEquals(2, ready.booklets().size());
+		assertEquals(1, ready.answerFiles().size());
+		assertEquals(0, count(fixture.sourceDatabase(), "SELECT COUNT(*) FROM exam_work_assignments"));
+
+		// Retain the registered Answer file and its physical PDF,
+		// but remove the booklet-to-Answer association.
+		execute(fixture.sourceDatabase(), """
+				UPDATE exam_booklets
+				SET answer_file_id = NULL
+				""");
+		assertTrue(Files.isRegularFile(fixture.sourceAnswerPdf()));
+		assertEquals(1, count(fixture.sourceDatabase(), "SELECT COUNT(*) FROM answer_files"));
+		IOException failure = assertThrows(IOException.class, () -> issuer.preflight(fixture.exam(), false));
+		assertTrue(failure.getMessage().contains("has no assigned Answer file"), failure.getMessage());
+		assertEquals(0, count(fixture.sourceDatabase(), "SELECT COUNT(*) FROM exam_work_assignments"));
+
+		// Final issuance must still independently reject the
+		// same invalid structure if preflight is bypassed.
+		Path destination = directory.resolve("unlinked-answer-assignment.examwork");
+		WorkAssignmentExporter.Request request = new WorkAssignmentExporter.Request(fixture.exam(), UUID.randomUUID(),
+				UUID.randomUUID(), "Integration Contributor", false, destination);
+		IOException finalFailure = assertThrows(IOException.class, () -> issuer.issue(request));
+		assertTrue(finalFailure.getMessage().contains("has no assigned Answer file"));
+		assertFalse(Files.exists(destination));
+		assertEquals(0, count(fixture.sourceDatabase(), "SELECT COUNT(*) FROM exam_work_assignments"));
+		fixture.sourceDatabase().verifyIntegrity();
 	}
 
 	@Test
@@ -444,6 +547,38 @@ class WorkAssignmentInstallationCoordinatorTest {
 		rejects(records -> change(records, "EXAM_BOOKLET", values -> values.remove("answer_file_id")));
 	}
 
+	@Test
+	void rejectsCompetingAssignmentForAlreadyActiveExam() throws Exception {
+		Fixture fixture = fixture();
+		var installer = new WorkAssignmentInstallationCoordinator(fixture.contributor());
+		installer.install(fixture.archive());
+		UUID competingAssignmentId = UUID.randomUUID();
+		Path competingArchive = directory.resolve("competing-assignment.examwork");
+
+		// Export another assignment for the same Exam,
+		// deliberately using a different contributor identity.
+		export(fixture, competingAssignmentId, competingArchive);
+		SqliteDatabase database = fixture.contributorDatabase();
+		var sessions = new SqliteContributorAssignmentSessionRepository(database);
+		var originalBaseline = sessions.readBaseline(fixture.assignmentId());
+		assertThrows(PackageFormatException.class, () -> installer.install(competingArchive));
+
+		// The rejected installation must leave the original
+		// assignment, selection and complete Exam graph intact.
+		assertTrue(sessions.find(competingAssignmentId).isEmpty());
+		assertEquals(fixture.assignmentId(), sessions.active().orElseThrow().assignmentId());
+		assertEquals(1, count(database, "SELECT COUNT(*) FROM contributor_assignment_sessions"));
+		assertEquals(1, count(database, "SELECT COUNT(*) FROM exams"));
+		assertEquals(2, count(database, "SELECT COUNT(*) FROM exam_booklets"));
+		assertEquals(1, count(database, "SELECT COUNT(*) FROM answer_files"));
+		assertEquals(2, count(database, "SELECT COUNT(*) FROM source_documents"));
+		assertArrayEquals(originalBaseline.records(), sessions.readBaseline(fixture.assignmentId()).records());
+		assertArrayEquals(originalBaseline.assets(), sessions.readBaseline(fixture.assignmentId()).assets());
+		assertAllCommittedFilesVerified(fixture);
+		database.verifySchema();
+		database.verifyIntegrity();
+	}
+
 	@ParameterizedTest
 	@ValueSource(strings = { "assignment_id", "baseline_snapshot_id", "master_installation_id", "subject_id", "exam_id",
 			"current_syllabus_id", "issued_at" })
@@ -518,10 +653,17 @@ class WorkAssignmentInstallationCoordinatorTest {
 	}
 
 	private void assertAllCommittedFilesVerified(Fixture fixture) throws Exception {
+		assertAllCommittedFilesVerified(fixture, 1);
+	}
+
+	private void assertAllCommittedFilesVerified(Fixture fixture, int expectedAssignmentCount) throws Exception {
 		var hashes = new SourceDocumentHashService();
 		try (var connection = fixture.contributorDatabase().openConnection();
 				var statement = connection.createStatement();
-				var rows = statement.executeQuery("SELECT relative_path, content_sha256 FROM source_documents")) {
+				var rows = statement.executeQuery("""
+						SELECT relative_path, content_sha256
+						FROM source_documents
+						""")) {
 			int verified = 0;
 			while (rows.next()) {
 				Path file = new ManagedDataLayout(fixture.contributor().dataRoot()).resolve(rows.getString(1));
@@ -531,7 +673,8 @@ class WorkAssignmentInstallationCoordinatorTest {
 			}
 			assertEquals(2, verified);
 		}
-		assertEquals(1, count(fixture.contributorDatabase(), "SELECT COUNT(*) FROM contributor_assignment_sessions"));
+		assertEquals(expectedAssignmentCount,
+				count(fixture.contributorDatabase(), "SELECT COUNT(*) FROM contributor_assignment_sessions"));
 		fixture.contributorDatabase().verifyIntegrity();
 	}
 

@@ -79,7 +79,9 @@ public interface QuestionOutputApplicabilityRepository {
 	 *                                  is {@code null}
 	 * @throws IllegalArgumentException if either object is not valid for an output
 	 *                                  exclusion
-	 * @throws IllegalStateException    if the exclusion cannot be persisted
+	 * @throws IllegalStateException    if the exclusion cannot be persisted,
+	 *                                  including when the persisted Exam is
+	 *                                  complete
 	 */
 	void setExcluded(Question question, CurriculumNode currentNode, boolean excluded);
 }

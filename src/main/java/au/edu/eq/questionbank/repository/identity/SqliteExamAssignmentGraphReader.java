@@ -115,6 +115,77 @@ public final class SqliteExamAssignmentGraphReader {
 	}
 
 	/**
+	 * Selects the complete assigned Exam graph within an existing SQLite
+	 * transaction.
+	 *
+	 * <p>
+	 * This operation includes uncommitted changes and permits verification of an
+	 * installation before it commits.
+	 *
+	 * @param connection caller-owned SQLite transaction
+	 * @param subjectId  existing Subject identifier
+	 * @param examId     existing Exam identifier
+	 * @return complete Exam graph and its Subject dependencies
+	 * @throws SQLException             if graph selection fails
+	 * @throws IllegalArgumentException if the identifiers or scope are invalid
+	 * @throws IllegalStateException    if the connection uses autocommit
+	 */
+	public static SubjectGraph readInTransaction(Connection connection, long subjectId, long examId)
+			throws SQLException {
+		if (examId < 1) {
+			throw new IllegalArgumentException("Exam ID must be positive");
+		}
+		SubjectGraph subjectGraph = SqliteSubjectGraphReader.readInTransaction(connection, subjectId);
+		if (!subjectGraph.ids(EntityType.EXAM).contains(examId)) {
+			throw new IllegalArgumentException("Exam does not belong to the selected Subject");
+		}
+		Map<EntityType, List<Long>> selections = new EnumMap<>(EntityType.class);
+		for (EntityType type : EntityType.values()) {
+			if (SUBJECT_DEPENDENCIES.contains(type)) {
+				selections.put(type, subjectGraph.ids(type));
+				continue;
+			}
+			if (type == EntityType.EXAM) {
+				selections.put(type, List.of(examId));
+				continue;
+			}
+			List<Long> selected = selectExamIds(connection, type, examId);
+			if (!subjectGraph.ids(type).containsAll(selected)) {
+				throw new SQLException("Exam selection escapes Subject scope: " + type);
+			}
+			selections.put(type, selected);
+		}
+		return new SubjectGraph(subjectId, subjectGraph.subjectName(), selections);
+	}
+
+	private static List<Long> selectExamIds(Connection connection, EntityType type, long examId) throws SQLException {
+		String sql = EXAM_SQL.get(type);
+		if (sql == null) {
+			throw new SQLException("No Exam assignment query for entity type: " + type);
+		}
+		List<Long> identifiers = new ArrayList<>();
+		try (PreparedStatement statement = connection.prepareStatement(sql)) {
+			statement.setLong(1, examId);
+
+			// Source documents may be referenced independently by
+			// Question Booklets and shared AnswerFiles.
+			if (type == EntityType.SOURCE_DOCUMENT) {
+				statement.setLong(2, examId);
+			}
+			try (ResultSet result = statement.executeQuery()) {
+				while (result.next()) {
+					long id = result.getLong(1);
+					if (id < 1) {
+						throw new SQLException("Invalid Exam record identifier for " + type);
+					}
+					identifiers.add(id);
+				}
+			}
+		}
+		return List.copyOf(identifiers);
+	}
+
+	/**
 	 * Selects one complete Exam and all its persisted capture records.
 	 *
 	 * <p>
@@ -162,32 +233,5 @@ public final class SqliteExamAssignmentGraphReader {
 			}
 		}
 		return new SubjectGraph(subjectId, subjectGraph.subjectName(), selections);
-	}
-
-	private List<Long> selectExamIds(Connection connection, EntityType type, long examId) throws SQLException {
-		String sql = EXAM_SQL.get(type);
-		if (sql == null) {
-			throw new SQLException("No Exam assignment query for entity type: " + type);
-		}
-		List<Long> identifiers = new ArrayList<>();
-		try (PreparedStatement statement = connection.prepareStatement(sql)) {
-			statement.setLong(1, examId);
-
-			// Source documents may be referenced independently by
-			// Question Booklets and shared AnswerFiles.
-			if (type == EntityType.SOURCE_DOCUMENT) {
-				statement.setLong(2, examId);
-			}
-			try (ResultSet result = statement.executeQuery()) {
-				while (result.next()) {
-					long id = result.getLong(1);
-					if (id < 1) {
-						throw new SQLException("Invalid Exam record identifier for " + type);
-					}
-					identifiers.add(id);
-				}
-			}
-		}
-		return List.copyOf(identifiers);
 	}
 }

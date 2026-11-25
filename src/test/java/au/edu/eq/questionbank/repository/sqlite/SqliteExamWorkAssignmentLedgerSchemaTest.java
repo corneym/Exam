@@ -186,8 +186,8 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 				assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
 						UPDATE schema_version
 						SET version = 45
-						WHERE version = 47
-						"""));
+						WHERE version = %d
+						""".formatted(SqliteDatabase.latestSchemaVersion())));
 				connection.commit();
 			} catch (SQLException | RuntimeException failure) {
 				connection.rollback();
@@ -224,7 +224,10 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 	void migrationToVersion47RestoresBookletReviewPermissions() throws Exception {
 		SqliteDatabase database = new SqliteDatabase(directory.resolve("version-47-upgrade.db"));
 		database.initialiseSchema();
-		assertEquals(47, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
+
+		// Reconstruct a genuine v46 database. This now also removes v48
+		// authority tables and triggers through HistoricalSchemaFixture.
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try (Statement statement = connection.createStatement()) {
@@ -232,8 +235,8 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 				assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
 						UPDATE schema_version
 						SET version = 46
-						WHERE version = 47
-						"""));
+						WHERE version = %d
+						""".formatted(SqliteDatabase.latestSchemaVersion())));
 				connection.commit();
 			} catch (SQLException | RuntimeException failure) {
 				connection.rollback();
@@ -242,8 +245,25 @@ class SqliteExamWorkAssignmentLedgerSchemaTest {
 		}
 		assertEquals(46, database.schemaVersion());
 		database.verifySchema();
-		database.initialiseSchema();
+
+		// Verify v47 independently, before subsequently installing v48.
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try {
+				SqlScriptExecutor.execute(connection, SqlResourceLoader.load("/db/migration-v46-to-v47.sql"));
+				connection.commit();
+			} catch (Exception failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
 		assertEquals(47, database.schemaVersion());
+		database.verifySchema();
+		database.verifyIntegrity();
+
+		// Normal startup now advances from v47 to v48.
+		database.initialiseSchema();
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		database.verifySchema();
 		database.verifyIntegrity();
 	}

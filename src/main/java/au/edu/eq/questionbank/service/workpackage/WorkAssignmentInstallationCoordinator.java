@@ -14,10 +14,11 @@ import java.util.Objects;
 import java.util.UUID;
 
 import au.edu.eq.questionbank.ApplicationConfig;
-import au.edu.eq.questionbank.ManagedAssetPublicationLock;
 import au.edu.eq.questionbank.ApplicationVersion;
+import au.edu.eq.questionbank.ManagedAssetPublicationLock;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
+import au.edu.eq.questionbank.repository.sqlite.SqliteContributorAssignmentVisibilityRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.workpackage.SqliteContributorAssignmentSessionRepository.LocalIds;
 import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationReview.Key;
@@ -70,27 +71,23 @@ public final class WorkAssignmentInstallationCoordinator {
 	}
 
 	/**
-	 * Installs and activates a whole-Exam assignment.
+	 * Installs or safely reactivates a validated whole-Exam assignment.
 	 *
 	 * <p>
-	 * Interrupted Subject imports and assignments are recovered before a package is
-	 * processed. A previously installed identical assignment is selected without
-	 * overwriting its existing contributor work.
+	 * New installations publish their verified graph and baseline through the
+	 * existing managed-asset recovery protocol. Reimporting an unchanged,
+	 * previously removed assignment reuses its existing graph and evidence.
 	 *
 	 * <p>
-	 * Successful installation commits the complete graph, immutable baseline and
-	 * session before publication staging is discarded. A cleanup failure after
-	 * commit is reported separately rather than misrepresented as a failed
-	 * installation.
+	 * Submitted assignments cannot be reopened for capture. Reimporting a
+	 * previously installed package never overwrites locally captured work.
 	 *
-	 * <p>
-	 * The caller must ensure other application processes do not modify managed
-	 * source files outside this installation protocol.
-	 *
-	 * @param incomingArchive validated coordinator .examwork package
-	 * @return installation result, including replay and cleanup status
-	 * @throws IOException          if the archive, publication or recovery fails
-	 * @throws SQLException         if database installation or registration fails
+	 * @param incomingArchive coordinator-issued .examwork archive
+	 * @return installation result, including replay and recovery information
+	 * @throws IOException          if validation, managed-asset publication or
+	 *                              recovery fails
+	 * @throws SQLException         if installation or contributor state cannot be
+	 *                              persisted
 	 * @throws NullPointerException if incomingArchive is null
 	 */
 	public Result install(Path incomingArchive) throws IOException, SQLException {
@@ -120,9 +117,18 @@ public final class WorkAssignmentInstallationCoordinator {
 			if (existing.isPresent()) {
 				var installed = existing.orElseThrow();
 				requireReplayMatch(installed.packageId(), installed.archiveSha256(), inspection);
+				var state = new SqliteContributorAssignmentVisibilityRepository(database).find(assignmentId)
+						.orElseThrow(() -> new SQLException("Installed assignment visibility is unavailable"));
+				if (state == SqliteContributorAssignmentVisibilityRepository.State.SUBMITTED) {
+					throw new IOException("This assignment has already been submitted. "
+							+ "It cannot be reopened by importing the original work package.");
+				}
+				if (state == SqliteContributorAssignmentVisibilityRepository.State.REMOVED) {
 
-				// Re-import is also an explicit request to enter
-				// the previously stored assignment.
+					// Reuse the original installation and its assets. Do not overwrite
+					// captured data or manufacture a new assignment identity.
+					new ContributorAssignmentRemovalService(database).reactivate(assignmentId);
+				}
 				sessions.select(assignmentId);
 				return new Result(assignmentId, packageId, true, false);
 			}

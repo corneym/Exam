@@ -11,6 +11,7 @@ import au.edu.eq.questionbank.model.AnswerFile;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.SourceDocument;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 
@@ -120,6 +121,8 @@ public final class AnswerFileReassignmentService {
 					connection.commit();
 					return new Result(replacement, impact, false, null);
 				}
+				new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.EXAM_BOOKLET,
+						booklet.getId());
 				verifyExamActive(connection, booklet);
 
 				// Existing repository invariants require all regions for this booklet to

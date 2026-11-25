@@ -11,23 +11,19 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 
 /**
- * Calculates contributor changes against an immutable whole-Exam assignment
- * baseline.
+ * Calculates newly captured contributor records against an immutable whole-Exam
+ * assignment baseline.
  *
  * <p>
- * The planner operates entirely on portable record values and revision
- * identities. It does not modify the contributor database, advance the
- * assignment baseline, or assume that an earlier contribution has been
- * acknowledged.
+ * Baseline records are coordinator-owned and cannot be modified or removed by a
+ * contributor. The only tolerated difference in an issued Booklet is automatic
+ * applicability-review invalidation caused by new capture; that difference is
+ * not exported as a proposed Booklet update.
  *
  * <p>
- * Each modified candidate retains its original baseline revision. Original
- * values are returned separately so that a coordinator can later perform
- * baseline-aware reconciliation.
- *
- * <p>
- * This class detects record changes only. Assignment scope, dependency closure,
- * asset packaging and master import validation are separate responsibilities.
+ * Only supported newly captured records are returned as candidates. The planner
+ * does not modify the original baseline or contributor database. Assignment
+ * scope and dependency validation are separate responsibilities.
  */
 public final class ContributionDeltaPlanner {
 
@@ -38,77 +34,54 @@ public final class ContributionDeltaPlanner {
 	}
 
 	/**
-	 * Calculates the contributor's new and modified records relative to the
-	 * original assignment baseline.
+	 * Identifies supported new records while preserving the issued baseline.
 	 *
 	 * <p>
-	 * Records with identical values are omitted, even when their revision
-	 * identifiers differ. Modified records retain their original baseline revision
-	 * identifier, and the corresponding original record is preserved separately.
+	 * Semantically unchanged baseline records are ignored. Changed or removed
+	 * baseline content is rejected, except for automatic Booklet
+	 * applicability-review invalidation.
 	 *
-	 * <p>
-	 * New records have no baseline revision. The planner does not interpret the
-	 * absence of a newly created record from a later snapshot as an instruction to
-	 * delete it from the master.
-	 *
-	 * @param baseline complete immutable assignment baseline
-	 * @param current  complete current assignment record snapshot
-	 * @return immutable, deterministically ordered contribution plan
-	 * @throws PackageFormatException if records are duplicated, missing,
-	 *                                structurally modified, or have invalid
-	 *                                revision evidence
-	 * @throws NullPointerException   if either input list is null
+	 * @param baseline complete immutable issued assignment records
+	 * @param current  complete current assigned Exam records
+	 * @return deterministic new-record candidates, with no baseline updates
+	 * @throws PackageFormatException if baseline records are altered or removed,
+	 *                                additions are unsupported, or record evidence
+	 *                                is invalid
+	 * @throws NullPointerException   if either record list is null
 	 */
 	public Plan plan(List<ExchangeRecord> baseline, List<ExchangeRecord> current) throws PackageFormatException {
 		Map<String, ExchangeRecord> originalRecords = index(baseline);
 		Map<String, ExchangeRecord> currentRecords = index(current);
-
-		// Baseline records cannot disappear from a contribution.
-		// Automatic deletion is outside the version-one return policy.
 		for (String key : originalRecords.keySet()) {
 			if (!currentRecords.containsKey(key)) {
-				throw new PackageFormatException("Baseline record is missing from contributor state: " + key);
+				throw new PackageFormatException("The contributor removed an issued baseline record: " + key);
 			}
 		}
 		List<ExchangeRecord> candidates = new ArrayList<>();
-		List<ExchangeRecord> originalVersions = new ArrayList<>();
-
-		// TreeMap iteration gives deterministic type/UUID ordering.
 		for (Map.Entry<String, ExchangeRecord> entry : currentRecords.entrySet()) {
 			ExchangeRecord proposed = entry.getValue();
 			ExchangeRecord original = originalRecords.get(entry.getKey());
-			if (original == null) {
-				if (!isAllowedAddition(proposed)) {
-					throw new PackageFormatException("Contributor cannot create record type: " + proposed.recordType());
+			if (original != null) {
+				if (original.values().equals(proposed.values())) {
+					continue;
 				}
-				candidates.add(new ExchangeRecord(proposed.recordVersion(), proposed.recordType(), proposed.recordId(),
-						proposed.revisionId(), null, proposed.values()));
-				continue;
-			}
 
-			// Compare semantic content, not revision UUIDs.
-			// An edit subsequently reverted to its original values
-			// does not need to be returned.
-			if (original.values().equals(proposed.values())) {
-				continue;
+				// New capture automatically invalidates the Booklet's previous
+				// applicability-review confirmation. That invalidation is not
+				// contributor-authored content and must not be returned as an edit.
+				if ("EXAM_BOOKLET".equals(original.recordType()) && onlyBookletReviewChanged(original, proposed)) {
+					continue;
+				}
+				throw new PackageFormatException(
+						"Existing coordinator-owned records cannot be modified: " + entry.getKey());
 			}
-			if (!isAllowedUpdate(original, proposed)) {
-				throw new PackageFormatException("Contributor modified protected record: " + entry.getKey());
-			}
-
-			// Changed values with the original revision indicate
-			// damaged or incorrectly generated revision evidence.
-			if (original.revisionId().equals(proposed.revisionId())) {
-				throw new PackageFormatException("Changed record retained its baseline revision: " + entry.getKey());
+			if (!isAllowedAddition(proposed)) {
+				throw new PackageFormatException("The contributor cannot create record type: " + proposed.recordType());
 			}
 			candidates.add(new ExchangeRecord(proposed.recordVersion(), proposed.recordType(), proposed.recordId(),
-					proposed.revisionId(), original.revisionId(), proposed.values()));
-
-			// Preserve the actual baseline values for reconciliation,
-			// rather than relying on revision UUIDs alone.
-			originalVersions.add(original);
+					proposed.revisionId(), null, proposed.values()));
 		}
-		return new Plan(candidates, originalVersions);
+		return new Plan(candidates, List.of());
 	}
 
 	private Map<String, ExchangeRecord> index(List<ExchangeRecord> records) throws PackageFormatException {
@@ -148,17 +121,6 @@ public final class ContributionDeltaPlanner {
 		// by the assignment capture model.
 		return switch (record.recordType()) {
 		case "QUESTION", "ANSWER", "SOURCE_QUESTION", "SHARED_QUESTION_CONTEXT", "QUESTION_IMAGE" -> true;
-		default -> false;
-		};
-	}
-
-	private boolean isAllowedUpdate(ExchangeRecord original, ExchangeRecord proposed) {
-		return switch (original.recordType()) {
-		case "QUESTION", "ANSWER", "SOURCE_QUESTION", "SHARED_QUESTION_CONTEXT", "QUESTION_IMAGE" -> true;
-
-		// A contributor may record booklet applicability
-		// reviews, but may not alter the Booklet itself.
-		case "EXAM_BOOKLET" -> onlyBookletReviewChanged(original, proposed);
 		default -> false;
 		};
 	}

@@ -14,7 +14,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.model.Descriptor;
+import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
+import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.Subject;
@@ -55,6 +57,33 @@ class SqliteQuestionOutputApplicabilityRepositoryTest {
 		assertEquals(Map.of(fixture.question().getId(), Set.of(fixture.firstCurrentDescriptor().getId()),
 				second.getId(), Set.of(fixture.secondCurrentDescriptor().getId())), actual);
 		assertEquals(Map.of(), repository.findExcludedCurrentNodeIdsForQuestions(List.of()));
+	}
+
+	@Test
+	void completedExamRejectsOutputApplicabilityChangesUntilReactivated() throws Exception {
+		Fixture fixture = createFixture("complete-exam-output-exclusions.db");
+		var repository = new SqliteQuestionOutputApplicabilityRepository(fixture.database());
+		Question question = fixture.question();
+		Exam exam = question.getExam();
+		repository.setExcluded(question, fixture.firstCurrentDescriptor(), true);
+		SqliteExamWriter examWriter = new SqliteExamWriter(fixture.database());
+		examWriter.updateExamAssetExpectations(exam, 1, 0);
+		new SqliteBookletApplicabilityReviewRepository(fixture.database()).setReviewed(question.getBooklet().getId(),
+				true);
+		Exam completed = examWriter.setExamCaptureState(exam, ExamCaptureState.COMPLETE);
+
+		// The retained Question object was loaded while ACTIVE.
+		// Persistence must still detect the actual COMPLETE state.
+		assertThrows(IllegalStateException.class,
+				() -> repository.setExcluded(question, fixture.firstCurrentDescriptor(), false));
+		assertThrows(IllegalStateException.class,
+				() -> repository.setExcluded(question, fixture.secondCurrentDescriptor(), true));
+		assertEquals(Set.of(fixture.firstCurrentDescriptor().getId()), repository.findExcludedCurrentNodeIds(question));
+		examWriter.setExamCaptureState(completed, ExamCaptureState.ACTIVE);
+		repository.setExcluded(question, fixture.firstCurrentDescriptor(), false);
+		repository.setExcluded(question, fixture.secondCurrentDescriptor(), true);
+		assertEquals(Set.of(fixture.secondCurrentDescriptor().getId()),
+				repository.findExcludedCurrentNodeIds(question));
 	}
 
 	@Test

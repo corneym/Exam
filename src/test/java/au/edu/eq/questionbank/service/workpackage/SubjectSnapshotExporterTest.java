@@ -29,6 +29,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
+
 import javax.imageio.ImageIO;
 
 import org.apache.pdfbox.Loader;
@@ -42,8 +43,8 @@ import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.repository.identity.SqliteExamAssignmentGraphReader;
-import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.identity.SqliteSubjectGraphReader.SubjectGraph;
 import au.edu.eq.questionbank.repository.identity.SqliteSubjectPortableRecordReader;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
@@ -428,11 +429,17 @@ class SubjectSnapshotExporterTest {
 				WHERE id = 31
 				""");
 		Path archive = fixture.exportDirectory().resolve("completed-exam.examwork");
-		SQLException failure = assertThrows(SQLException.class,
+		UUID examPortableId = new SqlitePortableIdentityRepository(fixture.database())
+				.requireByLocalId(EntityType.EXAM, 31).portableId();
+
+		// The request deliberately retains its older ACTIVE Exam snapshot.
+		// Preflight must use the authoritative persisted lifecycle state.
+		IOException failure = assertThrows(IOException.class,
 				() -> new WorkAssignmentIssuanceService(fixture.database(), fixture.layout())
 						.issue(assignmentRequest(archive, false)));
-		assertTrue(failure.getMessage().contains("Completed Exam cannot be assigned"));
+		assertTrue(failure.getMessage().contains("the Exam is complete"));
 		assertFalse(Files.exists(archive));
+		assertTrue(new WorkAssignmentLedger(fixture.database()).findActiveForExam(examPortableId).isEmpty());
 	}
 
 	@Test

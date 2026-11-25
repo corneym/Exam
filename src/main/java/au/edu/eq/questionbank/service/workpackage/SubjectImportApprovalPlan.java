@@ -182,6 +182,79 @@ public final class SubjectImportApprovalPlan {
 	}
 
 	/**
+	 * Prepares a complete, non-destructive installation of a previously absent
+	 * Subject.
+	 *
+	 * <p>
+	 * Every incoming record and asset is included. Existing shared examination
+	 * providers may be linked to verified canonical identities, but their values
+	 * must not be overwritten.
+	 *
+	 * <p>
+	 * The destination Subject's absence and all shared-provider resolutions must be
+	 * revalidated in the installation transaction.
+	 *
+	 * @param inspection      validated incoming Subject inspection
+	 * @param sharedProviders incoming provider UUIDs mapped to verified existing
+	 *                        canonical provider UUIDs
+	 * @return complete installation approval plan
+	 * @throws IllegalArgumentException if the inspection or provider mappings are
+	 *                                  invalid
+	 * @throws NullPointerException     if a required argument is null
+	 */
+	public static SubjectImportApprovalPlan prepareNewSubject(SubjectSnapshotIntakePreview.Inspection inspection,
+			Map<UUID, UUID> sharedProviders) {
+		Objects.requireNonNull(inspection, "inspection");
+		Map<UUID, UUID> providers = Map.copyOf(Objects.requireNonNull(sharedProviders, "sharedProviders"));
+		if (inspection.state() != SubjectSnapshotIntakePreview.State.NEW_SUBJECT
+				|| inspection.existingSubjectId() != null) {
+			throw new IllegalArgumentException("New Subject installation requires " + "an absent destination Subject");
+		}
+		List<Action> actions = new ArrayList<>();
+		Set<UUID> consumedProviders = new HashSet<>();
+		Set<Key> keys = new HashSet<>();
+		for (ExchangeRecord record : inspection.records()) {
+			Key key = SubjectReconciliationReview.recordKey(record.recordType(), record.recordId());
+			if (!keys.add(key)) {
+				throw new IllegalArgumentException("Duplicate incoming record: " + key);
+			}
+			UUID canonicalProvider = null;
+			if ("EXAM_PROVIDER".equals(record.recordType())) {
+				canonicalProvider = providers.get(record.recordId());
+				if (canonicalProvider != null) {
+					consumedProviders.add(record.recordId());
+				}
+			}
+			boolean reuseProvider = canonicalProvider != null;
+			actions.add(new Action(key, Decision.ACCEPT, reuseProvider ? Operation.LINK_ALIAS : Operation.INSERT_RECORD,
+					reuseProvider ? Classification.IDENTICAL.name() : Classification.NEW.name(), record.recordId(),
+					canonicalProvider, null, null, null, reuseProvider ? "Reuse verified shared examination provider"
+							: "Install complete authoritative Subject record",
+					""));
+		}
+		if (!consumedProviders.equals(providers.keySet())) {
+			throw new IllegalArgumentException(
+					"Shared-provider mappings contain " + "unknown incoming provider identities");
+		}
+		for (var reference : inspection.assets().references()) {
+			Key key = new Key("ASSET", reference.usage() + ":" + reference.managedPath() + ":"
+					+ (reference.ownerType() == null ? "" : reference.ownerType() + ":" + reference.ownerId()));
+			if (!keys.add(key)) {
+				throw new IllegalArgumentException("Duplicate incoming asset: " + key);
+			}
+			actions.add(new Action(key, Decision.ACCEPT, Operation.COPY_ASSET, Classification.NEW.name(),
+					reference.ownerId(), null, reference.managedPath(), null, reference.sha256(),
+					"Install authoritative Subject asset", ""));
+		}
+		actions.sort(Comparator.comparing((Action action) -> action.key().kind())
+				.thenComparing(action -> action.key().value()));
+
+		// A null master fingerprint explicitly represents
+		// an absent destination, rather than a fictitious snapshot.
+		return new SubjectImportApprovalPlan(null, inspection.fingerprint(), actions);
+	}
+
+	/**
 	 * Resolves an accepted asset conflict without replacing master bytes.
 	 */
 	private static Operation assetConflictOperation(AssetEvidence asset, ConflictResolution resolution) {
@@ -281,8 +354,19 @@ public final class SubjectImportApprovalPlan {
 	private static String fingerprintApproval(Fingerprint master, Fingerprint incoming, List<Action> actions) {
 		try {
 			MessageDigest digest = MessageDigest.getInstance("SHA-256");
-			update(digest, "subject-import-approval-v1");
-			update(digest, master.contentSha256());
+			if (master == null) {
+
+				// Keep new-Subject approval evidence distinct
+				// from legacy reconciliation approval evidence.
+				update(digest, "subject-install-approval-v1");
+				update(digest, "ABSENT_DESTINATION_SUBJECT");
+			} else {
+
+				// Preserve the existing reconciliation digest
+				// contract for previously approved import plans.
+				update(digest, "subject-import-approval-v1");
+				update(digest, master.contentSha256());
+			}
 			update(digest, incoming.archiveSha256());
 			for (Action action : actions) {
 				update(digest, action.key().kind());
@@ -385,6 +469,16 @@ public final class SubjectImportApprovalPlan {
 	}
 
 	/**
+	 * Indicates whether the approved operation installs a previously absent Subject
+	 * instead of reconciling an existing Subject.
+	 *
+	 * @return true for a new Subject installation
+	 */
+	public boolean isNewSubjectInstallation() {
+		return reviewedMaster == null;
+	}
+
+	/**
 	 * Revalidates the incoming archive against its exact approved bytes.
 	 *
 	 * @param archive currently supplied incoming archive
@@ -400,9 +494,14 @@ public final class SubjectImportApprovalPlan {
 	 *
 	 * @param archive fresh master Subject snapshot
 	 * @throws IOException           if archive validation fails
-	 * @throws IllegalStateException if master content has changed
+	 * @throws IllegalStateException if master content has changed or the approved
+	 *                               operation is a new Subject installation
 	 */
 	public void requireFreshMaster(Path archive) throws IOException {
+		if (isNewSubjectInstallation()) {
+			throw new IllegalStateException("A new Subject installation requires " + "destination absence validation, "
+					+ "not master snapshot comparison");
+		}
 		new SubjectImportSnapshotFingerprint().requireSameContent(reviewedMaster, archive);
 	}
 
@@ -418,7 +517,8 @@ public final class SubjectImportApprovalPlan {
 	/**
 	 * Returns the original reviewed master fingerprint.
 	 *
-	 * @return master fingerprint
+	 * @return master fingerprint, or null when installing a previously absent
+	 *         Subject
 	 */
 	public Fingerprint reviewedMaster() {
 		return reviewedMaster;

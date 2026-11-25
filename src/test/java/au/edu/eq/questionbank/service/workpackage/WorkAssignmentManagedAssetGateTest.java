@@ -21,6 +21,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.ApplicationConfig;
+import au.edu.eq.questionbank.ManagedDataLayout;
+import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkAssetIndex.Reference;
 import au.edu.eq.questionbank.service.workpackage.WorkAssignmentManagedAssetGate.Disposition;
 
@@ -28,6 +30,35 @@ class WorkAssignmentManagedAssetGateTest {
 
 	@TempDir
 	Path directory;
+
+	@Test
+	void acceptedExamPdfDestinationsMatchPdfStoreResolution() throws Exception {
+		byte[] bytes = content("Coordinator examination PDF");
+		ManagedDataLayout layout = new ManagedDataLayout(directory);
+		PdfStore canonicalStore = new PdfStore(layout);
+		PdfStore transitionalStore = new PdfStore(layout, directory.resolve("pdf"));
+		List<String> paths = List.of("subjects/Biology/exams/questions.pdf", "subjects/Biology/exams/answers.pdf",
+				"subjects/Biology/exams/QCAA/2025/" + "External Assessment/questions.pdf");
+		for (String path : paths) {
+			Reference reference = pdf(path, bytes);
+			ExamWorkAssetIndex index = new ExamWorkAssetIndex(List.of(reference));
+			var decision = gate().inspect("Biology", index).getFirst();
+			assertEquals(Disposition.CREATE, decision.disposition());
+			assertEquals(decision.destination(), canonicalStore.resolve(path));
+			assertEquals(decision.destination(), transitionalStore.resolve(path));
+			assertFalse(Files.exists(decision.destination()));
+
+			// Simulate completed managed publication, then
+			// verify that subsequent PDF access and assignment
+			// reuse identify the same physical file.
+			Files.createDirectories(decision.destination().getParent());
+			Files.write(decision.destination(), bytes);
+			var reused = gate().inspect("Biology", index).getFirst();
+			assertEquals(Disposition.REUSE, reused.disposition());
+			assertArrayEquals(bytes, Files.readAllBytes(canonicalStore.resolve(path)));
+			assertArrayEquals(bytes, Files.readAllBytes(transitionalStore.resolve(path)));
+		}
+	}
 
 	@Test
 	void embeddedImageNeverBecomesAManagedFile() throws Exception {
@@ -90,6 +121,19 @@ class WorkAssignmentManagedAssetGateTest {
 	}
 
 	@Test
+	void rejectsExamPdfOutsideExamNamespace() throws Exception {
+		byte[] bytes = content("Coordinator examination PDF");
+		for (String path : List.of("subjects/Biology/questions.pdf", "subjects/Biology/curriculum/questions.pdf",
+				"subjects/Biology/legacy/questions.pdf")) {
+			Reference reference = pdf(path, bytes);
+			IOException failure = assertThrows(IOException.class,
+					() -> gate().inspect("Biology", new ExamWorkAssetIndex(List.of(reference))));
+			assertTrue(failure.getMessage().contains("Invalid assignment Exam PDF destination"));
+			assertFalse(Files.exists(directory.resolve(path)));
+		}
+	}
+
+	@Test
 	void rejectsNonDirectoryAncestor() throws Exception {
 		Path subjects = directory.resolve("subjects");
 		Files.writeString(subjects, "Not a directory");
@@ -129,6 +173,25 @@ class WorkAssignmentManagedAssetGateTest {
 		assertTrue(decisions.stream().allMatch(decision -> decision.disposition() == Disposition.CREATE));
 		assertEquals(decisions.get(0).destination(), decisions.get(1).destination());
 		assertFalse(Files.exists(directory.resolve(path)));
+	}
+
+	@Test
+	void syllabusPdfRetainsIndependentManagedDestination() throws Exception {
+		byte[] bytes = content("Coordinator syllabus PDF");
+		String hash = sha256(bytes);
+		String path = "subjects/Biology/curriculum/2025/" + "sources/syllabus.pdf";
+		Reference reference = new Reference("assets/sha256/" + hash.substring(0, 2) + "/" + hash + ".pdf", hash,
+				bytes.length, "application/pdf", path, "SYLLABUS_VERSION", UUID.randomUUID(), "SYLLABUS_PDF");
+		ExamWorkAssetIndex index = new ExamWorkAssetIndex(List.of(reference));
+		var decision = gate().inspect("Biology", index).getFirst();
+		assertEquals(Disposition.CREATE, decision.disposition());
+		assertEquals(directory.resolve(path).toAbsolutePath().normalize(), decision.destination());
+		assertFalse(Files.exists(decision.destination()));
+		Files.createDirectories(decision.destination().getParent());
+		Files.write(decision.destination(), bytes);
+		var repeated = gate().inspect("Biology", index).getFirst();
+		assertEquals(Disposition.REUSE, repeated.disposition());
+		assertArrayEquals(bytes, Files.readAllBytes(repeated.destination()));
 	}
 
 	private byte[] content(String value) {

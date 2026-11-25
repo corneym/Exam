@@ -3,7 +3,6 @@ package au.edu.eq.questionbank.service.workpackage;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -23,11 +22,19 @@ import org.junit.jupiter.api.io.TempDir;
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.TestPdf;
+import au.edu.eq.questionbank.model.Answer;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamProvider;
+import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
+import au.edu.eq.questionbank.repository.assessment.SqliteBookletApplicabilityReviewRepository;
+import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
+import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
+import au.edu.eq.questionbank.repository.assessment.SqliteQuestionWriter;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
+import au.edu.eq.questionbank.repository.sqlite.SqliteContributorAssignmentVisibilityRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 public class ContributionSnapshotReaderTest {
@@ -36,166 +43,181 @@ public class ContributionSnapshotReaderTest {
 	Path directory;
 
 	@Test
-	void exportsFourPartialPackagesWithOriginalBaselineAndLineage() throws Exception {
+	void baselineQuestionAndAnswerAreRejectedAtSaveTime() throws Exception {
 		Fixture fixture = fixture();
-		SqliteDatabase contributorDatabase = fixture.contributorDatabase();
-		var sessions = new SqliteContributorAssignmentSessionRepository(contributorDatabase);
-		var ledger = new SqliteContributionReturnLedger(contributorDatabase);
-		ContributionExporter exporter = new ContributionExporter(contributorDatabase,
-				new ManagedDataLayout(directory.resolve("contributor")));
-		var initial = snapshot(fixture, "export-initial-snapshot.db");
-		ExchangeRecord question = findRecord(initial.baselineRecords(), "QUESTION");
-		ExchangeRecord answer = findRecord(initial.baselineRecords(), "ANSWER");
-		long questionLocalId = localId(contributorDatabase, "QUESTION", question.recordId());
-		long answerLocalId = localId(contributorDatabase, "ANSWER", answer.recordId());
-		long bookletLocalId = localId(contributorDatabase, "EXAM_BOOKLET",
-				UUID.fromString(question.values().path("booklet_id").asText()));
-		long classificationLocalId = localId(contributorDatabase, "CURRICULUM_NODE",
-				UUID.fromString(question.values().path("classification_node_id").asText()));
-		byte[] originalBaseline = sessions.readBaseline(fixture.assignmentId()).records();
-		UUID previousPackageId = null;
-		List<Integer> expectedCandidateCounts = List.of(1, 2, 3, 3);
-		for (int round = 1; round <= 4; round++) {
-			switch (round) {
-			case 1 -> executeOne(contributorDatabase, """
-					UPDATE questions
-					SET question_text = 'First contribution'
-					WHERE id = ?
-					""", questionLocalId);
-			case 2 -> executeOne(contributorDatabase, """
-					UPDATE answers
-					SET answer_text = 'Second contribution answer'
-					WHERE id = ?
-					""", answerLocalId);
-			case 3 -> executeOne(contributorDatabase, """
-					INSERT INTO questions (
-					    booklet_id,
-					    classification_node_id,
-					    question_code,
-					    question_text,
-					    marks,
-					    shared_context_capture_required
-					)
-					VALUES (
-					    ?, ?, '2',
-					    'Third contribution question', 3, 0
-					)
-					""", bookletLocalId, classificationLocalId);
-			case 4 -> executeOne(contributorDatabase, """
-					UPDATE questions
-					SET question_text = 'Fourth contribution revision'
-					WHERE id = ?
-					""", questionLocalId);
-			default -> throw new AssertionError(round);
-			}
-			Path archive = directory.resolve("contribution-" + round + ".examwork");
-			ExamWorkManifest manifest = exporter.export(fixture.assignmentId(), archive);
-			assertEquals(ExamWorkPackageType.CONTRIBUTION, manifest.packageType());
-			assertEquals(fixture.assignmentId(), manifest.assignmentId());
-			assertTrue(Files.isRegularFile(archive));
-			new ExamWorkArchiveValidator().validate(archive, manifest.producerApplicationVersion(),
-					manifest.producerSchemaVersion());
-			assertArrayEquals(originalBaseline, archiveEntryBytes(archive, "baseline/initial-records.jsonl"));
-			var codec = new ExamWorkJsonlCodec();
-			List<ExchangeRecord> changes = codec.readRecords(
-					new java.io.ByteArrayInputStream(archiveEntryBytes(archive, "records/contribution-changes.jsonl")));
-			assertEquals(expectedCandidateCounts.get(round - 1).intValue(), changes.size());
-			List<ExchangeRecord> contexts = codec.readRecords(
-					new java.io.ByteArrayInputStream(archiveEntryBytes(archive, "records/contribution-context.jsonl")));
-			assertEquals(1, contexts.size());
-			ExchangeRecord context = contexts.getFirst();
-			assertEquals("CONTRIBUTION_CONTEXT", context.recordType());
-			assertEquals(manifest.packageId(), context.recordId());
-			assertEquals(fixture.assignmentId().toString(), context.values().path("assignment_id").asText());
-			assertEquals(round, context.values().path("return_number").asInt());
-			assertEquals(changes.size(), context.values().path("candidate_count").asInt());
-			if (previousPackageId == null) {
-				assertTrue(context.values().path("previous_return_package_id").isNull());
-			} else {
-				assertEquals(previousPackageId.toString(),
-						context.values().path("previous_return_package_id").asText());
-			}
-			var recorded = ledger.find(manifest.packageId()).orElseThrow();
-			assertEquals(round, recorded.returnNumber());
-			assertEquals(previousPackageId, recorded.previousPackageId());
-			previousPackageId = manifest.packageId();
-		}
-		assertEquals(4, ledger.findLatest(fixture.assignmentId()).orElseThrow().returnNumber());
-		assertArrayEquals(originalBaseline, sessions.readBaseline(fixture.assignmentId()).records());
-		assertEquals(fixture.assignmentId(), sessions.active().orElseThrow().assignmentId());
+		SqliteDatabase database = fixture.contributorDatabase();
+		var snapshot = snapshot(fixture, "guard-baseline.db");
+		ExchangeRecord issued = findRecord(snapshot.baselineRecords(), "QUESTION");
+		ExchangeRecord issuedAnswer = findRecord(snapshot.baselineRecords(), "ANSWER");
+		long questionId = localId(database, "QUESTION", issued.recordId());
+		long answerId = localId(database, "ANSWER", issuedAnswer.recordId());
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		Question question = repository.findById(questionId).orElseThrow();
+		var questionWriter = new SqliteQuestionWriter(database);
+		var answerWriter = new SqliteAnswerWriter(database, new SqliteExamWriter(database));
+		assertThrows(IllegalStateException.class, () -> questionWriter.updateClassification(questionId,
+				question.getBooklet(), question.getClassification()));
+		assertThrows(IllegalStateException.class,
+				() -> answerWriter.updateAnswer(question, answerId, "Unauthorised edit", List.of()));
+		assertThrows(IllegalStateException.class,
+				() -> answerWriter.insertAnswer(question, "Unauthorised new Answer", List.of()));
+		assertThrows(IllegalStateException.class, () -> new SqliteBookletApplicabilityReviewRepository(database)
+				.setReviewed(question.getBooklet().getId(), true));
+		Question unchanged = repository.findById(questionId).orElseThrow();
+		assertEquals(question.getQuestionText(), unchanged.getQuestionText());
+		assertEquals(question.getClassification(), unchanged.getClassification());
+		assertEquals(question.getAnswer().getAnswerText(), unchanged.getAnswer().getAnswerText());
+		database.verifyIntegrity();
 	}
 
 	@Test
-	void keepsTheOriginalBaselineAcrossFourSnapshots() throws Exception {
+	void contributionPreflightRejectsRemovedAssignment() throws Exception {
 		Fixture fixture = fixture();
-		SqliteContributorAssignmentSessionRepository sessions = new SqliteContributorAssignmentSessionRepository(
-				fixture.contributorDatabase());
-		byte[] originalBaseline = sessions.readBaseline(fixture.assignmentId()).records();
+		SqliteDatabase database = fixture.contributorDatabase();
+		ContributionExporter exporter = new ContributionExporter(database,
+				new ManagedDataLayout(directory.resolve("contributor")));
+		ContributorAssignmentRemovalService removal = new ContributorAssignmentRemovalService(database);
+		removal.removeUnchanged(fixture.assignmentId());
+		IllegalStateException failure = assertThrows(IllegalStateException.class,
+				() -> exporter.preflight(fixture.assignmentId()));
+		assertTrue(failure.getMessage().contains("no longer available"));
+		var visibility = new SqliteContributorAssignmentVisibilityRepository(database);
+		assertEquals(SqliteContributorAssignmentVisibilityRepository.State.REMOVED,
+				visibility.find(fixture.assignmentId()).orElseThrow());
+		assertTrue(new SqliteContributionReturnLedger(database).findLatest(fixture.assignmentId()).isEmpty());
+		assertTrue(new SqliteContributorAssignmentSessionRepository(database).active().isEmpty());
+		database.verifyIntegrity();
+	}
 
-		// Snapshot 1: no contributor modifications.
-		var first = snapshot(fixture, "snapshot-1.db");
-		assertTrue(first.delta().candidates().isEmpty());
-		ExchangeRecord originalQuestion = findRecord(first.baselineRecords(), "QUESTION");
-		ExchangeRecord originalAnswer = findRecord(first.baselineRecords(), "ANSWER");
-
-		// Resolve portable identities into the contributor's IDs.
-		// The coordinator's original integer IDs are not portable.
-		long questionLocalId = localId(fixture.contributorDatabase(), "QUESTION", originalQuestion.recordId());
-		long answerLocalId = localId(fixture.contributorDatabase(), "ANSWER", originalAnswer.recordId());
-		long bookletLocalId = localId(fixture.contributorDatabase(), "EXAM_BOOKLET",
-				UUID.fromString(originalQuestion.values().path("booklet_id").asText()));
-		long classificationLocalId = localId(fixture.contributorDatabase(), "CURRICULUM_NODE",
-				UUID.fromString(originalQuestion.values().path("classification_node_id").asText()));
-
-		// Snapshot 2: an existing Question is edited.
-		executeOne(fixture.contributorDatabase(), """
-				UPDATE questions
-				SET question_text = 'Contributor edited question'
-				WHERE id = ?
-				""", questionLocalId);
-		var second = snapshot(fixture, "snapshot-2.db");
-		ExchangeRecord changedQuestion = second.delta().candidates().stream()
-				.filter(record -> record.recordType().equals("QUESTION")).findFirst().orElseThrow();
-		assertEquals("Contributor edited question", changedQuestion.values().path("question_text").asText());
-		assertEquals(originalQuestion.revisionId(), changedQuestion.baselineRevisionId());
-		assertNotEquals(originalQuestion.revisionId(), changedQuestion.revisionId());
-
-		// Snapshot 3: capture another Question using the
-		// contributor's own local Booklet and syllabus IDs.
-		executeOne(fixture.contributorDatabase(), """
+	@Test
+	void exportsOneFinalNewQuestionContributionAndRetainsBaseline() throws Exception {
+		Fixture fixture = fixture();
+		SqliteDatabase database = fixture.contributorDatabase();
+		var sessions = new SqliteContributorAssignmentSessionRepository(database);
+		var exporter = new ContributionExporter(database, new ManagedDataLayout(directory.resolve("contributor")));
+		var ledger = new SqliteContributionReturnLedger(database);
+		var original = snapshot(fixture, "original-export-snapshot.db");
+		ExchangeRecord issuedQuestion = findRecord(original.baselineRecords(), "QUESTION");
+		long bookletId = localId(database, "EXAM_BOOKLET",
+				UUID.fromString(issuedQuestion.values().path("booklet_id").asText()));
+		long classificationId = localId(database, "CURRICULUM_NODE",
+				UUID.fromString(issuedQuestion.values().path("classification_node_id").asText()));
+		byte[] issuedBaseline = sessions.readBaseline(fixture.assignmentId()).records();
+		executeOne(database, """
 				INSERT INTO questions (
 				    booklet_id, classification_node_id,
 				    question_code, question_text, marks,
 				    shared_context_capture_required
 				)
-				VALUES (
-				    ?, ?,
-				    '2', 'New contributor question', 3, 0
+				VALUES (?, ?, '2', 'New worker Question', 3, 0)
+				""", bookletId, classificationId);
+		Path archive = directory.resolve("final-contribution.examwork");
+		ExamWorkManifest manifest = exporter.export(fixture.assignmentId(), archive);
+		assertEquals(ExamWorkPackageType.CONTRIBUTION, manifest.packageType());
+		assertEquals(fixture.assignmentId(), manifest.assignmentId());
+		assertTrue(Files.isRegularFile(archive));
+		new ExamWorkArchiveValidator().validate(archive, manifest.producerApplicationVersion(),
+				manifest.producerSchemaVersion());
+		assertArrayEquals(issuedBaseline, archiveEntryBytes(archive, "baseline/initial-records.jsonl"));
+		var codec = new ExamWorkJsonlCodec();
+		List<ExchangeRecord> changes = codec.readRecords(
+				new java.io.ByteArrayInputStream(archiveEntryBytes(archive, "records/contribution-changes.jsonl")));
+		assertEquals(1, changes.size());
+		assertEquals("QUESTION", changes.getFirst().recordType());
+		assertEquals("New worker Question", changes.getFirst().values().path("question_text").asText());
+		assertEquals(null, changes.getFirst().baselineRevisionId());
+		ExchangeRecord context = codec.readRecords(
+				new java.io.ByteArrayInputStream(archiveEntryBytes(archive, "records/contribution-context.jsonl")))
+				.getFirst();
+		assertEquals(1, context.values().path("return_number").asInt());
+		assertTrue(context.values().path("previous_return_package_id").isNull());
+		assertEquals(1, ledger.findLatest(fixture.assignmentId()).orElseThrow().returnNumber());
+		assertTrue(sessions.active().isEmpty());
+		assertArrayEquals(issuedBaseline, sessions.readBaseline(fixture.assignmentId()).records());
+		assertThrows(IllegalStateException.class,
+				() -> exporter.export(fixture.assignmentId(), directory.resolve("another-contribution.examwork")));
+	}
+
+	@Test
+	void immutableContributorBaselineRejectsTamperingAndBaselineEdit() throws Exception {
+		Fixture fixture = fixture();
+		SqliteDatabase database = fixture.contributorDatabase();
+		var snapshot = snapshot(fixture, "baseline-integrity.db");
+		ExchangeRecord issued = findRecord(snapshot.baselineRecords(), "QUESTION");
+		long questionId = localId(database, "QUESTION", issued.recordId());
+		Question original = new SqliteQuestionRepository(database).findById(questionId).orElseThrow();
+
+		// The installed assignment evidence is immutable in SQLite.
+		// Deliberate tampering must be rejected before it reaches the writer.
+		assertThrows(SQLException.class, () -> {
+			try (Connection connection = database.openConnection();
+					PreparedStatement statement = connection.prepareStatement("""
+							UPDATE contributor_assignment_sessions
+							SET records_sha256 = ?
+							WHERE assignment_id = ?
+							""")) {
+				statement.setString(1, "0".repeat(64));
+				statement.setString(2, fixture.assignmentId().toString());
+				statement.executeUpdate();
+			}
+		});
+
+		// The unchanged but coordinator-owned Question must also be refused
+		// independently at the ordinary writer boundary.
+		assertThrows(IllegalStateException.class, () -> new SqliteQuestionWriter(database)
+				.updateClassification(questionId, original.getBooklet(), original.getClassification()));
+		Question unchanged = new SqliteQuestionRepository(database).findById(questionId).orElseThrow();
+		assertEquals(original.getClassification(), unchanged.getClassification());
+		assertEquals(original.getQuestionText(), unchanged.getQuestionText());
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void preservesBaselineAndRejectsChangesToIssuedQuestions() throws Exception {
+		Fixture fixture = fixture();
+		SqliteDatabase database = fixture.contributorDatabase();
+		var sessions = new SqliteContributorAssignmentSessionRepository(database);
+		byte[] issuedBaseline = sessions.readBaseline(fixture.assignmentId()).records();
+		var original = snapshot(fixture, "baseline-unchanged.db");
+		ExchangeRecord issuedQuestion = findRecord(original.baselineRecords(), "QUESTION");
+		long bookletId = localId(database, "EXAM_BOOKLET",
+				UUID.fromString(issuedQuestion.values().path("booklet_id").asText()));
+		long classificationId = localId(database, "CURRICULUM_NODE",
+				UUID.fromString(issuedQuestion.values().path("classification_node_id").asText()));
+		executeOne(database, """
+				INSERT INTO questions (
+				    booklet_id, classification_node_id,
+				    question_code, question_text, marks,
+				    shared_context_capture_required
 				)
-				""", bookletLocalId, classificationLocalId);
-		var third = snapshot(fixture, "snapshot-3.db");
-		assertEquals(2,
-				third.delta().candidates().stream().filter(record -> record.recordType().equals("QUESTION")).count());
-		assertEquals(1,
-				third.delta().candidates().stream()
-						.filter(record -> record.recordType().equals("QUESTION") && record.baselineRevisionId() == null)
-						.count());
-
-		// Snapshot 4: edit the existing Answer.
-		executeOne(fixture.contributorDatabase(), """
-				UPDATE answers
-				SET answer_text = 'Contributor edited answer'
+				VALUES (?, ?, '2', 'First worker draft', 3, 0)
+				""", bookletId, classificationId);
+		var first = snapshot(fixture, "first-worker-draft.db");
+		ExchangeRecord added = first.delta().candidates().stream()
+				.filter(record -> "QUESTION".equals(record.recordType())).findFirst().orElseThrow();
+		long newQuestionId = localId(database, "QUESTION", added.recordId());
+		executeOne(database, """
+				UPDATE questions
+				SET question_text = 'Corrected worker draft'
 				WHERE id = ?
-				""", answerLocalId);
-		var fourth = snapshot(fixture, "snapshot-4.db");
-		assertTrue(fourth.delta().candidates().stream().anyMatch(
-				record -> record.recordType().equals("ANSWER") && record.recordId().equals(originalAnswer.recordId())));
-		assertTrue(fourth.delta().candidates().stream().anyMatch(record -> record.recordType().equals("QUESTION")
-				&& record.recordId().equals(changedQuestion.recordId())));
+				""", newQuestionId);
+		var corrected = snapshot(fixture, "corrected-worker-draft.db");
+		assertEquals(1, corrected.delta().candidates().size());
+		assertEquals(added.recordId(), corrected.delta().candidates().getFirst().recordId());
+		assertEquals("Corrected worker draft",
+				corrected.delta().candidates().getFirst().values().path("question_text").asText());
+		assertArrayEquals(issuedBaseline, sessions.readBaseline(fixture.assignmentId()).records());
 
-		// Every comparison still uses the original issued baseline.
-		assertEquals(first.baselineRecords(), fourth.baselineRecords());
-		assertArrayEquals(originalBaseline, sessions.readBaseline(fixture.assignmentId()).records());
+		// This direct SQL write exercises the export boundary; the application
+		// must separately block the edit before it reaches persistence.
+		long issuedQuestionId = localId(database, "QUESTION", issuedQuestion.recordId());
+		executeOne(database, """
+				UPDATE questions
+				SET question_text = 'Unauthorised baseline modification'
+				WHERE id = ?
+				""", issuedQuestionId);
+		assertThrows(PackageFormatException.class, () -> snapshot(fixture, "invalid-baseline-change.db"));
+		assertArrayEquals(issuedBaseline, sessions.readBaseline(fixture.assignmentId()).records());
 	}
 
 	@Test
@@ -214,63 +236,191 @@ public class ContributionSnapshotReaderTest {
 	}
 
 	@Test
-	void rejectsEmptyAndOverwritingContributionExports() throws Exception {
+	void rejectsEmptyExportAndDoesNotPublishTwice() throws Exception {
 		Fixture fixture = fixture();
-		ContributionExporter exporter = new ContributionExporter(fixture.contributorDatabase(),
+		SqliteDatabase database = fixture.contributorDatabase();
+		ContributionExporter exporter = new ContributionExporter(database,
 				new ManagedDataLayout(directory.resolve("contributor")));
-		var ledger = new SqliteContributionReturnLedger(fixture.contributorDatabase());
 		Path destination = directory.resolve("single-contribution.examwork");
+		SqliteContributionReturnLedger ledger = new SqliteContributionReturnLedger(database);
+		var sessions = new SqliteContributorAssignmentSessionRepository(database);
+
+		// An unchanged assignment is rejected before a destination
+		// is required, without publishing or changing its lifecycle.
+		IOException preflightFailure = assertThrows(IOException.class,
+				() -> exporter.preflight(fixture.assignmentId()));
+		assertTrue(preflightFailure.getMessage().contains("No contributor changes to export"));
+		assertTrue(ledger.findLatest(fixture.assignmentId()).isEmpty());
+		assertEquals(fixture.assignmentId(), sessions.active().orElseThrow().assignmentId());
+		assertFalse(Files.exists(destination));
+
+		// Bypassing advisory preflight must not permit empty export.
 		assertThrows(IOException.class, () -> exporter.export(fixture.assignmentId(), destination));
 		assertFalse(Files.exists(destination));
-		assertTrue(ledger.findLatest(fixture.assignmentId()).isEmpty());
-		var original = snapshot(fixture, "export-empty-check.db");
+		var original = snapshot(fixture, "empty-check.db");
 		ExchangeRecord question = findRecord(original.baselineRecords(), "QUESTION");
-		long questionId = localId(fixture.contributorDatabase(), "QUESTION", question.recordId());
-		executeOne(fixture.contributorDatabase(), """
-				UPDATE questions
-				SET question_text = 'Exportable question'
-				WHERE id = ?
-				""", questionId);
+		long bookletId = localId(database, "EXAM_BOOKLET",
+				UUID.fromString(question.values().path("booklet_id").asText()));
+		long nodeId = localId(database, "CURRICULUM_NODE",
+				UUID.fromString(question.values().path("classification_node_id").asText()));
+		executeOne(database, """
+				INSERT INTO questions (
+				    booklet_id,
+				    classification_node_id,
+				    question_code,
+				    question_text,
+				    marks,
+				    shared_context_capture_required
+				)
+				VALUES (
+				    ?, ?,
+				    '2',
+				    'Submitted new Question',
+				    2,
+				    0
+				)
+				""", bookletId, nodeId);
+
+		// Saved contributor work now passes preflight.
+		// Repeated advisory checks do not consume the assignment.
+		exporter.preflight(fixture.assignmentId());
+		exporter.preflight(fixture.assignmentId());
+		assertTrue(ledger.findLatest(fixture.assignmentId()).isEmpty());
+		assertEquals(fixture.assignmentId(), sessions.active().orElseThrow().assignmentId());
+		assertFalse(Files.exists(destination));
 		ExamWorkManifest first = exporter.export(fixture.assignmentId(), destination);
 		assertTrue(Files.isRegularFile(destination));
+
+		// Both the advisory and authoritative boundaries
+		// must reject another return after submission.
+		IllegalStateException submittedFailure = assertThrows(IllegalStateException.class,
+				() -> exporter.preflight(fixture.assignmentId()));
+		assertTrue(submittedFailure.getMessage().contains("already been submitted"));
 		assertThrows(IOException.class, () -> exporter.export(fixture.assignmentId(), destination));
-		assertEquals(first.packageId(), ledger.findLatest(fixture.assignmentId()).orElseThrow().packageId());
-		assertEquals(1, ledger.findLatest(fixture.assignmentId()).orElseThrow().returnNumber());
+		assertThrows(IllegalStateException.class,
+				() -> exporter.export(fixture.assignmentId(), directory.resolve("second-submission.examwork")));
+		var recorded = ledger.findLatest(fixture.assignmentId()).orElseThrow();
+		assertEquals(first.packageId(), recorded.packageId());
+		assertEquals(1, recorded.returnNumber());
+		database.verifyIntegrity();
 	}
 
 	@Test
-	void snapshotDoesNotObserveLaterLiveDatabaseChanges() throws Exception {
+	void removesUnchangedAssignmentAndAllowsReimportButRejectsCapturedWork() throws Exception {
 		Fixture fixture = fixture();
-		Path originalPath = directory.resolve("stable-before-edit.db");
-		fixture.contributorDatabase().createConsistentSnapshot(originalPath);
+		SqliteDatabase database = fixture.contributorDatabase();
+		var removal = new ContributorAssignmentRemovalService(database);
+		var sessions = new SqliteContributorAssignmentSessionRepository(database);
+		var visibility = new SqliteContributorAssignmentVisibilityRepository(database);
+		UUID assignmentId = fixture.assignmentId();
+		removal.removeUnchanged(assignmentId);
+		assertEquals(SqliteContributorAssignmentVisibilityRepository.State.REMOVED,
+				visibility.find(assignmentId).orElseThrow());
+		assertTrue(sessions.active().isEmpty());
+		ApplicationConfig contributor = ApplicationConfig.fromDataRoot(directory.resolve("contributor"));
+		new WorkAssignmentInstallationCoordinator(contributor).install(directory.resolve("assignment.examwork"));
+		assertEquals(SqliteContributorAssignmentVisibilityRepository.State.ACTIVE,
+				visibility.find(assignmentId).orElseThrow());
+		assertEquals(assignmentId, sessions.active().orElseThrow().assignmentId());
+		var before = snapshot(fixture, "removal-before-new-work.db");
+		ExchangeRecord issued = findRecord(before.baselineRecords(), "QUESTION");
+		long bookletId = localId(database, "EXAM_BOOKLET",
+				UUID.fromString(issued.values().path("booklet_id").asText()));
+		long nodeId = localId(database, "CURRICULUM_NODE",
+				UUID.fromString(issued.values().path("classification_node_id").asText()));
+		executeOne(database, """
+				INSERT INTO questions (
+				    booklet_id, classification_node_id,
+				    question_code, question_text, marks,
+				    shared_context_capture_required
+				)
+				VALUES (?, ?, '2', 'Unsumbitted worker capture', 2, 0)
+				""", bookletId, nodeId);
+		assertThrows(IllegalStateException.class, () -> removal.removeUnchanged(assignmentId));
+		assertEquals(SqliteContributorAssignmentVisibilityRepository.State.ACTIVE,
+				visibility.find(assignmentId).orElseThrow());
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void stableSnapshotDoesNotObserveLaterNewQuestionCapture() throws Exception {
+		Fixture fixture = fixture();
+		SqliteDatabase database = fixture.contributorDatabase();
+		Path originalPath = directory.resolve("stable-before-capture.db");
+		database.createConsistentSnapshot(originalPath);
 		ContributionSnapshotReader reader = new ContributionSnapshotReader(originalPath);
 		var before = reader.read(fixture.assignmentId());
 		assertTrue(before.delta().candidates().isEmpty());
-		ExchangeRecord originalQuestion = findRecord(before.baselineRecords(), "QUESTION");
-		long questionLocalId = localId(fixture.contributorDatabase(), "QUESTION", originalQuestion.recordId());
+		ExchangeRecord issuedQuestion = findRecord(before.baselineRecords(), "QUESTION");
+		long bookletId = localId(database, "EXAM_BOOKLET",
+				UUID.fromString(issuedQuestion.values().path("booklet_id").asText()));
+		long nodeId = localId(database, "CURRICULUM_NODE",
+				UUID.fromString(issuedQuestion.values().path("classification_node_id").asText()));
+		executeOne(database, """
+				INSERT INTO questions (
+				    booklet_id, classification_node_id,
+				    question_code, question_text, marks,
+				    shared_context_capture_required
+				)
+				VALUES (?, ?, '2', 'Captured after snapshot', 2, 0)
+				""", bookletId, nodeId);
+		var unchanged = reader.read(fixture.assignmentId());
+		assertTrue(unchanged.delta().candidates().isEmpty());
+		assertEquals(before.currentRecords(), unchanged.currentRecords());
+		var refreshed = snapshot(fixture, "stable-after-capture.db");
+		assertEquals(1, refreshed.delta().candidates().size());
+		assertEquals("Captured after snapshot",
+				refreshed.delta().candidates().getFirst().values().path("question_text").asText());
+		assertEquals(before.baselineRecords(), refreshed.baselineRecords());
+	}
 
-		// Modify the live contributor database after the
-		// first immutable snapshot has been created.
-		executeOne(fixture.contributorDatabase(), """
-				UPDATE questions
-				SET question_text = 'Edited after SQLite snapshot'
-				WHERE id = ?
-				""", questionLocalId);
+	@Test
+	void workerCanEditOwnNewQuestionAndAnswerOnlyWhileAssigned() throws Exception {
+		Fixture fixture = fixture();
+		SqliteDatabase database = fixture.contributorDatabase();
+		var snapshot = snapshot(fixture, "guard-new-work.db");
+		ExchangeRecord issued = findRecord(snapshot.baselineRecords(), "QUESTION");
+		long bookletId = localId(database, "EXAM_BOOKLET",
+				UUID.fromString(issued.values().path("booklet_id").asText()));
+		long classificationId = localId(database, "CURRICULUM_NODE",
+				UUID.fromString(issued.values().path("classification_node_id").asText()));
 
-		// Re-reading the original snapshot must not observe
-		// the later live database modification.
-		var original = reader.read(fixture.assignmentId());
-		assertTrue(original.delta().candidates().isEmpty());
-		assertEquals(before.currentRecords(), original.currentRecords());
+		// Simulate a new Question captured within the assigned Exam.
+		executeOne(database, """
+				INSERT INTO questions (
+				    booklet_id,
+				    classification_node_id,
+				    question_code,
+				    question_text,
+				    marks,
+				    shared_context_capture_required
+				)
+				VALUES (?, ?, '2', 'Worker new Question', 2, 0)
+				""", bookletId, classificationId);
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		Question newQuestion = repository.findAll().stream()
+				.filter(question -> "Worker new Question".equals(question.getQuestionText())).findFirst().orElseThrow();
+		SqliteQuestionWriter questionWriter = new SqliteQuestionWriter(database);
 
-		// A fresh snapshot must contain the modification.
-		var updated = snapshot(fixture, "stable-after-edit.db");
-		ExchangeRecord changedQuestion = updated.delta().candidates().stream()
-				.filter(record -> record.recordType().equals("QUESTION")).findFirst().orElseThrow();
-		assertEquals(originalQuestion.recordId(), changedQuestion.recordId());
-		assertEquals("Edited after SQLite snapshot", changedQuestion.values().path("question_text").asText());
-		assertEquals(originalQuestion.revisionId(), changedQuestion.baselineRevisionId());
-		assertEquals(original.baselineRecords(), updated.baselineRecords());
+		// Changing a new Question's classification through its normal writer
+		// must remain possible while the assignment is selected.
+		questionWriter.updateClassification(newQuestion.getId(), newQuestion.getBooklet(),
+				newQuestion.getClassification());
+		SqliteAnswerWriter answerWriter = new SqliteAnswerWriter(database, new SqliteExamWriter(database));
+		Answer answer = answerWriter.insertAnswer(newQuestion, "First worker Answer", List.of());
+		Answer corrected = answerWriter.updateAnswer(newQuestion, answer.getId(), "Corrected worker Answer", List.of());
+		assertEquals("Corrected worker Answer", corrected.getAnswerText());
+
+		// Leaving assignment context never grants authority over the installed
+		// contributor Subject, even for records created locally.
+		new SqliteContributorAssignmentSessionRepository(database).clearActive();
+		assertThrows(IllegalStateException.class, () -> questionWriter.updateClassification(newQuestion.getId(),
+				newQuestion.getBooklet(), newQuestion.getClassification()));
+		assertThrows(IllegalStateException.class, () -> answerWriter.updateAnswer(newQuestion, answer.getId(),
+				"Edit after leaving assignment", List.of()));
+		assertEquals("Corrected worker Answer",
+				repository.findById(newQuestion.getId()).orElseThrow().getAnswer().getAnswerText());
+		database.verifyIntegrity();
 	}
 
 	private byte[] archiveEntryBytes(Path archive, String entryName) throws IOException {

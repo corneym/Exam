@@ -1,9 +1,11 @@
 package au.edu.eq.questionbank.ui;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.awt.image.BufferedImage;
@@ -12,7 +14,11 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -25,6 +31,8 @@ import java.util.function.BiFunction;
 
 import javax.imageio.ImageIO;
 
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
@@ -35,6 +43,7 @@ import org.testfx.api.FxRobot;
 import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
+import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.Constants;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.diagnostics.PerformanceCsvReader;
@@ -64,16 +73,23 @@ import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
+import au.edu.eq.questionbank.repository.sqlite.SqliteImportedSubjectAuthorityRepository;
 import au.edu.eq.questionbank.service.audit.BookletCorpusStatus;
 import au.edu.eq.questionbank.service.audit.ExamCorpusStatus;
 import au.edu.eq.questionbank.service.audit.QuestionCorpusWorkItem;
 import au.edu.eq.questionbank.service.legacy.LegacyQuestionWorkbookStore;
+import au.edu.eq.questionbank.service.workpackage.ExamWorkPackageType;
+import au.edu.eq.questionbank.service.workpackage.SubjectSnapshotExporter;
+import au.edu.eq.questionbank.service.workpackage.SubjectSnapshotIntakePreview;
+import au.edu.eq.questionbank.ui.audit.CorpusDashboardPane;
 import au.edu.eq.questionbank.ui.exam.ExamAssetsPane;
 import au.edu.eq.questionbank.ui.pdf.PdfFilePicker;
 import javafx.application.Platform;
 import javafx.embed.swing.SwingFXUtils;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonBase;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
@@ -84,6 +100,7 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.TableView;
+import javafx.scene.control.TextArea;
 import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
@@ -93,6 +110,422 @@ import javafx.stage.Stage;
 class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 	private static final int TIMEOUT = 10;
+
+	static void assertImportedSnapshotDashboard(QuestionBankApplicationUiTestBase fixture, FxRobot robot,
+			String subjectName) throws Exception {
+		ComboBox<Subject> subjects = fixture.comboBox(robot, "#curriculum-subject");
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> evaluateOnFx(robot,
+				() -> subjects.getItems().stream().anyMatch(subject -> subjectName.equals(subject.getName()))));
+		robot.interact(() -> {
+			assertFalse(subjects.isDisabled(), "Ordinary Working Subject selection is disabled");
+			Subject imported = subjects.getItems().stream().filter(subject -> subjectName.equals(subject.getName()))
+					.findFirst().orElseThrow();
+			subjects.getSelectionModel().select(imported);
+		});
+
+		// Wait for publication of the imported Exam, not merely
+		// publication of the Working Subject selector choices.
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
+			Node node = fixture.primaryStage.getScene().getRoot().lookup("#corpus-dashboard-exams");
+			if (!(node instanceof TableView<?> table) || table.getItems().size() != 1 || table.isDisabled()) {
+				return false;
+			}
+			return table.getItems().getFirst() instanceof ExamCorpusStatus status
+					&& subjectName.equals(status.exam().getSubject().getName());
+		}));
+
+		// Headline actions clear structural selection. Establish
+		// the ALL Questions filter before selecting an Exam.
+		fireControl(robot, "#corpus-dashboard-summary-total");
+		TableView<?> exams = lookup(robot, "#corpus-dashboard-exams", TableView.class);
+		robot.interact(() -> {
+			assertEquals(1, exams.getItems().size());
+			exams.getSelectionModel().selectFirst();
+			ExamCorpusStatus status = (ExamCorpusStatus) exams.getSelectionModel().getSelectedItem();
+			assertNotNull(status, "Imported Exam is not selected");
+			assertEquals(subjectName, status.exam().getSubject().getName());
+			assertEquals("QCAA", status.exam().getProvider().getName());
+			assertEquals(2025, status.exam().getYear());
+			assertEquals("External Assessment", status.exam().getName());
+		});
+		TableView<?> booklets = lookup(robot, "#corpus-dashboard-booklets", TableView.class);
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot, () -> booklets.getItems().size() == 1));
+		robot.interact(() -> {
+			booklets.getSelectionModel().selectFirst();
+			BookletCorpusStatus status = (BookletCorpusStatus) booklets.getSelectionModel().getSelectedItem();
+			assertNotNull(status, "Imported booklet is not selected");
+			assertEquals("Paper 1", status.booklet().getName());
+			assertEquals(1, status.questionSummary().totalQuestions());
+		});
+		TableView<?> questions = lookup(robot, "#corpus-dashboard-question-work", TableView.class);
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot, () -> questions.getItems().size() == 1));
+		robot.interact(() -> {
+			questions.getSelectionModel().selectFirst();
+			ExamCorpusStatus selectedExam = (ExamCorpusStatus) exams.getSelectionModel().getSelectedItem();
+			BookletCorpusStatus selectedBooklet = (BookletCorpusStatus) booklets.getSelectionModel().getSelectedItem();
+			QuestionCorpusWorkItem item = (QuestionCorpusWorkItem) questions.getSelectionModel().getSelectedItem();
+
+			// Establish all three selections before testing authority.
+			assertNotNull(selectedExam, "Exam selection was lost");
+			assertNotNull(selectedBooklet, "Booklet selection was lost");
+			assertNotNull(item, "Question selection was lost");
+			assertEquals("1", item.question().getQuestionCode());
+			assertEquals(subjectName, item.question().getExam().getSubject().getName());
+			assertEquals(selectedExam.exam().getId(), item.question().getExam().getId());
+			assertEquals(selectedBooklet.booklet().getId(), item.question().getBooklet().getId());
+			Node root = fixture.primaryStage.getScene().getRoot();
+			for (String selector : List.of("#corpus-dashboard-add-curriculum", "#corpus-dashboard-map-curriculum",
+					"#corpus-dashboard-add-exam", "#corpus-dashboard-manage-exam-assets",
+					"#corpus-dashboard-create-contributor-assignment", "#corpus-dashboard-exam-lifecycle",
+					"#corpus-dashboard-capture-questions", "#corpus-dashboard-capture-answers",
+					"#corpus-dashboard-capture-mcq-explanations", "#corpus-dashboard-assign-descriptors",
+					"#corpus-dashboard-question-work-assign-descriptors", "#corpus-dashboard-complete-question",
+					"#corpus-dashboard-complete-answer", "#corpus-dashboard-set-multiple-choice",
+					"#corpus-dashboard-set-written-response")) {
+				Node control = root.lookup(selector);
+				assertNotNull(control, selector);
+				assertTrue(control.isDisabled(), "Imported Subject permits mutation: " + selector);
+			}
+
+			// Read-only authority must not prevent inspection.
+			for (String selector : List.of("#corpus-dashboard-inspect-exam-questions",
+					"#corpus-dashboard-inspect-booklet-questions")) {
+				Node control = root.lookup(selector);
+				assertNotNull(control, selector);
+				assertFalse(control.isDisabled(), "Imported Subject prevents inspection: " + selector);
+			}
+			assertFalse(subjects.isDisabled(), "Imported Subject prevents ordinary Subject switching");
+		});
+
+		// Exercise the real Exam-specific Search route.
+		fireControlLater(robot, "#corpus-dashboard-inspect-exam-questions");
+		waitForDialogShowing(robot, "Search Questions");
+		DialogPane search = showingDialogPane(robot, "Search Questions");
+		ListView<?> results = lookupInShowingDialog(robot, "Search Questions", "#question-search-results",
+				ListView.class);
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot, () -> results.getItems().size() == 1));
+		robot.interact(() -> {
+			results.getSelectionModel().selectFirst();
+			assertNotNull(results.getSelectionModel().getSelectedItem());
+			assertFalse(results.isDisabled(), "Imported Question results cannot be inspected");
+			for (String selector : List.of("#question-search-edit-question", "#question-search-split-question",
+					"#question-search-edit-metadata", "#question-search-recapture-shared-context",
+					"#question-search-edit-answer", "#question-search-save-classification",
+					"#question-search-output-include", "#question-search-output-exclude")) {
+				Node control = search.lookup(selector);
+				assertNotNull(control, selector);
+				assertTrue(control.isDisabled(), "Imported Question permits mutation: " + selector);
+			}
+		});
+		closeDialog(robot, "Search Questions");
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
+
+		// Exercise booklet-specific inspection independently.
+		robot.interact(() -> {
+			exams.getSelectionModel().selectFirst();
+			booklets.getSelectionModel().selectFirst();
+		});
+		fireControlLater(robot, "#corpus-dashboard-inspect-booklet-questions");
+		waitForDialogShowing(robot, "Search Questions");
+		Label narrowing = lookupInShowingDialog(robot, "Search Questions", "#question-search-narrowing", Label.class);
+		ListView<?> bookletResults = lookupInShowingDialog(robot, "Search Questions", "#question-search-results",
+				ListView.class);
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot, () -> bookletResults.getItems().size() == 1));
+		robot.interact(() -> {
+			assertEquals("Booklet: QCAA 2025 — External Assessment — Paper 1", narrowing.getText());
+			bookletResults.getSelectionModel().selectFirst();
+			assertNotNull(bookletResults.getSelectionModel().getSelectedItem());
+			assertFalse(bookletResults.isDisabled());
+		});
+		closeDialog(robot, "Search Questions");
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-home").tryQuery().isPresent());
+
+		// Verify persisted authority independently of JavaFX state.
+		SqliteDatabase database = new SqliteDatabase(fixture.databasePath);
+		SqliteQuestionRepository repository = new SqliteQuestionRepository(database);
+		Question question = repository.findAll().stream()
+				.filter(candidate -> subjectName.equals(candidate.getExam().getSubject().getName())).findFirst()
+				.orElseThrow(() -> new AssertionError("Imported Question missing for " + subjectName));
+		Subject importedSubject = question.getExam().getSubject();
+		SqliteImportedSubjectAuthorityRepository authorities = new SqliteImportedSubjectAuthorityRepository(database);
+		assertTrue(authorities.isImported(importedSubject.getId()));
+		assertThrows(IllegalStateException.class,
+				() -> authorities.requireLocallyAuthoritative(importedSubject.getId()));
+		CurriculumNode originalClassification = question.getClassification();
+		assertNotNull(originalClassification);
+		assertEquals("S25D1", originalClassification.getCode());
+		SqliteCurriculumRepository curriculum = new SqliteCurriculumRepository(database);
+
+		// The portable fixture codes are not cumulative dotted codes.
+		// Reconstruct the hierarchy using persisted parent relationships
+		// rather than the prefix-based findByCode navigation method.
+		List<CurriculumNode> reviewNodes = curriculum.findReviewNodes(originalClassification.getSyllabusVersion());
+		assertEquals(2, reviewNodes.size(), "Both imported Descriptors must be available");
+		CurriculumNode replacementClassification = reviewNodes.stream()
+				.filter(node -> node.getLevel() == CurriculumLevel.DESCRIPTOR)
+				.filter(node -> "S25D2".equals(node.getCode())).findFirst()
+				.orElseThrow(() -> new AssertionError("Imported alternative Descriptor S25D2 missing"));
+		assertTrue(originalClassification.getId() != replacementClassification.getId());
+		assertEquals(originalClassification.getSyllabusVersion().getId(),
+				replacementClassification.getSyllabusVersion().getId());
+		assertEquals(importedSubject.getId(), replacementClassification.getSyllabusVersion().getSubject().getId());
+
+		// Both Descriptors are valid and belong to the same syllabus.
+		// Authority must prevent this otherwise legitimate mutation.
+		assertThrows(IllegalStateException.class,
+				() -> repository.updateClassification(question.getId(), replacementClassification),
+				"Repository permitted imported Question reclassification");
+		Question unchanged = repository.findAll().stream().filter(candidate -> candidate.getId() == question.getId())
+				.findFirst()
+				.orElseThrow(() -> new AssertionError("Imported Question disappeared after refused update"));
+		assertEquals(originalClassification.getId(), unchanged.getClassification().getId());
+		database.verifyIntegrity();
+	}
+
+	static void assertSnapshotImportReleased(QuestionBankApplicationUiTestBase fixture) throws Exception {
+		WaitForAsyncUtils.waitForFxEvents();
+		assertFalse(WaitForAsyncUtils
+				.asyncFx(() -> field(fixture.application, "packageImportInProgress", Boolean.class)).get());
+	}
+
+	static DialogPane assertSnapshotPreview(FxRobot robot, String subjectName) {
+		waitForDialogShowing(robot, "Import Subject Snapshot");
+		DialogPane preview = showingDialogPane(robot, "Import Subject Snapshot");
+		assertNotNull(preview);
+		robot.interact(() -> {
+			assertEquals("subject-snapshot-import-confirmation", preview.getId());
+			assertEquals("Import " + subjectName, preview.getHeaderText());
+			String content = preview.getContentText();
+			assertNotNull(content);
+			for (String expected : List.of("new read-only Subject", "Syllabus versions: 1", "Curriculum nodes: 4",
+					"Curriculum mappings: 0", "Exams: 1", "Question booklets: 1", "Answer booklets: 1", "Questions: 1",
+					"Answers: 1", "Shared contexts: 0", "Assets: 3",
+					"The originating installation remains authoritative", "Existing Subjects will not be changed",
+					"A verified full backup will be created automatically")) {
+				assertTrue(content.contains(expected), "Missing preview information: " + expected);
+			}
+			assertTrue(preview.getButtonTypes().stream()
+					.anyMatch(type -> type.getButtonData() == ButtonBar.ButtonData.OK_DONE));
+			assertTrue(preview.getButtonTypes().contains(ButtonType.CANCEL));
+		});
+		return preview;
+	}
+
+	static void awaitSnapshotImportSuccess(FxRobot robot, String subjectName) {
+		waitForDialogShowing(robot, "Subject Imported");
+		DialogPane success = showingDialogPane(robot, "Subject Imported");
+		robot.interact(() -> {
+			assertEquals(subjectName + " is now available.", success.getHeaderText());
+			String content = success.getContentText();
+			assertNotNull(content);
+			assertTrue(content.contains("Working Subject selector"));
+			assertTrue(content.contains("read-only"));
+			assertTrue(content.contains("Pre-import backup:"));
+		});
+		fireSnapshotDialogButton(robot, success, ButtonBar.ButtonData.OK_DONE);
+		waitForDialogHidden(robot, "Subject Imported");
+	}
+
+	static Path createSubjectSnapshotArchive(String subjectName) throws Exception {
+		assertTrue(List.of("Engineering", "Chemistry").contains(subjectName));
+		Path sourceRoot = Files.createTempDirectory("subject-snapshot-source-");
+		ApplicationConfig source = ApplicationConfig.fromDataRoot(sourceRoot);
+		SqliteDatabase database = new SqliteDatabase(source.databasePath());
+		database.initialiseSchema();
+		Path subjectDirectory = sourceRoot.resolve("subjects").resolve(subjectName);
+		Path questionPdf = subjectDirectory.resolve("exams/questions.pdf");
+		Path answerPdf = subjectDirectory.resolve("exams/answers.pdf");
+		Path syllabusPdf = subjectDirectory.resolve("curriculum").resolve(subjectName + " 2025")
+				.resolve("sources/syllabus.pdf");
+
+		// Use valid and independently identifiable PDF documents.
+		// Inspection should exercise the actual PDF preview boundary,
+		// not rely on placeholder files containing arbitrary bytes.
+		for (Path path : List.of(questionPdf, answerPdf, syllabusPdf)) {
+			Files.createDirectories(path.getParent());
+			try (PDDocument document = new PDDocument()) {
+				document.addPage(new PDPage());
+				document.addPage(new PDPage());
+				document.getDocumentInformation().setTitle(subjectName + " " + path.getFileName());
+				document.save(path.toFile());
+			}
+		}
+
+		// Local identifiers intentionally overlap those of other
+		// installations. The exchange must resolve portable identities.
+		List<String> seed = List.of("""
+				INSERT INTO subjects (id, subject_name)
+				VALUES (1, 'SnapshotSubject')
+				""", """
+				INSERT INTO syllabus_versions (
+				    id, subject_id, syllabus_name,
+				    is_current, source_pdf_path)
+				VALUES (
+				    11, 1, 'SnapshotSubject 2025', 1,
+				    'subjects/SnapshotSubject/curriculum/SnapshotSubject 2025/sources/syllabus.pdf')
+				""", """
+				INSERT INTO curriculum_nodes (
+				    id, syllabus_version_id, curriculum_code,
+				    curriculum_name, curriculum_level, display_order)
+				VALUES (
+				    101, 11, 'S25U1', 'Snapshot Unit', 'UNIT', 0)
+				""", """
+				INSERT INTO curriculum_nodes (
+				    id, syllabus_version_id, parent_id,
+				    curriculum_code, curriculum_name,
+				    curriculum_level, display_order)
+				VALUES
+				    (102, 11, 101, 'S25T1',
+				        'Snapshot Topic', 'TOPIC', 0),
+				    (103, 11, 102, 'S25D1',
+				        'Original Descriptor', 'DESCRIPTOR', 0),
+				    (104, 11, 102, 'S25D2',
+				        'Alternative Descriptor', 'DESCRIPTOR', 1)
+				""", """
+				INSERT INTO exam_providers (id, provider_name)
+				VALUES (21, 'QCAA')
+				""", """
+				INSERT INTO source_documents (id, relative_path)
+				VALUES
+				    (51, 'subjects/SnapshotSubject/exams/questions.pdf'),
+				    (52, 'subjects/SnapshotSubject/exams/answers.pdf')
+				""", """
+				INSERT INTO exams (
+				    id, subject_id, provider_id, exam_year, exam_name)
+				VALUES (
+				    31, 1, 21, 2025, 'External Assessment')
+				""", """
+				INSERT INTO exam_booklets (
+				    id, exam_id, source_document_id, booklet_name)
+				VALUES (61, 31, 51, 'Paper 1')
+				""", """
+				INSERT INTO answer_files (
+				    id, exam_id, source_document_id, answer_file_name)
+				VALUES (71, 31, 52, 'Marking Guide')
+				""", """
+				UPDATE exam_booklets
+				SET answer_file_id = 71
+				WHERE id = 61
+				""", """
+				INSERT INTO source_questions (
+				    id, booklet_id, source_question_code)
+				VALUES (91, 61, '1')
+				""", """
+				INSERT INTO questions (
+				    id, booklet_id, classification_node_id,
+				    question_code, question_text, marks,
+				    shared_context_capture_required,
+				    source_question_id)
+				VALUES (
+				    81, 61, 103, '1',
+				    'Imported SnapshotSubject Question',
+				    2, 0, 91)
+				""", """
+				INSERT INTO question_regions (
+				    question_id, region_order, booklet_id,
+				    page_number, x, y, width, height)
+				VALUES (
+				    81, 0, 61, 1, 0.1, 0.2, 0.5, 0.3)
+				""", """
+				INSERT INTO question_content_parts (
+				    question_id, content_order,
+				    content_type, region_order)
+				VALUES (81, 0, 'PDF_REGION', 0)
+				""", """
+				INSERT INTO answers (
+				    id, question_id, answer_text)
+				VALUES (141, 81, 'Snapshot answer')
+				""", """
+				INSERT INTO answer_regions (
+				    answer_id, region_order, answer_file_id,
+				    page_number, x, y, width, height)
+				VALUES (
+				    141, 0, 71, 1, 0.1, 0.2, 0.4, 0.3)
+				""");
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			connection.setAutoCommit(false);
+			try {
+
+				// Only trusted, test-controlled Subject names enter
+				// these fixed fixture statements.
+				for (String sql : seed) {
+					statement.execute(sql.replace("SnapshotSubject", subjectName));
+				}
+				connection.commit();
+			} catch (Exception failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
+		database.verifyIntegrity();
+
+		// Export through the production exporter rather than
+		// manufacturing a package manifest in the UI test.
+		Path archive = sourceRoot.getParent().resolve(sourceRoot.getFileName() + "-" + subjectName + ".examwork");
+		new SubjectSnapshotExporter(database, new ManagedDataLayout(sourceRoot)).export(1L, archive);
+		assertTrue(Files.isRegularFile(archive));
+		return archive;
+	}
+
+	static void fireSnapshotDialogButton(FxRobot robot, DialogPane dialog, ButtonBar.ButtonData buttonData) {
+		robot.interact(() -> {
+			ButtonType type = dialog.getButtonTypes().stream()
+					.filter(candidate -> candidate.getButtonData() == buttonData).findFirst()
+					.orElseThrow(() -> new AssertionError("Missing dialog action: " + buttonData));
+			Node node = dialog.lookupButton(type);
+			assertTrue(node instanceof ButtonBase);
+			assertFalse(node.isDisabled());
+			((ButtonBase) node).fire();
+		});
+	}
+
+	static List<Path> snapshotBackupFiles(ApplicationConfig config) throws Exception {
+		Path backupRoot = config.dataRoot().resolve("backups").resolve("pre-import");
+		if (!Files.exists(backupRoot)) {
+			return List.of();
+		}
+		try (var files = Files.walk(backupRoot)) {
+			return files.filter(Files::isRegularFile).sorted().toList();
+		}
+	}
+
+	static Map<String, Integer> snapshotGraphCounts(SqliteDatabase database) throws Exception {
+		Map<String, Integer> counts = new LinkedHashMap<>();
+
+		// Check the graph and its exchange evidence together.
+		// Unchanged Subject counts alone would not detect duplicate
+		// ledger entries or accidental partial installation.
+		List<String> tables = List.of("subjects", "syllabus_versions", "curriculum_nodes", "exams", "exam_booklets",
+				"answer_files", "questions", "answers", "subject_import_packages", "imported_subject_authorities");
+		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
+			for (String table : tables) {
+				try (ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM " + table)) {
+					assertTrue(result.next());
+					counts.put(table, result.getInt(1));
+				}
+			}
+		}
+		return Map.copyOf(counts);
+	}
+
+	static void startSnapshotImport(QuestionBankApplicationUiTestBase fixture, Path archive) throws Exception {
+
+		// Bypass only the OS-native file chooser. Production manifest
+		// validation, preview, approval, installation and publication
+		// must all execute through the real application boundary.
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(fixture.application, "startWorkPackageImport",
+					new Class<?>[] { Stage.class, ApplicationConfig.class, Path.class, ExamWorkPackageType.class },
+					fixture.primaryStage, fixture.applicationConfig, archive, ExamWorkPackageType.SUBJECT_SNAPSHOT);
+			return null;
+		}).get();
+	}
 
 	private static void assertExamAssetsNavigationMetrics(List<PerformanceCsvReader.Entry> records,
 			String operationName) {
@@ -123,6 +556,138 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// The source operation must have completed by the time navigation returns.
 		assertTrue(navigation.elapsedMillis() >= 0);
 		assertTrue(load.elapsedMillis() >= 0);
+	}
+
+	private static DialogPane assertSnapshotRefreshPreview(FxRobot robot, String subjectName) {
+		waitForDialogShowing(robot, "Refresh Subject Snapshot");
+		DialogPane preview = showingDialogPane(robot, "Refresh Subject Snapshot");
+		assertNotNull(preview);
+		robot.interact(() -> {
+			assertEquals("subject-snapshot-refresh-confirmation", preview.getId());
+			assertEquals("Refresh " + subjectName, preview.getHeaderText());
+			assertTrue(preview.getContent() instanceof TextArea);
+			TextArea comparison = (TextArea) preview.getContent();
+			assertEquals("subject-snapshot-refresh-comparison", comparison.getId());
+			assertFalse(comparison.isEditable());
+			String content = comparison.getText();
+			for (String expected : List.of("Eligible newer snapshot", "Originating installation:",
+					"Originating Subject identity:", "Latest accepted snapshot:", "Incoming snapshot:",
+					"Accepted package:", "Incoming package:", "The originating installation remains authoritative.",
+					"The destination Subject will remain read-only.", "RECORD COMPARISON", "Additions:", "Updates:",
+					"Removals:", "Revision-only changes:", "Unchanged:", "MANAGED ASSET COMPARISON",
+					"Subject names cannot change during refresh.",
+					"A verified full backup will be created automatically",
+					"Cancelling now will not change the database")) {
+				assertTrue(content.contains(expected), "Missing refresh comparison information: " + expected);
+			}
+			ButtonType approve = preview.getButtonTypes().stream()
+					.filter(type -> type.getButtonData() == ButtonBar.ButtonData.OK_DONE).findFirst().orElseThrow();
+			assertEquals("Approve Subject Refresh", approve.getText());
+			assertTrue(preview.getButtonTypes().contains(ButtonType.CANCEL));
+		});
+		return preview;
+	}
+
+	private static void assertSnapshotRefreshRejection(FxRobot robot, String expectedReason) {
+		waitForDialogShowing(robot, "Import Subject Snapshot");
+		DialogPane refusal = showingDialogPane(robot, "Import Subject Snapshot");
+		robot.interact(() -> {
+			assertEquals("This Subject already exists.", refusal.getHeaderText());
+			assertTrue(refusal.getContent() instanceof TextArea);
+			String content = ((TextArea) refusal.getContent()).getText();
+			assertTrue(content.contains("Authoritative refresh refused:"));
+			assertTrue(content.contains(expectedReason), content);
+
+			// A rejected snapshot must not expose an approval action.
+			assertFalse(refusal.getButtonTypes().stream()
+					.anyMatch(type -> "Approve Subject Refresh".equals(type.getText())));
+			assertFalse("subject-snapshot-refresh-confirmation".equals(refusal.getId()));
+		});
+		fireSnapshotDialogButton(robot, refusal, ButtonBar.ButtonData.OK_DONE);
+		waitForDialogHidden(robot, "Import Subject Snapshot");
+	}
+
+	private static void awaitSnapshotRefreshSuccess(FxRobot robot, String subjectName) {
+		waitForDialogShowing(robot, "Subject Refreshed");
+		DialogPane success = showingDialogPane(robot, "Subject Refreshed");
+		robot.interact(() -> {
+			assertEquals(subjectName + " has been refreshed.", success.getHeaderText());
+			String content = success.getContentText();
+			assertNotNull(content);
+			assertTrue(content.contains("The approved authoritative snapshot has been imported."));
+			assertTrue(content.contains("The Subject remains read-only."));
+			assertTrue(content.contains("Pre-import backup:"));
+		});
+		fireSnapshotDialogButton(robot, success, ButtonBar.ButtonData.OK_DONE);
+		waitForDialogHidden(robot, "Subject Refreshed");
+		waitForDialogHidden(robot, "Refreshing Subject Snapshot");
+	}
+
+	private static Path exportSubsequentSnapshot(Path sourceRoot, String archiveSuffix) throws Exception {
+		ApplicationConfig source = ApplicationConfig.fromDataRoot(sourceRoot);
+		SqliteDatabase database = new SqliteDatabase(source.databasePath());
+		Path archive = sourceRoot.getParent().resolve(sourceRoot.getFileName() + "-" + archiveSuffix + ".examwork");
+
+		// Reuse the existing originating database and managed assets.
+		// Creating another source installation would invalidate the
+		// authority relationship being tested.
+		new SubjectSnapshotExporter(database, new ManagedDataLayout(sourceRoot)).export(1L, archive);
+		assertTrue(Files.isRegularFile(archive));
+		return archive;
+	}
+
+	private static List<String> localCurriculumEvidence(SqliteDatabase database) throws Exception {
+		List<String> evidence = new ArrayList<>();
+
+		// Retain evidence of the established local curriculum graph,
+		// including names, local identifiers, hierarchy and ordering.
+		// Counts alone cannot detect replacement of existing records.
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet rows = statement.executeQuery("""
+						SELECT
+						    s.id,
+						    s.subject_name,
+						    v.id,
+						    v.syllabus_name,
+						    v.is_current,
+						    n.id,
+						    n.parent_id,
+						    n.curriculum_code,
+						    n.curriculum_name,
+						    n.curriculum_level,
+						    n.display_order
+						FROM subjects s
+						LEFT JOIN syllabus_versions v
+						    ON v.subject_id = s.id
+						LEFT JOIN curriculum_nodes n
+						    ON n.syllabus_version_id = v.id
+						WHERE s.subject_name IN (
+						    'Chemistry', 'Physics', 'Biology')
+						ORDER BY s.id, v.id, n.id
+						""")) {
+			while (rows.next()) {
+				List<String> values = new ArrayList<>();
+				for (int column = 1; column <= 11; column++) {
+					values.add(String.valueOf(rows.getObject(column)));
+				}
+				evidence.add(String.join("|", values));
+			}
+		}
+		return List.copyOf(evidence);
+	}
+
+	private static Path snapshotSourceRoot(Path originalArchive, String subjectName) {
+
+		// createSubjectSnapshotArchive places the archive beside its
+		// temporary source root using the root name and Subject suffix.
+		String archiveName = originalArchive.getFileName().toString();
+		String suffix = "-" + subjectName + ".examwork";
+		assertTrue(archiveName.endsWith(suffix));
+		String sourceDirectoryName = archiveName.substring(0, archiveName.length() - suffix.length());
+		Path sourceRoot = originalArchive.resolveSibling(sourceDirectoryName);
+		assertTrue(Files.isDirectory(sourceRoot));
+		return sourceRoot;
 	}
 
 	@Test
@@ -945,8 +1510,26 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 
 		// Even without booklets, the selected Exam must provide
 		// access to structural setup.
-		Button manageAssets = lookup(robot, "#corpus-dashboard-manage-exam-assets", Button.class);
-		assertFalse(manageAssets.isDisabled());
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> WaitForAsyncUtils.asyncFx(() -> {
+			CorpusDashboardPane dashboard = field(application, "corpusDashboardPane", CorpusDashboardPane.class);
+			if (dashboard == null || dashboard.getScene() == null) {
+				return false;
+			}
+			dashboard.applyCss();
+			dashboard.layout();
+			Button manageAssets = field(dashboard, "manageExamAssetsButton", Button.class);
+			TableView<?> currentExams = field(dashboard, "examTable", TableView.class);
+
+			// Wait for the mounted Dashboard, selected Exam,
+			// attached action control and refreshed authority.
+			return currentExams == exams
+					&& currentExams.getSelectionModel().getSelectedItem() instanceof ExamCorpusStatus selected
+					&& selected.exam().getId() == exam.getId() && manageAssets.getScene() == dashboard.getScene()
+					&& !manageAssets.isDisabled();
+		}).get());
+		CorpusDashboardPane dashboard = field(application, "corpusDashboardPane", CorpusDashboardPane.class);
+		Button manageAssets = field(dashboard, "manageExamAssetsButton", Button.class);
+		assertFalse(evaluateOnFx(robot, manageAssets::isDisabled));
 
 		// Adding expectations must update the existing Exam,
 		// not introduce a new Dashboard row.
@@ -1401,6 +1984,489 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
 	@Start
 	void start(Stage stage) throws Exception {
 		super.start(stage);
+	}
+
+	@Test
+	void subjectSnapshotImportPublishesReadOnlySubjectAndReplayIsIdempotent(FxRobot robot) throws Exception {
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		Map<String, Integer> originalCounts = snapshotGraphCounts(database);
+		List<String> originalCurriculum = localCurriculumEvidence(database);
+		List<Path> originalBackups = snapshotBackupFiles(applicationConfig);
+		assertEquals(3, originalCounts.get("subjects").intValue());
+		assertEquals(0, originalCounts.get("exams").intValue());
+		Path archive = createSubjectSnapshotArchive("Engineering");
+		startSnapshotImport(this, archive);
+		DialogPane preview = assertSnapshotPreview(robot, "Engineering");
+
+		// Preview must remain non-mutating until approval.
+		assertEquals(originalCounts, snapshotGraphCounts(database));
+		assertEquals(originalBackups, snapshotBackupFiles(applicationConfig));
+		fireSnapshotDialogButton(robot, preview, ButtonBar.ButtonData.OK_DONE);
+		awaitSnapshotImportSuccess(robot, "Engineering");
+		assertSnapshotImportReleased(this);
+		Map<String, Integer> importedCounts = snapshotGraphCounts(database);
+		assertEquals(
+				Map.of("subjects", originalCounts.get("subjects") + 1, "syllabus_versions",
+						originalCounts.get("syllabus_versions") + 1, "curriculum_nodes",
+						originalCounts.get("curriculum_nodes") + 4, "exams", 1, "exam_booklets", 1, "answer_files", 1,
+						"questions", 1, "answers", 1, "subject_import_packages", 1, "imported_subject_authorities", 1),
+				importedCounts);
+		assertEquals(originalCurriculum, localCurriculumEvidence(database));
+		List<Path> importedBackups = snapshotBackupFiles(applicationConfig);
+		assertTrue(importedBackups.size() > originalBackups.size());
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		robot.interact(() -> {
+			assertEquals(List.of("Biology", "Chemistry", "Engineering", "Physics"),
+					subjects.getItems().stream().map(Subject::getName).sorted().toList());
+			assertFalse(subjects.isDisabled());
+		});
+		assertImportedSnapshotDashboard(this, robot, "Engineering");
+		var inspection = new SubjectSnapshotIntakePreview(database).inspect(archive);
+		assertEquals(SubjectSnapshotIntakePreview.State.ALREADY_IMPORTED, inspection.state());
+		long importedSubjectId = new SqliteCurriculumRepository(database).findAllSubjects().stream()
+				.filter(subject -> "Engineering".equals(subject.getName())).findFirst().orElseThrow().getId();
+		SqliteImportedSubjectAuthorityRepository authorities = new SqliteImportedSubjectAuthorityRepository(database);
+		var originalAuthority = authorities.find(importedSubjectId).orElseThrow();
+		assertEquals(inspection.fingerprint().packageId(), originalAuthority.latestPackageId());
+		assertEquals(inspection.fingerprint().originInstallationId(), originalAuthority.originInstallationId());
+		assertEquals(inspection.fingerprint().subjectId(), originalAuthority.originSubjectPortableId());
+		assertEquals(inspection.fingerprint().archiveSha256(), originalAuthority.archiveSha256());
+		long importedQuestionId = new SqliteQuestionRepository(database).findAll().getFirst().getId();
+
+		// Replay the identical archive through ordinary application
+		// intake, not by directly invoking the coordinator service.
+		startSnapshotImport(this, archive);
+		waitForDialogShowing(robot, "Import Subject Snapshot");
+		DialogPane replay = showingDialogPane(robot, "Import Subject Snapshot");
+		robot.interact(() -> {
+			assertEquals("This Subject snapshot has already been imported.", replay.getHeaderText());
+			assertEquals("Engineering requires no changes.", replay.getContentText());
+		});
+		fireSnapshotDialogButton(robot, replay, ButtonBar.ButtonData.OK_DONE);
+		waitForDialogHidden(robot, "Import Subject Snapshot");
+		assertSnapshotImportReleased(this);
+		assertEquals(importedCounts, snapshotGraphCounts(database));
+		assertEquals(importedBackups, snapshotBackupFiles(applicationConfig));
+		assertEquals(originalAuthority, authorities.find(importedSubjectId).orElseThrow());
+		assertEquals(importedQuestionId, new SqliteQuestionRepository(database).findAll().getFirst().getId());
+		assertEquals(originalCurriculum, localCurriculumEvidence(database));
+		robot.interact(() -> {
+			assertEquals(4, subjects.getItems().size());
+			assertEquals("Engineering", subjects.getValue().getName());
+			assertFalse(subjects.isDisabled());
+			Subject chemistry = subjects.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
+					.findFirst().orElseThrow();
+			subjects.getSelectionModel().select(chemistry);
+		});
+
+		// Imported authority must not leak into an unrelated locally
+		// authoritative Subject when ordinary Subject selection changes.
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
+			Node root = primaryStage.getScene().getRoot();
+			Node addExam = root.lookup("#corpus-dashboard-add-exam");
+			Node addCurriculum = root.lookup("#corpus-dashboard-add-curriculum");
+			Node examTable = root.lookup("#corpus-dashboard-exams");
+			return "Chemistry".equals(subjects.getValue().getName()) && addExam != null && !addExam.isDisabled()
+					&& addCurriculum != null && !addCurriculum.isDisabled() && examTable instanceof TableView<?> table
+					&& table.getItems().isEmpty();
+		}));
+		assertEquals(originalCurriculum, localCurriculumEvidence(database));
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void subjectSnapshotImportRefusesLocallyAuthoritativeSubjectOverwrite(FxRobot robot) throws Exception {
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteCurriculumRepository curriculum = new SqliteCurriculumRepository(database);
+		Subject chemistry = curriculum.findAllSubjects().stream()
+				.filter(subject -> "Chemistry".equals(subject.getName())).findFirst().orElseThrow();
+		SqliteImportedSubjectAuthorityRepository authorities = new SqliteImportedSubjectAuthorityRepository(database);
+		assertFalse(authorities.isImported(chemistry.getId()));
+		authorities.requireLocallyAuthoritative(chemistry.getId());
+		Map<String, Integer> originalCounts = snapshotGraphCounts(database);
+		List<String> originalCurriculum = localCurriculumEvidence(database);
+		List<Path> originalBackups = snapshotBackupFiles(applicationConfig);
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		robot.interact(() -> subjects.getSelectionModel().select(chemistry));
+
+		// The incoming Chemistry archive is independently exported
+		// and contains an Exam absent from local Chemistry.
+		// It must not be adopted or merged by the new-Subject route.
+		Path archive = createSubjectSnapshotArchive("Chemistry");
+		startSnapshotImport(this, archive);
+		waitForDialogShowing(robot, "Import Subject Snapshot");
+		DialogPane refusal = showingDialogPane(robot, "Import Subject Snapshot");
+		robot.interact(() -> {
+			assertEquals("This Subject already exists.", refusal.getHeaderText());
+			assertTrue(refusal.getContent() instanceof TextArea);
+			String message = ((TextArea) refusal.getContent()).getText();
+			assertTrue(message.contains("Chemistry"));
+			assertTrue(message.contains("cannot be overwritten through new Subject import"));
+			assertTrue(refusal.getButtonTypes().contains(ButtonType.OK));
+			assertFalse("subject-snapshot-import-confirmation".equals(refusal.getId()));
+		});
+		fireSnapshotDialogButton(robot, refusal, ButtonBar.ButtonData.OK_DONE);
+		waitForDialogHidden(robot, "Import Subject Snapshot");
+		assertSnapshotImportReleased(this);
+		assertEquals(originalCounts, snapshotGraphCounts(database));
+		assertEquals(originalCurriculum, localCurriculumEvidence(database));
+		assertEquals(originalBackups, snapshotBackupFiles(applicationConfig));
+		assertFalse(authorities.isImported(chemistry.getId()));
+		assertTrue(authorities.find(chemistry.getId()).isEmpty());
+		authorities.requireLocallyAuthoritative(chemistry.getId());
+		assertEquals(chemistry.getId(), curriculum.findAllSubjects().stream()
+				.filter(subject -> "Chemistry".equals(subject.getName())).findFirst().orElseThrow().getId());
+		robot.interact(() -> {
+			assertEquals(3, subjects.getItems().size());
+			assertEquals("Chemistry", subjects.getValue().getName());
+			assertFalse(subjects.isDisabled());
+		});
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
+			Node addCurriculum = primaryStage.getScene().getRoot().lookup("#corpus-dashboard-add-curriculum");
+			return addCurriculum != null && !addCurriculum.isDisabled();
+		}));
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void subjectSnapshotPreviewCancellationPreservesLocalCorpus(FxRobot robot) throws Exception {
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		Map<String, Integer> originalCounts = snapshotGraphCounts(database);
+		List<String> originalCurriculum = localCurriculumEvidence(database);
+		List<Path> originalBackups = snapshotBackupFiles(applicationConfig);
+		assertEquals(3, originalCounts.get("subjects").intValue());
+		assertEquals(0, originalCounts.get("exams").intValue());
+		assertEquals(0, originalCounts.get("subject_import_packages").intValue());
+		assertEquals(0, originalCounts.get("imported_subject_authorities").intValue());
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		Subject originalSelection = WaitForAsyncUtils.asyncFx(subjects::getValue).get();
+		Path archive = createSubjectSnapshotArchive("Engineering");
+		startSnapshotImport(this, archive);
+		DialogPane preview = assertSnapshotPreview(robot, "Engineering");
+
+		// Confirm that neither the preview inspection nor preparation
+		// of its approval dialog has published destination records.
+		assertEquals(originalCounts, snapshotGraphCounts(database));
+		assertEquals(originalCurriculum, localCurriculumEvidence(database));
+		assertEquals(originalBackups, snapshotBackupFiles(applicationConfig));
+		fireSnapshotDialogButton(robot, preview, ButtonBar.ButtonData.CANCEL_CLOSE);
+		waitForDialogHidden(robot, "Import Subject Snapshot");
+		assertSnapshotImportReleased(this);
+		assertEquals(originalCounts, snapshotGraphCounts(database));
+		assertEquals(originalCurriculum, localCurriculumEvidence(database));
+		assertEquals(originalBackups, snapshotBackupFiles(applicationConfig));
+		robot.interact(() -> {
+			assertEquals(originalSelection, subjects.getValue());
+			assertEquals(List.of("Biology", "Chemistry", "Physics"),
+					subjects.getItems().stream().map(Subject::getName).sorted().toList());
+			assertFalse(subjects.isDisabled());
+		});
+		assertTrue(Files.isRegularFile(archive));
+
+		// The cancelled package must remain eligible for an ordinary
+		// new-Subject import, including a second application preview.
+		var inspection = new SubjectSnapshotIntakePreview(database).inspect(archive);
+		assertEquals(SubjectSnapshotIntakePreview.State.NEW_SUBJECT, inspection.state());
+		startSnapshotImport(this, archive);
+		DialogPane secondPreview = assertSnapshotPreview(robot, "Engineering");
+		fireSnapshotDialogButton(robot, secondPreview, ButtonBar.ButtonData.CANCEL_CLOSE);
+		waitForDialogHidden(robot, "Import Subject Snapshot");
+		assertSnapshotImportReleased(this);
+		assertEquals(originalCounts, snapshotGraphCounts(database));
+		assertEquals(originalBackups, snapshotBackupFiles(applicationConfig));
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void subjectSnapshotRefreshCancellationApprovalReplayAndRejection(FxRobot robot) throws Exception {
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		List<String> originalLocalCurriculum = localCurriculumEvidence(database);
+		Path originalArchive = createSubjectSnapshotArchive("Engineering");
+
+		// Establish an imported Subject through the ordinary application
+		// workflow before testing any subsequent snapshot.
+		startSnapshotImport(this, originalArchive);
+		DialogPane originalPreview = assertSnapshotPreview(robot, "Engineering");
+		fireSnapshotDialogButton(robot, originalPreview, ButtonBar.ButtonData.OK_DONE);
+		awaitSnapshotImportSuccess(robot, "Engineering");
+		assertSnapshotImportReleased(this);
+		assertImportedSnapshotDashboard(this, robot, "Engineering");
+		Question originalQuestion = new SqliteQuestionRepository(database).findAll().getFirst();
+		assertEquals(2, originalQuestion.getMarks());
+		long subjectId = originalQuestion.getExam().getSubject().getId();
+		long questionId = originalQuestion.getId();
+		SqliteImportedSubjectAuthorityRepository authorities = new SqliteImportedSubjectAuthorityRepository(database);
+		var originalAuthority = authorities.find(subjectId).orElseThrow();
+		Map<String, Integer> originalCounts = snapshotGraphCounts(database);
+		List<Path> originalBackups = snapshotBackupFiles(applicationConfig);
+		Path sourceRoot = snapshotSourceRoot(originalArchive, "Engineering");
+		ApplicationConfig sourceConfig = ApplicationConfig.fromDataRoot(sourceRoot);
+		SqliteDatabase sourceDatabase = new SqliteDatabase(sourceConfig.databasePath());
+		Path sourcePdf = sourceRoot.resolve("subjects/Engineering/exams/questions.pdf");
+		Path destinationPdf = applicationConfig.dataRoot().resolve("subjects/Engineering/exams/questions.pdf");
+		assertTrue(Files.isRegularFile(destinationPdf));
+		assertEquals(-1L, Files.mismatch(sourcePdf, destinationPdf));
+		byte[] originalPdfBytes = Files.readAllBytes(destinationPdf);
+
+		// Create a distinct, unaccepted package that will become stale
+		// after the subsequently changed snapshot is approved.
+		Path staleArchive = exportSubsequentSnapshot(sourceRoot, "stale");
+
+		// Change authoritative Question data without changing the
+		// originating installation or portable Subject identity.
+		try (Connection connection = sourceDatabase.openConnection();
+				Statement statement = connection.createStatement()) {
+
+			// JDBC update counts can include revision-trigger writes.
+			// Count only the directly modified Question row.
+			assertEquals(1, SqliteDirectChanges.executeUpdate(statement, """
+					UPDATE questions
+					SET marks = 5
+					WHERE id = 81
+					  AND marks = 2
+					"""));
+			try (ResultSet rows = statement.executeQuery("""
+					SELECT marks
+					FROM questions
+					WHERE id = 81
+					""")) {
+				assertTrue(rows.next());
+				assertEquals(5, rows.getInt("marks"));
+				assertFalse(rows.next());
+			}
+		}
+
+		// Replace the authoritative PDF with another valid PDF.
+		// Preserve its managed path and page count.
+		try (PDDocument document = new PDDocument()) {
+			document.addPage(new PDPage());
+			document.addPage(new PDPage());
+			document.getDocumentInformation().setTitle("Engineering authoritative revised question booklet");
+			document.save(sourcePdf.toFile());
+		}
+		assertFalse(Files.mismatch(sourcePdf, destinationPdf) == -1L);
+		Path newerArchive = exportSubsequentSnapshot(sourceRoot, "newer");
+		var inspection = new SubjectSnapshotIntakePreview(database).inspect(newerArchive);
+		assertEquals(SubjectSnapshotIntakePreview.State.EXISTING_SUBJECT, inspection.state());
+		assertEquals(originalAuthority.originInstallationId(), inspection.fingerprint().originInstallationId());
+		assertEquals(originalAuthority.originSubjectPortableId(), inspection.fingerprint().subjectId());
+
+		// First preview: inspect the actual comparison, then cancel.
+		startSnapshotImport(this, newerArchive);
+		DialogPane preview = assertSnapshotRefreshPreview(robot, "Engineering");
+		robot.interact(() -> {
+			String comparison = ((TextArea) preview.getContent()).getText();
+			assertTrue(comparison.contains(originalAuthority.originInstallationId().toString()), comparison);
+			assertTrue(comparison.contains(originalAuthority.originSubjectPortableId().toString()), comparison);
+			assertTrue(comparison.contains(originalAuthority.latestPackageId().toString()), comparison);
+			assertTrue(comparison.contains(inspection.fingerprint().packageId().toString()), comparison);
+			assertTrue(comparison.contains("Question:"), comparison);
+			assertTrue(comparison.contains("marks: 2 → 5"), comparison);
+			assertTrue(comparison.contains("Update: subjects/Engineering/exams/questions.pdf"), comparison);
+			assertTrue(comparison.contains("""
+					Asset totals:
+					Additions: 0
+					Updates: 1
+					Removals: 0
+					Unchanged: 2
+					"""), comparison);
+		});
+
+		// Even a comparison containing actual record and asset
+		// replacements must not mutate anything before approval.
+		assertEquals(originalCounts, snapshotGraphCounts(database));
+		assertEquals(originalBackups, snapshotBackupFiles(applicationConfig));
+		assertEquals(originalAuthority, authorities.find(subjectId).orElseThrow());
+		assertEquals(2, new SqliteQuestionRepository(database).findAll().getFirst().getMarks());
+		assertArrayEquals(originalPdfBytes, Files.readAllBytes(destinationPdf));
+		fireSnapshotDialogButton(robot, preview, ButtonBar.ButtonData.CANCEL_CLOSE);
+		waitForDialogHidden(robot, "Refresh Subject Snapshot");
+		assertSnapshotImportReleased(this);
+		assertEquals(originalCounts, snapshotGraphCounts(database));
+		assertEquals(originalBackups, snapshotBackupFiles(applicationConfig));
+		assertEquals(originalAuthority, authorities.find(subjectId).orElseThrow());
+		assertArrayEquals(originalPdfBytes, Files.readAllBytes(destinationPdf));
+		assertEquals(2, new SqliteQuestionRepository(database).findAll().getFirst().getMarks());
+
+		// Reopen the same archive and explicitly approve the refresh.
+		startSnapshotImport(this, newerArchive);
+		DialogPane approvedPreview = assertSnapshotRefreshPreview(robot, "Engineering");
+		fireSnapshotDialogButton(robot, approvedPreview, ButtonBar.ButtonData.OK_DONE);
+		awaitSnapshotRefreshSuccess(robot, "Engineering");
+		assertSnapshotImportReleased(this);
+		Question refreshedQuestion = new SqliteQuestionRepository(database).findAll().getFirst();
+		assertEquals(questionId, refreshedQuestion.getId());
+		assertEquals(subjectId, refreshedQuestion.getExam().getSubject().getId());
+		assertEquals(5, refreshedQuestion.getMarks());
+		assertEquals(-1L, Files.mismatch(sourcePdf, destinationPdf));
+		var refreshedAuthority = authorities.find(subjectId).orElseThrow();
+		assertEquals(originalAuthority.originInstallationId(), refreshedAuthority.originInstallationId());
+		assertEquals(originalAuthority.originSubjectPortableId(), refreshedAuthority.originSubjectPortableId());
+		assertEquals(inspection.fingerprint().packageId(), refreshedAuthority.latestPackageId());
+		assertEquals(inspection.fingerprint().archiveSha256(), refreshedAuthority.archiveSha256());
+		Map<String, Integer> expectedCounts = new LinkedHashMap<>(originalCounts);
+		expectedCounts.compute("subject_import_packages", (_, count) -> count + 1);
+		assertEquals(expectedCounts, snapshotGraphCounts(database));
+		List<Path> refreshedBackups = snapshotBackupFiles(applicationConfig);
+		assertTrue(refreshedBackups.size() > originalBackups.size());
+		assertEquals(originalLocalCurriculum, localCurriculumEvidence(database));
+
+		// The application must retain the ordinary Working Subject.
+		// Do not reselect it before checking the completed reload.
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		robot.interact(() -> {
+			assertEquals("Engineering", subjects.getValue().getName());
+			assertEquals(subjectId, subjects.getValue().getId());
+			assertEquals(4, subjects.getItems().size());
+			assertFalse(subjects.isDisabled());
+		});
+
+		// Reuse the full imported-Subject inspection and authority
+		// regression against the refreshed graph.
+		assertImportedSnapshotDashboard(this, robot, "Engineering");
+		TableView<?> questions = lookup(robot, "#corpus-dashboard-question-work", TableView.class);
+		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
+			if (questions.getItems().size() != 1) {
+				return false;
+			}
+			return questions.getItems().getFirst() instanceof QuestionCorpusWorkItem item
+					&& item.question().getId() == questionId && item.question().getMarks() == 5;
+		}));
+
+		// Both the latest accepted package and an older accepted
+		// package must be recognised as harmless exact replays.
+		for (Path replayArchive : List.of(newerArchive, originalArchive)) {
+			startSnapshotImport(this, replayArchive);
+			waitForDialogShowing(robot, "Import Subject Snapshot");
+			DialogPane replay = showingDialogPane(robot, "Import Subject Snapshot");
+			robot.interact(() -> {
+				assertEquals("This Subject snapshot has already been imported.", replay.getHeaderText());
+				assertEquals("Engineering requires no changes.", replay.getContentText());
+			});
+			fireSnapshotDialogButton(robot, replay, ButtonBar.ButtonData.OK_DONE);
+			waitForDialogHidden(robot, "Import Subject Snapshot");
+			assertSnapshotImportReleased(this);
+			assertEquals(refreshedAuthority, authorities.find(subjectId).orElseThrow());
+			assertEquals(expectedCounts, snapshotGraphCounts(database));
+			assertEquals(refreshedBackups, snapshotBackupFiles(applicationConfig));
+		}
+
+		// An older, previously unaccepted snapshot is not a replay.
+		// It must be rejected instead of rewinding the accepted authority.
+		startSnapshotImport(this, staleArchive);
+		assertSnapshotRefreshRejection(robot, "older than the latest accepted snapshot");
+		assertSnapshotImportReleased(this);
+
+		// An independent installation exporting the same Subject name
+		// must not acquire the established imported authority.
+		Path foreignArchive = createSubjectSnapshotArchive("Engineering");
+		startSnapshotImport(this, foreignArchive);
+		assertSnapshotRefreshRejection(robot, "different originating installation");
+		assertSnapshotImportReleased(this);
+		assertEquals(refreshedAuthority, authorities.find(subjectId).orElseThrow());
+		assertEquals(expectedCounts, snapshotGraphCounts(database));
+		assertEquals(refreshedBackups, snapshotBackupFiles(applicationConfig));
+		assertEquals(originalLocalCurriculum, localCurriculumEvidence(database));
+		assertEquals(5, new SqliteQuestionRepository(database).findAll().getFirst().getMarks());
+		assertEquals(-1L, Files.mismatch(sourcePdf, destinationPdf));
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void subjectSnapshotRefreshSubstitutionAndNewerIdenticalSnapshot(FxRobot robot) throws Exception {
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		Path originalArchive = createSubjectSnapshotArchive("Engineering");
+		startSnapshotImport(this, originalArchive);
+		DialogPane originalPreview = assertSnapshotPreview(robot, "Engineering");
+		fireSnapshotDialogButton(robot, originalPreview, ButtonBar.ButtonData.OK_DONE);
+		awaitSnapshotImportSuccess(robot, "Engineering");
+		assertSnapshotImportReleased(this);
+		Question originalQuestion = new SqliteQuestionRepository(database).findAll().getFirst();
+		long subjectId = originalQuestion.getExam().getSubject().getId();
+		SqliteImportedSubjectAuthorityRepository authorities = new SqliteImportedSubjectAuthorityRepository(database);
+		var originalAuthority = authorities.find(subjectId).orElseThrow();
+		Map<String, Integer> originalCounts = snapshotGraphCounts(database);
+		List<Path> originalBackups = snapshotBackupFiles(applicationConfig);
+		List<String> originalCurriculum = localCurriculumEvidence(database);
+		Path destinationPdf = applicationConfig.dataRoot().resolve("subjects/Engineering/exams/questions.pdf");
+		byte[] originalPdfBytes = Files.readAllBytes(destinationPdf);
+		Path sourceRoot = snapshotSourceRoot(originalArchive, "Engineering");
+
+		// Export two newer archives without changing the originating
+		// records or assets. Their package evidence remains distinct.
+		Path newerArchive = exportSubsequentSnapshot(sourceRoot, "unchanged");
+		Path substituteArchive = exportSubsequentSnapshot(sourceRoot, "substitute");
+		byte[] reviewedArchiveBytes = Files.readAllBytes(newerArchive);
+		var inspection = new SubjectSnapshotIntakePreview(database).inspect(newerArchive);
+		startSnapshotImport(this, newerArchive);
+		DialogPane preview = assertSnapshotRefreshPreview(robot, "Engineering");
+		robot.interact(() -> {
+			String comparison = ((TextArea) preview.getContent()).getText();
+			assertTrue(comparison.contains("The reviewed content is unchanged."));
+			assertTrue(comparison.contains("Approval will advance the accepted snapshot evidence"));
+			assertTrue(comparison.contains("""
+					Record totals:
+					Additions: 0
+					Updates: 0
+					Removals: 0
+					Revision-only changes: 0
+					"""));
+			assertTrue(comparison.contains("No changed records."));
+			assertTrue(comparison.contains("No changed managed assets."));
+		});
+		assertEquals(originalCounts, snapshotGraphCounts(database));
+		assertEquals(originalBackups, snapshotBackupFiles(applicationConfig));
+
+		// Replace the selected archive after review. The replacement
+		// is itself valid and originates from the same installation,
+		// but it is not the archive the user reviewed.
+		Files.write(newerArchive, Files.readAllBytes(substituteArchive));
+		fireSnapshotDialogButton(robot, preview, ButtonBar.ButtonData.OK_DONE);
+		waitForDialogShowing(robot, "Subject Refresh Failed");
+		DialogPane failure = showingDialogPane(robot, "Subject Refresh Failed");
+		robot.interact(() -> {
+			assertEquals("Engineering could not be refreshed.", failure.getHeaderText());
+			assertTrue(failure.getContent() instanceof TextArea);
+			String message = ((TextArea) failure.getContent()).getText();
+			assertTrue(message.contains("archive changed after approval"), message);
+		});
+		fireSnapshotDialogButton(robot, failure, ButtonBar.ButtonData.OK_DONE);
+		waitForDialogHidden(robot, "Subject Refresh Failed");
+		assertSnapshotImportReleased(this);
+		assertEquals(originalAuthority, authorities.find(subjectId).orElseThrow());
+		assertEquals(originalCounts, snapshotGraphCounts(database));
+		assertEquals(originalBackups, snapshotBackupFiles(applicationConfig));
+		assertArrayEquals(originalPdfBytes, Files.readAllBytes(destinationPdf));
+
+		// Restore the exact original archive and approve it through
+		// a fresh application comparison.
+		Files.write(newerArchive, reviewedArchiveBytes);
+		startSnapshotImport(this, newerArchive);
+		DialogPane secondPreview = assertSnapshotRefreshPreview(robot, "Engineering");
+		robot.interact(() -> {
+			String comparison = ((TextArea) secondPreview.getContent()).getText();
+			assertTrue(comparison.contains("The reviewed content is unchanged."));
+		});
+		fireSnapshotDialogButton(robot, secondPreview, ButtonBar.ButtonData.OK_DONE);
+		awaitSnapshotRefreshSuccess(robot, "Engineering");
+		assertSnapshotImportReleased(this);
+		var refreshedAuthority = authorities.find(subjectId).orElseThrow();
+		assertEquals(inspection.fingerprint().packageId(), refreshedAuthority.latestPackageId());
+		assertEquals(inspection.fingerprint().archiveSha256(), refreshedAuthority.archiveSha256());
+		assertEquals(originalAuthority.originInstallationId(), refreshedAuthority.originInstallationId());
+		assertEquals(originalAuthority.originSubjectPortableId(), refreshedAuthority.originSubjectPortableId());
+		Question refreshedQuestion = new SqliteQuestionRepository(database).findAll().getFirst();
+		assertEquals(originalQuestion.getId(), refreshedQuestion.getId());
+		assertEquals(originalQuestion.getMarks(), refreshedQuestion.getMarks());
+		Map<String, Integer> expectedCounts = new LinkedHashMap<>(originalCounts);
+		expectedCounts.compute("subject_import_packages", (_, count) -> count + 1);
+		assertEquals(expectedCounts, snapshotGraphCounts(database));
+		assertTrue(snapshotBackupFiles(applicationConfig).size() > originalBackups.size());
+		assertArrayEquals(originalPdfBytes, Files.readAllBytes(destinationPdf));
+		assertEquals(originalCurriculum, localCurriculumEvidence(database));
+		assertTrue(authorities.isImported(subjectId));
+		assertThrows(IllegalStateException.class, () -> authorities.requireLocallyAuthoritative(subjectId));
+		database.verifyIntegrity();
 	}
 
 	private void assertQuestionCorrectionLocksWorkingSubject(FxRobot robot, Question question,

@@ -1,0 +1,1295 @@
+diff --git a/src/main/java/au/edu/eq/questionbank/ui/QuestionBankApplication.java b/src/main/java/au/edu/eq/questionbank/ui/QuestionBankApplication.java
+index 5cbace83..4ef46c4d 100644
+--- a/src/main/java/au/edu/eq/questionbank/ui/QuestionBankApplication.java
++++ b/src/main/java/au/edu/eq/questionbank/ui/QuestionBankApplication.java
+@@ -28,6 +28,7 @@ import java.util.Map;
+ import java.util.Objects;
+ import java.util.Optional;
+ import java.util.Set;
++import java.util.TreeSet;
+ import java.util.UUID;
+ import java.util.concurrent.Callable;
+ import java.util.concurrent.CancellationException;
+@@ -193,11 +194,15 @@ import au.edu.eq.questionbank.service.workpackage.MasterContributionDecisionLedg
+ import au.edu.eq.questionbank.service.workpackage.MasterContributionIntake;
+ import au.edu.eq.questionbank.service.workpackage.MasterContributionReceiptExporter;
+ import au.edu.eq.questionbank.service.workpackage.MasterContributionReviewPlanner;
++import au.edu.eq.questionbank.service.workpackage.PackageFormatException;
+ import au.edu.eq.questionbank.service.workpackage.SqliteContributorAssignmentSessionRepository;
+ import au.edu.eq.questionbank.service.workpackage.SubjectImportBackupGate;
+ import au.edu.eq.questionbank.service.workpackage.SubjectImportCoordinator;
+ import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationPreviewService;
+ import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationReview;
++import au.edu.eq.questionbank.service.workpackage.SubjectRefreshChangeClassifier;
++import au.edu.eq.questionbank.service.workpackage.SubjectRefreshChangeClassifier.ChangeKind;
++import au.edu.eq.questionbank.service.workpackage.SubjectRefreshPlan;
+ import au.edu.eq.questionbank.service.workpackage.SubjectSnapshotExporter;
+ import au.edu.eq.questionbank.service.workpackage.SubjectSnapshotIntakePreview;
+ import au.edu.eq.questionbank.service.workpackage.WorkAssignmentExporter;
+@@ -2716,6 +2721,215 @@ public class QuestionBankApplication extends Application {
+ 		refreshActiveExamContext();
+ 	}
+ 
++	private String describeRefreshRecord(SubjectRefreshChangeClassifier.RecordChange change) {
++		var record = change.incoming() == null ? change.current() : change.incoming();
++		var values = record.values();
++
++		List<String> labels = new ArrayList<>();
++		for (String field : List.of("subject_name", "syllabus_name", "curriculum_code", "curriculum_name",
++				"provider_name", "exam_year", "exam_name", "booklet_name", "answer_file_name", "question_code",
++				"source_question_code", "relative_path")) {
++			String value = values.path(field).asText("");
++			if (!value.isBlank()) {
++				labels.add(value);
++			}
++		}
++
++		String description = refreshRecordTypeLabel(change.key().recordType());
++		if (!labels.isEmpty()) {
++			description += " — " + String.join(" / ", labels);
++		}
++
++		return description + " [" + change.key().recordId() + "]";
++	}
++
++	private String describeSubjectRefresh(SubjectRefreshPlan plan) {
++		var evidence = plan.evidence();
++		var authority = evidence.authority();
++		var incoming = evidence.incoming();
++		var accepted = evidence.accepted();
++
++		StringBuilder message = new StringBuilder();
++
++		message.append("""
++				REFRESH ELIGIBILITY
++
++				Subject: %s
++
++				Eligible newer snapshot from the established originating authority.
++
++				Originating installation:
++				%s
++
++				Originating Subject identity:
++				%s
++
++				Latest accepted snapshot: %s
++				Incoming snapshot: %s
++
++				Accepted package: %s
++				Incoming package: %s
++
++				The originating installation remains authoritative.
++				The destination Subject will remain read-only.
++
++				""".formatted(incoming.fingerprint().subjectName(), authority.originInstallationId(),
++				authority.originSubjectPortableId(), accepted.createdAt(), incoming.createdAt(),
++				accepted.fingerprint().packageId(), incoming.fingerprint().packageId()));
++
++		if (plan.hasContentChanges()) {
++			message.append("The reviewed comparison contains authoritative changes.\n\n");
++		} else {
++			message.append("""
++					The reviewed content is unchanged.
++
++					Approval will advance the accepted snapshot evidence
++					without changing the existing records or asset bytes.
++
++					""");
++		}
++
++		message.append("RECORD COMPARISON\n\n");
++
++		message.append("""
++				Record totals:
++				Additions: %d
++				Updates: %d
++				Removals: %d
++				Revision-only changes: %d
++				Unchanged: %d
++
++				""".formatted(plan.countRecords(ChangeKind.ADD), plan.countRecords(ChangeKind.UPDATE),
++				plan.countRecords(ChangeKind.REMOVE), plan.countRecords(ChangeKind.REVISION_ONLY),
++				plan.countRecords(ChangeKind.UNCHANGED)));
++
++		// Present all represented entity types, including those whose
++		// content remains unchanged.
++		List<String> recordTypes = plan.recordChanges().stream().map(change -> change.key().recordType()).distinct()
++				.sorted().toList();
++
++		for (String recordType : recordTypes) {
++			message.append("""
++					%s:
++					    Additions: %d, Updates: %d, Removals: %d
++					    Revision-only changes: %d, Unchanged: %d
++
++					""".formatted(refreshRecordTypeLabel(recordType), plan.countRecords(recordType, ChangeKind.ADD),
++					plan.countRecords(recordType, ChangeKind.UPDATE), plan.countRecords(recordType, ChangeKind.REMOVE),
++					plan.countRecords(recordType, ChangeKind.REVISION_ONLY),
++					plan.countRecords(recordType, ChangeKind.UNCHANGED)));
++		}
++
++		message.append("CHANGED RECORDS\n\n");
++
++		boolean changedRecords = false;
++
++		for (var change : plan.recordChanges()) {
++			if (change.kind() == ChangeKind.UNCHANGED) {
++				continue;
++			}
++
++			changedRecords = true;
++
++			message.append(refreshChangeLabel(change.kind())).append(": ").append(describeRefreshRecord(change))
++					.append('\n');
++
++			if (change.kind() == ChangeKind.UPDATE) {
++				var before = change.current().values();
++				var after = change.incoming().values();
++
++				Set<String> fields = new TreeSet<>();
++				before.fieldNames().forEachRemaining(fields::add);
++				after.fieldNames().forEachRemaining(fields::add);
++
++				// Report changed domain fields rather than repeating
++				// the complete unchanged record.
++				for (String field : fields) {
++					var previous = before.get(field);
++					var replacement = after.get(field);
++
++					if (!Objects.equals(previous, replacement)) {
++						message.append("    ").append(field.replace('_', ' ')).append(": ").append(previous)
++								.append(" → ").append(replacement).append('\n');
++					}
++				}
++			} else if (change.kind() == ChangeKind.REVISION_ONLY) {
++				message.append("    Previous revision: ").append(change.current().revisionId()).append('\n')
++						.append("    Authoritative revision: ").append(change.incoming().revisionId()).append('\n');
++			}
++
++			message.append('\n');
++		}
++
++		if (!changedRecords) {
++			message.append("No changed records.\n\n");
++		}
++
++		message.append("MANAGED ASSET COMPARISON\n\n");
++
++		message.append("""
++				Asset totals:
++				Additions: %d
++				Updates: %d
++				Removals: %d
++				Unchanged: %d
++
++				Revision-only changes do not apply to binary assets.
++
++				""".formatted(plan.countAssets(ChangeKind.ADD), plan.countAssets(ChangeKind.UPDATE),
++				plan.countAssets(ChangeKind.REMOVE), plan.countAssets(ChangeKind.UNCHANGED)));
++
++		boolean changedAssets = false;
++
++		for (var change : plan.assetChanges()) {
++			if (change.kind() == ChangeKind.UNCHANGED) {
++				continue;
++			}
++
++			changedAssets = true;
++
++			message.append(refreshChangeLabel(change.kind())).append(": ").append(change.managedPath()).append('\n');
++
++			if (change.current() != null) {
++				message.append("    Existing size: ").append(change.current().size()).append(" bytes\n");
++			}
++
++			if (change.incoming() != null) {
++				message.append("    Incoming size: ").append(change.incoming().size()).append(" bytes\n");
++			}
++
++			message.append('\n');
++		}
++
++		if (!changedAssets) {
++			message.append("No changed managed assets.\n\n");
++		}
++
++		message.append("""
++				APPROVAL AND BACKUP
++
++				Approval applies to this complete reviewed comparison.
++
++				Records and managed assets absent from the newer authoritative
++				snapshot may be removed from this imported Subject.
++
++				Subject names cannot change during refresh.
++
++				Unrelated Subjects and their protected resources must not be changed.
++
++				A verified full backup will be created automatically
++				before publication.
++
++				The application will revalidate the archive, authority and
++				destination state before committing the approved refresh.
++
++				Cancelling now will not change the database, publish assets
++				or create a backup.
++				""");
++
++		return message.toString();
++	}
++
+ 	private String diagnosticRuntimeKind() {
+ 		String configured = System.getProperty("eqb.performance.runtimeKind", "unknown");
+ 		return switch (configured) {
+@@ -3077,6 +3291,34 @@ public class QuestionBankApplication extends Application {
+ 		}
+ 	}
+ 
++	private void finishSubjectSnapshotRefresh(Alert progress, String subjectName,
++			SubjectImportCoordinator.Result result, Throwable refreshFailure) {
++
++		SubjectImportReviewWorkflow.dismissCompletedProgress(progress);
++		packageImportInProgress = false;
++
++		if (refreshFailure != null) {
++
++			// Publication has committed. A subsequent application
++			// presentation failure must not be described as a rollback.
++			showAlert(Alert.AlertType.ERROR, "Subject Refreshed", subjectName + " was refreshed.",
++					"The authoritative refresh completed, but the application "
++							+ "could not reload its current Subject data.\n\n" + failureMessage(refreshFailure),
++					refreshFailure);
++			return;
++		}
++
++		if (result.replay()) {
++			showAlert(Alert.AlertType.INFORMATION, "Subject Already Refreshed", subjectName + " is already up to date.",
++					"No duplicate records were created and no additional " + "backup was required.");
++			return;
++		}
++
++		showAlert(Alert.AlertType.INFORMATION, "Subject Refreshed", subjectName + " has been refreshed.",
++				"The approved authoritative snapshot has been imported.\n\n" + "The Subject remains read-only.\n\n"
++						+ "Pre-import backup:\n" + result.backupArchivePath());
++	}
++
+ 	private void focusStoredQuestionRegions(Question question) {
+ 		List<PdfWorkspacePane.RegionSelection> regions = question.getRegions().stream()
+ 				.map(region -> new PdfWorkspacePane.RegionSelection(PdfWorkspacePane.DocumentMode.EXAM,
+@@ -4286,6 +4528,16 @@ public class QuestionBankApplication extends Application {
+ 		refreshCorpusDashboardHome(-1L);
+ 	}
+ 
++	private String refreshChangeLabel(ChangeKind kind) {
++		return switch (kind) {
++		case ADD -> "Addition";
++		case UPDATE -> "Update";
++		case REMOVE -> "Removal";
++		case REVISION_ONLY -> "Revision-only change";
++		case UNCHANGED -> "Unchanged";
++		};
++	}
++
+ 	private void refreshContributorAssignmentContext(ContributorAssignmentDashboardContextResolver.Context context,
+ 			boolean refreshSubjects, Consumer<Throwable> completionHandler) {
+ 		Objects.requireNonNull(completionHandler, "completionHandler");
+@@ -4441,6 +4693,12 @@ public class QuestionBankApplication extends Application {
+ 		}
+ 	}
+ 
++	private String refreshRecordTypeLabel(String recordType) {
++		String label = recordType.toLowerCase(Locale.ROOT).replace('_', ' ');
++
++		return Character.toUpperCase(label.charAt(0)) + label.substring(1);
++	}
++
+ 	private void removeContributorAssignment() {
+ 		var selected = assignmentSelector.getValue();
+ 		if (selected == null || contributorRemovalRunning || contributionExportRunning
+@@ -6760,6 +7018,58 @@ public class QuestionBankApplication extends Application {
+ 		worker.start();
+ 	}
+ 
++	private void showSubjectRefreshApproval(Stage primaryStage, ApplicationConfig config, Path incomingArchive,
++			SubjectRefreshPlan plan) {
++
++		if (activeAssignmentContext != null) {
++			packageImportInProgress = false;
++
++			showAlert(Alert.AlertType.WARNING, "Import Subject Snapshot", "A contributor assignment is active.",
++					"A Subject snapshot cannot be refreshed while working " + "on an active contributor assignment.");
++			return;
++		}
++
++		Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
++		confirmation.initOwner(primaryStage);
++		confirmation.setTitle("Refresh Subject Snapshot");
++		confirmation.setHeaderText("Refresh " + plan.evidence().incoming().fingerprint().subjectName());
++
++		confirmation.getDialogPane().setId("subject-snapshot-refresh-confirmation");
++
++		TextArea comparison = new TextArea(describeSubjectRefresh(plan));
++		comparison.setId("subject-snapshot-refresh-comparison");
++		comparison.setEditable(false);
++		comparison.setWrapText(true);
++		comparison.setPrefColumnCount(85);
++		comparison.setPrefRowCount(26);
++		comparison.setMaxWidth(Double.MAX_VALUE);
++		comparison.setMaxHeight(Double.MAX_VALUE);
++
++		confirmation.getDialogPane().setContent(comparison);
++		confirmation.getDialogPane().setPrefWidth(760);
++		confirmation.setResizable(true);
++
++		ButtonType approveButton = new ButtonType("Approve Subject Refresh", ButtonBar.ButtonData.OK_DONE);
++
++		confirmation.getButtonTypes().setAll(approveButton, ButtonType.CANCEL);
++
++		// Display the beginning of the authority and eligibility evidence
++		// rather than positioning the comparison at the final paragraph.
++		comparison.positionCaret(0);
++
++		if (confirmation.showAndWait().orElse(ButtonType.CANCEL) != approveButton) {
++			packageImportInProgress = false;
++			return;
++		}
++
++		// Only an explicit affirmative dialog result creates an approval.
++		// The approval remains bound to the exact immutable comparison.
++		SubjectRefreshPlan.Approval approval = plan
++				.approve("Authoritative Subject refresh explicitly approved " + "through Import Subject Snapshot.");
++
++		startSubjectSnapshotRefreshInstallation(primaryStage, config, incomingArchive, approval);
++	}
++
+ 	private void showVersionInformation(ApplicationConfig config) {
+ 		String applicationVersion = applicationVersion();
+ 		String javaVersion = System.getProperty("java.version", "Unknown");
+@@ -7486,74 +7796,93 @@ public class QuestionBankApplication extends Application {
+ 	}
+ 
+ 	private void startLiveSubjectSnapshotReview(Stage primaryStage, ApplicationConfig config, Path incomingArchive) {
++
+ 		if (activeAssignmentContext != null) {
+ 			packageImportInProgress = false;
++
+ 			showAlert(Alert.AlertType.WARNING, "Import Subject Snapshot", "A contributor assignment is active.",
+ 					"A Subject snapshot cannot be imported " + "while working on an active contributor assignment.");
+ 			return;
+ 		}
++
+ 		Task<SubjectSnapshotIntakePreview.Inspection> task = new ApplicationBackgroundTask<>(() -> {
++
+ 			SqliteDatabase database = new SqliteDatabase(config.databasePath());
+ 
+ 			// Inspect one complete incoming Subject.
+ 			// No existing local master snapshot is required.
+ 			return new SubjectSnapshotIntakePreview(database).inspect(incomingArchive);
+ 		});
++
+ 		Alert progress = new Alert(Alert.AlertType.INFORMATION);
+ 		progress.initOwner(primaryStage);
+ 		progress.setTitle("Inspecting Subject Snapshot");
+ 		progress.setHeaderText("Validating the incoming Subject");
+ 		progress.setContentText(
+ 				"Checking the Subject records, assets and " + "destination database. No data is being imported.");
++
+ 		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
++
+ 		progress.getButtonTypes().setAll(new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE));
++
+ 		task.setOnSucceeded(_ -> {
+ 			progress.close();
++
+ 			try {
+ 				var inspection = task.getValue();
++
+ 				switch (inspection.state()) {
+ 				case NEW_SUBJECT -> showNewSubjectSnapshotApproval(primaryStage, config, incomingArchive, inspection);
++
+ 				case ALREADY_IMPORTED -> {
+ 					packageImportInProgress = false;
++
+ 					showAlert(Alert.AlertType.INFORMATION, "Import Subject Snapshot",
+ 							"This Subject snapshot has already been imported.",
+ 							inspection.fingerprint().subjectName() + " requires no changes.");
+ 				}
++
+ 				case EXISTING_SUBJECT -> {
+-					packageImportInProgress = false;
+ 
+-					// Existing Subject refresh requires its own
+-					// provenance-aware approval and transaction.
+-					// Never redirect to legacy reconciliation.
+-					showAlert(Alert.AlertType.WARNING, "Import Subject Snapshot", "This Subject already exists.",
+-							"The incoming snapshot belongs to " + inspection.fingerprint().subjectName()
+-									+ ". Existing Subjects cannot be " + "overwritten through new Subject import.");
++					// A name collision does not authorise an overwrite.
++					// The dedicated refresh service establishes provenance,
++					// chronological eligibility and the exact comparison.
++					startSubjectSnapshotRefreshPreview(primaryStage, config, incomingArchive, inspection);
+ 				}
+ 				}
++
+ 			} catch (RuntimeException failure) {
+ 				packageImportInProgress = false;
++
+ 				showAlert(Alert.AlertType.ERROR, "Import Subject Snapshot",
+ 						"The Subject import preview could not be displayed.", failureMessage(failure));
+ 			}
+ 		});
++
+ 		task.setOnFailed(_ -> {
+ 			packageImportInProgress = false;
+ 			progress.close();
++
+ 			showAlert(Alert.AlertType.ERROR, "Subject Import Preview", "The incoming Subject could not be validated.",
+ 					failureMessage(task.getException()));
+ 		});
++
+ 		task.setOnCancelled(_ -> {
+ 			packageImportInProgress = false;
+ 			progress.close();
+ 		});
++
+ 		Thread worker = new Thread(task, "examwork-subject-snapshot-preview");
++
+ 		worker.setDaemon(true);
+ 		progress.show();
++
+ 		try {
+ 			worker.start();
+ 		} catch (RuntimeException failure) {
+ 			packageImportInProgress = false;
+ 			progress.close();
++
+ 			showAlert(Alert.AlertType.ERROR, "Subject Import Preview", "The Subject inspection could not be started.",
+ 					failureMessage(failure));
+ 		}
+@@ -7753,6 +8082,225 @@ public class QuestionBankApplication extends Application {
+ 		}
+ 	}
+ 
++	private void startSubjectSnapshotRefreshInstallation(Stage primaryStage, ApplicationConfig config,
++			Path incomingArchive, SubjectRefreshPlan.Approval approval) {
++
++		if (activeAssignmentContext != null) {
++			packageImportInProgress = false;
++
++			showAlert(Alert.AlertType.WARNING, "Refresh Subject Snapshot", "A contributor assignment is active.",
++					"The approved Subject refresh cannot proceed.");
++			return;
++		}
++
++		if (!allowWorkingSubjectChange()) {
++			packageImportInProgress = false;
++			return;
++		}
++
++		var evidence = approval.plan().evidence();
++
++		String subjectName = evidence.incoming().fingerprint().subjectName();
++
++		try {
++
++			// Release any PDF handles belonging to the current imported
++			// Subject before its managed files can be replaced or removed.
++			// This occurs only after explicit approval.
++			if (workingSubject != null && workingSubject.getId() == evidence.authority().subjectLocalId()) {
++				pdfWorkspace.clearDocuments();
++			}
++
++		} catch (RuntimeException failure) {
++			packageImportInProgress = false;
++
++			showAlert(Alert.AlertType.ERROR, "Subject Refresh Failed", "The Subject refresh could not be started.",
++					failureMessage(failure), failure);
++			return;
++		}
++
++		Task<SubjectImportCoordinator.Result> task = new ApplicationBackgroundTask<>(() -> {
++
++			// The coordinator owns exact approval revalidation,
++			// automatic backup, transactional graph publication,
++			// managed-file recovery and authority advancement.
++			return new SubjectImportCoordinator(config).executeRefresh(approval, incomingArchive);
++		});
++
++		Alert progress = new Alert(Alert.AlertType.INFORMATION);
++		progress.initOwner(primaryStage);
++		progress.setTitle("Refreshing Subject Snapshot");
++		progress.setHeaderText("Refreshing " + subjectName);
++
++		progress.setContentText("Revalidating the approved comparison, creating a verified "
++				+ "full backup and publishing the authoritative changes.\n\n"
++				+ "Publication cannot be cancelled once started.");
++
++		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
++
++		// Do not allow ordinary application navigation or cancellation
++		// while managed-file and database publication are in progress.
++		progress.getButtonTypes().clear();
++		progress.setOnCloseRequest(event -> event.consume());
++
++		task.setOnSucceeded(_ -> {
++			var result = task.getValue();
++
++			if (!result.applied()) {
++				SubjectImportReviewWorkflow.dismissCompletedProgress(progress);
++				packageImportInProgress = false;
++
++				showAlert(Alert.AlertType.WARNING, "Refresh Subject Snapshot", "The Subject was not refreshed.",
++						"No successful refresh was recorded.");
++				return;
++			}
++
++			progress.setHeaderText("Reloading Subject data");
++			progress.setContentText("Publication has completed. Reloading the Working Subject, "
++					+ "curriculum, capture queues and Corpus Dashboard.");
++
++			try {
++				examMetadataPane.refreshSubjects();
++
++				// Reuse the existing complete operating-context reload.
++				// A null assignment context retains ordinary Subject mode.
++				// The new generation invalidates retained pre-refresh data.
++				refreshContributorAssignmentContext(null, true,
++						failure -> finishSubjectSnapshotRefresh(progress, subjectName, result, failure));
++
++			} catch (RuntimeException failure) {
++				finishSubjectSnapshotRefresh(progress, subjectName, result, failure);
++			}
++		});
++
++		task.setOnFailed(_ -> {
++			SubjectImportReviewWorkflow.dismissCompletedProgress(progress);
++			packageImportInProgress = false;
++
++			Throwable failure = task.getException();
++
++			showAlert(Alert.AlertType.ERROR, "Subject Refresh Failed", subjectName + " could not be refreshed.",
++					failureMessage(failure), failure);
++		});
++
++		task.setOnCancelled(_ -> {
++			SubjectImportReviewWorkflow.dismissCompletedProgress(progress);
++			packageImportInProgress = false;
++
++			showAlert(Alert.AlertType.WARNING, "Subject Refresh Snapshot", "The refresh task was cancelled.",
++					"Check the recorded import outcome before retrying.");
++		});
++
++		Thread worker = new Thread(task, "examwork-subject-refresh-installation");
++
++		worker.setDaemon(true);
++		progress.show();
++
++		try {
++			worker.start();
++		} catch (RuntimeException failure) {
++			SubjectImportReviewWorkflow.dismissCompletedProgress(progress);
++			packageImportInProgress = false;
++
++			showAlert(Alert.AlertType.ERROR, "Subject Refresh Failed", "The Subject refresh could not be started.",
++					failureMessage(failure), failure);
++		}
++	}
++
++	private void startSubjectSnapshotRefreshPreview(Stage primaryStage, ApplicationConfig config, Path incomingArchive,
++			SubjectSnapshotIntakePreview.Inspection inspection) {
++
++		Task<SubjectRefreshPlan> task = new ApplicationBackgroundTask<>(() -> {
++
++			SqliteDatabase database = new SqliteDatabase(config.databasePath());
++
++			SubjectSnapshotIntakePreview preview = new SubjectSnapshotIntakePreview(database);
++
++			// Refuse locally authoritative Subjects and incompatible
++			// originating identities before constructing the comparison.
++			preview.requireRefreshAuthority(inspection);
++
++			SubjectRefreshPlan plan = preview.previewRefresh(incomingArchive, new ManagedDataLayout(config.dataRoot()));
++
++			// The initial inspection and the complete comparison
++			// must describe the same incoming archive.
++			if (!inspection.fingerprint().equals(plan.evidence().incoming().fingerprint())) {
++
++				throw new PackageFormatException("The incoming Subject snapshot changed " + "during inspection.");
++			}
++
++			return plan;
++		});
++
++		Alert progress = new Alert(Alert.AlertType.INFORMATION);
++		progress.initOwner(primaryStage);
++		progress.setTitle("Comparing Subject Snapshot");
++		progress.setHeaderText("Checking refresh eligibility for " + inspection.fingerprint().subjectName());
++
++		progress.setContentText("Checking the originating authority, snapshot freshness, "
++				+ "record identities and managed assets.\n\n" + "No destination data is being changed.");
++
++		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
++
++		progress.getButtonTypes().clear();
++		progress.setOnCloseRequest(event -> event.consume());
++
++		task.setOnSucceeded(_ -> {
++			SubjectImportReviewWorkflow.dismissCompletedProgress(progress);
++
++			try {
++				showSubjectRefreshApproval(primaryStage, config, incomingArchive, task.getValue());
++
++			} catch (RuntimeException failure) {
++				packageImportInProgress = false;
++
++				showAlert(Alert.AlertType.ERROR, "Refresh Subject Snapshot",
++						"The Subject refresh comparison could not be displayed.", failureMessage(failure), failure);
++			}
++		});
++
++		task.setOnFailed(_ -> {
++			SubjectImportReviewWorkflow.dismissCompletedProgress(progress);
++			packageImportInProgress = false;
++
++			Throwable failure = task.getException();
++
++			if (failure instanceof PackageFormatException) {
++
++				// Preserve the existing locally authoritative Subject
++				// collision warning while explaining why the dedicated
++				// refresh operation was refused.
++				showAlert(Alert.AlertType.WARNING, "Import Subject Snapshot", "This Subject already exists.",
++						"The incoming snapshot belongs to " + inspection.fingerprint().subjectName()
++								+ ". Existing Subjects cannot be overwritten " + "through new Subject import.\n\n"
++								+ "Authoritative refresh refused:\n" + failureMessage(failure));
++			} else {
++				showAlert(Alert.AlertType.ERROR, "Subject Refresh Preview",
++						"The Subject refresh comparison could not be completed.", failureMessage(failure), failure);
++			}
++		});
++
++		task.setOnCancelled(_ -> {
++			SubjectImportReviewWorkflow.dismissCompletedProgress(progress);
++			packageImportInProgress = false;
++		});
++
++		Thread worker = new Thread(task, "examwork-subject-refresh-preview");
++
++		worker.setDaemon(true);
++		progress.show();
++
++		try {
++			worker.start();
++		} catch (RuntimeException failure) {
++			SubjectImportReviewWorkflow.dismissCompletedProgress(progress);
++			packageImportInProgress = false;
++
++			showAlert(Alert.AlertType.ERROR, "Subject Refresh Preview",
++					"The Subject refresh comparison could not be started.", failureMessage(failure), failure);
++		}
++	}
++
+ 	private void startWorkingSubjectCaptureRefresh(Subject subject, long generation) {
+ 		startWorkingSubjectCaptureRefresh(subject, generation, failure -> {
+ 			if (failure != null && !(failure instanceof CancellationException)) {
+diff --git a/src/test/java/au/edu/eq/questionbank/ui/CorpusDashboardWorkflowTest.java b/src/test/java/au/edu/eq/questionbank/ui/CorpusDashboardWorkflowTest.java
+index 5cd5ec2d..2cf1069d 100644
+--- a/src/test/java/au/edu/eq/questionbank/ui/CorpusDashboardWorkflowTest.java
++++ b/src/test/java/au/edu/eq/questionbank/ui/CorpusDashboardWorkflowTest.java
+@@ -1,5 +1,6 @@
+ package au.edu.eq.questionbank.ui;
+ 
++import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+ import static org.junit.jupiter.api.Assertions.assertEquals;
+ import static org.junit.jupiter.api.Assertions.assertFalse;
+ import static org.junit.jupiter.api.Assertions.assertNotNull;
+@@ -556,6 +557,124 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
+ 		assertTrue(load.elapsedMillis() >= 0);
+ 	}
+ 
++	private static DialogPane assertSnapshotRefreshPreview(FxRobot robot, String subjectName) {
++
++		waitForDialogShowing(robot, "Refresh Subject Snapshot");
++
++		DialogPane preview = showingDialogPane(robot, "Refresh Subject Snapshot");
++
++		assertNotNull(preview);
++
++		robot.interact(() -> {
++			assertEquals("subject-snapshot-refresh-confirmation", preview.getId());
++
++			assertEquals("Refresh " + subjectName, preview.getHeaderText());
++
++			assertTrue(preview.getContent() instanceof TextArea);
++
++			TextArea comparison = (TextArea) preview.getContent();
++
++			assertEquals("subject-snapshot-refresh-comparison", comparison.getId());
++
++			assertFalse(comparison.isEditable());
++
++			String content = comparison.getText();
++
++			for (String expected : List.of("Eligible newer snapshot", "Originating installation:",
++					"Originating Subject identity:", "Latest accepted snapshot:", "Incoming snapshot:",
++					"Accepted package:", "Incoming package:", "The originating installation remains authoritative.",
++					"The destination Subject will remain read-only.", "RECORD COMPARISON", "Additions:", "Updates:",
++					"Removals:", "Revision-only changes:", "Unchanged:", "MANAGED ASSET COMPARISON",
++					"Subject names cannot change during refresh.",
++					"A verified full backup will be created automatically",
++					"Cancelling now will not change the database")) {
++
++				assertTrue(content.contains(expected), "Missing refresh comparison information: " + expected);
++			}
++
++			ButtonType approve = preview.getButtonTypes().stream()
++					.filter(type -> type.getButtonData() == ButtonBar.ButtonData.OK_DONE).findFirst().orElseThrow();
++
++			assertEquals("Approve Subject Refresh", approve.getText());
++
++			assertTrue(preview.getButtonTypes().contains(ButtonType.CANCEL));
++		});
++
++		return preview;
++	}
++
++	private static void assertSnapshotRefreshRejection(FxRobot robot, String expectedReason) {
++
++		waitForDialogShowing(robot, "Import Subject Snapshot");
++
++		DialogPane refusal = showingDialogPane(robot, "Import Subject Snapshot");
++
++		robot.interact(() -> {
++			assertEquals("This Subject already exists.", refusal.getHeaderText());
++
++			assertTrue(refusal.getContent() instanceof TextArea);
++
++			String content = ((TextArea) refusal.getContent()).getText();
++
++			assertTrue(content.contains("Authoritative refresh refused:"));
++			assertTrue(content.contains(expectedReason), content);
++
++			// A rejected snapshot must not expose an approval action.
++			assertFalse(refusal.getButtonTypes().stream()
++					.anyMatch(type -> "Approve Subject Refresh".equals(type.getText())));
++
++			assertFalse("subject-snapshot-refresh-confirmation".equals(refusal.getId()));
++		});
++
++		fireSnapshotDialogButton(robot, refusal, ButtonBar.ButtonData.OK_DONE);
++
++		waitForDialogHidden(robot, "Import Subject Snapshot");
++	}
++
++	private static void awaitSnapshotRefreshSuccess(FxRobot robot, String subjectName) {
++
++		waitForDialogShowing(robot, "Subject Refreshed");
++
++		DialogPane success = showingDialogPane(robot, "Subject Refreshed");
++
++		robot.interact(() -> {
++			assertEquals(subjectName + " has been refreshed.", success.getHeaderText());
++
++			String content = success.getContentText();
++
++			assertNotNull(content);
++
++			assertTrue(content.contains("The approved authoritative snapshot has been imported."));
++
++			assertTrue(content.contains("The Subject remains read-only."));
++
++			assertTrue(content.contains("Pre-import backup:"));
++		});
++
++		fireSnapshotDialogButton(robot, success, ButtonBar.ButtonData.OK_DONE);
++
++		waitForDialogHidden(robot, "Subject Refreshed");
++		waitForDialogHidden(robot, "Refreshing Subject Snapshot");
++	}
++
++	private static Path exportSubsequentSnapshot(Path sourceRoot, String archiveSuffix) throws Exception {
++
++		ApplicationConfig source = ApplicationConfig.fromDataRoot(sourceRoot);
++
++		SqliteDatabase database = new SqliteDatabase(source.databasePath());
++
++		Path archive = sourceRoot.getParent().resolve(sourceRoot.getFileName() + "-" + archiveSuffix + ".examwork");
++
++		// Reuse the existing originating database and managed assets.
++		// Creating another source installation would invalidate the
++		// authority relationship being tested.
++		new SubjectSnapshotExporter(database, new ManagedDataLayout(sourceRoot)).export(1L, archive);
++
++		assertTrue(Files.isRegularFile(archive));
++
++		return archive;
++	}
++
+ 	private static List<String> localCurriculumEvidence(SqliteDatabase database) throws Exception {
+ 		List<String> evidence = new ArrayList<>();
+ 
+@@ -597,6 +716,25 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
+ 		return List.copyOf(evidence);
+ 	}
+ 
++	private static Path snapshotSourceRoot(Path originalArchive, String subjectName) {
++
++		// createSubjectSnapshotArchive places the archive beside its
++		// temporary source root using the root name and Subject suffix.
++		String archiveName = originalArchive.getFileName().toString();
++
++		String suffix = "-" + subjectName + ".examwork";
++
++		assertTrue(archiveName.endsWith(suffix));
++
++		String sourceDirectoryName = archiveName.substring(0, archiveName.length() - suffix.length());
++
++		Path sourceRoot = originalArchive.resolveSibling(sourceDirectoryName);
++
++		assertTrue(Files.isDirectory(sourceRoot));
++
++		return sourceRoot;
++	}
++
+ 	@Test
+ 	void corpusDashboardHomeShowsLiveDashboardForWorkingSubject(FxRobot robot) throws Exception {
+ 		prepareExamAndClassification(robot, "Chemistry", "QCAA", 2025, "External Assessment", "Paper 1",
+@@ -2084,6 +2222,437 @@ class CorpusDashboardWorkflowTest extends QuestionBankApplicationUiTestBase {
+ 		database.verifyIntegrity();
+ 	}
+ 
++	@Test
++	void subjectSnapshotRefreshCancellationApprovalReplayAndRejection(FxRobot robot) throws Exception {
++
++		SqliteDatabase database = new SqliteDatabase(databasePath);
++
++		List<String> originalLocalCurriculum = localCurriculumEvidence(database);
++
++		Path originalArchive = createSubjectSnapshotArchive("Engineering");
++
++		// Establish an imported Subject through the ordinary application
++		// workflow before testing any subsequent snapshot.
++		startSnapshotImport(this, originalArchive);
++
++		DialogPane originalPreview = assertSnapshotPreview(robot, "Engineering");
++
++		fireSnapshotDialogButton(robot, originalPreview, ButtonBar.ButtonData.OK_DONE);
++
++		awaitSnapshotImportSuccess(robot, "Engineering");
++		assertSnapshotImportReleased(this);
++
++		assertImportedSnapshotDashboard(this, robot, "Engineering");
++
++		Question originalQuestion = new SqliteQuestionRepository(database).findAll().getFirst();
++
++		assertEquals(2, originalQuestion.getMarks());
++
++		long subjectId = originalQuestion.getExam().getSubject().getId();
++		long questionId = originalQuestion.getId();
++
++		SqliteImportedSubjectAuthorityRepository authorities = new SqliteImportedSubjectAuthorityRepository(database);
++
++		var originalAuthority = authorities.find(subjectId).orElseThrow();
++
++		Map<String, Integer> originalCounts = snapshotGraphCounts(database);
++
++		List<Path> originalBackups = snapshotBackupFiles(applicationConfig);
++
++		Path sourceRoot = snapshotSourceRoot(originalArchive, "Engineering");
++
++		ApplicationConfig sourceConfig = ApplicationConfig.fromDataRoot(sourceRoot);
++
++		SqliteDatabase sourceDatabase = new SqliteDatabase(sourceConfig.databasePath());
++
++		Path sourcePdf = sourceRoot.resolve("subjects/Engineering/exams/questions.pdf");
++
++		Path destinationPdf = applicationConfig.dataRoot().resolve("subjects/Engineering/exams/questions.pdf");
++
++		assertTrue(Files.isRegularFile(destinationPdf));
++		assertEquals(-1L, Files.mismatch(sourcePdf, destinationPdf));
++
++		byte[] originalPdfBytes = Files.readAllBytes(destinationPdf);
++
++		// Create a distinct, unaccepted package that will become stale
++		// after the subsequently changed snapshot is approved.
++		Path staleArchive = exportSubsequentSnapshot(sourceRoot, "stale");
++
++		// Change authoritative Question data without changing the
++		// originating installation or portable Subject identity.
++		try (Connection connection = sourceDatabase.openConnection();
++				Statement statement = connection.createStatement()) {
++
++			assertEquals(1, statement.executeUpdate("""
++					UPDATE questions
++					SET marks = 5
++					WHERE id = 81
++					"""));
++		}
++
++		// Replace the authoritative PDF with another valid PDF.
++		// Preserve its managed path and page count.
++		try (PDDocument document = new PDDocument()) {
++			document.addPage(new PDPage());
++			document.addPage(new PDPage());
++
++			document.getDocumentInformation().setTitle("Engineering authoritative revised question booklet");
++
++			document.save(sourcePdf.toFile());
++		}
++
++		assertFalse(Files.mismatch(sourcePdf, destinationPdf) == -1L);
++
++		Path newerArchive = exportSubsequentSnapshot(sourceRoot, "newer");
++
++		var inspection = new SubjectSnapshotIntakePreview(database).inspect(newerArchive);
++
++		assertEquals(SubjectSnapshotIntakePreview.State.EXISTING_SUBJECT, inspection.state());
++
++		assertEquals(originalAuthority.originInstallationId(), inspection.fingerprint().originInstallationId());
++
++		assertEquals(originalAuthority.originSubjectPortableId(), inspection.fingerprint().subjectId());
++
++		// First preview: inspect the actual comparison, then cancel.
++		startSnapshotImport(this, newerArchive);
++
++		DialogPane preview = assertSnapshotRefreshPreview(robot, "Engineering");
++
++		robot.interact(() -> {
++			String comparison = ((TextArea) preview.getContent()).getText();
++
++			assertTrue(comparison.contains(originalAuthority.originInstallationId().toString()));
++
++			assertTrue(comparison.contains(originalAuthority.originSubjectPortableId().toString()));
++
++			assertTrue(comparison.contains(originalAuthority.latestPackageId().toString()));
++
++			assertTrue(comparison.contains(inspection.fingerprint().packageId().toString()));
++
++			assertTrue(comparison.contains("Question:"));
++			assertTrue(comparison.contains("marks: 2 → 5"));
++
++			assertTrue(comparison.contains("Update: subjects/Engineering/exams/questions.pdf"));
++
++			assertTrue(comparison.contains("""
++					Asset totals:
++					Additions: 0
++					Updates: 1
++					Removals: 0
++					Unchanged: 2
++					"""));
++		});
++
++		// Even a comparison containing actual record and asset
++		// replacements must not mutate anything before approval.
++		assertEquals(originalCounts, snapshotGraphCounts(database));
++		assertEquals(originalBackups, snapshotBackupFiles(applicationConfig));
++
++		assertEquals(originalAuthority, authorities.find(subjectId).orElseThrow());
++
++		assertEquals(2, new SqliteQuestionRepository(database).findAll().getFirst().getMarks());
++
++		assertArrayEquals(originalPdfBytes, Files.readAllBytes(destinationPdf));
++
++		fireSnapshotDialogButton(robot, preview, ButtonBar.ButtonData.CANCEL_CLOSE);
++
++		waitForDialogHidden(robot, "Refresh Subject Snapshot");
++		assertSnapshotImportReleased(this);
++
++		assertEquals(originalCounts, snapshotGraphCounts(database));
++		assertEquals(originalBackups, snapshotBackupFiles(applicationConfig));
++
++		assertEquals(originalAuthority, authorities.find(subjectId).orElseThrow());
++
++		assertArrayEquals(originalPdfBytes, Files.readAllBytes(destinationPdf));
++
++		assertEquals(2, new SqliteQuestionRepository(database).findAll().getFirst().getMarks());
++
++		// Reopen the same archive and explicitly approve the refresh.
++		startSnapshotImport(this, newerArchive);
++
++		DialogPane approvedPreview = assertSnapshotRefreshPreview(robot, "Engineering");
++
++		fireSnapshotDialogButton(robot, approvedPreview, ButtonBar.ButtonData.OK_DONE);
++
++		awaitSnapshotRefreshSuccess(robot, "Engineering");
++		assertSnapshotImportReleased(this);
++
++		Question refreshedQuestion = new SqliteQuestionRepository(database).findAll().getFirst();
++
++		assertEquals(questionId, refreshedQuestion.getId());
++		assertEquals(subjectId, refreshedQuestion.getExam().getSubject().getId());
++		assertEquals(5, refreshedQuestion.getMarks());
++
++		assertEquals(-1L, Files.mismatch(sourcePdf, destinationPdf));
++
++		var refreshedAuthority = authorities.find(subjectId).orElseThrow();
++
++		assertEquals(originalAuthority.originInstallationId(), refreshedAuthority.originInstallationId());
++
++		assertEquals(originalAuthority.originSubjectPortableId(), refreshedAuthority.originSubjectPortableId());
++
++		assertEquals(inspection.fingerprint().packageId(), refreshedAuthority.latestPackageId());
++
++		assertEquals(inspection.fingerprint().archiveSha256(), refreshedAuthority.archiveSha256());
++
++		Map<String, Integer> expectedCounts = new LinkedHashMap<>(originalCounts);
++
++		expectedCounts.compute("subject_import_packages", (_, count) -> count + 1);
++
++		assertEquals(expectedCounts, snapshotGraphCounts(database));
++
++		List<Path> refreshedBackups = snapshotBackupFiles(applicationConfig);
++
++		assertTrue(refreshedBackups.size() > originalBackups.size());
++
++		assertEquals(originalLocalCurriculum, localCurriculumEvidence(database));
++
++		// The application must retain the ordinary Working Subject.
++		// Do not reselect it before checking the completed reload.
++		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
++
++		robot.interact(() -> {
++			assertEquals("Engineering", subjects.getValue().getName());
++			assertEquals(subjectId, subjects.getValue().getId());
++			assertEquals(4, subjects.getItems().size());
++			assertFalse(subjects.isDisabled());
++		});
++
++		// Reuse the full imported-Subject inspection and authority
++		// regression against the refreshed graph.
++		assertImportedSnapshotDashboard(this, robot, "Engineering");
++
++		TableView<?> questions = lookup(robot, "#corpus-dashboard-question-work", TableView.class);
++
++		WaitForAsyncUtils.waitFor(TIMEOUT, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> {
++
++			if (questions.getItems().size() != 1) {
++				return false;
++			}
++
++			return questions.getItems().getFirst() instanceof QuestionCorpusWorkItem item
++					&& item.question().getId() == questionId && item.question().getMarks() == 5;
++		}));
++
++		// Both the latest accepted package and an older accepted
++		// package must be recognised as harmless exact replays.
++		for (Path replayArchive : List.of(newerArchive, originalArchive)) {
++
++			startSnapshotImport(this, replayArchive);
++
++			waitForDialogShowing(robot, "Import Subject Snapshot");
++
++			DialogPane replay = showingDialogPane(robot, "Import Subject Snapshot");
++
++			robot.interact(() -> {
++				assertEquals("This Subject snapshot has already been imported.", replay.getHeaderText());
++
++				assertEquals("Engineering requires no changes.", replay.getContentText());
++			});
++
++			fireSnapshotDialogButton(robot, replay, ButtonBar.ButtonData.OK_DONE);
++
++			waitForDialogHidden(robot, "Import Subject Snapshot");
++			assertSnapshotImportReleased(this);
++
++			assertEquals(refreshedAuthority, authorities.find(subjectId).orElseThrow());
++
++			assertEquals(expectedCounts, snapshotGraphCounts(database));
++
++			assertEquals(refreshedBackups, snapshotBackupFiles(applicationConfig));
++		}
++
++		// An older, previously unaccepted snapshot is not a replay.
++		// It must be rejected instead of rewinding the accepted authority.
++		startSnapshotImport(this, staleArchive);
++
++		assertSnapshotRefreshRejection(robot, "older than the latest accepted snapshot");
++
++		assertSnapshotImportReleased(this);
++
++		// An independent installation exporting the same Subject name
++		// must not acquire the established imported authority.
++		Path foreignArchive = createSubjectSnapshotArchive("Engineering");
++
++		startSnapshotImport(this, foreignArchive);
++
++		assertSnapshotRefreshRejection(robot, "different originating installation");
++
++		assertSnapshotImportReleased(this);
++
++		assertEquals(refreshedAuthority, authorities.find(subjectId).orElseThrow());
++
++		assertEquals(expectedCounts, snapshotGraphCounts(database));
++		assertEquals(refreshedBackups, snapshotBackupFiles(applicationConfig));
++
++		assertEquals(originalLocalCurriculum, localCurriculumEvidence(database));
++
++		assertEquals(5, new SqliteQuestionRepository(database).findAll().getFirst().getMarks());
++
++		assertEquals(-1L, Files.mismatch(sourcePdf, destinationPdf));
++
++		database.verifyIntegrity();
++	}
++
++	@Test
++	void subjectSnapshotRefreshSubstitutionAndNewerIdenticalSnapshot(FxRobot robot) throws Exception {
++
++		SqliteDatabase database = new SqliteDatabase(databasePath);
++
++		Path originalArchive = createSubjectSnapshotArchive("Engineering");
++
++		startSnapshotImport(this, originalArchive);
++
++		DialogPane originalPreview = assertSnapshotPreview(robot, "Engineering");
++
++		fireSnapshotDialogButton(robot, originalPreview, ButtonBar.ButtonData.OK_DONE);
++
++		awaitSnapshotImportSuccess(robot, "Engineering");
++		assertSnapshotImportReleased(this);
++
++		Question originalQuestion = new SqliteQuestionRepository(database).findAll().getFirst();
++
++		long subjectId = originalQuestion.getExam().getSubject().getId();
++
++		SqliteImportedSubjectAuthorityRepository authorities = new SqliteImportedSubjectAuthorityRepository(database);
++
++		var originalAuthority = authorities.find(subjectId).orElseThrow();
++
++		Map<String, Integer> originalCounts = snapshotGraphCounts(database);
++
++		List<Path> originalBackups = snapshotBackupFiles(applicationConfig);
++
++		List<String> originalCurriculum = localCurriculumEvidence(database);
++
++		Path destinationPdf = applicationConfig.dataRoot().resolve("subjects/Engineering/exams/questions.pdf");
++
++		byte[] originalPdfBytes = Files.readAllBytes(destinationPdf);
++
++		Path sourceRoot = snapshotSourceRoot(originalArchive, "Engineering");
++
++		// Export two newer archives without changing the originating
++		// records or assets. Their package evidence remains distinct.
++		Path newerArchive = exportSubsequentSnapshot(sourceRoot, "unchanged");
++
++		Path substituteArchive = exportSubsequentSnapshot(sourceRoot, "substitute");
++
++		byte[] reviewedArchiveBytes = Files.readAllBytes(newerArchive);
++
++		var inspection = new SubjectSnapshotIntakePreview(database).inspect(newerArchive);
++
++		startSnapshotImport(this, newerArchive);
++
++		DialogPane preview = assertSnapshotRefreshPreview(robot, "Engineering");
++
++		robot.interact(() -> {
++			String comparison = ((TextArea) preview.getContent()).getText();
++
++			assertTrue(comparison.contains("The reviewed content is unchanged."));
++
++			assertTrue(comparison.contains("Approval will advance the accepted snapshot evidence"));
++
++			assertTrue(comparison.contains("""
++					Record totals:
++					Additions: 0
++					Updates: 0
++					Removals: 0
++					Revision-only changes: 0
++					"""));
++
++			assertTrue(comparison.contains("No changed records."));
++			assertTrue(comparison.contains("No changed managed assets."));
++		});
++
++		assertEquals(originalCounts, snapshotGraphCounts(database));
++		assertEquals(originalBackups, snapshotBackupFiles(applicationConfig));
++
++		// Replace the selected archive after review. The replacement
++		// is itself valid and originates from the same installation,
++		// but it is not the archive the user reviewed.
++		Files.write(newerArchive, Files.readAllBytes(substituteArchive));
++
++		fireSnapshotDialogButton(robot, preview, ButtonBar.ButtonData.OK_DONE);
++
++		waitForDialogShowing(robot, "Subject Refresh Failed");
++
++		DialogPane failure = showingDialogPane(robot, "Subject Refresh Failed");
++
++		robot.interact(() -> {
++			assertEquals("Engineering could not be refreshed.", failure.getHeaderText());
++
++			assertTrue(failure.getContent() instanceof TextArea);
++
++			String message = ((TextArea) failure.getContent()).getText();
++
++			assertTrue(message.contains("archive changed after approval"), message);
++		});
++
++		fireSnapshotDialogButton(robot, failure, ButtonBar.ButtonData.OK_DONE);
++
++		waitForDialogHidden(robot, "Subject Refresh Failed");
++		assertSnapshotImportReleased(this);
++
++		assertEquals(originalAuthority, authorities.find(subjectId).orElseThrow());
++
++		assertEquals(originalCounts, snapshotGraphCounts(database));
++		assertEquals(originalBackups, snapshotBackupFiles(applicationConfig));
++
++		assertArrayEquals(originalPdfBytes, Files.readAllBytes(destinationPdf));
++
++		// Restore the exact original archive and approve it through
++		// a fresh application comparison.
++		Files.write(newerArchive, reviewedArchiveBytes);
++
++		startSnapshotImport(this, newerArchive);
++
++		DialogPane secondPreview = assertSnapshotRefreshPreview(robot, "Engineering");
++
++		robot.interact(() -> {
++			String comparison = ((TextArea) secondPreview.getContent()).getText();
++
++			assertTrue(comparison.contains("The reviewed content is unchanged."));
++		});
++
++		fireSnapshotDialogButton(robot, secondPreview, ButtonBar.ButtonData.OK_DONE);
++
++		awaitSnapshotRefreshSuccess(robot, "Engineering");
++		assertSnapshotImportReleased(this);
++
++		var refreshedAuthority = authorities.find(subjectId).orElseThrow();
++
++		assertEquals(inspection.fingerprint().packageId(), refreshedAuthority.latestPackageId());
++
++		assertEquals(inspection.fingerprint().archiveSha256(), refreshedAuthority.archiveSha256());
++
++		assertEquals(originalAuthority.originInstallationId(), refreshedAuthority.originInstallationId());
++
++		assertEquals(originalAuthority.originSubjectPortableId(), refreshedAuthority.originSubjectPortableId());
++
++		Question refreshedQuestion = new SqliteQuestionRepository(database).findAll().getFirst();
++
++		assertEquals(originalQuestion.getId(), refreshedQuestion.getId());
++		assertEquals(originalQuestion.getMarks(), refreshedQuestion.getMarks());
++
++		Map<String, Integer> expectedCounts = new LinkedHashMap<>(originalCounts);
++
++		expectedCounts.compute("subject_import_packages", (_, count) -> count + 1);
++
++		assertEquals(expectedCounts, snapshotGraphCounts(database));
++
++		assertTrue(snapshotBackupFiles(applicationConfig).size() > originalBackups.size());
++
++		assertArrayEquals(originalPdfBytes, Files.readAllBytes(destinationPdf));
++
++		assertEquals(originalCurriculum, localCurriculumEvidence(database));
++
++		assertTrue(authorities.isImported(subjectId));
++
++		assertThrows(IllegalStateException.class, () -> authorities.requireLocallyAuthoritative(subjectId));
++
++		database.verifyIntegrity();
++	}
++
+ 	private void assertQuestionCorrectionLocksWorkingSubject(FxRobot robot, Question question,
+ 			ComboBox<Subject> subjects) throws TimeoutException {
+ 		Node root = primaryStage.getScene().getRoot();

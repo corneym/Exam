@@ -9,6 +9,8 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -23,7 +25,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 47;
+	private static final int LATEST_SCHEMA_VERSION = 49;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -916,6 +918,19 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v46-to-v47.sql", 47);
 			return 47;
 		}
+		if (version == 47) {
+
+			// Schema v48 introduces Subject import authority and contributor
+			// assignment visibility without changing existing domain records.
+			executeMigration(connection, "/db/migration-v47-to-v48.sql", 48);
+			return 48;
+		}
+		if (version == 48) {
+
+			// Retain originating freshness evidence separately from local import time.
+			executeMigration(connection, "/db/migration-v48-to-v49.sql", 49);
+			return 49;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -1310,6 +1325,12 @@ public final class SqliteDatabase {
 		} else if (version >= 41) {
 			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
 					"/db/migration-v39-to-v40.sql", "/db/migration-v40-to-v41.sql");
+		}
+		if (version >= 48) {
+			verifyVersion48OperatingContextSchema(connection);
+		}
+		if (version >= 49) {
+			verifyVersion49SubjectSnapshotFreshness(connection);
 		}
 	}
 
@@ -2294,6 +2315,49 @@ public final class SqliteDatabase {
 				""")) {
 			if (!rows.next() || rows.getLong(1) != 0) {
 				throw new SQLException("Unreleased master graph write permit");
+			}
+		}
+	}
+
+	private void verifyVersion48OperatingContextSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "imported_subject_authorities",
+				List.of(column("subject_local_id", false, 1), column("origin_installation_id", true, 0),
+						column("origin_subject_portable_id", true, 0), column("latest_package_id", true, 0),
+						column("archive_sha256", true, 0), column("imported_at", true, 0)),
+				List.of(foreignKey("subject_local_id", "subjects", "id"),
+						foreignKey("latest_package_id", "subject_import_packages", "package_id")),
+				List.of(List.of("origin_installation_id", "origin_subject_portable_id")));
+		verifyTableSchema(connection, "contributor_assignment_hidden",
+				List.of(column("assignment_id", true, 1), column("removed_at", true, 0)),
+				List.of(foreignKey("assignment_id", "contributor_assignment_sessions", "assignment_id")), List.of());
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_operating_context_", "operating-context authority",
+				"/db/migration-v47-to-v48.sql");
+	}
+
+	private void verifyVersion49SubjectSnapshotFreshness(Connection connection) throws SQLException {
+		verifyTableColumns(connection, "subject_import_packages",
+				List.of(column("package_id", true, 1), column("originating_snapshot_created_at", false, 0),
+						column("originating_snapshot_content_sha256", false, 0)));
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_subject_import_freshness_", "Subject snapshot freshness",
+				"/db/migration-v48-to-v49.sql");
+		try (Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery("""
+				SELECT originating_snapshot_created_at,
+				       originating_snapshot_content_sha256
+				FROM subject_import_packages
+				WHERE originating_snapshot_created_at IS NOT NULL
+				   OR originating_snapshot_content_sha256 IS NOT NULL
+				""")) {
+			while (rows.next()) {
+				String timestamp = rows.getString(1);
+				String digest = rows.getString(2);
+				if (timestamp == null || digest == null || !digest.matches("[0-9a-f]{64}")) {
+					throw new SQLException("Incomplete or invalid originating snapshot freshness evidence");
+				}
+				try {
+					Instant.parse(timestamp);
+				} catch (DateTimeParseException failure) {
+					throw new SQLException("Invalid originating snapshot creation timestamp", failure);
+				}
 			}
 		}
 	}

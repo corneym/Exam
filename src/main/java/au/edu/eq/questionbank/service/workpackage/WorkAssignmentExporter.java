@@ -25,6 +25,7 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Stream;
 
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
@@ -32,8 +33,8 @@ import au.edu.eq.questionbank.ApplicationVersion;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.repository.identity.SqliteExamAssignmentGraphReader;
-import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.identity.SqliteSubjectGraphReader.SubjectGraph;
 import au.edu.eq.questionbank.repository.identity.SqliteSubjectPortableRecordReader;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
@@ -128,8 +129,10 @@ public final class WorkAssignmentExporter {
 			// Preserve the original record values and revision tokens.
 			// Contributor modifications must never overwrite this entry.
 			addStructuredEntry(sources, entries, BASELINE_PATH, EntryRole.BASELINE, initialRecords);
+			List<ExchangeRecord> reconciliationEvidence = new AssignmentReconciliationEvidenceReader(snapshotDatabase)
+					.read(examPortableId, request.contributorId());
 			ExchangeRecord assignmentContext = assignmentContext(request, masterId, subjectPortableId, examPortableId,
-					currentSyllabusId, legacySyllabusId, baselineId, issuedAt);
+					currentSyllabusId, legacySyllabusId, baselineId, issuedAt, reconciliationEvidence);
 			addStructuredEntry(sources, entries, ASSIGNMENT_CONTEXT_PATH, EntryRole.RECORDS,
 					encodeRecords(List.of(assignmentContext)));
 			addStructuredEntry(sources, entries, ExamWorkAssetIndex.INDEX_PATH, EntryRole.INDEX,
@@ -185,7 +188,8 @@ public final class WorkAssignmentExporter {
 	}
 
 	private ExchangeRecord assignmentContext(Request request, UUID masterId, UUID subjectId, UUID examId,
-			UUID currentSyllabusId, UUID legacySyllabusId, UUID baselineId, Instant issuedAt) {
+			UUID currentSyllabusId, UUID legacySyllabusId, UUID baselineId, Instant issuedAt,
+			List<ExchangeRecord> reconciliationEvidence) {
 		ObjectNode values = JsonNodeFactory.instance.objectNode();
 		values.put("assignment_id", request.assignmentId().toString());
 		values.put("baseline_snapshot_id", baselineId.toString());
@@ -199,6 +203,16 @@ public final class WorkAssignmentExporter {
 		values.put("subject_id", subjectId.toString());
 		if (legacySyllabusId != null) {
 			values.put("legacy_syllabus_id", legacySyllabusId.toString());
+		}
+
+		// Carry accepted historical identity mappings inside the
+		// integrity-checked assignment context. No separate receipt
+		// exchange is required.
+		ArrayNode evidence = values.putArray("reconciliation_evidence");
+		for (ExchangeRecord record : reconciliationEvidence) {
+			ObjectNode entry = evidence.addObject();
+			entry.put("evidence_id", record.recordId().toString());
+			entry.set("mapping", record.values());
 		}
 		return new ExchangeRecord(ExchangeRecord.CURRENT_RECORD_VERSION, "WORK_ASSIGNMENT_CONTEXT",
 				request.assignmentId(), baselineId, null, values);

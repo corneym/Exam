@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.ui.audit;
 
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -9,6 +10,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamAssetExpectations;
@@ -47,6 +49,7 @@ import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressIndicator;
+import javafx.scene.control.ScrollBar;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SelectionMode;
 import javafx.scene.control.SplitPane;
@@ -84,6 +87,7 @@ public final class CorpusDashboardPane extends VBox {
 	// the dialog is vertically constrained.
 	private static final double BOOKLET_TABLE_MAX_HEIGHT = 280.0;
 	private static final double BOOKLET_TABLE_MIN_HEIGHT = 125.0;
+	private static final PseudoClass EXAM_ROW_ASSIGNED = PseudoClass.getPseudoClass("exam-assigned");
 
 	// Corpus and curriculum snapshots.
 	private boolean curriculumAvailable;
@@ -126,8 +130,6 @@ public final class CorpusDashboardPane extends VBox {
 	private final Button missingQuestionsButton = new Button();
 	private final Button sharedContextButton = new Button();
 	private final TableView<ExamCorpusStatus> examTable = new TableView<>();
-	private final Label selectedExamLabel = new Label();
-	private final Label declaredExamStateLabel = new Label();
 	private final Label selectedExamCountsLabel = new Label();
 	private final TableView<BookletCorpusStatus> bookletTable = new TableView<>();
 	private final Label selectedBookletLabel = new Label();
@@ -194,6 +196,14 @@ public final class CorpusDashboardPane extends VBox {
 	private final Button createContributorAssignmentButton = new Button("Create Contributor Assignment");
 	private Consumer<Exam> createContributorAssignmentHandler = _ -> {
 	};
+	private final Button closeContributorAssignmentButton = new Button("Close Work Package");
+	private Consumer<Exam> closeContributorAssignmentHandler = _ -> {
+	};
+	private Map<Long, String> coordinatorExamLocks = Map.of();
+	private boolean importedSubjectReadOnly;
+	private Set<Long> contributorBaselineQuestionIds = Set.of();
+	private StackPane curriculumSection;
+	private Set<Long> contributorBaselineAnswerIds = Set.of();
 
 	/**
 	 * Creates a Subject-scoped operational Dashboard from one persistence snapshot.
@@ -252,17 +262,78 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	/**
-	 * Replaces the complete persistence-derived Dashboard generation while
-	 * retaining compatible local filters and selection.
+	 * Prepares this Dashboard for a contributor assignment transition without
+	 * reconstructing its layout.
+	 *
+	 * <p>
+	 * Previous ownership permissions and operational selections are invalidated
+	 * immediately. The Dashboard remains disabled until the application publishes
+	 * the replacement persistence and authority snapshot.
+	 *
+	 * @param examId next assigned Exam ID, or null when no assignment remains
+	 * @throws IllegalArgumentException if a supplied Exam ID is non-positive
+	 */
+	public void beginContributorAssignmentRefresh(Long examId) {
+		if (examId != null && examId < 1) {
+			throw new IllegalArgumentException("Assignment Exam ID must be positive");
+		}
+		setDisable(true);
+		setReadOnlyContext(coordinatorExamLocks, true);
+		assignmentExamId = examId;
+		contributorBaselineQuestionIds = Set.of();
+		contributorBaselineAnswerIds = Set.of();
+		if (examId == null) {
+
+			// Historical contributor records must not become ordinary work
+			// merely because the final active assignment has ended.
+			examStatuses = List.of();
+			questions = List.of();
+		}
+		examTable.getSelectionModel().clearSelection();
+		bookletTable.getSelectionModel().clearSelection();
+		questionTable.getSelectionModel().clearSelection();
+		changingScopeFilters = true;
+		try {
+			populateFilterOptions();
+		} finally {
+			changingScopeFilters = false;
+		}
+		clearFilters();
+	}
+
+	/**
+	 * Mounts this Dashboard's existing Curriculum controls in an external
+	 * application header without duplicating their state or handlers.
+	 *
+	 * A standalone Dashboard retains its Curriculum section until this method is
+	 * called.
+	 *
+	 * @param destination host for the Curriculum section
+	 * @throws NullPointerException if the destination is null
+	 */
+	public void moveCurriculumSectionTo(StackPane destination) {
+		Objects.requireNonNull(destination, "destination");
+		if (curriculumSection.getParent() == destination) {
+			return;
+		}
+
+		// Transfer the existing section rather than constructing
+		// a second set of Curriculum controls.
+		getChildren().remove(curriculumSection);
+		destination.getChildren().setAll(curriculumSection);
+	}
+
+	/**
+	 * Replaces the persistence-derived Dashboard data while preserving valid
+	 * selections, filters and the existing Dashboard layout.
 	 *
 	 * @param updatedStatuses            refreshed Exam audit state
 	 * @param updatedQuestions           refreshed Question corpus
 	 * @param updatedMappingCoverages    refreshed curriculum mapping coverage
-	 * @param updatedCurriculumAvailable whether the Subject has at least one
-	 *                                   curriculum version
-	 * @param preferredQuestionId        Question to restore when still visible, or
-	 *                                   a non-positive value for no preferred
-	 *                                   Question
+	 * @param updatedCurriculumAvailable whether curriculum is available
+	 * @param preferredQuestionId        Question to select when visible, or a
+	 *                                   non-positive value to preserve the existing
+	 *                                   selection
 	 */
 	public void replaceData(List<ExamCorpusStatus> updatedStatuses, List<Question> updatedQuestions,
 			List<CurriculumMappingCoverage> updatedMappingCoverages, boolean updatedCurriculumAvailable,
@@ -272,9 +343,12 @@ public final class CorpusDashboardPane extends VBox {
 		Long providerId = providerBox.getValue() == null ? null : providerBox.getValue().getId();
 		Integer year = yearBox.getValue();
 		ExamCaptureState examState = examStateBox.getValue();
+		Set<Long> selectedQuestionIds = questionTable.getSelectionModel().getSelectedItems().stream()
+				.map(item -> item.question().getId()).collect(Collectors.toSet());
+		Map<ScrollBar, Double> scrollPositions = captureTableScrollPositions();
 
-		// Replace all Subject-level reporting snapshots from the same persistence
-		// generation without allowing mapping status to alter corpus completeness.
+		// Replace the data without reconstructing the Dashboard
+		// or its adjustable split panes.
 		examStatuses = statusesForWorkingSubject(updatedStatuses);
 		questions = questionsForWorkingSubject(updatedQuestions);
 		mappingCoverages = mappingCoveragesForWorkingSubject(updatedMappingCoverages);
@@ -290,25 +364,34 @@ public final class CorpusDashboardPane extends VBox {
 		} finally {
 			changingScopeFilters = false;
 		}
-
-		// Exam creation depends on Subject curriculum, so refresh that gate from the
-		// same generation before rebuilding the structural hierarchy.
 		updateAddExamActionState();
 		refreshSummaryControls();
 		refreshCurriculumMappingSummary();
 		refreshExamTable(selectedExamId, selectedBookletId);
 		refreshQuestionWork();
-		if (preferredQuestionId > 0) {
+		restoreTableScrollPositions(scrollPositions);
 
-			// Restore a corrected Question only when it remains visible under the
-			// Dashboard's current Exam, booklet and work filters.
-			QuestionCorpusWorkItem preferred = questionTable.getItems().stream()
-					.filter(item -> item.question().getId() == preferredQuestionId).findFirst().orElse(null);
-			if (preferred != null) {
-				questionTable.getSelectionModel().select(preferred);
-				questionTable.scrollTo(preferred);
+		// An explicitly requested Question takes precedence over
+		// the previous selection after a correction workflow.
+		QuestionCorpusWorkItem preferred = preferredQuestionId > 0
+				? questionTable.getItems().stream().filter(item -> item.question().getId() == preferredQuestionId)
+						.findFirst().orElse(null)
+				: null;
+		if (preferred != null) {
+			questionTable.getSelectionModel().select(preferred);
+			questionTable.scrollTo(preferred);
+		} else {
+
+			// Preserve every selected Question that still exists
+			// within the refreshed display scope.
+			for (QuestionCorpusWorkItem item : questionTable.getItems()) {
+				if (selectedQuestionIds.contains(item.question().getId())) {
+					questionTable.getSelectionModel().select(item);
+				}
 			}
 		}
+		updateBulkActionState();
+		updateQuestionActionState();
 	}
 
 	/**
@@ -329,6 +412,18 @@ public final class CorpusDashboardPane extends VBox {
 		// value from the Dashboard generation already on screen.
 		replaceData(updatedStatuses, updatedQuestions, updatedMappingCoverages, curriculumAvailable,
 				preferredQuestionId);
+	}
+
+	/**
+	 * Temporarily restricts Dashboard mutations while fresh authority information
+	 * is being acquired.
+	 *
+	 * <p>
+	 * The existing assignment indicators and displayed data remain visible. A
+	 * subsequently published authority snapshot restores the permitted operations.
+	 */
+	public void restrictUntilAuthorityRefresh() {
+		setReadOnlyContext(coordinatorExamLocks, true);
 	}
 
 	/**
@@ -433,7 +528,7 @@ public final class CorpusDashboardPane extends VBox {
 	 * <p>
 	 * The restriction applies to Exam lists, summary counts, Question Work,
 	 * structural actions and Exam lifecycle actions. Ordinary filters cannot
-	 * broaden it.
+	 * broaden it. Republishing an unchanged scope preserves existing filters.
 	 *
 	 * @param examId assigned local Exam ID, or null for ordinary mode
 	 * @throws IllegalArgumentException if the Exam is not in this Dashboard
@@ -448,11 +543,17 @@ public final class CorpusDashboardPane extends VBox {
 				throw new IllegalArgumentException("Assigned Exam is unavailable on the Dashboard: " + examId);
 			}
 		}
+		if (Objects.equals(assignmentExamId, examId)) {
+			return;
+		}
 		assignmentExamId = examId;
-
-		// Curriculum authoring is coordinator-owned. Classification
-		// of captured Questions remains available through Question Work.
-		addCurriculumButton.setDisable(assignmentExamId != null);
+		addCurriculumButton.setDisable(importedSubjectReadOnly || assignmentExamId != null);
+		changingScopeFilters = true;
+		try {
+			populateFilterOptions();
+		} finally {
+			changingScopeFilters = false;
+		}
 		clearFilters();
 	}
 
@@ -487,6 +588,70 @@ public final class CorpusDashboardPane extends VBox {
 
 		// Bulk UNKNOWN resolution remains an existing operational Dashboard feature.
 		bulkResponseTypeHandler = handler;
+	}
+
+	/**
+	 * Sets the coordinator action that closes an active Exam assignment without
+	 * receiving a contribution.
+	 *
+	 * @param handler receives the selected locked Exam
+	 * @throws NullPointerException if handler is null
+	 */
+	public void setCloseContributorAssignmentHandler(Consumer<Exam> handler) {
+		closeContributorAssignmentHandler = Objects.requireNonNull(handler, "handler");
+	}
+
+	/**
+	 * Supplies the immutable Answer identities from the issued assignment.
+	 * Republishing unchanged identities preserves current Question Work selections.
+	 *
+	 * @param answerIds positive local Answer identifiers
+	 * @throws NullPointerException     if the set or an element is null
+	 * @throws IllegalArgumentException if an identifier is not positive
+	 */
+	public void setContributorBaselineAnswerIds(Set<Long> answerIds) {
+		Objects.requireNonNull(answerIds, "answerIds");
+		for (Long id : answerIds) {
+			Objects.requireNonNull(id, "answerIds element");
+			if (id < 1) {
+				throw new IllegalArgumentException("Answer IDs must be positive");
+			}
+		}
+		Set<Long> replacement = Set.copyOf(answerIds);
+		if (contributorBaselineAnswerIds.equals(replacement)) {
+			return;
+		}
+		contributorBaselineAnswerIds = replacement;
+		refreshQuestionWork();
+	}
+
+	/**
+	 * Supplies the existing Questions included in the selected assignment baseline.
+	 *
+	 * <p>
+	 * These Questions remain available for inspection but cannot be corrected by
+	 * the contributor. Questions created after assignment installation retain their
+	 * permitted capture actions. Republishing unchanged identities preserves
+	 * current Question Work selections.
+	 *
+	 * @param questionIds local IDs of coordinator-issued Questions
+	 * @throws NullPointerException     if the set or an element is null
+	 * @throws IllegalArgumentException if an ID is not positive
+	 */
+	public void setContributorBaselineQuestionIds(Set<Long> questionIds) {
+		Objects.requireNonNull(questionIds, "questionIds");
+		for (Long id : questionIds) {
+			Objects.requireNonNull(id, "questionIds element");
+			if (id < 1) {
+				throw new IllegalArgumentException("Question IDs must be positive");
+			}
+		}
+		Set<Long> replacement = Set.copyOf(questionIds);
+		if (contributorBaselineQuestionIds.equals(replacement)) {
+			return;
+		}
+		contributorBaselineQuestionIds = replacement;
+		refreshQuestionWork();
 	}
 
 	/**
@@ -659,6 +824,54 @@ public final class CorpusDashboardPane extends VBox {
 	 */
 	public void setQuestionWorkDescriptorAssignmentHandler(Consumer<List<Question>> handler) {
 		questionWorkDescriptorAssignmentHandler = Objects.requireNonNull(handler, "handler");
+	}
+
+	/**
+	 * Applies authoritative read-only presentation to the Dashboard.
+	 *
+	 * Active coordinator assignments are recorded by Exam ID. Imported Subjects are
+	 * read-only throughout their Exam hierarchy. Searching, inspection, filtering
+	 * and navigation remain available.
+	 *
+	 * @param lockedExams     active Exam IDs mapped to contributor names
+	 * @param subjectReadOnly whether the Subject is externally authoritative or
+	 *                        temporarily restricted
+	 * @throws NullPointerException     if the map contains null values
+	 * @throws IllegalArgumentException if an Exam ID or name is invalid
+	 */
+	public void setReadOnlyContext(Map<Long, String> lockedExams, boolean subjectReadOnly) {
+		Objects.requireNonNull(lockedExams, "lockedExams");
+		for (Map.Entry<Long, String> entry : lockedExams.entrySet()) {
+			Long examId = Objects.requireNonNull(entry.getKey(), "examId");
+			String contributor = Objects.requireNonNull(entry.getValue(), "contributor");
+			if (examId < 1 || contributor.isBlank()) {
+				throw new IllegalArgumentException("Invalid assigned Exam details");
+			}
+		}
+		boolean locksChanged = !coordinatorExamLocks.equals(lockedExams);
+		coordinatorExamLocks = Map.copyOf(lockedExams);
+		importedSubjectReadOnly = subjectReadOnly;
+		addCurriculumButton.setDisable(importedSubjectReadOnly || assignmentExamId != null);
+		updateAddExamActionState();
+		refreshCurriculumMappingSummary();
+
+		// Only repaint assignment-dependent table cells when
+		// the durable lock information has actually changed.
+		if (locksChanged) {
+			examTable.refresh();
+		}
+		refreshExamRowStyles();
+		bookletTable.refresh();
+		updateCaptureActionState();
+		updateExamAssetsActionState();
+		updateExamLifecycleActionState();
+		updateBulkActionState();
+		updateQuestionActionState();
+		List<Question> outstanding = missingDescriptorQuestionsShown();
+		assignQuestionWorkDescriptorsButton
+				.setDisable(importedSubjectReadOnly || assignmentExamId != null || isSelectedExamReadOnly()
+						|| outstanding.isEmpty() || outstanding.stream().anyMatch(this::isQuestionReadOnly));
+		updateSelectedExamSummary(examTable.getSelectionModel().getSelectedItem());
 	}
 
 	void replaceData(List<ExamCorpusStatus> updatedStatuses, List<Question> updatedQuestions) {
@@ -844,28 +1057,34 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private void buildContent() {
-		StackPane curriculumSection = buildCurriculumSection();
+		curriculumSection = buildCurriculumSection();
 		HBox summaryRow = buildSummaryRow();
 		ScrollPane summaryScroll = createHorizontalScrollRow("corpus-dashboard-summary-scroll", summaryRow);
 		SplitPane hierarchyRow = buildHierarchyRow();
 		StackPane questionSection = buildQuestionWorkSection();
 		SplitPane workSplit = buildWorkSplit(hierarchyRow, questionSection);
 
-		// Keep the summary outside the adjustable work area, but allow its
-		// natural-width buttons to scroll rather than become clipped.
+		// Standalone Dashboard usage retains its local
+		// Curriculum section. The application home transfers
+		// that same section to its shared header.
 		getChildren().addAll(curriculumSection, summaryScroll, workSplit);
 		setSpacing(SPACING);
 		setPadding(PADDING);
 	}
 
 	private StackPane buildCurriculumSection() {
-		HBox mappingReviewRow = new HBox(SPACING, createBoldLabel("Mapping review"), curriculumMappingSummaryLabel);
-		mappingReviewRow.setAlignment(Pos.CENTER_LEFT);
-		HBox.setHgrow(curriculumMappingSummaryLabel, Priority.ALWAYS);
-		HBox curriculumActionsRow = new HBox(SPACING, addCurriculumButton, mapCurriculumButton);
+		Label mappingReviewLabel = createBoldLabel("Mapping review");
+		mappingReviewLabel.setId("corpus-dashboard-mapping-review-label");
+		mappingReviewLabel.setMinWidth(Region.USE_PREF_SIZE);
+		HBox curriculumActionsRow = new HBox(SPACING, addCurriculumButton, mapCurriculumButton, mappingReviewLabel,
+				curriculumMappingSummaryLabel);
+		curriculumActionsRow.setId("corpus-dashboard-curriculum-actions-row");
 		curriculumActionsRow.setAlignment(Pos.CENTER_LEFT);
-		return createTitledSection("corpus-dashboard-curriculum-section", "CURRICULUM", mappingReviewRow,
-				curriculumActionsRow);
+
+		// Keep Curriculum actions at their natural widths and allow
+		// the mapping summary to occupy the remaining horizontal space.
+		HBox.setHgrow(curriculumMappingSummaryLabel, Priority.ALWAYS);
+		return createTitledSection("corpus-dashboard-curriculum-section", "CURRICULUM", curriculumActionsRow);
 	}
 
 	private SplitPane buildHierarchyRow() {
@@ -878,10 +1097,9 @@ public final class CorpusDashboardPane extends VBox {
 		examEmptyStateRow.setId("corpus-dashboard-exam-empty-state");
 		examEmptyStateRow.setAlignment(Pos.CENTER_LEFT);
 		examEmptyStateScroll = createHorizontalScrollRow("corpus-dashboard-empty-exam-scroll", examEmptyStateRow);
-		HBox selectedExamTitleRow = new HBox(SPACING, selectedExamLabel, declaredExamStateLabel, manageExamAssetsButton,
-				createContributorAssignmentButton, inspectExamQuestionsButton, examLifecycleButton);
+		HBox selectedExamTitleRow = new HBox(SPACING, manageExamAssetsButton, createContributorAssignmentButton,
+				closeContributorAssignmentButton, inspectExamQuestionsButton, examLifecycleButton);
 		selectedExamTitleRow.setAlignment(Pos.CENTER_LEFT);
-		HBox.setHgrow(selectedExamLabel, Priority.ALWAYS);
 		ScrollPane examActionsScroll = createHorizontalScrollRow("corpus-dashboard-exam-actions-scroll",
 				selectedExamTitleRow);
 		examOperationalContent = new VBox(SPACING, examFilterScroll, examTable, examActionsScroll,
@@ -980,6 +1198,22 @@ public final class CorpusDashboardPane extends VBox {
 		return workSplit;
 	}
 
+	private boolean canCaptureAnswer(Question question) {
+		if (question == null || isExamReadOnly(question.getExam().getId())) {
+			return false;
+		}
+		if (assignmentExamId == null) {
+			return true;
+		}
+		if (question.getExam().getId() != assignmentExamId.longValue()) {
+			return false;
+		}
+
+		// Protect the issued Answer itself rather than
+		// inferring Answer ownership from its parent Question.
+		return !question.hasAnswer() || !contributorBaselineAnswerIds.contains(question.getAnswer().getId());
+	}
+
 	private boolean canCompleteSelectedAnswer(QuestionCorpusWorkItem item) {
 		if (item == null) {
 			return false;
@@ -1043,6 +1277,18 @@ public final class CorpusDashboardPane extends VBox {
 		newQuestionCaptureHandler.accept(selected.booklet());
 	}
 
+	private Map<ScrollBar, Double> captureTableScrollPositions() {
+		Map<ScrollBar, Double> positions = new HashMap<>();
+		for (TableView<?> table : List.of(examTable, bookletTable, questionTable)) {
+			for (Node node : table.lookupAll(".scroll-bar")) {
+				if (node instanceof ScrollBar scrollBar) {
+					positions.put(scrollBar, scrollBar.getValue());
+				}
+			}
+		}
+		return positions;
+	}
+
 	private <S> void centreTableColumns(TableView<S> table) {
 		for (TableColumn<S, ?> column : table.getColumns()) {
 
@@ -1092,9 +1338,7 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private void clearSelectedExam() {
-		selectedExamLabel.setText("No Exam selected");
-		declaredExamStateLabel.setText("");
-		selectedExamCountsLabel.setText("");
+		updateSelectedExamSummary(null);
 		bookletTable.getItems().clear();
 		updateSelectedBookletLabel(null);
 		setVisibleAndManaged(bookletWarningLabel, false);
@@ -1108,23 +1352,16 @@ public final class CorpusDashboardPane extends VBox {
 
 	private void completeSelectedAnswer() {
 		QuestionCorpusWorkItem selected = singleSelectedQuestionWorkItem();
-		if (selected == null) {
+		if (selected == null || !canCaptureAnswer(selected.question())) {
 			return;
 		}
 		if (isMissingMcqExplanation(selected.question())) {
-
-			// Explanation work belongs to an already-complete A-D Answer and therefore
-			// routes to the retrofit explanation workflow rather than ordinary Answer
-			// capture.
 			mcqExplanationCaptureHandler.accept(selected.question());
 			return;
 		}
-		if (!canCompleteSelectedAnswer(selected)) {
-			return;
+		if (canCompleteSelectedAnswer(selected)) {
+			answerCaptureHandler.accept(selected.question());
 		}
-
-		// Ordinary missing-Answer work retains its existing exact-Question route.
-		answerCaptureHandler.accept(selected.question());
 	}
 
 	private void completeSelectedQuestion() {
@@ -1299,6 +1536,12 @@ public final class CorpusDashboardPane extends VBox {
 			// Issuance is always Exam-wide, never booklet-specific.
 			createContributorAssignmentHandler.accept(selected.exam());
 		});
+		closeContributorAssignmentButton.setOnAction(_ -> {
+			ExamCorpusStatus selected = examTable.getSelectionModel().getSelectedItem();
+			if (selected != null && !closeContributorAssignmentButton.isDisabled()) {
+				closeContributorAssignmentHandler.accept(selected.exam());
+			}
+		});
 		assignDescriptorsButton.setOnAction(_ -> assignSelectedBookletDescriptors());
 		assignQuestionWorkDescriptorsButton.setOnAction(_ -> assignQuestionWorkDescriptors());
 		inspectBookletQuestionsButton.setOnAction(_ -> inspectSelectedBookletQuestions());
@@ -1347,17 +1590,19 @@ public final class CorpusDashboardPane extends VBox {
 		createContributorAssignmentButton.setDisable(true);
 		createContributorAssignmentButton.setTooltip(new Tooltip("Issue the selected complete Exam structure and PDFs "
 				+ "for offline Question capture and classification."));
+		closeContributorAssignmentButton.setId("corpus-dashboard-close-assignment");
+		closeContributorAssignmentButton.setDisable(true);
+		closeContributorAssignmentButton
+				.setTooltip(new Tooltip("Close the selected active work package without importing a return. "
+						+ "The Exam will be unlocked and late contributions will not be accepted."));
 
 		// Status labels must remain readable as the adjacent panel grows or
 		// shrinks, rather than forcing the enclosing section to be wider.
-		declaredExamStateLabel.setStyle("-fx-font-weight: bold;");
 		selectedExamCountsLabel.setStyle("-fx-font-weight: bold;");
 		selectedExamCountsLabel.setWrapText(true);
+		selectedExamCountsLabel.setId("corpus-dashboard-selected-exam-counts");
 		selectedBookletLabel.setStyle("-fx-font-weight: bold;");
 		selectedBookletLabel.setWrapText(true);
-		selectedExamLabel.setId("corpus-dashboard-selected-exam");
-		declaredExamStateLabel.setId("corpus-dashboard-selected-exam-state");
-		selectedExamCountsLabel.setId("corpus-dashboard-selected-exam-counts");
 		selectedBookletLabel.setId("corpus-dashboard-selected-booklet");
 		bookletWarningLabel.setId("corpus-dashboard-booklet-warning");
 		mcqExplanationCoverageLabel.setId("corpus-dashboard-mcq-coverage");
@@ -1387,8 +1632,9 @@ public final class CorpusDashboardPane extends VBox {
 		TableColumn<ExamCorpusStatus, String> assessmentColumn = new TableColumn<>("Assessment");
 		assessmentColumn.setCellValueFactory(data -> new ReadOnlyStringWrapper(data.getValue().exam().getName()));
 		TableColumn<ExamCorpusStatus, String> stateColumn = new TableColumn<>("State");
-		stateColumn
-				.setCellValueFactory(data -> new ReadOnlyStringWrapper(data.getValue().declaredCaptureState().name()));
+		stateColumn.setCellValueFactory(data -> new ReadOnlyStringWrapper(
+				coordinatorExamLocks.containsKey(data.getValue().exam().getId()) ? "ASSIGNED"
+						: data.getValue().declaredCaptureState().name()));
 		TableColumn<ExamCorpusStatus, String> questionBookletsColumn = new TableColumn<>("Question Booklets");
 		questionBookletsColumn
 				.setCellValueFactory(data -> new ReadOnlyStringWrapper(questionAssetCount(data.getValue())));
@@ -1616,7 +1862,9 @@ public final class CorpusDashboardPane extends VBox {
 				setAlignment(Pos.CENTER);
 				checkBox.setOnAction(_ -> {
 					BookletCorpusStatus status = getTableRow() == null ? null : getTableRow().getItem();
-					if (status == null || applicabilityReviewChangeInProgress) {
+					if (status == null || applicabilityReviewChangeInProgress || assignmentExamId != null
+							|| status.booklet().getExam().isComplete()
+							|| isExamReadOnly(status.booklet().getExam().getId())) {
 						return;
 					}
 					boolean recorded = reviewedBookletIds.contains(status.booklet().getId());
@@ -1645,9 +1893,13 @@ public final class CorpusDashboardPane extends VBox {
 				boolean eligible = ExamApplicabilityReview.eligibleForReview(status);
 				checkBox.setId("corpus-dashboard-applicability-reviewed-" + bookletId);
 				checkBox.setSelected(recorded && eligible);
-				checkBox.setDisable(applicabilityReviewChangeInProgress || (!recorded && !eligible));
+				checkBox.setDisable(applicabilityReviewChangeInProgress || assignmentExamId != null
+						|| status.booklet().getExam().isComplete() || isExamReadOnly(status.booklet().getExam().getId())
+						|| (!recorded && !eligible));
 				String explanation;
-				if (!eligible) {
+				if (status.booklet().getExam().isComplete()) {
+					explanation = "Exam is complete. Reactivate it before " + "changing applicability review.";
+				} else if (!eligible) {
 					explanation = "Finish the booklet's expected Question "
 							+ "capture, classification and required content "
 							+ "before confirming applicability review.";
@@ -1821,10 +2073,7 @@ public final class CorpusDashboardPane extends VBox {
 		QuestionCorpusFilter filter = new QuestionCorpusFilter(workingSubject.getId(), null, null,
 				selected.booklet().getId(), QuestionCorpusCompletionFilter.INCOMPLETE,
 				QuestionCorpusProblem.MISSING_ANSWER);
-		return QuestionCorpusQueue.build(questions, filter).stream()
-
-				// Do not send the user to Answer capture while Question content, Shared
-				// Context or response type still requires earlier correction.
+		return QuestionCorpusQueue.build(questions, filter).stream().filter(item -> canCaptureAnswer(item.question()))
 				.filter(item -> item.status().questionContentCaptured() && item.status().sharedContextResolved()
 						&& item.status().responseTypeResolved())
 				.map(QuestionCorpusWorkItem::question).findFirst().orElse(null);
@@ -1834,13 +2083,9 @@ public final class CorpusDashboardPane extends VBox {
 		if (bookletStatus == null || !bookletStatus.mcqExplanationCoverage().explanationCapable()) {
 			return null;
 		}
-
-		// Booklet capture must begin at the first outstanding Question in natural
-		// source
-		// order and must never cross into another booklet.
 		return questions.stream().filter(question -> question.getBooklet().getId() == bookletStatus.booklet().getId())
-				.filter(this::isMissingMcqExplanation).sorted(QuestionSourceOrder.comparator()).findFirst()
-				.orElse(null);
+				.filter(this::canCaptureAnswer).filter(this::isMissingMcqExplanation)
+				.sorted(QuestionSourceOrder.comparator()).findFirst().orElse(null);
 	}
 
 	private Question firstQuestionCaptureWorkQuestion(BookletCorpusStatus selected) {
@@ -1849,11 +2094,8 @@ public final class CorpusDashboardPane extends VBox {
 		}
 		QuestionCorpusFilter filter = new QuestionCorpusFilter(workingSubject.getId(), null, null,
 				selected.booklet().getId(), QuestionCorpusCompletionFilter.INCOMPLETE, null);
-
-		// Question-side capture consists of existing Questions whose body content or
-		// Shared Context still requires resolution. Answer-only work does not belong to
-		// this action.
 		return QuestionCorpusQueue.build(questions, filter).stream()
+				.filter(item -> !isQuestionReadOnly(item.question()))
 				.filter(item -> item.status().hasProblem(QuestionCorpusProblem.MISSING_QUESTION_CONTENT)
 						|| item.status().hasProblem(QuestionCorpusProblem.UNRESOLVED_SHARED_CONTEXT))
 				.map(QuestionCorpusWorkItem::question).findFirst().orElse(null);
@@ -1926,6 +2168,10 @@ public final class CorpusDashboardPane extends VBox {
 				reviewedBookletIds);
 	}
 
+	private boolean isExamReadOnly(long examId) {
+		return importedSubjectReadOnly || coordinatorExamLocks.containsKey(examId);
+	}
+
 	private boolean isMissingMcqExplanation(Question question) {
 		if (question == null || question.getResponseType() != QuestionResponseType.MULTIPLE_CHOICE) {
 			return false;
@@ -1943,6 +2189,19 @@ public final class CorpusDashboardPane extends VBox {
 
 		// For eligible MCQs, at least one persisted Answer region is the explanation.
 		return question.getAnswer().getRegions().isEmpty();
+	}
+
+	private boolean isQuestionReadOnly(Question question) {
+		if (question == null) {
+			return false;
+		}
+		return isExamReadOnly(question.getExam().getId())
+				|| (assignmentExamId != null && contributorBaselineQuestionIds.contains(question.getId()));
+	}
+
+	private boolean isSelectedExamReadOnly() {
+		ExamCorpusStatus selected = examTable.getSelectionModel().getSelectedItem();
+		return selected != null && isExamReadOnly(selected.exam().getId());
 	}
 
 	private void manageSelectedExamAssets() {
@@ -2012,14 +2271,17 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private void populateFilterOptions() {
+		List<ExamCorpusStatus> availableStatuses = examStatuses.stream()
+				.filter(status -> assignmentExamId == null || status.exam().getId() == assignmentExamId.longValue())
+				.toList();
 		Map<Long, ExamProvider> providers = new LinkedHashMap<>();
-		for (ExamCorpusStatus status : examStatuses) {
+		for (ExamCorpusStatus status : availableStatuses) {
 			ExamProvider provider = status.exam().getProvider();
 			providers.putIfAbsent(provider.getId(), provider);
 		}
 		providerBox.getItems().setAll(providers.values().stream()
 				.sorted(Comparator.comparing(ExamProvider::getName).thenComparingLong(ExamProvider::getId)).toList());
-		yearBox.getItems().setAll(examStatuses.stream().map(status -> status.exam().getYear()).distinct()
+		yearBox.getItems().setAll(availableStatuses.stream().map(status -> status.exam().getYear()).distinct()
 				.sorted(Comparator.reverseOrder()).toList());
 	}
 
@@ -2122,7 +2384,8 @@ public final class CorpusDashboardPane extends VBox {
 			curriculumMappingSummaryLabel.setText("No curriculum has been added.");
 			return;
 		}
-		mapCurriculumButton.setDisable(assignmentExamId != null || mappingCoverages.isEmpty());
+		mapCurriculumButton
+				.setDisable(importedSubjectReadOnly || assignmentExamId != null || mappingCoverages.isEmpty());
 		if (mappingCoverages.isEmpty()) {
 
 			// Curriculum exists, but no historical-to-current pair currently requires
@@ -2177,9 +2440,7 @@ public final class CorpusDashboardPane extends VBox {
 			examTable.getItems().setAll(filtered);
 			if (subjectWideQuestionWork) {
 
-				// No Exam may appear selected while Question Work contains
-				// Questions from several Exams. Clicking an Exam later
-				// establishes its own explicit narrower scope.
+				// Subject-wide Question Work has no selected Exam.
 				examTable.getSelectionModel().clearSelection();
 				clearSelectedExam();
 				return;
@@ -2193,10 +2454,12 @@ public final class CorpusDashboardPane extends VBox {
 				return;
 			}
 			if (!filtered.isEmpty()) {
+				ExamCorpusStatus first = filtered.getFirst();
+				examTable.getSelectionModel().select(first);
 
-				// Ordinary Dashboard entry retains its existing first-Exam
-				// selection when no headline drill-down is active.
-				examTable.getSelectionModel().selectFirst();
+				// Rebuild the Booklet presentation explicitly even when
+				// JavaFX retains the same selected table index.
+				showSelectedExam(first, null);
 				return;
 			}
 			examTable.getSelectionModel().clearSelection();
@@ -2228,7 +2491,10 @@ public final class CorpusDashboardPane extends VBox {
 		// where the same row index could represent another Question.
 		questionTable.getSelectionModel().clearSelection();
 		questionResultCountLabel.setText(String.format("Showing %d Questions", workItems.size()));
-		assignQuestionWorkDescriptorsButton.setDisable(missingDescriptorQuestionsShown().isEmpty());
+		List<Question> missingDescriptors = missingDescriptorQuestionsShown();
+		assignQuestionWorkDescriptorsButton.setDisable(importedSubjectReadOnly || assignmentExamId != null
+				|| isSelectedExamReadOnly() || missingDescriptors.isEmpty()
+				|| missingDescriptors.stream().anyMatch(this::isQuestionReadOnly));
 		updateBulkActionState();
 		updateCaptureActionState();
 		updateQuestionActionState();
@@ -2273,6 +2539,18 @@ public final class CorpusDashboardPane extends VBox {
 		case WRITTEN_RESPONSE -> "Written";
 		case UNKNOWN -> "UNKNOWN";
 		};
+	}
+
+	private void restoreTableScrollPositions(Map<ScrollBar, Double> positions) {
+
+		// Update table layout before restoring the existing scrollbars.
+		// A shorter refreshed table may require a smaller scroll value.
+		layout();
+		positions.forEach((scrollBar, value) -> {
+			if (scrollBar.getScene() != null) {
+				scrollBar.setValue(Math.max(scrollBar.getMin(), Math.min(scrollBar.getMax(), value)));
+			}
+		});
 	}
 
 	private List<ExamCorpusStatus> scopeFilteredExamStatuses() {
@@ -2352,16 +2630,7 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private void showSelectedExam(ExamCorpusStatus status, Long preferredBookletId) {
-		selectedExamLabel.setText(String.format("%s %d — %s", status.exam().getProvider().getName(),
-				status.exam().getYear(), status.exam().getName()));
-		declaredExamStateLabel.setText("Declared state: " + status.declaredCaptureState().name());
-		ExamAssetExpectations expectations = status.assetExpectations();
-		selectedExamCountsLabel.setText(String.format(
-				"Question booklets: %s     Answer booklets: %s     Questions: %d     Need work: %d",
-				presentExpected(expectations.availableQuestionBookletCount(),
-						expectations.expectedQuestionBookletCount()),
-				presentExpected(expectations.availableAnswerFileCount(), expectations.expectedAnswerFileCount()),
-				status.questionSummary().totalQuestions(), examWorkCount(status)));
+		updateSelectedExamSummary(status);
 		List<BookletCorpusStatus> displayedBooklets = filteredBookletStatuses(status);
 		bookletTable.getItems().setAll(displayedBooklets);
 		bookletTable.getSelectionModel().clearSelection();
@@ -2428,9 +2697,10 @@ public final class CorpusDashboardPane extends VBox {
 	private void updateAddExamActionState() {
 
 		// All required Exam structure is issued by the coordinator.
-		if (assignmentExamId != null) {
+		if (assignmentExamId != null || importedSubjectReadOnly) {
 			addExamButton.setDisable(true);
-			noExamsLabel.setText("The assigned Exam is supplied by the coordinator.");
+			noExamsLabel.setText(assignmentExamId != null ? "The assigned Exam is supplied by the coordinator."
+					: "This Subject is an imported read-only snapshot.");
 			return;
 		}
 		addExamButton.setDisable(!curriculumAvailable);
@@ -2451,43 +2721,55 @@ public final class CorpusDashboardPane extends VBox {
 	}
 
 	private void updateBulkActionState() {
+		boolean readOnly = importedSubjectReadOnly || assignmentExamId != null || isSelectedExamReadOnly();
 		boolean unknownVisible = questionTable.getItems().stream()
-				.anyMatch(item -> item.question().getResponseType() == QuestionResponseType.UNKNOWN);
-		selectAllUnknownButton.setDisable(!unknownVisible);
-		boolean validSelection = !selectedQuestionsForBulkUpdate().isEmpty();
+				.anyMatch(item -> item.question().getResponseType() == QuestionResponseType.UNKNOWN
+						&& !isQuestionReadOnly(item.question()));
+		selectAllUnknownButton.setDisable(readOnly || !unknownVisible);
+		List<Question> selected = selectedQuestionsForBulkUpdate();
+		boolean validSelection = !readOnly && !selected.isEmpty()
+				&& selected.stream().noneMatch(this::isQuestionReadOnly);
 		setSelectedMultipleChoiceButton.setDisable(!validSelection);
 		setSelectedWrittenResponseButton.setDisable(!validSelection);
 	}
 
 	private void updateCaptureActionState() {
 		BookletCorpusStatus selected = bookletTable.getSelectionModel().getSelectedItem();
+		if (importedSubjectReadOnly || isSelectedExamReadOnly()) {
+			assignDescriptorsButton.setDisable(true);
+			captureQuestionsButton.setDisable(true);
+			captureAnswersButton.setDisable(true);
+			captureMcqExplanationsButton.setDisable(true);
+			return;
+		}
 
-		// Descriptor refinement corrects existing Question metadata.
-		// It remains available for COMPLETE Exams.
-		assignDescriptorsButton.setDisable(selected == null || selected.questionsWithoutDescriptorCount() == 0);
+		// Workers cannot bulk-correct the classifications of issued Questions.
+		// They can classify new work in the ordinary capture workspace.
+		assignDescriptorsButton.setDisable(
+				assignmentExamId != null || selected == null || selected.questionsWithoutDescriptorCount() == 0);
 		Question existingQuestionWork = firstQuestionCaptureWorkQuestion(selected);
-
-		// Existing Question correction is permitted for COMPLETE Exams,
-		// while creating a new Question requires an ACTIVE Exam.
 		boolean questionCaptureAvailable = selected != null && selected.questionPdfAvailable()
 				&& (existingQuestionWork != null || !selected.booklet().getExam().isComplete());
 		captureQuestionsButton.setDisable(!questionCaptureAvailable);
 		captureAnswersButton.setDisable(selected == null || firstMissingAnswerQuestion() == null);
-
-		// Explanation correction remains available for COMPLETE Exams.
 		captureMcqExplanationsButton
 				.setDisable(selected == null || firstMissingMcqExplanationQuestion(selected) == null);
 	}
 
 	private void updateExamAssetsActionState() {
 		ExamCorpusStatus selectedExam = examTable.getSelectionModel().getSelectedItem();
-		boolean coordinatorExamSelected = selectedExam != null && assignmentExamId == null;
+		boolean selected = selectedExam != null;
+		boolean locked = selected && isSelectedExamReadOnly();
+		boolean complete = selected && selectedExam.declaredCaptureState() == ExamCaptureState.COMPLETE;
+		boolean coordinatorContext = assignmentExamId == null;
 
-		// Contributor work uses immutable coordinator-supplied
-		// Exam assets. Structural management and assignment issuance
-		// are both coordinator-only operations.
-		manageExamAssetsButton.setDisable(!coordinatorExamSelected);
-		createContributorAssignmentButton.setDisable(!coordinatorExamSelected);
+		// Contributors may inspect the assigned Exam structure.
+		// The destination workspace enforces read-only authority.
+		manageExamAssetsButton.setText(coordinatorContext ? "Manage Exam / Assets" : "Inspect Exam / Assets");
+		manageExamAssetsButton.setDisable(!selected || locked);
+		createContributorAssignmentButton.setDisable(!selected || !coordinatorContext || locked || complete);
+		boolean hasActiveLock = selected && coordinatorExamLocks.containsKey(selectedExam.exam().getId());
+		closeContributorAssignmentButton.setDisable(!coordinatorContext || importedSubjectReadOnly || !hasActiveLock);
 	}
 
 	private void updateExamEmptyState() {
@@ -2510,6 +2792,13 @@ public final class CorpusDashboardPane extends VBox {
 			examLifecycleButton.setText("Coordinator only");
 			examLifecycleButton.setDisable(true);
 			examLifecycleButton.setTooltip(new Tooltip("Only the coordinator changes Exam lifecycle state."));
+			return;
+		}
+		ExamCorpusStatus selectedExam = examTable.getSelectionModel().getSelectedItem();
+		if (selectedExam != null && isSelectedExamReadOnly()) {
+			examLifecycleButton.setDisable(true);
+			examLifecycleButton.setTooltip(new Tooltip("This Exam is read-only while assigned or imported. "
+					+ "Its authoritative lifecycle cannot be changed here."));
 			return;
 		}
 		if (selected == null) {
@@ -2547,34 +2836,43 @@ public final class CorpusDashboardPane extends VBox {
 
 	private void updateExamRowState(TableRow<?> row) {
 		ExamCorpusStatus status = row.isEmpty() || !(row.getItem() instanceof ExamCorpusStatus exam) ? null : exam;
-
-		// Use exactly the readiness rule behind the Needs Work column.
-		// Missing expectations or outstanding reviews cannot appear green.
-		boolean clear = status != null && status.isReadyForCompletion() && isExamApplicabilityReviewed(status);
-		boolean attention = status != null && !clear;
+		boolean assigned = status != null && coordinatorExamLocks.containsKey(status.exam().getId());
+		boolean clear = status != null && !assigned && status.isReadyForCompletion()
+				&& isExamApplicabilityReviewed(status);
+		boolean attention = status != null && !assigned && !clear;
+		row.pseudoClassStateChanged(EXAM_ROW_ASSIGNED, assigned);
 		row.pseudoClassStateChanged(EXAM_ROW_ATTENTION, attention);
 		row.pseudoClassStateChanged(EXAM_ROW_CLEAR, clear);
+		row.setTooltip(assigned ? new Tooltip(
+				"ASSIGNED to " + coordinatorExamLocks.get(status.exam().getId()) + ". This Exam is locked for editing.")
+				: null);
 	}
 
 	private void updateQuestionActionState() {
 		QuestionCorpusWorkItem selected = singleSelectedQuestionWorkItem();
-		boolean missingExplanation = selected != null && isMissingMcqExplanation(selected.question());
-		if (missingExplanation) {
+		if (selected == null || importedSubjectReadOnly || isSelectedExamReadOnly()) {
+			completeSelectedQuestionButton.setDisable(true);
+			completeSelectedAnswerButton.setText("Complete Selected Answer");
+			completeSelectedAnswerButton.setDisable(true);
+			return;
+		}
+		Question question = selected.question();
+
+		// Evaluate Question and Answer permissions separately.
+		completeSelectedQuestionButton
+				.setDisable(isQuestionReadOnly(question) || !canCompleteSelectedQuestion(selected));
+		if (isMissingMcqExplanation(question)) {
 			completeSelectedAnswerButton.setText("Capture Explanation");
 			completeSelectedAnswerButton
-					.setTooltip(new Tooltip("Capture the missing MCQ explanation for the selected Question."));
-			completeSelectedAnswerButton.setDisable(false);
+					.setTooltip(new Tooltip("Capture the missing MCQ explanation " + "for the selected Question."));
+			completeSelectedAnswerButton.setDisable(!canCaptureAnswer(question));
 		} else {
 			completeSelectedAnswerButton.setText("Complete Selected Answer");
 			completeSelectedAnswerButton
-					.setTooltip(new Tooltip("Complete the missing Answer for the selected Question."));
-			completeSelectedAnswerButton.setDisable(!canCompleteSelectedAnswer(selected));
+					.setTooltip(new Tooltip("Complete the missing Answer " + "for the selected Question."));
+			completeSelectedAnswerButton
+					.setDisable(!canCaptureAnswer(question) || !canCompleteSelectedAnswer(selected));
 		}
-
-		// Question-side correction remains independently available if the same
-		// persisted
-		// Question also has Question-content work.
-		completeSelectedQuestionButton.setDisable(!canCompleteSelectedQuestion(selected));
 	}
 
 	private void updateQuestionWorkRowState(TableRow<?> row) {
@@ -2603,6 +2901,25 @@ public final class CorpusDashboardPane extends VBox {
 		// changing Exams cannot retain the previous Exam's display.
 		selectedBookletLabel.setText(String.format("Selected booklet: %s %d — %s — %s", exam.getProvider().getName(),
 				exam.getYear(), exam.getName(), bookletName));
+	}
+
+	private void updateSelectedExamSummary(ExamCorpusStatus status) {
+		if (status == null) {
+			selectedExamCountsLabel.setText("");
+			setVisibleAndManaged(selectedExamCountsLabel, false);
+			return;
+		}
+
+		// Exam identity, lifecycle and booklet counts already
+		// appear in the table. Retain only additional information.
+		String summary = String.format("Questions: %d     Need work: %d", status.questionSummary().totalQuestions(),
+				examWorkCount(status));
+		String contributor = coordinatorExamLocks.get(status.exam().getId());
+		if (contributor != null) {
+			summary += "     ASSIGNED to " + contributor;
+		}
+		selectedExamCountsLabel.setText(summary);
+		setVisibleAndManaged(selectedExamCountsLabel, true);
 	}
 
 	private String workLabel(ExamCorpusStatus status) {

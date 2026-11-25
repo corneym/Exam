@@ -35,42 +35,29 @@ class SqliteContributionReturnLedgerTest {
 	Path directory;
 
 	@Test
-	void recordsFourReturnsAndIdempotentReplays() throws Exception {
+	void recordsOneReturnAndRejectsFurtherSubmissions() throws Exception {
 		Fixture fixture = fixture();
 		SqliteContributionReturnLedger ledger = new SqliteContributionReturnLedger(fixture.database());
-		assertTrue(ledger.findLatest(fixture.session().assignmentId()).isEmpty());
-		UUID previousPackageId = null;
-		SqliteContributionReturnLedger.PublishedReturn first = null;
-		for (int number = 1; number <= 4; number++) {
-			UUID packageId = UUID.randomUUID();
-			ExamWorkManifest manifest = manifest(fixture, packageId);
-			var recorded = ledger.recordPublished(manifest, previousPackageId, hash("return-" + number));
-			assertEquals(number, recorded.returnNumber());
-			assertEquals(previousPackageId, recorded.previousPackageId());
-			assertEquals(fixture.session().baselineSnapshotId(), recorded.baselineSnapshotId());
-			assertEquals(fixture.session().masterInstallationId(), recorded.masterInstallationId());
-			assertEquals(fixture.session().contributorId(), recorded.contributorId());
-			assertEquals(fixture.installationId(), recorded.originInstallationId());
-			assertEquals(recorded, ledger.find(packageId).orElseThrow());
-			if (number == 1) {
-				first = recorded;
-			}
-			previousPackageId = packageId;
-		}
-		assertEquals(4, ledger.findLatest(fixture.session().assignmentId()).orElseThrow().returnNumber());
+		UUID firstId = UUID.randomUUID();
+		var first = ledger.recordPublished(manifest(fixture, firstId), null, hash("return-1"));
+		assertEquals(1, first.returnNumber());
+		assertEquals(null, first.previousPackageId());
+		assertEquals(first, ledger.find(firstId).orElseThrow());
 
-		// An older package may be presented again after later
-		// returns. Identical evidence remains an idempotent replay.
-		var replay = ledger.recordPublished(manifest(fixture, first.packageId()), null, hash("return-1"));
+		// The identical published package can still be recognised idempotently.
+		var replay = ledger.recordPublished(manifest(fixture, firstId), null, hash("return-1"));
 		assertEquals(first, replay);
-		assertEquals(4, ledger.findLatest(fixture.session().assignmentId()).orElseThrow().returnNumber());
-
-		// The history survives reopening the database.
-		SqliteDatabase reopened = new SqliteDatabase(directory.resolve("returns.db"));
-		var restartedLedger = new SqliteContributionReturnLedger(reopened);
-		assertEquals(4, restartedLedger.findLatest(fixture.session().assignmentId()).orElseThrow().returnNumber());
-		reopened.verifySchema();
-		reopened.verifyIntegrity();
+		UUID secondId = UUID.randomUUID();
+		assertThrows(SQLException.class,
+				() -> ledger.recordPublished(manifest(fixture, secondId), null, hash("return-2")));
+		assertThrows(SQLException.class,
+				() -> ledger.recordPublished(manifest(fixture, secondId), firstId, hash("return-2")));
+		SqliteDatabase restarted = new SqliteDatabase(directory.resolve("returns.db"));
+		var restartedLedger = new SqliteContributionReturnLedger(restarted);
+		assertEquals(first, restartedLedger.find(firstId).orElseThrow());
+		assertEquals(1, restartedLedger.findLatest(fixture.session().assignmentId()).orElseThrow().returnNumber());
+		restarted.verifySchema();
+		restarted.verifyIntegrity();
 	}
 
 	@Test
@@ -103,7 +90,7 @@ class SqliteContributionReturnLedgerTest {
 		// the installed contributor assignment.
 		var sessions = new SqliteContributorAssignmentSessionRepository(fixture.database());
 		assertTrue(sessions.find(fixture.session().assignmentId()).isPresent());
-		assertTrue(sessions.active().isPresent());
+		assertTrue(sessions.active().isEmpty(), "Published work must not remain an active contributor assignment");
 		sessions.clearActive();
 		assertTrue(sessions.active().isEmpty());
 		assertFalse(ledger.findLatest(fixture.session().assignmentId()).isEmpty());
@@ -112,35 +99,22 @@ class SqliteContributionReturnLedgerTest {
 	}
 
 	@Test
-	void rejectsMissingLineageAndChangedReplayEvidence() throws Exception {
+	void rejectsSecondReturnAndChangedReplayEvidence() throws Exception {
 		Fixture fixture = fixture();
 		var ledger = new SqliteContributionReturnLedger(fixture.database());
 		UUID firstId = UUID.randomUUID();
 		UUID secondId = UUID.randomUUID();
-
-		// The first return must not claim a nonexistent parent.
 		assertThrows(SQLException.class,
 				() -> ledger.recordPublished(manifest(fixture, firstId), UUID.randomUUID(), hash("first")));
 		var first = ledger.recordPublished(manifest(fixture, firstId), null, hash("first"));
 		assertEquals(1, first.returnNumber());
-
-		// The second return cannot omit its predecessor.
 		assertThrows(SQLException.class,
 				() -> ledger.recordPublished(manifest(fixture, secondId), null, hash("second")));
-
-		// Nor can it refer to an unknown predecessor.
 		assertThrows(SQLException.class,
-				() -> ledger.recordPublished(manifest(fixture, secondId), UUID.randomUUID(), hash("second")));
-
-		// A package UUID cannot be reused for different bytes.
+				() -> ledger.recordPublished(manifest(fixture, secondId), firstId, hash("second")));
 		assertThrows(SQLException.class,
 				() -> ledger.recordPublished(manifest(fixture, firstId), null, hash("tampered-first")));
-
-		// The correct lineage is accepted.
-		var second = ledger.recordPublished(manifest(fixture, secondId), firstId, hash("second"));
-		assertEquals(2, second.returnNumber());
-		assertEquals(firstId, second.previousPackageId());
-		assertEquals(2, ledger.findLatest(fixture.session().assignmentId()).orElseThrow().returnNumber());
+		assertEquals(first, ledger.findLatest(fixture.session().assignmentId()).orElseThrow());
 	}
 
 	private void execute(SqliteDatabase database, String sql) throws SQLException {

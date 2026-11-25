@@ -15,6 +15,7 @@ import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamBookletQuestionFormat;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.SourceDocument;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 
@@ -352,6 +353,7 @@ public final class SqliteAnswerWriter {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
+				new SqliteContributorBaselineWriteGuard().requireAnswerCreation(connection, question.getId());
 
 				// Existing capture paths may not yet have explicitly assigned the booklet.
 				// A single unambiguous AnswerFile can establish that relationship here.
@@ -432,6 +434,10 @@ public final class SqliteAnswerWriter {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
+
+				// Answer ownership is independent of parent Question
+				// ownership. The existing relationship is verified below.
+				new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.ANSWER, answerId);
 
 				// Check ownership before replacing anything under the existing Answer ID.
 				verifyAnswerBelongsToQuestion(connection, answerId, question);
@@ -831,6 +837,8 @@ public final class SqliteAnswerWriter {
 		if (answerFile == null) {
 			throw new NullPointerException("answerFile");
 		}
+		new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.ANSWER_FILE,
+				answerFile.getId());
 		try (PreparedStatement statement = connection.prepareStatement("""
 				UPDATE answer_files
 				SET contains_answer_explanations = ?

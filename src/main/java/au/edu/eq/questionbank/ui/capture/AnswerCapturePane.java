@@ -171,6 +171,7 @@ public final class AnswerCapturePane extends VBox {
 	// transient Exam scope never requires a synchronous repository reload.
 	private List<Question> questionSnapshot = List.of();
 	private PerformanceOperation activeAnswerSaveOperation;
+	private Set<Long> contributorBaselineAnswerIds = Set.of();
 
 	/**
 	 * Creates the answer-capture workflow and its persistence integration.
@@ -670,23 +671,22 @@ public final class AnswerCapturePane extends VBox {
 		if (!question.hasAnswer()) {
 			throw new IllegalArgumentException("Question does not have an answer to edit");
 		}
+		if (contributorBaselineAnswerIds.contains(question.getAnswer().getId())) {
+			return false;
+		}
 		if (!answerTransitionAllowed.getAsBoolean()) {
 			return false;
 		}
 
-		// Existing-Answer editing has its own completion lifecycle and therefore
-		// abandons any unfinished direct missing-Answer capture callback.
+		// Existing-Answer editing owns its own completion
+		// lifecycle and selector state until Save or Cancel.
 		clearAnswerCaptureCompletion();
-
-		// Existing-Answer editing owns the selector until Save or Cancel.
 		clearPendingAnswerRegions();
 		editingAnswerQuestion = question;
 		answerEditCompletedHandler = editCompletedHandler;
 		unansweredQuestionField.setDisable(true);
 		setUnansweredQuestionSilently(question);
 		applyUnansweredQuestionChange(question);
-
-		// Persisted Answer regions determine the initial marking-PDF page.
 		showFirstStoredAnswerRegionPage(question);
 		saveAnswerButton.setText("Update Answer");
 		setVisibleAndManaged(cancelAnswerEditButton, true);
@@ -797,6 +797,18 @@ public final class AnswerCapturePane extends VBox {
 			return;
 		}
 		applyUnansweredQuestionChange(question);
+	}
+
+	/**
+	 * Supplies the protected Answer identities for the current contributor
+	 * assignment.
+	 *
+	 * @param answerIds local identifiers of issued Answers, or an empty set outside
+	 *                  contributor mode
+	 * @throws NullPointerException if the set or an element is null
+	 */
+	public void setContributorBaselineAnswerIds(Set<Long> answerIds) {
+		contributorBaselineAnswerIds = Set.copyOf(Objects.requireNonNull(answerIds, "answerIds"));
 	}
 
 	/**
@@ -1714,19 +1726,25 @@ public final class AnswerCapturePane extends VBox {
 		if (!mcqExplanationRequestIsCurrent(requestedSubject, requestedBooklet, activeBookletOwned)) {
 			return;
 		}
-		if (candidates.isEmpty()) {
-			selectedAnswerQuestionLabel.setText("No MCQs in this booklet are missing required explanation regions.");
-			return;
-		}
-		if (preferredQuestionId != null
-				&& candidates.stream().noneMatch(candidate -> candidate.getId() == preferredQuestionId.longValue())) {
 
-			// A Dashboard snapshot can become stale while the worker is loading. Never
-			// silently substitute a different Question for an explicitly selected row.
-			selectedAnswerQuestionLabel.setText("The selected MCQ no longer requires explanation capture.");
+		// Recheck Answer ownership before exposing the
+		// background-loaded explanation candidates.
+		List<Question> editableCandidates = candidates.stream().filter(Question::hasAnswer)
+				.filter(question -> !contributorBaselineAnswerIds.contains(question.getAnswer().getId())).toList();
+		if (editableCandidates.isEmpty()) {
+			selectedAnswerQuestionLabel
+					.setText("No MCQs in this booklet are missing " + "required explanation regions.");
 			return;
 		}
-		enterMcqExplanationCapture(candidates, preferredQuestionId);
+		if (preferredQuestionId != null && editableCandidates.stream()
+				.noneMatch(candidate -> candidate.getId() == preferredQuestionId.longValue())) {
+
+			// Do not substitute another Question when the
+			// explicitly requested candidate is unavailable.
+			selectedAnswerQuestionLabel.setText("The selected MCQ no longer requires " + "explanation capture.");
+			return;
+		}
+		enterMcqExplanationCapture(editableCandidates, preferredQuestionId);
 	}
 
 	private void handleMcqExplanationQuestionChanged(Question question) {

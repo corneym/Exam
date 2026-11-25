@@ -9,6 +9,7 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
 import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.Objects;
@@ -58,6 +59,25 @@ public final class SubjectImportSnapshotFingerprint {
 	 * @throws IOException if copying, validation or reading fails
 	 */
 	public Fingerprint inspect(Path archive) throws IOException {
+		return inspectEvidence(archive).fingerprint();
+	}
+
+	/**
+	 * Inspects a complete Subject snapshot and retains its originating creation
+	 * timestamp alongside its verified fingerprints.
+	 *
+	 * <p>
+	 * The timestamp is taken from the validated manifest in the same private
+	 * archive used to calculate the content and archive digests. Filesystem
+	 * modification times and destination import times are not used as originating
+	 * freshness evidence.
+	 *
+	 * @param archive existing Subject snapshot archive
+	 * @return verified fingerprint and originating creation timestamp
+	 * @throws IOException          if copying, validation or reading fails
+	 * @throws NullPointerException if archive is null
+	 */
+	public SnapshotEvidence inspectEvidence(Path archive) throws IOException {
 		Objects.requireNonNull(archive, "archive");
 		if (!Files.isRegularFile(archive, LinkOption.NOFOLLOW_LINKS)) {
 			throw new PackageFormatException("Subject archive must be a regular file");
@@ -68,9 +88,6 @@ public final class SubjectImportSnapshotFingerprint {
 		Path directory = Files.createTempDirectory("examwork-fingerprint-");
 		Path staged = directory.resolve("verified.examwork");
 		try {
-
-			// Do not follow source symbolic links. Validation and digest
-			// calculation both operate on this private staged file.
 			Files.copy(archive, staged, LinkOption.NOFOLLOW_LINKS);
 			ExamWorkManifest manifest = validator.validate(staged, ApplicationVersion.current(),
 					SqliteDatabase.latestSchemaVersion());
@@ -85,16 +102,19 @@ public final class SubjectImportSnapshotFingerprint {
 			update(digest, manifest.subjectId().toString());
 			update(digest, manifest.subjectName());
 
-			// All manifest entries have already been checked against the
-			// actual bytes of this staged archive.
+			// The semantic fingerprint intentionally excludes package
+			// identity and creation time. Those belong to the distinct
+			// package identity and freshness evidence.
 			for (Entry entry : manifest.entries().stream().sorted(Comparator.comparing(Entry::path)).toList()) {
 				update(digest, entry.path());
 				update(digest, entry.role().name());
 				update(digest, Long.toString(entry.size()));
 				update(digest, entry.sha256());
 			}
-			return new Fingerprint(manifest.packageId(), manifest.originInstallationId(), manifest.subjectId(),
-					manifest.subjectName(), HexFormat.of().formatHex(digest.digest()), archiveSha256(staged));
+			Fingerprint fingerprint = new Fingerprint(manifest.packageId(), manifest.originInstallationId(),
+					manifest.subjectId(), manifest.subjectName(), HexFormat.of().formatHex(digest.digest()),
+					archiveSha256(staged));
+			return new SnapshotEvidence(fingerprint, manifest.createdAt());
 		} finally {
 			try {
 				Files.deleteIfExists(staged);
@@ -181,6 +201,30 @@ public final class SubjectImportSnapshotFingerprint {
 		byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
 		digest.update(ByteBuffer.allocate(Integer.BYTES).putInt(bytes.length).array());
 		digest.update(bytes);
+	}
+
+	/**
+	 * Verified originating snapshot evidence.
+	 *
+	 * <p>
+	 * The fingerprint identifies the exact archive and its semantic content. The
+	 * creation timestamp identifies when the originating installation produced the
+	 * snapshot.
+	 *
+	 * @param fingerprint verified archive and semantic fingerprints
+	 * @param createdAt   originating snapshot creation timestamp
+	 */
+	public record SnapshotEvidence(Fingerprint fingerprint, Instant createdAt) {
+
+		/**
+		 * Validates complete snapshot evidence.
+		 *
+		 * @throws NullPointerException if either component is null
+		 */
+		public SnapshotEvidence {
+			Objects.requireNonNull(fingerprint, "fingerprint");
+			Objects.requireNonNull(createdAt, "createdAt");
+		}
 	}
 
 	/**

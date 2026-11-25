@@ -46,25 +46,50 @@ public final class SubjectImportReviewWorkflow {
 	private final Path masterArchive;
 	private final Path incomingArchive;
 	private final Runnable refreshAfterImport;
+	private final Runnable cleanupAfterImport;
 
 	/**
-	 * Creates the approval workflow for the exact reviewed archive pair.
+	 * Creates the approval workflow for an existing pair of reviewed archives.
 	 *
-	 * @param owner              application owner window
-	 * @param config             authoritative master configuration
-	 * @param review             reviewed reconciliation decisions
-	 * @param masterArchive      coordinator archive used in the review
-	 * @param incomingArchive    contributor archive used in the review
-	 * @param refreshAfterImport reload action after successful commit
+	 * @param owner              application owner
+	 * @param config             coordinator configuration
+	 * @param review             completed review decisions
+	 * @param masterArchive      reviewed master snapshot
+	 * @param incomingArchive    reviewed incoming snapshot
+	 * @param refreshAfterImport refresh after successful publication
 	 */
 	public SubjectImportReviewWorkflow(Window owner, ApplicationConfig config, SubjectReconciliationReview review,
 			Path masterArchive, Path incomingArchive, Runnable refreshAfterImport) {
+		this(owner, config, review, masterArchive, incomingArchive, refreshAfterImport, () -> {
+		});
+	}
+
+	/**
+	 * Creates a review workflow that owns temporary snapshot cleanup.
+	 *
+	 * <p>
+	 * The supplied cleanup action runs if approval is abandoned, or after the
+	 * asynchronous import reaches a terminal state. It must not remove the reviewed
+	 * master archive while publication is in progress.
+	 *
+	 * @param owner              application owner
+	 * @param config             coordinator configuration
+	 * @param review             completed review decisions
+	 * @param masterArchive      reviewed master snapshot
+	 * @param incomingArchive    reviewed incoming snapshot
+	 * @param refreshAfterImport refresh after successful publication
+	 * @param cleanupAfterImport cleanup when the workflow finishes
+	 * @throws NullPointerException if any argument is null
+	 */
+	public SubjectImportReviewWorkflow(Window owner, ApplicationConfig config, SubjectReconciliationReview review,
+			Path masterArchive, Path incomingArchive, Runnable refreshAfterImport, Runnable cleanupAfterImport) {
 		this.owner = Objects.requireNonNull(owner, "owner");
 		this.config = Objects.requireNonNull(config, "config");
 		this.review = Objects.requireNonNull(review, "review");
 		this.masterArchive = Objects.requireNonNull(masterArchive, "masterArchive");
 		this.incomingArchive = Objects.requireNonNull(incomingArchive, "incomingArchive");
 		this.refreshAfterImport = Objects.requireNonNull(refreshAfterImport, "refreshAfterImport");
+		this.cleanupAfterImport = Objects.requireNonNull(cleanupAfterImport, "cleanupAfterImport");
 	}
 
 	/**
@@ -82,13 +107,14 @@ public final class SubjectImportReviewWorkflow {
 		progress.close();
 	}
 
-	/** Presents conflict operations and starts import only after approval. */
+	/** Presents explicit approval and starts import only after confirmation. */
 	public void run() {
-		if (!review.snapshot().complete() || !review.snapshot().dependencySafe()) {
-			error("Review must be complete and dependency-safe before import");
-			return;
-		}
+		boolean importStarted = false;
 		try {
+			if (!review.snapshot().complete() || !review.snapshot().dependencySafe()) {
+				error("Review must be complete and dependency-safe before import");
+				return;
+			}
 			var master = new SubjectImportSnapshotFingerprint().inspect(masterArchive);
 			var incoming = new SubjectImportSnapshotFingerprint().inspect(incomingArchive);
 			Map<Key, ConflictResolution> resolutions = resolveConflicts();
@@ -118,17 +144,24 @@ public final class SubjectImportReviewWorkflow {
 			confirmation.setHeaderText("Import approved records into the master database?");
 			confirmation.setContentText("Subject: " + master.subjectName() + "\nAccepted actions: "
 					+ plan.actions().stream().filter(action -> action.decision() == Decision.ACCEPT).count()
-					+ "\nBackup destination: " + folder
-					+ "\n\nThe application will revalidate master state before importing. "
-					+ "Existing master files will never be replaced.");
+					+ "\nBackup destination: " + folder + "\n\nThe application will revalidate master state "
+					+ "before importing." + "\nExisting master files will not be overwritten.");
 			ButtonType importType = new ButtonType("Import approved changes");
 			confirmation.getButtonTypes().setAll(importType, ButtonType.CANCEL);
 			if (confirmation.showAndWait().orElse(ButtonType.CANCEL) != importType) {
 				return;
 			}
 			startImport(masterSubjectId, plan, folder.toPath(), note.get());
+			importStarted = true;
 		} catch (IOException | SQLException | IllegalArgumentException | IllegalStateException failure) {
 			error(failure.getMessage());
+		} finally {
+
+			// Before asynchronous publication starts, cancellation owns
+			// immediate cleanup. After it starts, terminal task handlers own it.
+			if (!importStarted) {
+				cleanupAfterImport.run();
+			}
 		}
 	}
 
@@ -221,15 +254,17 @@ public final class SubjectImportReviewWorkflow {
 		progress.setTitle("Publishing approved Subject import");
 		progress.setHeaderText("Verifying backup and committing approved Subject data");
 		progress.setContentText("Publication cannot be cancelled once started.");
-
-		// The user cannot cancel publication while it is active.
 		progress.getButtonTypes().clear();
 		progress.setOnCloseRequest(event -> event.consume());
 		task.setOnSucceeded(_ -> {
 			dismissCompletedProgress(progress);
 			var result = task.getValue();
-			if (result.applied()) {
-				refreshAfterImport.run();
+			try {
+				if (result.applied()) {
+					refreshAfterImport.run();
+				}
+			} finally {
+				cleanupAfterImport.run();
 			}
 			Alert success = new Alert(Alert.AlertType.INFORMATION);
 			success.initOwner(owner);
@@ -241,8 +276,13 @@ public final class SubjectImportReviewWorkflow {
 		});
 		task.setOnFailed(_ -> {
 			dismissCompletedProgress(progress);
+			cleanupAfterImport.run();
 			Throwable failure = task.getException();
 			error(failure == null ? "Unknown import failure" : failure.getMessage());
+		});
+		task.setOnCancelled(_ -> {
+			dismissCompletedProgress(progress);
+			cleanupAfterImport.run();
 		});
 		Thread worker = new Thread(task, "examwork-subject-import");
 		worker.setDaemon(true);

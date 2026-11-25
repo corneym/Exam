@@ -144,22 +144,38 @@ class CorpusDashboardPaneTest {
 		Button lifecycle = robot.lookup("#corpus-dashboard-exam-lifecycle").queryButton();
 		Button captureQuestions = robot.lookup("#corpus-dashboard-capture-questions").queryButton();
 		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
-		robot.interact(() -> pane.setAssignmentExamScope(fixture.activeExam.getId()));
+		AtomicReference<Exam> requestedExam = new AtomicReference<>();
+		AtomicReference<ExamBooklet> requestedBooklet = new AtomicReference<>();
+		robot.interact(() -> {
+			pane.setExamAssetsHandler((exam, booklet) -> {
+				requestedExam.set(exam);
+				requestedBooklet.set(booklet);
+			});
+			pane.setAssignmentExamScope(fixture.activeExam.getId());
+		});
 		assertTrue(addExam.isDisable());
 		assertTrue(addCurriculum.isDisable());
 		assertTrue(mapCurriculum.isDisable());
-		assertTrue(manageAssets.isDisable());
 		assertTrue(lifecycle.isDisable());
 
-		// The assigned active Exam still permits Question capture.
+		// Assigned Exam assets remain accessible for inspection.
+		assertFalse(manageAssets.isDisable());
+		assertEquals("Inspect Exam / Assets", manageAssets.getText());
 		robot.interact(() -> booklets.getSelectionModel().select(fixture.activePaperStatus));
 		assertFalse(captureQuestions.isDisable());
+		robot.interact(manageAssets::fire);
+		assertNotNull(requestedExam.get());
+		assertNotNull(requestedBooklet.get());
+		assertEquals(fixture.activeExam.getId(), requestedExam.get().getId());
+		assertEquals(fixture.activePaper.getId(), requestedBooklet.get().getId());
 
-		// Exiting assignment mode restores coordinator controls.
+		// Exiting assignment mode restores ordinary
+		// coordinator management controls.
 		robot.interact(() -> pane.setAssignmentExamScope(null));
 		assertFalse(addExam.isDisable());
 		assertFalse(addCurriculum.isDisable());
 		assertFalse(mapCurriculum.isDisable());
+		assertEquals("Manage Exam / Assets", manageAssets.getText());
 	}
 
 	@Test
@@ -582,15 +598,161 @@ class CorpusDashboardPaneTest {
 
 	@Test
 	@SuppressWarnings("unchecked")
+	void completedExamCannotChangeApplicabilityOrIssueAssignment(FxRobot robot) {
+		BookletCorpusStatus readyBooklet = new BookletCorpusStatus(fixture.paper1, true, fixture.markingGuide, 20, 20,
+				0, new QuestionCorpusSummary(20, 20, 0, 0, 0, 0, 0), new McqExplanationCoverage(true, 20, 20),
+				EnumSet.noneOf(BookletCorpusFinding.class));
+		ExamCorpusStatus completedStatus = new ExamCorpusStatus(fixture.completeExam,
+				new ExamAssetExpectations(1, 1, 1, 1), List.of(readyBooklet),
+				new QuestionCorpusSummary(20, 20, 0, 0, 0, 0, 0), new McqExplanationSummary(1, 20, 20),
+				EnumSet.noneOf(ExamCorpusFinding.class));
+		AtomicReference<Boolean> requestedReview = new AtomicReference<>();
+		AtomicReference<Exam> requestedAssignment = new AtomicReference<>();
+		robot.interact(() -> {
+			pane.setApplicabilityReviewHandler((_, reviewed) -> requestedReview.set(reviewed));
+			pane.setCreateContributorAssignmentHandler(requestedAssignment::set);
+			pane.replaceData(List.of(completedStatus), List.of());
+			pane.setApplicabilityReviewState(Set.of(fixture.paper1.getId()));
+		});
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		TableColumn<BookletCorpusStatus, Boolean> reviewedColumn = booklets.getColumns().stream()
+				.filter(column -> "Applicability Reviewed".equals(column.getText()))
+				.map(column -> (TableColumn<BookletCorpusStatus, Boolean>) column).findFirst().orElseThrow();
+		robot.interact(() -> booklets.scrollToColumn(reviewedColumn));
+		WaitForAsyncUtils.waitForFxEvents();
+		CheckBox review = robot.lookup("#corpus-dashboard-applicability-reviewed-20").queryAs(CheckBox.class);
+		Button issue = robot.lookup("#corpus-dashboard-create-contributor-assignment").queryButton();
+		Button lifecycle = robot.lookup("#corpus-dashboard-exam-lifecycle").queryButton();
+		assertTrue(review.isSelected());
+		assertTrue(review.isDisabled());
+		assertTrue(issue.isDisabled());
+		assertFalse(lifecycle.isDisabled());
+		assertEquals("Mark Active", lifecycle.getText());
+		robot.interact(review::fire);
+		robot.interact(issue::fire);
+		assertNull(requestedReview.get());
+		assertNull(requestedAssignment.get());
+
+		// A missing confirmation is also locked while COMPLETE.
+		robot.interact(() -> pane.setApplicabilityReviewState(Set.of()));
+		CheckBox unreviewed = robot.lookup("#corpus-dashboard-applicability-reviewed-20").queryAs(CheckBox.class);
+		assertFalse(unreviewed.isSelected());
+		assertTrue(unreviewed.isDisabled());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void contributorCanCaptureMissingAnswersWithoutChangingIssuedQuestions(FxRobot robot) {
+		Question baseline = fixture.question(910, fixture.activePaper, "Q9", QuestionResponseType.WRITTEN_RESPONSE,
+				true, false);
+		Question worker = fixture.question(911, fixture.activePaper, "Q10", QuestionResponseType.WRITTEN_RESPONSE, true,
+				false);
+		AtomicReference<Question> routed = new AtomicReference<>();
+		Button captureAnswers = robot.lookup("#corpus-dashboard-capture-answers").queryButton();
+		Button completeAnswer = robot.lookup("#corpus-dashboard-complete-answer").queryButton();
+		Button completeQuestion = robot.lookup("#corpus-dashboard-complete-question").queryButton();
+		Button assignDescriptors = robot.lookup("#corpus-dashboard-assign-descriptors").queryButton();
+		Button inspect = robot.lookup("#corpus-dashboard-inspect-exam-questions").queryButton();
+		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		TableView<QuestionCorpusWorkItem> work = robot.lookup("#corpus-dashboard-question-work")
+				.queryAs(TableView.class);
+		robot.interact(() -> {
+			pane.setAnswerCaptureHandler(routed::set);
+			pane.replaceData(List.of(fixture.activeExamStatus), List.of(baseline));
+			pane.setAssignmentExamScope(fixture.activeExam.getId());
+			pane.setContributorBaselineQuestionIds(Set.of(baseline.getId()));
+			pane.setContributorBaselineAnswerIds(Set.of());
+			exams.getSelectionModel().clearAndSelect(0);
+		});
+		robot.interact(() -> booklets.getSelectionModel().clearAndSelect(0));
+		robot.interact(() -> {
+			assertEquals(1, work.getItems().size());
+			assertEquals(baseline.getId(), work.getItems().getFirst().question().getId());
+			work.getSelectionModel().clearAndSelect(0);
+		});
+		robot.interact(() -> {
+			assertEquals(1, work.getSelectionModel().getSelectedItems().size());
+			assertFalse(captureAnswers.isDisabled(),
+					"Booklet Answer capture must permit an issued Question " + "without an Answer");
+			assertFalse(completeAnswer.isDisabled(),
+					"Selected Answer capture must permit an issued Question " + "without an Answer");
+			assertTrue(completeQuestion.isDisabled(), "Issued Question content must remain protected");
+			assertTrue(assignDescriptors.isDisabled(), "Bulk Descriptor assignment must remain unavailable");
+			assertFalse(inspect.isDisabled(), "Exam inspection must remain available");
+		});
+		robot.interact(captureAnswers::fire);
+		assertNotNull(routed.get());
+		assertEquals(baseline.getId(), routed.get().getId());
+		routed.set(null);
+		robot.interact(completeAnswer::fire);
+		assertNotNull(routed.get());
+		assertEquals(baseline.getId(), routed.get().getId());
+
+		// Introduce another unanswered Question and verify source ordering.
+		robot.interact(() -> {
+			pane.replaceData(List.of(fixture.activeExamStatus), List.of(worker, baseline));
+			exams.getSelectionModel().clearAndSelect(0);
+		});
+		robot.interact(() -> booklets.getSelectionModel().clearAndSelect(0));
+		routed.set(null);
+		robot.interact(captureAnswers::fire);
+		assertNotNull(routed.get());
+		assertEquals(baseline.getId(), routed.get().getId(),
+				"Answer capture must start with the first source-ordered " + "Question regardless of repository order");
+
+		// An existing issued Answer must remain protected, even when
+		// its written-response content is incomplete.
+		robot.interact(() -> {
+			baseline.setAnswer(new Answer(912, "Issued answer", List.of()));
+			pane.setContributorBaselineAnswerIds(Set.of(912L));
+			pane.replaceData(List.of(fixture.activeExamStatus), List.of(baseline, worker));
+			exams.getSelectionModel().clearAndSelect(0);
+		});
+		robot.interact(() -> booklets.getSelectionModel().clearAndSelect(0));
+		robot.interact(() -> {
+			QuestionCorpusWorkItem baselineItem = work.getItems().stream()
+					.filter(item -> item.question().getId() == baseline.getId()).findFirst().orElseThrow();
+			work.getSelectionModel().clearAndSelect(work.getItems().indexOf(baselineItem));
+		});
+		robot.interact(() -> {
+			assertTrue(completeAnswer.isDisabled(), "An existing issued Answer must remain protected");
+			assertFalse(captureAnswers.isDisabled(), "Contributor-owned unanswered Questions remain eligible");
+		});
+		routed.set(null);
+		robot.interact(captureAnswers::fire);
+		assertNotNull(routed.get());
+		assertEquals(worker.getId(), routed.get().getId());
+		robot.interact(() -> {
+			QuestionCorpusWorkItem workerItem = work.getItems().stream()
+					.filter(item -> item.question().getId() == worker.getId()).findFirst().orElseThrow();
+			work.getSelectionModel().clearAndSelect(work.getItems().indexOf(workerItem));
+		});
+		robot.interact(() -> {
+			assertEquals(1, work.getSelectionModel().getSelectedItems().size());
+			assertFalse(completeAnswer.isDisabled(),
+					"Selected contributor-owned Question must permit " + "Answer capture");
+		});
+		routed.set(null);
+		robot.interact(completeAnswer::fire);
+		assertNotNull(routed.get());
+		assertEquals(worker.getId(), routed.get().getId());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
 	void coordinatorCanIssueOnlyFromSelectedExam(FxRobot robot) {
 		Button createAssignment = robot.lookup("#corpus-dashboard-create-contributor-assignment").queryButton();
 		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
 		AtomicReference<Exam> requested = new AtomicReference<>();
 		robot.interact(() -> pane.setCreateContributorAssignmentHandler(requested::set));
-		assertFalse(createAssignment.isDisabled());
+
+		// The initially selected fixture Exam is COMPLETE.
+		assertTrue(createAssignment.isDisabled());
 
 		// Issuance uses the actual selected Exam identity.
 		robot.interact(() -> exams.getSelectionModel().select(fixture.activeExamStatus));
+		assertFalse(createAssignment.isDisabled());
 		robot.interact(createAssignment::fire);
 		assertEquals(fixture.activeExam.getId(), requested.get().getId());
 		requested.set(null);
@@ -625,6 +787,31 @@ class CorpusDashboardPaneTest {
 		// Four outstanding mapping reviews must not become four additional incomplete
 		// Questions.
 		assertEquals("3 Need attention", needsAttention.getText());
+	}
+
+	@Test
+	void curriculumSectionPlacesMappingReviewBesideActions(FxRobot robot) {
+		HBox actionsRow = robot.lookup("#corpus-dashboard-curriculum-actions-row").queryAs(HBox.class);
+		Button addCurriculum = robot.lookup("#corpus-dashboard-add-curriculum").queryButton();
+		Button mapCurriculum = robot.lookup("#corpus-dashboard-map-curriculum").queryButton();
+		Label mappingReviewLabel = robot.lookup("#corpus-dashboard-mapping-review-label").queryAs(Label.class);
+		Label mappingSummary = robot.lookup("#corpus-dashboard-mapping-review").queryAs(Label.class);
+		robot.interact(() -> {
+
+			// All four controls occupy one horizontal row,
+			// with the Mapping Review information after the buttons.
+			assertEquals(List.of(addCurriculum, mapCurriculum, mappingReviewLabel, mappingSummary),
+					actionsRow.getChildren());
+			assertEquals("Mapping review", mappingReviewLabel.getText());
+			assertEquals(Pos.CENTER_LEFT, actionsRow.getAlignment());
+			assertEquals(Priority.ALWAYS, HBox.getHgrow(mappingSummary));
+			assertTrue(mappingSummary.isWrapText());
+			assertTrue(mappingSummary.getText().contains("11/15 resolved"));
+			assertTrue(addCurriculum.isVisible());
+			assertTrue(mapCurriculum.isVisible());
+			assertTrue(mappingReviewLabel.isVisible());
+			assertTrue(mappingSummary.isVisible());
+		});
 	}
 
 	@Test
@@ -717,10 +904,7 @@ class CorpusDashboardPaneTest {
 		Label provider = (Label) filterRow.getChildren().get(0);
 		Label year = (Label) filterRow.getChildren().get(2);
 		Label examState = (Label) filterRow.getChildren().get(4);
-		Label selectedExam = robot.lookup("#corpus-dashboard-selected-exam").queryAs(Label.class);
-		Label declaredState = robot.lookup("#corpus-dashboard-selected-exam-state").queryAs(Label.class);
-
-		// Exercise window resizing and the existing vertical divider.
+		Label selectedSummary = robot.lookup("#corpus-dashboard-selected-exam-counts").queryAs(Label.class);
 		robot.interact(() -> {
 			pane.getScene().getWindow().setWidth(820);
 			workSplit.setDividerPositions(0.65);
@@ -729,10 +913,7 @@ class CorpusDashboardPaneTest {
 		robot.interact(() -> {
 			pane.applyCss();
 			pane.layout();
-
-			// Under the standard light JavaFX theme these labels must
-			// retain dark text, including those below the Exam table.
-			for (Label label : List.of(provider, year, examState, selectedExam, declaredState)) {
+			for (Label label : List.of(provider, year, examState, selectedSummary)) {
 				assertTrue(label.getTextFill() instanceof Color, label.getText());
 				Color colour = (Color) label.getTextFill();
 				assertTrue(colour.getBrightness() < 0.65, label.getText() + " has unreadable text: " + colour);
@@ -816,29 +997,22 @@ class CorpusDashboardPaneTest {
 	void displaysApprovedExamAndBookletHierarchy(FxRobot robot) {
 		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
 		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
-		Label selectedExam = robot.lookup("#corpus-dashboard-selected-exam").queryAs(Label.class);
-		Label selectedState = robot.lookup("#corpus-dashboard-selected-exam-state").queryAs(Label.class);
 		Label selectedCounts = robot.lookup("#corpus-dashboard-selected-exam-counts").queryAs(Label.class);
 		Label selectedBooklet = robot.lookup("#corpus-dashboard-selected-booklet").queryAs(Label.class);
 		assertEquals(2, exams.getItems().size());
-
-		// Dashboard terminology must use the agreed user-facing corpus concepts rather
-		// than the internal generic asset terminology.
 		assertEquals("Question Booklets", exams.getColumns().get(4).getText());
 		assertEquals("Answer Booklets", exams.getColumns().get(5).getText());
 		assertEquals("Question PDF", booklets.getColumns().get(2).getText());
-
-		// First visible Exam is selected automatically, while booklet scope initially
-		// remains the whole Exam.
 		assertEquals(fixture.completeExamStatus, exams.getSelectionModel().getSelectedItem());
-		assertTrue(selectedExam.getText().contains("QCAA 2025"));
-		assertEquals("Declared state: COMPLETE", selectedState.getText());
-		assertTrue(selectedCounts.getText().contains("Question booklets: 2 / 2"));
-		assertTrue(selectedCounts.getText().contains("Answer booklets: 1 / 1"));
-		assertTrue(selectedCounts.getText().contains("Questions: 54"));
 
-		// The Exam has three ordinary incomplete Questions plus one required MCQ
-		// explanation, so both work dimensions contribute to the operational total.
+		// Exam identity and lifecycle are communicated by the
+		// selected table row, not duplicated beneath the table.
+		assertEquals("COMPLETE", exams.getColumns().get(3).getCellData(fixture.completeExamStatus));
+		assertTrue(robot.lookup("#corpus-dashboard-selected-exam").tryQuery().isEmpty());
+		assertTrue(robot.lookup("#corpus-dashboard-selected-exam-state").tryQuery().isEmpty());
+		assertFalse(selectedCounts.getText().contains("Question booklets:"));
+		assertFalse(selectedCounts.getText().contains("Answer booklets:"));
+		assertTrue(selectedCounts.getText().contains("Questions: 54"));
 		assertTrue(selectedCounts.getText().contains("Need work: 4"));
 		assertEquals(2, booklets.getItems().size());
 		assertNull(booklets.getSelectionModel().getSelectedItem());
@@ -1098,8 +1272,7 @@ class CorpusDashboardPaneTest {
 		assertEquals(1, exams.getItems().size());
 		assertEquals(fixture.activeExamStatus, exams.getSelectionModel().getSelectedItem());
 		assertEquals(1, booklets.getItems().size());
-		Label selectedState = robot.lookup("#corpus-dashboard-selected-exam-state").queryAs(Label.class);
-		assertEquals("Declared state: ACTIVE", selectedState.getText());
+		assertEquals("ACTIVE", exams.getColumns().get(3).getCellData(fixture.activeExamStatus));
 
 		// The representative ACTIVE Question is complete, so the default Needs
 		// attention view contains no Question work.
@@ -1267,34 +1440,33 @@ class CorpusDashboardPaneTest {
 	void horizontalScrollRowsKeepLabelsReadableAfterResize(FxRobot robot) {
 		ScrollPane filters = robot.lookup("#corpus-dashboard-exam-filters-scroll").queryAs(ScrollPane.class);
 		Label providerLabel = (Label) ((HBox) filters.getContent()).getChildren().get(0);
-		Label selectedExamLabel = robot.lookup("#corpus-dashboard-selected-exam").queryAs(Label.class);
+		Label selectedSummary = robot.lookup("#corpus-dashboard-selected-exam-counts").queryAs(Label.class);
 		robot.interact(() -> pane.getScene().getWindow().setWidth(820));
 		WaitForAsyncUtils.waitForFxEvents();
 		robot.interact(pane::applyCss);
-
-		// The standard light Dashboard theme requires dark label text.
-		// Transparent background colour lookups must not turn it white.
 		Color providerText = (Color) providerLabel.getTextFill();
-		Color selectedExamText = (Color) selectedExamLabel.getTextFill();
+		Color summaryText = (Color) selectedSummary.getTextFill();
 		assertTrue(providerText.getBrightness() < 0.65, "Provider label has insufficient contrast: " + providerText);
-		assertTrue(selectedExamText.getBrightness() < 0.65,
-				"Selected Exam label has insufficient contrast: " + selectedExamText);
+		assertTrue(summaryText.getBrightness() < 0.65, "Exam summary has insufficient contrast: " + summaryText);
 	}
 
 	@Test
 	@SuppressWarnings("unchecked")
 	void incompleteBookletCannotBeConfirmedReviewed(FxRobot robot) {
+		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
 		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+
+		// Test incomplete capture independently of the COMPLETE
+		// lifecycle restriction introduced in this batch.
+		robot.interact(() -> exams.getSelectionModel().select(fixture.activeExamStatus));
 		TableColumn<BookletCorpusStatus, Boolean> reviewedColumn = booklets.getColumns().stream()
 				.filter(column -> "Applicability Reviewed".equals(column.getText()))
 				.map(column -> (TableColumn<BookletCorpusStatus, Boolean>) column).findFirst().orElseThrow();
 		robot.interact(() -> booklets.scrollToColumn(reviewedColumn));
 		WaitForAsyncUtils.waitForFxEvents();
-
-		// Paper 1 still lacks one required MCQ explanation.
-		CheckBox checkBox = robot.lookup("#corpus-dashboard-applicability-reviewed-20").queryAs(CheckBox.class);
+		CheckBox checkBox = robot.lookup("#corpus-dashboard-applicability-reviewed-31").queryAs(CheckBox.class);
 		assertFalse(checkBox.isSelected());
-		assertTrue(checkBox.isDisable());
+		assertTrue(checkBox.isDisabled());
 		assertTrue(checkBox.getTooltip().getText().contains("classification"));
 	}
 
@@ -1381,6 +1553,40 @@ class CorpusDashboardPaneTest {
 		robot.interact(lifecycle::fire);
 		assertNotNull(routedExam.get());
 		assertEquals(fixture.completeExam.getId(), routedExam.get().getId());
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void lockedCoordinatorExamRemainsInspectableButCannotBeModified(FxRobot robot) {
+		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		TableView<BookletCorpusStatus> booklets = robot.lookup("#corpus-dashboard-booklets").queryAs(TableView.class);
+		Button manage = robot.lookup("#corpus-dashboard-manage-exam-assets").queryButton();
+		Button issue = robot.lookup("#corpus-dashboard-create-contributor-assignment").queryButton();
+		Button close = robot.lookup("#corpus-dashboard-close-assignment").queryButton();
+		Button inspect = robot.lookup("#corpus-dashboard-inspect-exam-questions").queryButton();
+		Button capture = robot.lookup("#corpus-dashboard-capture-questions").queryButton();
+		Button lifecycle = robot.lookup("#corpus-dashboard-exam-lifecycle").queryButton();
+		robot.interact(() -> {
+			exams.getSelectionModel().select(fixture.activeExamStatus);
+			booklets.getSelectionModel().select(fixture.activePaperStatus);
+			pane.setReadOnlyContext(java.util.Map.of(fixture.activeExam.getId(), "Test Contributor"), false);
+		});
+		assertTrue(manage.isDisabled());
+		assertTrue(issue.isDisabled());
+		assertTrue(capture.isDisabled());
+		assertTrue(lifecycle.isDisabled());
+		assertFalse(close.isDisabled());
+		assertFalse(inspect.isDisabled());
+		Label selectedSummary = robot.lookup("#corpus-dashboard-selected-exam-counts").queryAs(Label.class);
+		assertTrue(selectedSummary.getText().contains("ASSIGNED to Test Contributor"));
+		assertEquals("ASSIGNED", exams.getColumns().get(3).getCellData(fixture.activeExamStatus));
+		robot.interact(() -> pane.setReadOnlyContext(java.util.Map.of(), false));
+		assertFalse(manage.isDisabled());
+		assertFalse(issue.isDisabled());
+		assertTrue(close.isDisabled());
+		assertFalse(capture.isDisabled());
+		assertFalse(selectedSummary.getText().contains("ASSIGNED to"));
+		assertEquals("ACTIVE", exams.getColumns().get(3).getCellData(fixture.activeExamStatus));
 	}
 
 	@Test
@@ -2394,6 +2600,7 @@ class CorpusDashboardPaneTest {
 	}
 
 	@Test
+	@SuppressWarnings("unchecked")
 	void unsetExpectedCountsAreShownExplicitly(FxRobot robot) {
 		ExamCorpusStatus unsetExpectations = new ExamCorpusStatus(fixture.completeExam,
 				new ExamAssetExpectations(null, 2, null, 1), fixture.completeExamStatus.bookletStatuses(),
@@ -2401,12 +2608,19 @@ class CorpusDashboardPaneTest {
 				EnumSet.noneOf(ExamCorpusFinding.class));
 		robot.interact(
 				() -> pane.replaceData(List.of(unsetExpectations, fixture.activeExamStatus), fixture.questions()));
-		Label selectedCounts = robot.lookup("#corpus-dashboard-selected-exam-counts").queryAs(Label.class);
+		TableView<ExamCorpusStatus> exams = robot.lookup("#corpus-dashboard-exams").queryAs(TableView.class);
+		TableColumn<ExamCorpusStatus, ?> questionBooklets = exams.getColumns().stream()
+				.filter(column -> "Question Booklets".equals(column.getText())).findFirst().orElseThrow();
+		TableColumn<ExamCorpusStatus, ?> answerBooklets = exams.getColumns().stream()
+				.filter(column -> "Answer Booklets".equals(column.getText())).findFirst().orElseThrow();
 
-		// Missing planning metadata must be distinguishable from a genuine zero count
-		// and from the dash used to represent no ordinary work.
-		assertTrue(selectedCounts.getText().contains("Question booklets: 2 / not recorded"));
-		assertTrue(selectedCounts.getText().contains("Answer booklets: 1 / not recorded"));
+		// Missing expectations remain distinguishable from zero,
+		// even though the redundant summary counts have been removed.
+		robot.interact(() -> {
+			assertTrue(exams.getItems().contains(unsetExpectations));
+			assertEquals("2 / not recorded", questionBooklets.getCellData(unsetExpectations));
+			assertEquals("1 / not recorded", answerBooklets.getCellData(unsetExpectations));
+		});
 	}
 
 	@SuppressWarnings({ "rawtypes", "unchecked" })

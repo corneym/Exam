@@ -98,3 +98,24 @@
 #corpus-dashboard-question-work:focused .table-row-cell:filled:selected:question-clear {
     -fx-background-color: -fx-selection-bar;
 }
+
+
+/* An actively assigned coordinator Exam takes precedence over audit colours. */
+
+#corpus-dashboard-exams .table-row-cell:filled:exam-assigned {
+    -fx-background-color: #dcecff;
+}
+
+#corpus-dashboard-exams .table-row-cell:filled:odd:exam-assigned {
+    -fx-background-color: #cee3fb;
+}
+
+/* Selected assigned Exams retain the normal JavaFX selection colour. */
+
+#corpus-dashboard-exams .table-row-cell:filled:selected:exam-assigned {
+    -fx-background-color: -fx-selection-bar-non-focused;
+}
+
+#corpus-dashboard-exams:focused .table-row-cell:filled:selected:exam-assigned {
+    -fx-background-color: -fx-selection-bar;
+}

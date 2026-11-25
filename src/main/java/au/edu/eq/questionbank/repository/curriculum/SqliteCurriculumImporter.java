@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.repository.curriculum;
 
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteImportedSubjectAuthorityRepository;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -213,6 +214,7 @@ public final class SqliteCurriculumImporter {
 		} else {
 			subject = writer.insertSubject(connection, subjectName);
 		}
+		new SqliteImportedSubjectAuthorityRepository(database).requireLocallyAuthoritative(connection, subject.getId());
 
 		// Switch the current version in the same transaction as the new hierarchy.
 		if (current) {

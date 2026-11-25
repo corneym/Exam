@@ -17,6 +17,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 
 import au.edu.eq.questionbank.repository.identity.SqliteExamAssignmentGraphReader;
@@ -68,79 +69,33 @@ public final class MasterContributionReviewPlanner {
 	 * @throws NullPointerException if packageId is null
 	 */
 	public ReviewPlan plan(UUID packageId) throws SQLException, IOException {
-		Objects.requireNonNull(packageId, "packageId");
-		Path directory = Files.createTempDirectory("examwork-master-review-");
-		Path snapshotPath = directory.resolve("master-review.db");
-		try {
-			database.createConsistentSnapshot(snapshotPath);
-			SqliteDatabase snapshot = SqliteDatabase.readOnly(snapshotPath);
+		return plan(packageId, false).orElseThrow();
+	}
 
-			// Read the receipt, proposals, assignment and current Exam from
-			// one immutable snapshot to prevent mixed-state comparisons.
-			MasterContributionIntake intake = new MasterContributionIntake(snapshot);
-			MasterContributionIntake.ReceivedPackage received = intake.find(packageId)
-					.orElseThrow(() -> new PackageFormatException("Contribution has not been received: " + packageId));
-			List<ExchangeRecord> changes = intake.proposedChanges(packageId);
-			if (changes.isEmpty()) {
-				throw new PackageFormatException("Received contribution has no proposed records");
-			}
-			WorkAssignmentLedger.Assignment assignment = new WorkAssignmentLedger(snapshot)
-					.find(received.assignmentId())
-					.orElseThrow(() -> new SQLException("Issued assignment is missing from master snapshot"));
-			if (!received.baselineSnapshotId().equals(assignment.baselineSnapshotId())
-					|| !received.masterInstallationId().equals(assignment.masterInstallationId())
-					|| !received.contributorId().equals(assignment.contributorId())) {
-				throw new PackageFormatException("Stored intake evidence disagrees with issued assignment");
-			}
-			SqlitePortableIdentityRepository identities = new SqlitePortableIdentityRepository(snapshot);
-			var subject = identities.findByPortableId(EntityType.SUBJECT, assignment.subjectPortableId());
-			var exam = identities.findByPortableId(EntityType.EXAM, assignment.examPortableId());
-			boolean missingRoot = subject.isEmpty() || exam.isEmpty();
-			List<ExchangeRecord> masterRecords;
-			if (missingRoot) {
-				masterRecords = List.of();
-			} else {
-				var graph = new SqliteExamAssignmentGraphReader(snapshotPath).read(subject.orElseThrow().localId(),
-						exam.orElseThrow().localId());
-				masterRecords = new SqliteSubjectPortableRecordReader(snapshotPath).read(graph);
-			}
-			Map<String, ExchangeRecord> currentByIdentity = new HashMap<>();
-			for (ExchangeRecord current : masterRecords) {
-				if (currentByIdentity.putIfAbsent(key(current), current) != null) {
-					throw new SQLException("Duplicate portable identity in master Exam graph");
-				}
-			}
-			List<RecordAssessment> assessments = new ArrayList<>();
-			try (Connection connection = snapshot.openConnection();
-					PreparedStatement identityLookup = connection.prepareStatement("""
-							SELECT retired
-							FROM portable_entity_identities
-							WHERE entity_type = ?
-							  AND portable_id = ?
-							""")) {
-				for (ExchangeRecord proposed : changes) {
-					ExchangeRecord current = currentByIdentity.get(key(proposed));
-					IdentityState outside = current == null ? findExternalIdentity(identityLookup, proposed)
-							: IdentityState.ABSENT;
-					ReviewStatus status = classify(received.status(), proposed, current, outside, missingRoot);
-					assessments.add(new RecordAssessment(proposed.recordType(), proposed.recordId(),
-							proposed.baselineRevisionId(), proposed.revisionId(),
-							current == null ? null : current.revisionId(),
-							current == null ? null : recordDigest(current), status));
-				}
-			}
-			return new ReviewPlan(received.packageId(), received.assignmentId(), received.status(), Instant.now(),
-					assessments);
-		} finally {
-
-			// Snapshot readers close their connections before this point.
-			// Remove the temporary SQLite file even if assessment fails.
-			try {
-				Files.deleteIfExists(snapshotPath);
-			} finally {
-				Files.deleteIfExists(directory);
-			}
-		}
+	/**
+	 * Prepares a review only when a received contribution remains eligible for
+	 * reconciliation against its active assignment.
+	 *
+	 * <p>
+	 * Previously received but unapplied contributions remain eligible, including
+	 * contributions whose earlier review was cancelled. Applied, closed, held and
+	 * competing returns are not eligible.
+	 *
+	 * <p>
+	 * Eligibility and record assessments are read from the same consistent master
+	 * snapshot. Application must still repeat its authoritative validation before
+	 * writing.
+	 *
+	 * @param packageId received contribution package identity
+	 * @return preliminary review plan, or empty when the return is no longer
+	 *         eligible
+	 * @throws SQLException         if master persistence or graph reading fails
+	 * @throws IOException          if snapshot creation or portable content reading
+	 *                              fails
+	 * @throws NullPointerException if packageId is null
+	 */
+	public Optional<ReviewPlan> planPending(UUID packageId) throws SQLException, IOException {
+		return plan(packageId, true);
 	}
 
 	private ReviewStatus classify(IntakeStatus intakeStatus, ExchangeRecord proposed, ExchangeRecord current,
@@ -196,6 +151,92 @@ public final class MasterContributionReviewPlanner {
 
 	private String key(ExchangeRecord record) {
 		return record.recordType() + "\0" + record.recordId();
+	}
+
+	private Optional<ReviewPlan> plan(UUID packageId, boolean pendingOnly) throws SQLException, IOException {
+		Objects.requireNonNull(packageId, "packageId");
+		Path directory = Files.createTempDirectory("examwork-master-review-");
+		Path snapshotPath = directory.resolve("master-review.db");
+		try {
+			database.createConsistentSnapshot(snapshotPath);
+			SqliteDatabase snapshot = SqliteDatabase.readOnly(snapshotPath);
+
+			// Evaluate eligibility against the same immutable snapshot
+			// used to assess the proposed records.
+			if (pendingOnly) {
+				try (Connection connection = snapshot.openConnection()) {
+					if (MasterContributionIntake.findReviewableAssignment(connection, packageId).isEmpty()) {
+						return Optional.empty();
+					}
+				}
+			}
+
+			// Read the receipt, proposals, assignment and current Exam
+			// from one snapshot to prevent mixed-state comparisons.
+			MasterContributionIntake intake = new MasterContributionIntake(snapshot);
+			MasterContributionIntake.ReceivedPackage received = intake.find(packageId)
+					.orElseThrow(() -> new PackageFormatException("Contribution has not been received: " + packageId));
+			List<ExchangeRecord> changes = intake.proposedChanges(packageId);
+			if (changes.isEmpty()) {
+				throw new PackageFormatException("Received contribution has no proposed records");
+			}
+			WorkAssignmentLedger.Assignment assignment = new WorkAssignmentLedger(snapshot)
+					.find(received.assignmentId())
+					.orElseThrow(() -> new SQLException("Issued assignment is missing " + "from master snapshot"));
+			if (!received.baselineSnapshotId().equals(assignment.baselineSnapshotId())
+					|| !received.masterInstallationId().equals(assignment.masterInstallationId())
+					|| !received.contributorId().equals(assignment.contributorId())) {
+				throw new PackageFormatException("Stored intake evidence disagrees " + "with issued assignment");
+			}
+			SqlitePortableIdentityRepository identities = new SqlitePortableIdentityRepository(snapshot);
+			var subject = identities.findByPortableId(EntityType.SUBJECT, assignment.subjectPortableId());
+			var exam = identities.findByPortableId(EntityType.EXAM, assignment.examPortableId());
+			boolean missingRoot = subject.isEmpty() || exam.isEmpty();
+			List<ExchangeRecord> masterRecords;
+			if (missingRoot) {
+				masterRecords = List.of();
+			} else {
+				var graph = new SqliteExamAssignmentGraphReader(snapshotPath).read(subject.orElseThrow().localId(),
+						exam.orElseThrow().localId());
+				masterRecords = new SqliteSubjectPortableRecordReader(snapshotPath).read(graph);
+			}
+			Map<String, ExchangeRecord> currentByIdentity = new HashMap<>();
+			for (ExchangeRecord current : masterRecords) {
+				if (currentByIdentity.putIfAbsent(key(current), current) != null) {
+					throw new SQLException("Duplicate portable identity " + "in master Exam graph");
+				}
+			}
+			List<RecordAssessment> assessments = new ArrayList<>();
+			try (Connection connection = snapshot.openConnection();
+					PreparedStatement identityLookup = connection.prepareStatement("""
+							SELECT retired
+							FROM portable_entity_identities
+							WHERE entity_type = ?
+							  AND portable_id = ?
+							""")) {
+				for (ExchangeRecord proposed : changes) {
+					ExchangeRecord current = currentByIdentity.get(key(proposed));
+					IdentityState outside = current == null ? findExternalIdentity(identityLookup, proposed)
+							: IdentityState.ABSENT;
+					ReviewStatus status = classify(received.status(), proposed, current, outside, missingRoot);
+					assessments.add(new RecordAssessment(proposed.recordType(), proposed.recordId(),
+							proposed.baselineRevisionId(), proposed.revisionId(),
+							current == null ? null : current.revisionId(),
+							current == null ? null : recordDigest(current), status));
+				}
+			}
+			return Optional.of(new ReviewPlan(received.packageId(), received.assignmentId(), received.status(),
+					Instant.now(), assessments));
+		} finally {
+
+			// Remove the temporary snapshot even when eligibility
+			// prevents review or assessment fails.
+			try {
+				Files.deleteIfExists(snapshotPath);
+			} finally {
+				Files.deleteIfExists(directory);
+			}
+		}
 	}
 
 	private String recordDigest(ExchangeRecord record) throws IOException {

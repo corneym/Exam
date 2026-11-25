@@ -4,6 +4,8 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -30,9 +32,10 @@ public final class SqliteSubjectImportLedger {
 	private final SqliteDatabase database;
 
 	/**
-	 * Creates a ledger repository.
+	 * Creates a ledger repository for the initialised application database.
 	 *
-	 * @param database initialised SQLite database at schema v27
+	 * @param database initialised SQLite database
+	 * @throws NullPointerException if database is null
 	 */
 	public SqliteSubjectImportLedger(SqliteDatabase database) {
 		this.database = Objects.requireNonNull(database, "database");
@@ -53,6 +56,46 @@ public final class SqliteSubjectImportLedger {
 	private static void requireSha256(String digest, String field) {
 		if (digest == null || !digest.matches("[0-9a-f]{64}")) {
 			throw new IllegalArgumentException(field + " must be a SHA-256 digest");
+		}
+	}
+
+	/**
+	 * Retrieves a previously recorded package outcome using the caller's existing
+	 * database connection.
+	 *
+	 * <p>
+	 * The connection remains owned by the caller. This method does not commit, roll
+	 * back or modify package history.
+	 *
+	 * @param connection caller-owned database connection
+	 * @param packageId  immutable package identity
+	 * @return the recorded package, or an empty result
+	 * @throws SQLException         if reading the ledger fails
+	 * @throws NullPointerException if either argument is null
+	 */
+	public Optional<PackageEntry> find(Connection connection, UUID packageId) throws SQLException {
+		Objects.requireNonNull(connection, "connection");
+		Objects.requireNonNull(packageId, "packageId");
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT package_id, archive_sha256,
+				       origin_installation_id, subject_portable_id,
+				       master_state_sha256, approval_sha256, outcome,
+				       backup_archive_path, approval_note
+				FROM subject_import_packages
+				WHERE package_id = ?
+				""")) {
+			statement.setString(1, packageId.toString());
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					return Optional.empty();
+				}
+				return Optional.of(new PackageEntry(UUID.fromString(result.getString("package_id")),
+						result.getString("archive_sha256"), UUID.fromString(result.getString("origin_installation_id")),
+						UUID.fromString(result.getString("subject_portable_id")),
+						result.getString("master_state_sha256"), result.getString("approval_sha256"),
+						PackageOutcome.valueOf(result.getString("outcome")), result.getString("backup_archive_path"),
+						result.getString("approval_note")));
+			}
 		}
 	}
 
@@ -105,6 +148,65 @@ public final class SqliteSubjectImportLedger {
 	}
 
 	/**
+	 * Retrieves originating freshness evidence in the caller's database view.
+	 *
+	 * <p>
+	 * Older ledger entries have no such evidence. The local completion time must
+	 * never be substituted for the originating creation timestamp.
+	 *
+	 * @param connection caller-owned database connection
+	 * @param packageId  immutable package identity
+	 * @return recorded evidence, or empty for an unknown package or legacy entry
+	 * @throws SQLException         if evidence cannot be read or is invalid
+	 * @throws NullPointerException if either argument is null
+	 */
+	public Optional<OriginatingSnapshotEvidence> findOriginatingSnapshotEvidence(Connection connection, UUID packageId)
+			throws SQLException {
+		Objects.requireNonNull(connection, "connection");
+		Objects.requireNonNull(packageId, "packageId");
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT originating_snapshot_created_at,
+				       originating_snapshot_content_sha256
+				FROM subject_import_packages
+				WHERE package_id = ?
+				""")) {
+			statement.setString(1, packageId.toString());
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					return Optional.empty();
+				}
+				String timestamp = result.getString(1);
+				String digest = result.getString(2);
+				if (timestamp == null && digest == null) {
+					return Optional.empty();
+				}
+				if (timestamp == null || digest == null) {
+					throw new SQLException("Incomplete originating snapshot freshness evidence");
+				}
+				try {
+					return Optional.of(new OriginatingSnapshotEvidence(Instant.parse(timestamp), digest));
+				} catch (DateTimeParseException | IllegalArgumentException failure) {
+					throw new SQLException("Invalid originating snapshot freshness evidence", failure);
+				}
+			}
+		}
+	}
+
+	/**
+	 * Retrieves the originating freshness evidence for a package.
+	 *
+	 * @param packageId immutable package identity
+	 * @return recorded evidence, or empty for an unknown package or legacy entry
+	 * @throws SQLException         if evidence cannot be read or is invalid
+	 * @throws NullPointerException if packageId is null
+	 */
+	public Optional<OriginatingSnapshotEvidence> findOriginatingSnapshotEvidence(UUID packageId) throws SQLException {
+		try (Connection connection = database.openConnection()) {
+			return findOriginatingSnapshotEvidence(connection, packageId);
+		}
+	}
+
+	/**
 	 * Adds one reviewed record or asset outcome to the caller's transaction.
 	 *
 	 * <p>
@@ -140,26 +242,55 @@ public final class SqliteSubjectImportLedger {
 	}
 
 	/**
-	 * Records an immutable package outcome in the caller's transaction.
+	 * Records a package outcome without originating freshness evidence.
 	 *
 	 * <p>
-	 * The caller must check the returned value before writing individual outcomes.
-	 * An already recorded package must not be applied again.
+	 * Retains the legacy ledger contract. Production Subject snapshot imports use
+	 * the overload that records verified originating evidence. An identical
+	 * previously recorded package is not changed.
 	 *
 	 * @param connection caller-owned transactional connection
-	 * @param entry      approved package result
-	 * @return true if inserted, false if the identical package was recorded
-	 * @throws SQLException if the identifier is reused for different bytes or
-	 *                      persistence otherwise fails
+	 * @param entry      package outcome
+	 * @return true if inserted, false if identical archive bytes were recorded
+	 * @throws SQLException if the identity was reused or persistence fails
 	 */
 	public boolean recordPackage(Connection connection, PackageEntry entry) throws SQLException {
+		return recordPackage(connection, entry, null);
+	}
+
+	/**
+	 * Records a package outcome and verified originating freshness evidence in one
+	 * insert within the caller's transaction.
+	 *
+	 * <p>
+	 * Only the caller that has validated the exact archive may supply freshness
+	 * evidence. A null evidence value represents unknown legacy evidence. Replaying
+	 * an existing package never changes its history, including unknown evidence.
+	 *
+	 * @param connection caller-owned transactional connection
+	 * @param entry      package outcome
+	 * @param evidence   verified originating evidence, or null for legacy entries
+	 * @return true if inserted, false if the identical archive was already recorded
+	 * @throws SQLException          if package identity or known evidence
+	 *                               conflicts, or persistence fails
+	 * @throws IllegalStateException if the connection is in auto-commit mode
+	 * @throws NullPointerException  if connection or entry is null
+	 */
+	public boolean recordPackage(Connection connection, PackageEntry entry, OriginatingSnapshotEvidence evidence)
+			throws SQLException {
 		requireTransaction(connection);
 		Objects.requireNonNull(entry, "entry");
 		Optional<PackageEntry> existing = find(connection, entry.packageId());
 		if (existing.isPresent()) {
-			PackageEntry previous = existing.get();
+			PackageEntry previous = existing.orElseThrow();
 			if (!previous.archiveSha256().equals(entry.archiveSha256())) {
 				throw new SQLException("Package ID already belongs to different archive content");
+			}
+			if (evidence != null) {
+				var recorded = findOriginatingSnapshotEvidence(connection, entry.packageId());
+				if (recorded.isPresent() && !recorded.orElseThrow().equals(evidence)) {
+					throw new SQLException("Package ID already has different originating freshness evidence");
+				}
 			}
 			return false;
 		}
@@ -168,9 +299,10 @@ public final class SqliteSubjectImportLedger {
 				    package_id, archive_sha256, origin_installation_id,
 				    subject_portable_id, master_state_sha256,
 				    approval_sha256, outcome, backup_archive_path,
-				    approval_note
+				    approval_note, originating_snapshot_created_at,
+				    originating_snapshot_content_sha256
 				)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				""")) {
 			statement.setString(1, entry.packageId().toString());
 			statement.setString(2, entry.archiveSha256());
@@ -181,37 +313,11 @@ public final class SqliteSubjectImportLedger {
 			statement.setString(7, entry.outcome().name());
 			statement.setString(8, entry.backupArchivePath());
 			statement.setString(9, entry.approvalNote());
+			statement.setString(10, evidence == null ? null : evidence.createdAt().toString());
+			statement.setString(11, evidence == null ? null : evidence.contentSha256());
 			statement.executeUpdate();
 		}
 		return true;
-	}
-
-	/**
-	 * Finds a package using the caller's existing database connection.
-	 */
-	private Optional<PackageEntry> find(Connection connection, UUID packageId) throws SQLException {
-		Objects.requireNonNull(packageId, "packageId");
-		try (PreparedStatement statement = connection.prepareStatement("""
-				SELECT package_id, archive_sha256,
-				       origin_installation_id, subject_portable_id,
-				       master_state_sha256, approval_sha256, outcome,
-				       backup_archive_path, approval_note
-				FROM subject_import_packages
-				WHERE package_id = ?
-				""")) {
-			statement.setString(1, packageId.toString());
-			try (ResultSet result = statement.executeQuery()) {
-				if (!result.next()) {
-					return Optional.empty();
-				}
-				return Optional.of(new PackageEntry(UUID.fromString(result.getString("package_id")),
-						result.getString("archive_sha256"), UUID.fromString(result.getString("origin_installation_id")),
-						UUID.fromString(result.getString("subject_portable_id")),
-						result.getString("master_state_sha256"), result.getString("approval_sha256"),
-						PackageOutcome.valueOf(result.getString("outcome")), result.getString("backup_archive_path"),
-						result.getString("approval_note")));
-			}
-		}
 	}
 
 	/**
@@ -260,6 +366,11 @@ public final class SqliteSubjectImportLedger {
 
 	/**
 	 * Identifies the result of one reviewed record or asset.
+	 *
+	 * <p>
+	 * Subject refresh entries retain the existing persisted outcome vocabulary. For
+	 * refresh operations, the explanation records the exact authoritative change
+	 * classification, including replacement and removal.
 	 */
 	public enum ItemOutcome {
 		/** New canonical master record inserted. */
@@ -268,12 +379,35 @@ public final class SqliteSubjectImportLedger {
 		ALIAS_LINKED,
 		/** Existing master record or asset retained unchanged. */
 		PRESERVED,
-		/** Verified packaged asset published in managed storage. */
+		/**
+		 * Verified packaged asset published, or approved authoritative refresh
+		 * difference applied to the destination.
+		 */
 		COPIED,
 		/** Coordinator rejected the proposed change. */
 		REJECTED,
 		/** An unsafe or unresolved operation was blocked. */
 		BLOCKED
+	}
+
+	/**
+	 * Originating evidence retained for an accepted or reviewed Subject snapshot.
+	 *
+	 * @param createdAt     creation instant from the validated originating manifest
+	 * @param contentSha256 verified semantic snapshot SHA-256 digest
+	 */
+	public record OriginatingSnapshotEvidence(Instant createdAt, String contentSha256) {
+
+		/**
+		 * Validates complete originating freshness evidence.
+		 *
+		 * @throws NullPointerException     if createdAt is null
+		 * @throws IllegalArgumentException if the content digest is invalid
+		 */
+		public OriginatingSnapshotEvidence {
+			Objects.requireNonNull(createdAt, "createdAt");
+			requireSha256(contentSha256, "contentSha256");
+		}
 	}
 
 	/**

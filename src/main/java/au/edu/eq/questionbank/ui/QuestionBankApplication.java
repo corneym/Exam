@@ -1,13 +1,25 @@
 package au.edu.eq.questionbank.ui;
 
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -16,7 +28,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CancellationException;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -25,6 +39,7 @@ import java.util.stream.Collectors;
 
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ApplicationPaths;
+import au.edu.eq.questionbank.ApplicationVersion;
 import au.edu.eq.questionbank.ConfigurationException;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.diagnostics.PerformanceCorpusCheckpointRecorder;
@@ -115,8 +130,13 @@ import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumMappingRevie
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumSourcePdfRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.IncompatibleDatabaseException;
+import au.edu.eq.questionbank.repository.sqlite.SqliteContributorAssignmentVisibilityRepository;
+import au.edu.eq.questionbank.repository.sqlite.SqliteCoordinatorExamLockRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteImportedSubjectAuthorityRepository;
 import au.edu.eq.questionbank.service.audit.BookletApplicabilityReviewService;
 import au.edu.eq.questionbank.service.audit.ExamCorpusAuditService;
 import au.edu.eq.questionbank.service.audit.ExamCorpusStatus;
@@ -162,12 +182,29 @@ import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
 import au.edu.eq.questionbank.service.revision.RevisionCorpusBuilder;
 import au.edu.eq.questionbank.service.revision.RevisionGroupingMode;
 import au.edu.eq.questionbank.service.revision.RevisionPresentationPlanner;
+import au.edu.eq.questionbank.service.workpackage.ContributionExporter;
 import au.edu.eq.questionbank.service.workpackage.ContributorAssignmentDashboardContextResolver;
+import au.edu.eq.questionbank.service.workpackage.ContributorAssignmentRemovalService;
+import au.edu.eq.questionbank.service.workpackage.ExamWorkJsonlCodec;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest;
+import au.edu.eq.questionbank.service.workpackage.ExamWorkPackageType;
+import au.edu.eq.questionbank.service.workpackage.ExchangeRecord;
+import au.edu.eq.questionbank.service.workpackage.MasterContributionApplicationCoordinator;
+import au.edu.eq.questionbank.service.workpackage.MasterContributionDecisionLedger;
+import au.edu.eq.questionbank.service.workpackage.MasterContributionIntake;
+import au.edu.eq.questionbank.service.workpackage.MasterContributionReceiptExporter;
+import au.edu.eq.questionbank.service.workpackage.MasterContributionReviewPlanner;
+import au.edu.eq.questionbank.service.workpackage.PackageFormatException;
 import au.edu.eq.questionbank.service.workpackage.SqliteContributorAssignmentSessionRepository;
+import au.edu.eq.questionbank.service.workpackage.SubjectImportBackupGate;
+import au.edu.eq.questionbank.service.workpackage.SubjectImportCoordinator;
 import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationPreviewService;
 import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationReview;
+import au.edu.eq.questionbank.service.workpackage.SubjectRefreshChangeClassifier;
+import au.edu.eq.questionbank.service.workpackage.SubjectRefreshChangeClassifier.ChangeKind;
+import au.edu.eq.questionbank.service.workpackage.SubjectRefreshPlan;
 import au.edu.eq.questionbank.service.workpackage.SubjectSnapshotExporter;
+import au.edu.eq.questionbank.service.workpackage.SubjectSnapshotIntakePreview;
 import au.edu.eq.questionbank.service.workpackage.WorkAssignmentExporter;
 import au.edu.eq.questionbank.service.workpackage.WorkAssignmentInstallationCoordinator;
 import au.edu.eq.questionbank.service.workpackage.WorkAssignmentIssuanceService;
@@ -225,8 +262,10 @@ import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.SplitPane;
+import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TextInputDialog;
+import javafx.scene.control.Tooltip;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -378,13 +417,23 @@ public class QuestionBankApplication extends Application {
 	private ContributorAssignmentDashboardContextResolver.Context activeAssignmentContext;
 	private ContributorAssignmentDashboardContextResolver contributorAssignmentResolver;
 	private SqliteContributorAssignmentSessionRepository contributorAssignments;
-	private final Button assignmentExitButton = new Button("Exit assignment mode");
 	private boolean assignmentSelectionInProgress;
+	private final Button assignmentRemoveButton = new Button("Remove Unchanged Assignment");
+	private boolean contributorRemovalRunning;
 	private final ComboBox<SqliteContributorAssignmentSessionRepository.Session> assignmentSelector = new ComboBox<>();
-	private final Button assignmentSwitchButton = new Button("Switch assignment");
 	private final HBox assignmentToolbar = new HBox(SECTION_SPACING);
 	private boolean contributorAssignmentIssuanceRunning;
 	private long contributorAssignmentInstallationRequest;
+	private MenuItem contributionExportMenuItem;
+	private boolean contributionExportRunning;
+	private MenuItem subjectSnapshotExportMenuItem;
+	private boolean packageImportInProgress;
+	private final StackPane corpusDashboardCurriculumHost = new StackPane();
+	private Menu curriculumMenu;
+	private Map<UUID, String> assignmentDisplayLabels = Map.of();
+	private long contributorContextRefreshGeneration;
+	private Subject corpusDashboardSubject;
+	private UUID removableContributorAssignmentId;
 
 	/**
 	 * Creates the desktop application instance initialized by JavaFX.
@@ -747,6 +796,20 @@ public class QuestionBankApplication extends Application {
 		return false;
 	}
 
+	private boolean allowCurriculumModification(String title) {
+		if (workingSubject == null) {
+			showAlert(Alert.AlertType.WARNING, title, "No Subject is selected.",
+					"Select a Subject on the Corpus Dashboard.");
+			return false;
+		}
+		if (isWorkingSubjectSnapshotExportRestricted()) {
+			showAlert(Alert.AlertType.WARNING, title, "This Curriculum is read-only.",
+					"Curriculum changes must be made in the " + "authoritative coordinator installation.");
+			return false;
+		}
+		return true;
+	}
+
 	private boolean allowExamAssetsTransition() {
 		boolean captureWorkInProgress = captureSelectionState.hasPendingSelection()
 				|| questionCapturePane.hasAcceptedRegions() || answerCapturePane.hasAcceptedRegions()
@@ -892,6 +955,25 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void applyDashboardAuthority(CorpusDashboardPane dashboard, CorpusDashboardSnapshot snapshot) {
+		UUID expectedAssignmentId = activeAssignmentContext == null ? null
+				: activeAssignmentContext.session().assignmentId();
+		if (!Objects.equals(expectedAssignmentId, snapshot.assignmentId())) {
+			throw new IllegalStateException("Dashboard authority does not match the selected assignment.");
+		}
+		boolean readOnly = snapshot.importedSubject()
+				|| (activeAssignmentContext == null && snapshot.installedContributorSubject());
+		dashboard.setAssignmentExamScope(
+				activeAssignmentContext == null ? null : Long.valueOf(activeAssignmentContext.session().examLocalId()));
+		dashboard.setContributorBaselineQuestionIds(snapshot.baselineQuestionIds());
+		dashboard.setContributorBaselineAnswerIds(snapshot.baselineAnswerIds());
+		answerCapturePane.setContributorBaselineAnswerIds(snapshot.baselineAnswerIds());
+		dashboard.setReadOnlyContext(snapshot.coordinatorExamLocks(), readOnly);
+		removableContributorAssignmentId = snapshot.removableAssignmentId();
+		dashboard.setDisable(false);
+		updateContributorAssignmentActions();
+	}
+
 	private void applyInstalledContributorAssignment(WorkAssignmentInstallationCoordinator.Result result,
 			Consumer<Throwable> completionHandler) throws SQLException {
 		Objects.requireNonNull(result, "result");
@@ -901,46 +983,11 @@ public class QuestionBankApplication extends Application {
 			throw new IllegalStateException(
 					"The installed assignment identity does not match " + "the active contributor session.");
 		}
-		activeAssignmentContext = installed;
-		restoringWorkingSubject = true;
-		try {
 
-			// Any previous PDF or Booklet capture context belongs to
-			// the earlier selection. Installation activates only an Exam.
-			clearCorpusDashboardCaptureReturn();
-			clearPdfWorkspaceForSubjectChange(null);
-			examMetadataPane.invalidateForSubjectChange(null);
-
-			// The installer may have introduced an entirely new Subject.
-			// Rebuild the selector from the committed database first.
-			curriculumSelectorPane.refreshSubjects();
-			curriculumSelectorPane.selectSubject(installed.subject());
-			workingSubject = installed.subject();
-			examMetadataPane.invalidateForSubjectChange(workingSubject);
-			resetLegacyQuestionImportState();
-			showCorpusDashboardHome();
-			refreshActiveExamContext();
-			refreshContributorAssignmentToolbar();
-		} finally {
-			restoringWorkingSubject = false;
-		}
-
-		// Keep the installation's busy token through both asynchronous publications.
-		// Capture queues must finish before the Dashboard can expose new capture work.
-		long generation = ++workingSubjectRefreshGeneration;
-		Subject subject = workingSubject;
-		showCorpusDashboardLoading(subject);
-		startWorkingSubjectCaptureRefresh(subject, generation, failure -> {
-			if (failure != null) {
-				completionHandler.accept(failure);
-				return;
-			}
-			try {
-				loadCorpusDashboardHome(subject, generation, -1L, completionHandler);
-			} catch (RuntimeException | Error exception) {
-				completionHandler.accept(exception);
-			}
-		});
+		// Installation may have introduced a new Subject. Retain the
+		// installation's busy ownership until capture and Dashboard
+		// publication have both completed.
+		refreshContributorAssignmentContext(installed, true, completionHandler);
 	}
 
 	private void backupNow(Stage primaryStage, ApplicationConfig config) {
@@ -988,6 +1035,46 @@ public class QuestionBankApplication extends Application {
 		return true;
 	}
 
+	private Map<UUID, String> buildAssignmentDisplayLabels(SqliteDatabase database,
+			List<SqliteContributorAssignmentSessionRepository.Session> sessions) throws SQLException {
+		SqliteExamWriter writer = new SqliteExamWriter(database);
+		Map<Long, List<Exam>> examsBySubject = new HashMap<>();
+		Map<UUID, String> descriptions = new LinkedHashMap<>();
+		Map<UUID, String> subjectNames = new HashMap<>();
+		for (var session : sessions) {
+			var context = contributorAssignmentResolver.require(session.assignmentId());
+			Subject subject = context.subject();
+			List<Exam> exams = examsBySubject.get(subject.getId());
+			if (exams == null) {
+				exams = writer.findExamsForSubject(subject);
+				examsBySubject.put(subject.getId(), exams);
+			}
+			Exam exam = exams.stream().filter(candidate -> candidate.getId() == session.examLocalId()).findFirst()
+					.orElseThrow(() -> new SQLException("Assigned Exam metadata is unavailable"));
+			String description = "%s %d %s".formatted(exam.getProvider().getName(), exam.getYear(), exam.getName());
+			descriptions.put(session.assignmentId(), description);
+			subjectNames.put(session.assignmentId(), subject.getName());
+		}
+
+		// Include Subject only when the ordinary Exam description
+		// does not distinguish the available assignments.
+		Map<String, Long> descriptionCounts = descriptions.values().stream()
+				.collect(Collectors.groupingBy(description -> description, Collectors.counting()));
+		Map<UUID, String> labels = new LinkedHashMap<>();
+		descriptions.forEach((id, description) -> {
+			String label = descriptionCounts.get(description) > 1 ? subjectNames.get(id) + " — " + description
+					: description;
+			labels.put(id, label);
+		});
+
+		// Retain unambiguous selection even if two assignments
+		// have identical Subject and Exam descriptions.
+		Map<String, Long> labelCounts = labels.values().stream()
+				.collect(Collectors.groupingBy(label -> label, Collectors.counting()));
+		labels.replaceAll((id, label) -> labelCounts.get(label) > 1 ? label + " (" + id + ")" : label);
+		return Map.copyOf(labels);
+	}
+
 	private void cancelPendingLegacyQuestionImport() {
 
 		// User cancellation abandons the pending workbook transaction but may also need
@@ -1028,55 +1115,26 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void changeContributorAssignment(UUID assignmentId) {
-		if (!allowWorkingSubjectChange()) {
+		if (assignmentId == null) {
+			refreshContributorAssignmentToolbar();
 			return;
 		}
-		if (applicationBusyOverlay != null && applicationBusyOverlay.isBusy()) {
+		if (contributorRemovalRunning || contributionExportRunning
+				|| (applicationBusyOverlay != null && applicationBusyOverlay.isBusy())) {
+			return;
+		}
+		if (!allowWorkingSubjectChange()) {
+			refreshContributorAssignmentToolbar();
 			return;
 		}
 		var previousContext = activeAssignmentContext;
+		ContributorAssignmentDashboardContextResolver.Context nextContext;
 		try {
 
-			// Validate the target before changing persistent selection.
-			if (assignmentId != null) {
-				contributorAssignmentResolver.require(assignmentId);
-				contributorAssignments.select(assignmentId);
-			} else {
-				contributorAssignments.clearActive();
-			}
-			var newContext = contributorAssignmentResolver.active().orElse(null);
-			activeAssignmentContext = newContext;
-
-			// The old Exam/Booklet document must not survive assignment
-			// switching, even when the new assignment has the same Subject.
-			// Only the selected Exam is activated; Booklet selection remains
-			// an explicit contributor action.
-			clearCorpusDashboardCaptureReturn();
-			clearPdfWorkspaceForSubjectChange(null);
-			examMetadataPane.invalidateForSubjectChange(null);
-			assignmentSelectionInProgress = true;
-			try {
-				if (newContext != null && !Objects.equals(workingSubject, newContext.subject())) {
-
-					// Use the existing Subject refresh pipeline.
-					curriculumSelectorPane.selectSubject(newContext.subject());
-				} else {
-
-					// The Subject may be unchanged while the assigned
-					// Exam changes. Invalidate older async generations
-					// and rebuild the Dashboard from persistence.
-					startWorkingSubjectRefresh(workingSubject);
-				}
-				showCorpusDashboardHome();
-				refreshActiveExamContext();
-				refreshContributorAssignmentToolbar();
-			} finally {
-				assignmentSelectionInProgress = false;
-			}
+			// Validate the target before accepting its persistent selection.
+			nextContext = contributorAssignmentResolver.require(assignmentId);
+			contributorAssignments.select(assignmentId);
 		} catch (SQLException | RuntimeException failure) {
-
-			// Restore persisted selection if activation or UI setup
-			// fails. The assignment's captured work is untouched.
 			try {
 				if (previousContext == null) {
 					contributorAssignments.clearActive();
@@ -1084,29 +1142,24 @@ public class QuestionBankApplication extends Application {
 					contributorAssignments.select(previousContext.session().assignmentId());
 				}
 				activeAssignmentContext = previousContext;
-				assignmentSelectionInProgress = true;
-				try {
-
-					// The database selection has been restored. Restore the
-					// visible Subject and invalidate any snapshot requested
-					// for the unsuccessful target assignment.
-					if (previousContext != null && !Objects.equals(workingSubject, previousContext.subject())) {
-						curriculumSelectorPane.selectSubject(previousContext.subject());
-					} else {
-						startWorkingSubjectRefresh(workingSubject);
-					}
-					showCorpusDashboardHome();
-					refreshActiveExamContext();
-					refreshContributorAssignmentToolbar();
-				} finally {
-					assignmentSelectionInProgress = false;
-				}
+				refreshContributorAssignmentToolbar();
 			} catch (SQLException | RuntimeException rollbackFailure) {
 				failure.addSuppressed(rollbackFailure);
 			}
 			showAlert(Alert.AlertType.ERROR, "Contributor Assignment", "The assignment could not be selected.",
 					failureMessage(failure));
+			return;
 		}
+
+		// Once persistence accepts the selection, presentation failures
+		// must not expose an editable Dashboard for the previous assignment.
+		refreshContributorAssignmentContext(nextContext, false, failure -> {
+			if (failure != null && !(failure instanceof CancellationException)) {
+				showAlert(Alert.AlertType.ERROR, "Contributor Assignment",
+						"The assignment was selected, but its " + "Dashboard could not be refreshed.",
+						failureMessage(failure));
+			}
+		});
 	}
 
 	private void changeCorpusDashboardBookletReview(ExamBooklet booklet, boolean reviewed) {
@@ -1224,6 +1277,88 @@ public class QuestionBankApplication extends Application {
 		return bookletPicker.chooseAnyPdf(primaryStage, "Choose Answer booklet PDF");
 	}
 
+	private void chooseAssignmentContributionDestination(Stage primaryStage, ApplicationConfig config,
+			UUID assignmentId, Exam exam, String contributorName) {
+
+		// Do not continue an obsolete preflight after the assignment
+		// context has changed.
+		if (activeAssignmentContext == null || !assignmentId.equals(activeAssignmentContext.session().assignmentId())) {
+			return;
+		}
+		long examId = exam.getId();
+		FileChooser chooser = new FileChooser();
+		chooser.setTitle("Export Assignment Contribution");
+		chooser.setInitialFileName(WorkPackageFileNames.contribution(exam, contributorName, LocalDateTime.now()));
+		chooser.getExtensionFilters()
+				.add(new FileChooser.ExtensionFilter("ExamWork contribution (*.examwork)", "*.examwork"));
+		File selected = chooser.showSaveDialog(primaryStage);
+		if (selected == null) {
+			return;
+		}
+		Path destination = selected.toPath().toAbsolutePath().normalize();
+		Path dataRoot = config.dataRoot().toAbsolutePath().normalize();
+		if (destination.startsWith(dataRoot)) {
+			showAlert(Alert.AlertType.ERROR, "Export Assignment Contribution",
+					"Choose a location outside the managed data directory.",
+					"Contribution packages are exchange files, " + "not authoritative application data.");
+			return;
+		}
+		if (Files.exists(destination, LinkOption.NOFOLLOW_LINKS)) {
+			showAlert(Alert.AlertType.ERROR, "Export Assignment Contribution", "The destination already exists.",
+					"Choose a new filename. Existing contribution " + "archives will not be overwritten.");
+			return;
+		}
+		Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+		confirmation.initOwner(primaryStage);
+		confirmation.setTitle("Export Assignment Contribution");
+		confirmation.setHeaderText("Export saved changes from this assignment?");
+		confirmation.setContentText("Assignment: " + assignmentId + "\nExam: " + examId + "\nDestination: "
+				+ destination + "\n\nOnly newly captured contributor work " + "will be exported."
+				+ "\n\nThis is the final submission for this assignment."
+				+ " Once successfully exported, the assignment " + "becomes read-only"
+				+ " and disappears from the active assignment list." + "\n\nKeep the exported file so it can be sent "
+				+ "again if necessary." + " The coordinator must issue a new assignment " + "for further work.");
+		ButtonType exportButton = new ButtonType("Export Contribution", ButtonBar.ButtonData.OK_DONE);
+		confirmation.getButtonTypes().setAll(exportButton, ButtonType.CANCEL);
+		if (confirmation.showAndWait().orElse(ButtonType.CANCEL) != exportButton) {
+			return;
+		}
+
+		// The final exporter independently rechecks the current
+		// assignment and saved-work snapshot before publication.
+		startAssignmentContributionExport(primaryStage, config, assignmentId, destination);
+	}
+
+	private void chooseContributorAssignmentDestination(Stage primaryStage, ApplicationConfig config, Exam exam,
+			String contributorName, boolean legacyCaptureEnabled) {
+		if (activeAssignmentContext != null || contributorAssignmentIssuanceRunning || workingSubject == null
+				|| workingSubject.getId() != exam.getSubject().getId()) {
+			return;
+		}
+		FileChooser chooser = new FileChooser();
+		chooser.setTitle("Save Contributor Assignment");
+		chooser.getExtensionFilters()
+				.add(new FileChooser.ExtensionFilter("ExamWork assignment (*.examwork)", "*.examwork"));
+		chooser.setInitialFileName(suggestContributorAssignmentFileName(exam, contributorName));
+		File destination = chooser.showSaveDialog(primaryStage);
+		if (destination == null) {
+			return;
+		}
+
+		// Identity is created once for this issuance attempt,
+		// only after successful preflight and destination selection.
+		WorkAssignmentExporter.Request request;
+		try {
+			request = new WorkAssignmentExporter.Request(exam, UUID.randomUUID(), UUID.randomUUID(), contributorName,
+					legacyCaptureEnabled, destination.toPath());
+		} catch (IllegalArgumentException exception) {
+			showAlert(Alert.AlertType.ERROR, "Create Contributor Assignment", "The assignment details are invalid.",
+					exception.getMessage());
+			return;
+		}
+		startContributorAssignmentIssuance(primaryStage, config, request);
+	}
+
 	private CurriculumAuthoringSession chooseExistingCurriculum(Stage primaryStage, List<SyllabusVersion> versions,
 			CurriculumAuthoringOpenService openService) {
 		if (versions.isEmpty()) {
@@ -1287,6 +1422,20 @@ public class QuestionBankApplication extends Application {
 		questionCapturePane.discardCurrentSelectionForOwnershipLoss();
 	}
 
+	private void cleanupPreparedSubjectReview(PreparedSubjectReview prepared) {
+		try {
+			Files.deleteIfExists(prepared.masterArchive());
+			Files.deleteIfExists(prepared.directory());
+		} catch (IOException failure) {
+			showAlert(Alert.AlertType.ERROR, "Subject Review Cleanup",
+					"The temporary master review files could not be removed.",
+					failureMessage(failure) + "\n\nReview and remove this temporary directory "
+							+ "only after ensuring no import is running:\n" + prepared.directory());
+		} finally {
+			packageImportInProgress = false;
+		}
+	}
+
 	private void clearCaptureSelection(CaptureSelectionOwner owner) {
 		if (captureSelectionState.clear(owner)) {
 			pdfWorkspace.clearSelection();
@@ -1300,6 +1449,12 @@ public class QuestionBankApplication extends Application {
 		corpusDashboardCaptureReturnHandler = null;
 		returnToCorpusDashboardButton.setVisible(false);
 		returnToCorpusDashboardButton.setManaged(false);
+	}
+
+	private void clearDashboardCurriculumSection() {
+		corpusDashboardCurriculumHost.getChildren().clear();
+		corpusDashboardCurriculumHost.setVisible(false);
+		corpusDashboardCurriculumHost.setManaged(false);
 	}
 
 	private void clearPdfWorkspaceForSubjectChange(Subject newSubject) {
@@ -1370,6 +1525,35 @@ public class QuestionBankApplication extends Application {
 		// modal inspection session closes.
 		pdfWorkspace.closeViewerPdf();
 		setViewerMode(false);
+	}
+
+	private void completeContributorAssignmentInstallation(long request,
+			WorkAssignmentInstallationCoordinator.Result result, Throwable failure) {
+		if (!applicationBusyOverlay.owns(request)) {
+			return;
+		}
+		finishContributorAssignmentInstallation(request);
+		if (failure != null) {
+			corpusDashboardPane = null;
+			clearDashboardCurriculumSection();
+			corpusDashboardHost.getChildren().setAll(new Label(
+					"The installed assignment could not be displayed. Restart the application to refresh it."));
+
+			// Persistence succeeded; distinguish a presentation failure from a failed
+			// import.
+			showAlert(Alert.AlertType.ERROR, "Contributor Assignment Installed",
+					"The assignment was installed, but the Dashboard could not be refreshed.",
+					failureMessage(failure) + "\n\nRestart the application to restore the active assignment.");
+			return;
+		}
+		String message = result.replay()
+				? "The previously installed assignment was selected without replacing captured work."
+				: "The assignment and its source assets were installed successfully.";
+		if (result.cleanupPending()) {
+			message += "\n\nTemporary installation cleanup is pending. It will be retried by the installer.";
+		}
+		showAlert(Alert.AlertType.INFORMATION, "Contributor Assignment Installed", message, "Assignment ID: "
+				+ result.assignmentId() + "\n\nThe Corpus Dashboard is now scoped to the assigned Subject and Exam.");
 	}
 
 	private void completeExitWithoutBackup(Runnable readyAction) {
@@ -1462,21 +1646,37 @@ public class QuestionBankApplication extends Application {
 			WorkingSubjectCaptureSnapshot snapshot) {
 		if (!isCurrentWorkingSubjectRefresh(subject, generation)) {
 
-			// A later Subject selection is already authoritative. Neither curriculum nor
-			// queue data from this completed worker may be published.
+			// An obsolete worker must not publish curriculum or capture
+			// queues over the currently selected assignment.
 			return;
 		}
-		if (curriculumSelectorPane != null) {
+		List<Question> captureQuestions = snapshot.questions();
+		if (activeAssignmentContext != null) {
+			long assignedExamId = activeAssignmentContext.session().examLocalId();
+			captureQuestions = captureQuestions.stream()
+					.filter(question -> question.getExam().getId() == assignedExamId).toList();
+		} else if (subject != null && contributorAssignments != null) {
+			try {
+				Set<Long> contributorExamIds = contributorAssignments.findAll().stream()
+						.filter(session -> session.subjectLocalId() == subject.getId())
+						.map(session -> session.examLocalId()).collect(Collectors.toUnmodifiableSet());
 
-			// Curriculum is published first so any Question subsequently exposed by the
-			// queues can immediately restore its classification path.
+				// Retained assignment history is not locally authoritative
+				// capture work when no assignment is active.
+				captureQuestions = captureQuestions.stream()
+						.filter(question -> !contributorExamIds.contains(question.getExam().getId())).toList();
+			} catch (SQLException failure) {
+				throw new IllegalStateException("Contributor capture authority could not be loaded.", failure);
+			}
+		}
+		if (curriculumSelectorPane != null) {
 			curriculumSelectorPane.applySubjectSnapshot(snapshot.curriculumSnapshot());
 		}
 		if (questionCapturePane != null) {
-			questionCapturePane.setWorkingSubject(subject, snapshot.questions());
+			questionCapturePane.setWorkingSubject(subject, captureQuestions);
 		}
 		if (answerCapturePane != null) {
-			answerCapturePane.setWorkingSubject(subject, snapshot.questions());
+			answerCapturePane.setWorkingSubject(subject, captureQuestions);
 		}
 	}
 
@@ -1491,9 +1691,6 @@ public class QuestionBankApplication extends Application {
 
 			@Override
 			public SqliteContributorAssignmentSessionRepository.Session fromString(String text) {
-
-				// The selector is not editable. Typed conversion
-				// must never create an unregistered assignment.
 				return null;
 			}
 
@@ -1502,19 +1699,44 @@ public class QuestionBankApplication extends Application {
 				if (session == null) {
 					return "";
 				}
-				String shortId = session.assignmentId().toString().substring(0, 8);
-				return "Exam " + session.examLocalId() + " — " + session.contributorName() + " (" + shortId + ")";
+
+				// JavaFX cell rendering must not perform SQLite reads.
+				return assignmentDisplayLabels.getOrDefault(session.assignmentId(), "Assignment unavailable");
 			}
 		});
-		assignmentSwitchButton.setId("corpus-dashboard-switch-assignment");
-		assignmentSwitchButton.setOnAction(_ -> switchContributorAssignment());
-		assignmentExitButton.setId("corpus-dashboard-exit-assignment");
-		assignmentExitButton.setOnAction(_ -> exitContributorAssignment());
-		assignmentSelector.valueProperty().addListener((_, _, _) -> updateContributorAssignmentActions());
-		assignmentToolbar.getChildren().setAll(label, assignmentSelector, assignmentSwitchButton, assignmentExitButton);
+		assignmentRemoveButton.setId("corpus-dashboard-remove-assignment");
+		assignmentRemoveButton.setTooltip(new Tooltip("Remove an unchanged work package from the active list. "
+				+ "Assignments with saved work must be " + "submitted instead."));
+		assignmentRemoveButton.setOnAction(_ -> removeContributorAssignment());
+		assignmentSelector.valueProperty().addListener((_, _, selected) -> {
+			updateContributorAssignmentActions();
+			if (assignmentSelectionInProgress || contributionExportRunning || contributorRemovalRunning
+					|| selected == null) {
+				return;
+			}
+			if (activeAssignmentContext != null
+					&& activeAssignmentContext.session().assignmentId().equals(selected.assignmentId())) {
+				return;
+			}
+			changeContributorAssignment(selected.assignmentId());
+		});
+		assignmentToolbar.getChildren().setAll(label, assignmentSelector, assignmentRemoveButton);
 		assignmentToolbar.setVisible(false);
 		assignmentToolbar.setManaged(false);
 		updateContributorAssignmentActions();
+	}
+
+	private void configureExamAssetsAuthority() throws SQLException {
+		boolean subjectReadOnly = isWorkingSubjectSnapshotExportRestricted();
+		SqliteDatabase database = new SqliteDatabase(applicationConfig.databasePath());
+		Set<Long> lockedExamIds = new SqliteCoordinatorExamLockRepository(database)
+				.findForSubject(workingSubject.getId()).keySet();
+		Long assignedExamId = activeAssignmentContext == null ? null
+				: Long.valueOf(activeAssignmentContext.session().examLocalId());
+
+		// Structural authority is established before the workspace
+		// is populated from persistence.
+		examAssetsPane.setStructureAuthority(subjectReadOnly, lockedExamIds, assignedExamId);
 	}
 
 	private void configurePdfWorkspace() {
@@ -1606,6 +1828,23 @@ public class QuestionBankApplication extends Application {
 
 		// Closing or dismissing the confirmation never performs structural correction.
 		return alert.showAndWait().orElse(cancelButton) == replaceButton;
+	}
+
+	private void confirmContributorAssignmentInstallation(Stage primaryStage, ApplicationConfig config, Path archive) {
+		ButtonType installButton = new ButtonType("Install Assignment", ButtonBar.ButtonData.OK_DONE);
+		Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+		confirmation.initOwner(primaryStage);
+		confirmation.setTitle("Import Contributor Assignment");
+		confirmation.setHeaderText("Install the supplied Exam and activate contributor mode?");
+		confirmation.setContentText("Package:\n" + archive.toAbsolutePath() + "\n\nContributor data directory:\n"
+				+ config.dataRoot() + "\n\nThe importer will install the assigned Exam, "
+				+ "PDFs, curriculum and immutable baseline." + "\n\nUse a separate contributor data directory, "
+				+ "not the authoritative coordinator database.");
+		confirmation.getButtonTypes().setAll(installButton, ButtonType.CANCEL);
+		if (confirmation.showAndWait().orElse(ButtonType.CANCEL) != installButton) {
+			return;
+		}
+		startContributorAssignmentInstallation(primaryStage, config, archive);
 	}
 
 	private boolean confirmCorpusDashboardExamCompletion() {
@@ -2073,12 +2312,30 @@ public class QuestionBankApplication extends Application {
 		showCorpusDashboardNoSubject();
 		corpusDashboardSubjectHost.setId("corpus-dashboard-subject-host");
 		corpusDashboardSubjectHost.setAlignment(Pos.CENTER_LEFT);
+		corpusDashboardCurriculumHost.setId("corpus-dashboard-curriculum-host");
+		corpusDashboardCurriculumHost.setAlignment(Pos.CENTER_LEFT);
+		HBox.setHgrow(corpusDashboardCurriculumHost, Priority.ALWAYS);
+
+		// The Working Subject and Curriculum share the same
+		// horizontal header instead of consuming two vertical rows.
+		HBox dashboardHeader = new HBox(SECTION_SPACING, corpusDashboardSubjectHost, corpusDashboardCurriculumHost);
+		dashboardHeader.setId("corpus-dashboard-header");
+		dashboardHeader.setAlignment(Pos.CENTER_LEFT);
+		dashboardHeader.setMinWidth(Region.USE_PREF_SIZE);
+
+		// Preserve natural control widths when the window is narrow.
+		ScrollPane headerScroll = new ScrollPane(dashboardHeader);
+		headerScroll.setId("corpus-dashboard-header-scroll");
+		headerScroll.setFitToWidth(true);
+		headerScroll.setFitToHeight(true);
+		headerScroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+		headerScroll.setVbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+		headerScroll.setMinWidth(0);
 		configureContributorAssignmentToolbar();
 		Label heading = new Label("CORPUS DASHBOARD");
 		heading.setStyle("-fx-font-weight: bold; -fx-font-size: 14px;" + " -fx-background-color: -fx-background;"
 				+ " -fx-padding: 0 5 0 5;");
-		VBox dashboardBody = new VBox(SECTION_SPACING, corpusDashboardSubjectHost, assignmentToolbar,
-				corpusDashboardHost);
+		VBox dashboardBody = new VBox(SECTION_SPACING, headerScroll, assignmentToolbar, corpusDashboardHost);
 		dashboardBody.setPadding(new Insets(14, 10, 10, 10));
 		dashboardBody.setStyle("-fx-border-color: #b0b0b0;" + " -fx-border-width: 1;" + " -fx-border-radius: 3;");
 		VBox.setVgrow(corpusDashboardHost, Priority.ALWAYS);
@@ -2096,15 +2353,16 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private Menu createCurriculumMenu(Stage primaryStage, ApplicationConfig config) {
-		Menu curriculumMenu = createMenu("_Curriculum");
+		curriculumMenu = createMenu("_Curriculum");
 		MenuItem authorItem = createMenuItem("_Author / Edit...", () -> showCurriculumAuthoring(primaryStage, config));
-
-		// Retain the existing id so any UI automation referring to this menu action
-		// remains compatible.
 		authorItem.setId("author-curriculum-pdf");
-		curriculumMenu.getItems().addAll(createMenuItem("_Import...", () -> importCurriculum(primaryStage, config)),
-				authorItem, new SeparatorMenuItem(),
-				createMenuItem("_Review Mappings...", () -> reviewCurriculumMappings(primaryStage, config)));
+		MenuItem importItem = createMenuItem("_Import...", () -> importCurriculum(primaryStage, config));
+		importItem.setId("import-curriculum");
+		MenuItem mappingItem = createMenuItem("_Review Mappings...",
+				() -> reviewCurriculumMappings(primaryStage, config));
+		mappingItem.setId("review-curriculum-mappings");
+		curriculumMenu.getItems().addAll(importItem, authorItem, new SeparatorMenuItem(), mappingItem);
+		curriculumMenu.setDisable(isWorkingSubjectSnapshotExportRestricted());
 		return curriculumMenu;
 	}
 
@@ -2136,12 +2394,21 @@ public class QuestionBankApplication extends Application {
 
 	private Menu createExportMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu exportMenu = createMenu("E_xport");
+		subjectSnapshotExportMenuItem = createMenuItem("Export Working _Subject Snapshot...",
+				() -> showExportWorkingSubjectSnapshot(primaryStage, config));
+		subjectSnapshotExportMenuItem.setId("export-subject-snapshot");
+		contributionExportMenuItem = createMenuItem("Export Assignment _Contribution...",
+				() -> showExportAssignmentContribution(primaryStage, config));
+		contributionExportMenuItem.setId("export-assignment-contribution");
 		revisionExportMenuItem = createMenuItem("_Revision HTML...",
 				() -> showRevisionExportDialog(primaryStage, config));
 		revisionExportMenuItem.setId("export-revision-html");
 		scormExportMenuItem = createMenuItem("Revision _SCORM...", () -> showScormExportDialog(primaryStage, config));
 		scormExportMenuItem.setId("export-revision-scorm");
-		exportMenu.getItems().addAll(revisionExportMenuItem, scormExportMenuItem);
+		exportMenu.getItems().setAll(subjectSnapshotExportMenuItem, contributionExportMenuItem, new SeparatorMenuItem(),
+				revisionExportMenuItem, scormExportMenuItem);
+		subjectSnapshotExportMenuItem.setDisable(activeAssignmentContext != null);
+		contributionExportMenuItem.setDisable(activeAssignmentContext == null);
 		return exportMenu;
 	}
 
@@ -2165,22 +2432,12 @@ public class QuestionBankApplication extends Application {
 		return progressAlert;
 	}
 
-	/** Builds the primary File menu, including read-only Subject comparison. */
+	/** Builds the primary File menu for documents and application maintenance. */
 	private Menu createFileMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu fileMenu = createMenu("_File");
 		Menu openMenu = createMenu("_Open");
 		openMenu.getItems().add(createMenuItem("_PDF...", () -> openViewerPdf(primaryStage, config)));
-		MenuItem exportSubjectItem = createMenuItem("Export Working _Subject snapshot...",
-				() -> showExportWorkingSubjectSnapshot(primaryStage, config));
-		exportSubjectItem.setId("file-export-subject-snapshot");
-		MenuItem reconciliationItem = createMenuItem("_Review Subject snapshots...",
-				() -> showSubjectReconciliationReview(primaryStage, config));
-		reconciliationItem.setId("file-review-subject-snapshots");
-		MenuItem importAssignmentItem = createMenuItem("Import Contributor _Assignment...",
-				() -> showImportContributorAssignment(primaryStage, config));
-		importAssignmentItem.setId("file-import-contributor-assignment");
-		fileMenu.getItems().addAll(openMenu, createMenuItem("_Close PDF", this::closeViewerPdf),
-				new SeparatorMenuItem(), importAssignmentItem, exportSubjectItem, reconciliationItem,
+		fileMenu.getItems().setAll(openMenu, createMenuItem("_Close PDF", this::closeViewerPdf),
 				new SeparatorMenuItem(), createMenuItem("_Backup Now...", () -> backupNow(primaryStage, config)),
 				createMenuItem("_Restore Backup...", () -> restoreBackup(primaryStage, config)),
 				new SeparatorMenuItem(), createMenuItem("Op_tions...", () -> showOptions(primaryStage, config)),
@@ -2199,6 +2456,21 @@ public class QuestionBankApplication extends Application {
 		return helpMenu;
 	}
 
+	private Menu createImportMenu(Stage primaryStage, ApplicationConfig config) {
+		Menu importMenu = createMenu("_Import");
+		MenuItem subjectItem = createMenuItem("Import _Subject Snapshot...",
+				() -> showImportWorkPackage(primaryStage, config, ExamWorkPackageType.SUBJECT_SNAPSHOT));
+		subjectItem.setId("import-subject-snapshot");
+		MenuItem assignmentItem = createMenuItem("Import _Work Assignment...",
+				() -> showImportWorkPackage(primaryStage, config, ExamWorkPackageType.WORK_ASSIGNMENT));
+		assignmentItem.setId("import-work-assignment");
+		MenuItem contributionItem = createMenuItem("Import _Contribution...",
+				() -> showImportWorkPackage(primaryStage, config, ExamWorkPackageType.CONTRIBUTION));
+		contributionItem.setId("import-contribution");
+		importMenu.getItems().setAll(subjectItem, assignmentItem, contributionItem);
+		return importMenu;
+	}
+
 	private Menu createMenu(String text) {
 		Menu menu = new Menu(text);
 		menu.setMnemonicParsing(true);
@@ -2207,9 +2479,9 @@ public class QuestionBankApplication extends Application {
 
 	private MenuBar createMenuBar(Stage primaryStage, ApplicationConfig config) {
 		MenuBar menuBar = new MenuBar();
-		menuBar.getMenus().addAll(createFileMenu(primaryStage, config), createCurriculumMenu(primaryStage, config),
-				createQuestionMenu(primaryStage, config), createExportMenu(primaryStage, config),
-				createHelpMenu(config));
+		menuBar.getMenus().setAll(createFileMenu(primaryStage, config), createCurriculumMenu(primaryStage, config),
+				createQuestionMenu(primaryStage, config), createImportMenu(primaryStage, config),
+				createExportMenu(primaryStage, config), createHelpMenu(config));
 		return menuBar;
 	}
 
@@ -2449,6 +2721,184 @@ public class QuestionBankApplication extends Application {
 		refreshActiveExamContext();
 	}
 
+	private String describeRefreshRecord(SubjectRefreshChangeClassifier.RecordChange change) {
+		var record = change.incoming() == null ? change.current() : change.incoming();
+		var values = record.values();
+		List<String> labels = new ArrayList<>();
+		for (String field : List.of("subject_name", "syllabus_name", "curriculum_code", "curriculum_name",
+				"provider_name", "exam_year", "exam_name", "booklet_name", "answer_file_name", "question_code",
+				"source_question_code", "relative_path")) {
+			String value = values.path(field).asText("");
+			if (!value.isBlank()) {
+				labels.add(value);
+			}
+		}
+		String description = refreshRecordTypeLabel(change.key().recordType());
+		if (!labels.isEmpty()) {
+			description += " — " + String.join(" / ", labels);
+		}
+		return description + " [" + change.key().recordId() + "]";
+	}
+
+	private String describeSubjectRefresh(SubjectRefreshPlan plan) {
+		var evidence = plan.evidence();
+		var authority = evidence.authority();
+		var incoming = evidence.incoming();
+		var accepted = evidence.accepted();
+		StringBuilder message = new StringBuilder();
+		message.append("""
+				REFRESH ELIGIBILITY
+
+				Subject: %s
+
+				Eligible newer snapshot from the established originating authority.
+
+				Originating installation:
+				%s
+
+				Originating Subject identity:
+				%s
+
+				Latest accepted snapshot: %s
+				Incoming snapshot: %s
+
+				Accepted package: %s
+				Incoming package: %s
+
+				The originating installation remains authoritative.
+				The destination Subject will remain read-only.
+
+				""".formatted(incoming.fingerprint().subjectName(), authority.originInstallationId(),
+				authority.originSubjectPortableId(), accepted.createdAt(), incoming.createdAt(),
+				accepted.fingerprint().packageId(), incoming.fingerprint().packageId()));
+		if (plan.hasContentChanges()) {
+			message.append("The reviewed comparison contains authoritative changes.\n\n");
+		} else {
+			message.append("""
+					The reviewed content is unchanged.
+
+					Approval will advance the accepted snapshot evidence
+					without changing the existing records or asset bytes.
+
+					""");
+		}
+		message.append("RECORD COMPARISON\n\n");
+		message.append("""
+				Record totals:
+				Additions: %d
+				Updates: %d
+				Removals: %d
+				Revision-only changes: %d
+				Unchanged: %d
+
+				""".formatted(plan.countRecords(ChangeKind.ADD), plan.countRecords(ChangeKind.UPDATE),
+				plan.countRecords(ChangeKind.REMOVE), plan.countRecords(ChangeKind.REVISION_ONLY),
+				plan.countRecords(ChangeKind.UNCHANGED)));
+
+		// Present all represented entity types, including those whose
+		// content remains unchanged.
+		List<String> recordTypes = plan.recordChanges().stream().map(change -> change.key().recordType()).distinct()
+				.sorted().toList();
+		for (String recordType : recordTypes) {
+			message.append("""
+					%s:
+					    Additions: %d, Updates: %d, Removals: %d
+					    Revision-only changes: %d, Unchanged: %d
+
+					""".formatted(refreshRecordTypeLabel(recordType), plan.countRecords(recordType, ChangeKind.ADD),
+					plan.countRecords(recordType, ChangeKind.UPDATE), plan.countRecords(recordType, ChangeKind.REMOVE),
+					plan.countRecords(recordType, ChangeKind.REVISION_ONLY),
+					plan.countRecords(recordType, ChangeKind.UNCHANGED)));
+		}
+		message.append("CHANGED RECORDS\n\n");
+		boolean changedRecords = false;
+		for (var change : plan.recordChanges()) {
+			if (change.kind() == ChangeKind.UNCHANGED) {
+				continue;
+			}
+			changedRecords = true;
+			message.append(refreshChangeLabel(change.kind())).append(": ").append(describeRefreshRecord(change))
+					.append('\n');
+			if (change.kind() == ChangeKind.UPDATE) {
+				var before = change.current().values();
+				var after = change.incoming().values();
+				Set<String> fields = new TreeSet<>();
+				before.fieldNames().forEachRemaining(fields::add);
+				after.fieldNames().forEachRemaining(fields::add);
+
+				// Report changed domain fields rather than repeating
+				// the complete unchanged record.
+				for (String field : fields) {
+					var previous = before.get(field);
+					var replacement = after.get(field);
+					if (!Objects.equals(previous, replacement)) {
+						message.append("    ").append(field.replace('_', ' ')).append(": ").append(previous)
+								.append(" → ").append(replacement).append('\n');
+					}
+				}
+			} else if (change.kind() == ChangeKind.REVISION_ONLY) {
+				message.append("    Previous revision: ").append(change.current().revisionId()).append('\n')
+						.append("    Authoritative revision: ").append(change.incoming().revisionId()).append('\n');
+			}
+			message.append('\n');
+		}
+		if (!changedRecords) {
+			message.append("No changed records.\n\n");
+		}
+		message.append("MANAGED ASSET COMPARISON\n\n");
+		message.append("""
+				Asset totals:
+				Additions: %d
+				Updates: %d
+				Removals: %d
+				Unchanged: %d
+
+				Revision-only changes do not apply to binary assets.
+
+				""".formatted(plan.countAssets(ChangeKind.ADD), plan.countAssets(ChangeKind.UPDATE),
+				plan.countAssets(ChangeKind.REMOVE), plan.countAssets(ChangeKind.UNCHANGED)));
+		boolean changedAssets = false;
+		for (var change : plan.assetChanges()) {
+			if (change.kind() == ChangeKind.UNCHANGED) {
+				continue;
+			}
+			changedAssets = true;
+			message.append(refreshChangeLabel(change.kind())).append(": ").append(change.managedPath()).append('\n');
+			if (change.current() != null) {
+				message.append("    Existing size: ").append(change.current().size()).append(" bytes\n");
+			}
+			if (change.incoming() != null) {
+				message.append("    Incoming size: ").append(change.incoming().size()).append(" bytes\n");
+			}
+			message.append('\n');
+		}
+		if (!changedAssets) {
+			message.append("No changed managed assets.\n\n");
+		}
+		message.append("""
+				APPROVAL AND BACKUP
+
+				Approval applies to this complete reviewed comparison.
+
+				Records and managed assets absent from the newer authoritative
+				snapshot may be removed from this imported Subject.
+
+				Subject names cannot change during refresh.
+
+				Unrelated Subjects and their protected resources must not be changed.
+
+				A verified full backup will be created automatically
+				before publication.
+
+				The application will revalidate the archive, authority and
+				destination state before committing the approved refresh.
+
+				Cancelling now will not change the database, publish assets
+				or create a backup.
+				""");
+		return message.toString();
+	}
+
 	private String diagnosticRuntimeKind() {
 		String configured = System.getProperty("eqb.performance.runtimeKind", "unknown");
 		return switch (configured) {
@@ -2504,16 +2954,6 @@ public class QuestionBankApplication extends Application {
 			Platform.runLater(
 					() -> showQuestionSearchDialog(primaryStage, searchDialog, curriculumRepository, metadataService));
 		}
-	}
-
-	private void exitContributorAssignment() {
-		if (activeAssignmentContext == null) {
-			return;
-		}
-
-		// This changes only the selected session. It does not mark
-		// the assignment complete and does not discard captured work.
-		changeContributorAssignment(null);
 	}
 
 	private void failCorpusDashboardQuestionCorrection(Runnable returnHandler, Throwable failure) {
@@ -2739,6 +3179,35 @@ public class QuestionBankApplication extends Application {
 		return matchingContext;
 	}
 
+	private long findMasterSubjectId(ApplicationConfig config, String subjectName) throws SQLException {
+		try (Connection connection = new SqliteDatabase(config.databasePath()).openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT id
+						FROM subjects
+						WHERE subject_name = ?
+						""")) {
+			statement.setString(1, subjectName);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new SQLException("The coordinator database has no Subject named " + subjectName
+							+ ". Create the Subject before importing " + "a snapshot of its records.");
+				}
+				long id = result.getLong(1);
+				if (result.next()) {
+					throw new SQLException("The coordinator Subject identity is ambiguous.");
+				}
+				return id;
+			}
+		}
+	}
+
+	private void finishContributorAssignmentInstallation(long request) {
+		if (contributorAssignmentInstallationRequest == request) {
+			contributorAssignmentInstallationRequest = 0;
+		}
+		applicationBusyOverlay.finish(request);
+	}
+
 	private void finishCorpusDashboardLifecycleChange(CorpusDashboardPane initiatingDashboard) {
 		corpusDashboardLifecycleChangeRunning = false;
 
@@ -2789,6 +3258,30 @@ public class QuestionBankApplication extends Application {
 		if (scormExportMenuItem != null) {
 			scormExportMenuItem.setDisable(false);
 		}
+	}
+
+	private void finishSubjectSnapshotRefresh(Alert progress, String subjectName,
+			SubjectImportCoordinator.Result result, Throwable refreshFailure) {
+		SubjectImportReviewWorkflow.dismissCompletedProgress(progress);
+		packageImportInProgress = false;
+		if (refreshFailure != null) {
+
+			// Publication has committed. A subsequent application
+			// presentation failure must not be described as a rollback.
+			showAlert(Alert.AlertType.ERROR, "Subject Refreshed", subjectName + " was refreshed.",
+					"The authoritative refresh completed, but the application "
+							+ "could not reload its current Subject data.\n\n" + failureMessage(refreshFailure),
+					refreshFailure);
+			return;
+		}
+		if (result.replay()) {
+			showAlert(Alert.AlertType.INFORMATION, "Subject Already Refreshed", subjectName + " is already up to date.",
+					"No duplicate records were created and no additional " + "backup was required.");
+			return;
+		}
+		showAlert(Alert.AlertType.INFORMATION, "Subject Refreshed", subjectName + " has been refreshed.",
+				"The approved authoritative snapshot has been imported.\n\n" + "The Subject remains read-only.\n\n"
+						+ "Pre-import backup:\n" + result.backupArchivePath());
 	}
 
 	private void focusStoredQuestionRegions(Question question) {
@@ -2973,6 +3466,11 @@ public class QuestionBankApplication extends Application {
 		// Moving application Subject may invalidate an active Exam from the old
 		// Subject, so this lightweight visible context changes immediately.
 		refreshActiveExamContext();
+
+		// Whole-Subject export is available only for a selected locally
+		// authoritative Subject. Recalculate the menu's enabled state
+		// whenever Working Subject changes.
+		updateContributorAssignmentActions();
 	}
 
 	private void hideWorkspaceBusy() {
@@ -3026,9 +3524,7 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void importCurriculum(Stage primaryStage, ApplicationConfig config) {
-		if (workingSubject == null) {
-			showAlert(Alert.AlertType.WARNING, "Curriculum Import", "No Subject is selected.",
-					"Select a Subject on the Corpus Dashboard before importing curriculum.");
+		if (!allowCurriculumModification("Curriculum Import")) {
 			return;
 		}
 		Subject subject = workingSubject;
@@ -3369,6 +3865,25 @@ public class QuestionBankApplication extends Application {
 		return examMetadataPane.getBooklet() != null && questionCapturePane.canCaptureRegions();
 	}
 
+	private boolean isWorkingSubjectSnapshotExportRestricted() {
+		if (workingSubject == null || activeAssignmentContext != null) {
+			return true;
+		}
+		try {
+			long subjectId = workingSubject.getId();
+			SqliteDatabase database = new SqliteDatabase(applicationConfig.databasePath());
+			if (new SqliteImportedSubjectAuthorityRepository(database).isImported(subjectId)) {
+				return true;
+			}
+			return contributorAssignments != null && contributorAssignments.findAll().stream()
+					.anyMatch(session -> session.subjectLocalId() == subjectId);
+		} catch (SQLException failure) {
+
+			// If authority cannot be established, do not enable the export.
+			return true;
+		}
+	}
+
 	private String legacyPaperCode(String bookletName) {
 		return switch (bookletName) {
 		case "MCQ booklet", "MCQ" -> "MCQ";
@@ -3376,6 +3891,23 @@ public class QuestionBankApplication extends Application {
 		case "Paper 2" -> "2";
 		default -> throw new IllegalArgumentException("Unsupported legacy booklet requirement: " + bookletName);
 		};
+	}
+
+	private Set<Long> loadContributorBaselineIds(UUID assignmentId, EntityType type) throws SQLException, IOException {
+		Objects.requireNonNull(assignmentId, "assignmentId");
+		Objects.requireNonNull(type, "type");
+		byte[] baseline = contributorAssignments.readBaseline(assignmentId).records();
+		List<ExchangeRecord> records = new ExamWorkJsonlCodec().readRecords(new ByteArrayInputStream(baseline));
+		Set<UUID> issuedIds = records.stream().filter(record -> type.name().equals(record.recordType()))
+				.map(ExchangeRecord::recordId).collect(Collectors.toUnmodifiableSet());
+		SqliteDatabase database = new SqliteDatabase(applicationConfig.databasePath());
+		return new SqlitePortableIdentityRepository(database).findAllByLocalId(type).entrySet().stream()
+				.filter(entry -> issuedIds.contains(entry.getValue().portableId())).map(Map.Entry::getKey)
+				.collect(Collectors.toUnmodifiableSet());
+	}
+
+	private Set<Long> loadContributorBaselineQuestionIds(UUID assignmentId) throws SQLException, IOException {
+		return loadContributorBaselineIds(assignmentId, EntityType.QUESTION);
 	}
 
 	private void loadCorpusDashboardHome(Subject dashboardSubject, long generation, long preferredQuestionId) {
@@ -3386,26 +3918,17 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void loadCorpusDashboardHome(Subject dashboardSubject, long generation, long preferredQuestionId,
-			Runnable completionHandler) {
-		Objects.requireNonNull(completionHandler, "completionHandler");
-		loadCorpusDashboardHome(dashboardSubject, generation, preferredQuestionId, failure -> {
-			try {
-				if (failure != null && !(failure instanceof CancellationException)) {
-					showAlert(Alert.AlertType.ERROR, "Corpus Dashboard", "The Corpus Dashboard could not be refreshed.",
-							failureMessage(failure));
-				}
-			} finally {
-				completionHandler.run();
-			}
-		});
-	}
-
-	private void loadCorpusDashboardHome(Subject dashboardSubject, long generation, long preferredQuestionId,
 			Consumer<Throwable> completionHandler) {
 		Objects.requireNonNull(completionHandler, "completionHandler");
-
-		// Only the newest Dashboard refresh may publish its results.
 		long dashboardGeneration = ++corpusDashboardRefreshGeneration;
+
+		// Removal eligibility belongs to the newly requested persistence
+		// snapshot, not to the previous Dashboard generation.
+		removableContributorAssignmentId = null;
+		updateContributorAssignmentActions();
+		if (corpusDashboardPane != null) {
+			corpusDashboardPane.restrictUntilAuthorityRefresh();
+		}
 		PerformanceOperation refreshOperation = performanceRecorder.start("dashboard.refresh");
 		Task<CorpusDashboardSnapshot> task = new ApplicationBackgroundTask<>(() -> {
 			try (PerformanceOperation snapshotOperation = performanceRecorder.start("dashboard.snapshot",
@@ -3425,28 +3948,29 @@ public class QuestionBankApplication extends Application {
 			Throwable publicationFailure = null;
 			try {
 				if (!isCurrentCorpusDashboardRefresh(dashboardSubject, generation, dashboardGeneration)) {
-
-					// A superseded refresh did not publish its result.
-					// Record it as unsuccessful rather than a completed
-					// user-visible Dashboard refresh.
 					refreshOperation.failed();
 					publicationFailure = new CancellationException("Dashboard refresh was superseded.");
 					return;
 				}
 				CorpusDashboardSnapshot snapshot = task.getValue();
-				if (corpusDashboardPane == null) {
+				if (corpusDashboardPane == null || !Objects.equals(corpusDashboardSubject, dashboardSubject)) {
 					showCorpusDashboardSnapshot(dashboardSubject, snapshot);
 					return;
 				}
 
-				// Preserve current Dashboard filters and selection.
-				// Publish review confirmations before replacing the Exam audit
-				// snapshot so lifecycle readiness never uses stale review IDs.
+				// Preserve the existing Dashboard layout and publish
+				// the refreshed data and authority in the same FX callback.
 				corpusDashboardPane.setApplicabilityReviewState(snapshot.reviewedBookletIds());
 				corpusDashboardPane.replaceData(snapshot.examStatuses(), snapshot.questions(),
 						snapshot.mappingCoverages(), snapshot.curriculumAvailable(), preferredQuestionId);
+				applyDashboardAuthority(corpusDashboardPane, snapshot);
 			} catch (RuntimeException | Error failure) {
 				refreshOperation.failed();
+				removableContributorAssignmentId = null;
+				if (corpusDashboardPane != null) {
+					corpusDashboardPane.restrictUntilAuthorityRefresh();
+				}
+				updateContributorAssignmentActions();
 				publicationFailure = failure;
 			} finally {
 				try {
@@ -3489,17 +4013,26 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void loadCorpusDashboardHome(Subject dashboardSubject, long generation, long preferredQuestionId,
+			Runnable completionHandler) {
+		Objects.requireNonNull(completionHandler, "completionHandler");
+		loadCorpusDashboardHome(dashboardSubject, generation, preferredQuestionId, failure -> {
+			try {
+				if (failure != null && !(failure instanceof CancellationException)) {
+					showAlert(Alert.AlertType.ERROR, "Corpus Dashboard", "The Corpus Dashboard could not be refreshed.",
+							failureMessage(failure));
+				}
+			} finally {
+				completionHandler.run();
+			}
+		});
+	}
+
 	private CorpusDashboardSnapshot loadCorpusDashboardSnapshot(ApplicationConfig config,
 			ExamCorpusAuditService auditService, Subject dashboardSubject, long parentOperationId) throws SQLException {
-		if (config == null) {
-			throw new NullPointerException("config");
-		}
-		if (auditService == null) {
-			throw new NullPointerException("auditService");
-		}
-		if (dashboardSubject == null) {
-			throw new NullPointerException("dashboardSubject");
-		}
+		Objects.requireNonNull(config, "config");
+		Objects.requireNonNull(auditService, "auditService");
+		Objects.requireNonNull(dashboardSubject, "dashboardSubject");
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
 		CurriculumDashboardState curriculumState;
 		try (PerformanceOperation operation = performanceRecorder.start("dashboard.curriculum", parentOperationId)) {
@@ -3510,12 +4043,6 @@ public class QuestionBankApplication extends Application {
 				throw failure;
 			}
 		}
-
-		// Acquire one new, authoritative Question generation
-		// for this Dashboard refresh.
-		//
-		// This operation remains inside the existing Dashboard
-		// background Task; it never runs on the JavaFX thread.
 		List<Question> questions;
 		try (PerformanceOperation operation = performanceRecorder.start("dashboard.question.findAll",
 				parentOperationId)) {
@@ -3527,9 +4054,6 @@ public class QuestionBankApplication extends Application {
 				throw failure;
 			}
 		}
-
-		// Audit and display now consume the same Question
-		// objects from this one refresh generation.
 		List<ExamCorpusStatus> examStatuses;
 		try (PerformanceOperation operation = performanceRecorder.start("dashboard.audit", parentOperationId)) {
 			try {
@@ -3540,14 +4064,66 @@ public class QuestionBankApplication extends Application {
 				throw failure;
 			}
 		}
-
-		// Review confirmations are persisted independently
-		// of the Question snapshot. Preserve the existing
-		// Subject-scoped repository lookup.
 		Set<Long> reviewedBookletIds = bookletApplicabilityReviewRepository
 				.findReviewedBookletIdsForSubject(dashboardSubject.getId());
+		Map<Long, String> assignedExams = new HashMap<>();
+		for (var entry : new SqliteCoordinatorExamLockRepository(database).findForSubject(dashboardSubject.getId())
+				.entrySet()) {
+			assignedExams.put(entry.getKey(), entry.getValue().contributorName());
+		}
+		boolean importedSubject = new SqliteImportedSubjectAuthorityRepository(database)
+				.isImported(dashboardSubject.getId());
+		var sessions = new SqliteContributorAssignmentSessionRepository(database);
+		var installed = sessions.findAll().stream()
+				.filter(session -> session.subjectLocalId() == dashboardSubject.getId()).toList();
+		boolean installedContributorSubject = !installed.isEmpty();
+		var selected = sessions.active().filter(session -> session.subjectLocalId() == dashboardSubject.getId())
+				.orElse(null);
+		if (installedContributorSubject) {
+			Set<UUID> activeIds = Set
+					.copyOf(new SqliteContributorAssignmentVisibilityRepository(database).findActiveAssignmentIds());
+			Set<Long> activeExamIds = installed.stream().filter(session -> activeIds.contains(session.assignmentId()))
+					.map(session -> session.examLocalId()).collect(Collectors.toUnmodifiableSet());
+			Set<Long> historicalExamIds = installed.stream().map(session -> session.examLocalId())
+					.filter(examId -> !activeExamIds.contains(examId)).collect(Collectors.toUnmodifiableSet());
+
+			// Exclude historical Exams from operational presentation only.
+			// A later active assignment for the same Exam takes precedence
+			// over its earlier submitted or removed assignment records.
+			examStatuses = examStatuses.stream().filter(status -> !historicalExamIds.contains(status.exam().getId()))
+					.toList();
+			questions = questions.stream().filter(question -> !historicalExamIds.contains(question.getExam().getId()))
+					.toList();
+		}
+		UUID assignmentId = selected == null ? null : selected.assignmentId();
+		Set<Long> baselineQuestionIds = Set.of();
+		Set<Long> baselineAnswerIds = Set.of();
+		UUID removableAssignmentId = null;
+		if (assignmentId != null) {
+			try {
+				baselineQuestionIds = loadContributorBaselineQuestionIds(assignmentId);
+				baselineAnswerIds = loadContributorBaselineIds(assignmentId, EntityType.ANSWER);
+			} catch (IOException failure) {
+				throw new SQLException("Contributor baseline permissions could not be loaded.", failure);
+			}
+
+			// This potentially expensive eligibility check belongs on the
+			// background worker, never inside a JavaFX selection listener.
+			try {
+				if (new ContributorAssignmentRemovalService(database).canRemoveUnchanged(assignmentId)) {
+					removableAssignmentId = assignmentId;
+				}
+			} catch (SQLException | IOException | RuntimeException failure) {
+
+				// If unchanged status cannot be established, removal
+				// remains unavailable. The Dashboard can still be inspected.
+				removableAssignmentId = null;
+			}
+		}
 		return new CorpusDashboardSnapshot(examStatuses, questions, curriculumState.mappingCoverages(),
-				curriculumState.curriculumAvailable(), reviewedBookletIds);
+				curriculumState.curriculumAvailable(), reviewedBookletIds, assignedExams, importedSubject,
+				installedContributorSubject, assignmentId, baselineQuestionIds, baselineAnswerIds,
+				removableAssignmentId);
 	}
 
 	private CurriculumDashboardState loadCurriculumDashboardState(SqliteDatabase database, Subject subject) {
@@ -3767,6 +4343,24 @@ public class QuestionBankApplication extends Application {
 		setViewerMode(true);
 	}
 
+	private void presentCoordinatorContributionReview(Stage primaryStage, ApplicationConfig config, Path archive,
+			ContributionReviewData data) {
+		MasterContributionReviewDialog dialog = new MasterContributionReviewDialog(primaryStage, data.plan(),
+				data.baseline(), data.proposals(), data.assignment().examPortableId(),
+				data.assignment().contributorName());
+		ButtonType result = dialog.showAndWait().orElse(ButtonType.CANCEL);
+		if (result != MasterContributionReviewDialog.MERGE) {
+			packageImportInProgress = false;
+			return;
+		}
+		Path backupDirectory = config.dataRoot().resolve("backups").resolve("pre-import").toAbsolutePath().normalize();
+
+		// The Merge Contribution action is the coordinator's
+		// explicit approval of the complete return.
+		startCoordinatorContributionApplication(primaryStage, config, archive, data.receipt().received().packageId(),
+				backupDirectory);
+	}
+
 	private Stage primaryStage() {
 		Window window = primaryWindow();
 		if (window instanceof Stage stage) {
@@ -3867,6 +4461,30 @@ public class QuestionBankApplication extends Application {
 		setActiveExamBookletContext(booklet);
 	}
 
+	private void refreshAfterContributorAssignmentClosed(Consumer<Throwable> completionHandler) {
+		ContributorAssignmentDashboardContextResolver.Context next = null;
+		Throwable selectionFailure = null;
+		try {
+			next = selectRemainingContributorAssignment();
+		} catch (SQLException | RuntimeException failure) {
+			selectionFailure = failure;
+		}
+		Throwable activationFailure = selectionFailure;
+
+		// A closed assignment cannot be restored as an editable context,
+		// even if selecting its replacement encounters a failure.
+		refreshContributorAssignmentContext(next, false, refreshFailure -> {
+			if (activationFailure != null) {
+				if (refreshFailure != null) {
+					activationFailure.addSuppressed(refreshFailure);
+				}
+				completionHandler.accept(activationFailure);
+			} else {
+				completionHandler.accept(refreshFailure);
+			}
+		});
+	}
+
 	private void refreshAndShowCorpusDashboardHome() {
 
 		// Returning from a specialised workflow exposes the home immediately, then
@@ -3875,28 +4493,138 @@ public class QuestionBankApplication extends Application {
 		refreshCorpusDashboardHome(-1L);
 	}
 
-	private void refreshContributorAssignmentToolbar() {
+	private String refreshChangeLabel(ChangeKind kind) {
+		return switch (kind) {
+		case ADD -> "Addition";
+		case UPDATE -> "Update";
+		case REMOVE -> "Removal";
+		case REVISION_ONLY -> "Revision-only change";
+		case UNCHANGED -> "Unchanged";
+		};
+	}
+
+	private void refreshContributorAssignmentContext(ContributorAssignmentDashboardContextResolver.Context context,
+			boolean refreshSubjects, Consumer<Throwable> completionHandler) {
+		Objects.requireNonNull(completionHandler, "completionHandler");
+		Subject subject = context == null ? workingSubject : context.subject();
+		long generation = ++workingSubjectRefreshGeneration;
+		contributorContextRefreshGeneration = generation;
+		removableContributorAssignmentId = null;
+		activeAssignmentContext = context;
+		Consumer<Throwable> finish = failure -> {
+			if (isCurrentWorkingSubjectRefresh(subject, generation)) {
+				contributorContextRefreshGeneration = 0L;
+				if (failure != null && corpusDashboardPane != null) {
+					corpusDashboardPane.restrictUntilAuthorityRefresh();
+					corpusDashboardPane.setDisable(true);
+				}
+				updateContributorAssignmentActions();
+			}
+			completionHandler.accept(failure);
+		};
 		try {
-			List<SqliteContributorAssignmentSessionRepository.Session> installed = contributorAssignments.findAll();
+			boolean previousRestoring = restoringWorkingSubject;
+			boolean previousSelectionChange = assignmentSelectionInProgress;
+			restoringWorkingSubject = true;
+			assignmentSelectionInProgress = true;
+			try {
+				clearCorpusDashboardCaptureReturn();
+				examAssetsPane.clearCorpusDashboardReturnHandler();
+
+				// An assignment transition invalidates capture context
+				// even when both assignments belong to the same Subject.
+				clearPdfWorkspaceForSubjectChange(null);
+				examMetadataPane.invalidateForSubjectChange(null);
+				answerCapturePane.setContributorBaselineAnswerIds(Set.of());
+				if (refreshSubjects) {
+					curriculumSelectorPane.refreshSubjects();
+				}
+				curriculumSelectorPane.selectSubject(subject);
+				workingSubject = subject;
+				examMetadataPane.invalidateForSubjectChange(subject);
+				resetLegacyQuestionImportState();
+				if (subject == null) {
+					showCorpusDashboardNoSubject();
+				} else if (corpusDashboardPane != null && Objects.equals(corpusDashboardSubject, subject)) {
+
+					// Reuse the existing layout. Immediately remove the
+					// previous assignment's operational selection.
+					corpusDashboardPane.beginContributorAssignmentRefresh(
+							context == null ? null : Long.valueOf(context.session().examLocalId()));
+				} else {
+
+					// A genuinely different Subject requires a new
+					// Subject-bound Dashboard instance.
+					showCorpusDashboardLoading(subject);
+				}
+				showCorpusDashboardHome();
+				refreshActiveExamContext();
+				refreshContributorAssignmentToolbar();
+			} finally {
+				restoringWorkingSubject = previousRestoring;
+				assignmentSelectionInProgress = previousSelectionChange;
+			}
+
+			// Both capture queues and curriculum must finish publishing
+			// before the Dashboard enables operational actions.
+			startWorkingSubjectCaptureRefresh(subject, generation, failure -> {
+				if (failure != null) {
+					finish.accept(failure);
+					return;
+				}
+				if (!isCurrentWorkingSubjectRefresh(subject, generation)) {
+					finish.accept(new CancellationException("Assignment refresh was superseded."));
+					return;
+				}
+				if (subject == null) {
+					finish.accept(null);
+					return;
+				}
+				try {
+					loadCorpusDashboardHome(subject, generation, -1L, finish);
+				} catch (RuntimeException | Error exception) {
+					finish.accept(exception);
+				}
+			});
+		} catch (RuntimeException | Error failure) {
+			finish.accept(failure);
+		}
+	}
+
+	private void refreshContributorAssignmentToolbar() {
+		boolean previousSelectionChange = assignmentSelectionInProgress;
+		assignmentSelectionInProgress = true;
+		try {
+			SqliteDatabase database = new SqliteDatabase(applicationConfig.databasePath());
+			Set<UUID> activeIds = Set
+					.copyOf(new SqliteContributorAssignmentVisibilityRepository(database).findActiveAssignmentIds());
+			List<SqliteContributorAssignmentSessionRepository.Session> installed = contributorAssignments.findAll()
+					.stream().filter(session -> activeIds.contains(session.assignmentId())).toList();
+
+			// Resolve authoritative descriptions before publishing
+			// the selector items so cell rendering is persistence-free.
+			assignmentDisplayLabels = buildAssignmentDisplayLabels(database, installed);
 			assignmentSelector.getItems().setAll(installed);
 			if (activeAssignmentContext == null) {
 				assignmentSelector.getSelectionModel().clearSelection();
 			} else {
-				var currentId = activeAssignmentContext.session().assignmentId();
-				var selected = installed.stream().filter(session -> session.assignmentId().equals(currentId))
-						.findFirst()
-						.orElseThrow(() -> new IllegalStateException("Selected assignment is not installed"));
-				assignmentSelector.getSelectionModel().select(selected);
+				UUID activeId = activeAssignmentContext.session().assignmentId();
+				var selected = installed.stream().filter(session -> session.assignmentId().equals(activeId))
+						.findFirst();
+				if (selected.isPresent()) {
+					assignmentSelector.getSelectionModel().select(selected.orElseThrow());
+				} else {
+					assignmentSelector.getSelectionModel().clearSelection();
+				}
 			}
-
-			// A stored assignment can be re-entered after exiting mode.
-			// Hide the row only for databases with no installed assignments.
 			boolean available = !installed.isEmpty();
 			assignmentToolbar.setVisible(available);
 			assignmentToolbar.setManaged(available);
 			updateContributorAssignmentActions();
-		} catch (SQLException exception) {
-			throw new IllegalStateException("Could not load installed contributor assignments", exception);
+		} catch (SQLException failure) {
+			throw new IllegalStateException("Could not load available contributor assignments", failure);
+		} finally {
+			assignmentSelectionInProgress = previousSelectionChange;
 		}
 	}
 
@@ -3928,6 +4656,69 @@ public class QuestionBankApplication extends Application {
 			showAlert(Alert.AlertType.ERROR, "Exam / Assets",
 					"The asset was deleted, but Exam / Assets could not be refreshed.", failureMessage(exception));
 		}
+	}
+
+	private String refreshRecordTypeLabel(String recordType) {
+		String label = recordType.toLowerCase(Locale.ROOT).replace('_', ' ');
+		return Character.toUpperCase(label.charAt(0)) + label.substring(1);
+	}
+
+	private void removeContributorAssignment() {
+		var selected = assignmentSelector.getValue();
+		if (selected == null || contributorRemovalRunning || contributionExportRunning
+				|| applicationBusyOverlay.isBusy()
+				|| !Objects.equals(selected.assignmentId(), removableContributorAssignmentId)
+				|| !allowWorkingSubjectChange()) {
+			return;
+		}
+		Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+		confirmation.initOwner(primaryStage());
+		confirmation.setTitle("Remove Work Package");
+		confirmation.setHeaderText("Remove this unchanged assignment?");
+		confirmation.setContentText("Contributor: " + selected.contributorName() + "\nAssignment: "
+				+ selected.assignmentId() + "\n\nOnly assignments with no saved work " + "can be removed."
+				+ "\nThe original installed data is retained " + "for safe reimport.");
+		ButtonType removeButton = new ButtonType("Remove Unchanged", ButtonBar.ButtonData.OK_DONE);
+		confirmation.getButtonTypes().setAll(removeButton, ButtonType.CANCEL);
+		if (confirmation.showAndWait().orElse(ButtonType.CANCEL) != removeButton) {
+			return;
+		}
+		contributorRemovalRunning = true;
+		updateContributorAssignmentActions();
+		UUID assignmentId = selected.assignmentId();
+		Task<Void> task = new ApplicationBackgroundTask<>(() -> {
+
+			// The service independently validates current saved work.
+			// Cached UI eligibility is never sufficient authorisation.
+			new ContributorAssignmentRemovalService(new SqliteDatabase(applicationConfig.databasePath()))
+					.removeUnchanged(assignmentId);
+			return null;
+		});
+		task.setOnSucceeded(_ -> refreshAfterContributorAssignmentClosed(failure -> {
+			contributorRemovalRunning = false;
+			updateContributorAssignmentActions();
+			if (failure != null && !(failure instanceof CancellationException)) {
+				showAlert(Alert.AlertType.ERROR, "Work Package Removed",
+						"The assignment was removed but the " + "Dashboard could not refresh.",
+						failureMessage(failure));
+				return;
+			}
+			showAlert(Alert.AlertType.INFORMATION, "Work Package Removed",
+					"The unchanged assignment was removed " + "from the active list.",
+					"The original work package may be imported again.");
+		}));
+		task.setOnFailed(_ -> {
+			contributorRemovalRunning = false;
+			removableContributorAssignmentId = null;
+			updateContributorAssignmentActions();
+			refreshCorpusDashboardHome(-1L);
+			showAlert(Alert.AlertType.WARNING, "Work Package Not Removed", "The assignment cannot be removed.",
+					failureMessage(task.getException()) + "\n\nIf work has been captured, export its "
+							+ "contribution and send it to the coordinator.");
+		});
+		Thread worker = new Thread(task, "examwork-remove-unchanged-assignment");
+		worker.setDaemon(true);
+		worker.start();
 	}
 
 	private void removePrimaryStageFocusListener() {
@@ -4297,18 +5088,26 @@ public class QuestionBankApplication extends Application {
 		completeSuccessfulRestore(primaryStage, restoreResult);
 	}
 
-	private void restoreContributorAssignmentAtStartup() {
+	private void restoreContributorAssignmentAtStartup() throws SQLException {
 		if (activeAssignmentContext == null) {
+			List<UUID> available = new SqliteContributorAssignmentVisibilityRepository(
+					new SqliteDatabase(applicationConfig.databasePath())).findActiveAssignmentIds();
+			if (available.isEmpty()) {
+				return;
+			}
+			var replacement = selectRemainingContributorAssignment();
+			refreshContributorAssignmentContext(replacement, false, failure -> {
+				if (failure != null && !(failure instanceof CancellationException)) {
+					showAlert(Alert.AlertType.ERROR, "Contributor Assignment",
+							"The installed assignment could not " + "be restored.", failureMessage(failure));
+				}
+			});
 			return;
 		}
 
-		// The existing Subject transition starts the normal asynchronous
-		// curriculum, Question/Answer and Dashboard snapshot loaders.
-		// No special contributor capture queues are introduced.
+		// Resume the persistently selected assignment through the ordinary
+		// Working Subject initialisation pipeline.
 		curriculumSelectorPane.selectSubject(activeAssignmentContext.subject());
-
-		// The Dashboard displays the assigned Subject as read-only.
-		// Syllabus selection remains available for permitted classification.
 		curriculumSelectorPane.setSubjectEditingEnabled(false);
 	}
 
@@ -4411,9 +5210,7 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void reviewCurriculumMappings(Stage primaryStage, ApplicationConfig config) {
-		if (workingSubject == null) {
-			showAlert(Alert.AlertType.WARNING, "Curriculum Mapping", "No Subject is selected.",
-					"Select a Subject on the Corpus Dashboard before reviewing curriculum mappings.");
+		if (!allowCurriculumModification("Curriculum Mapping")) {
 			return;
 		}
 		Subject subject = workingSubject;
@@ -4475,6 +5272,45 @@ public class QuestionBankApplication extends Application {
 			suffix++;
 		}
 		return destination;
+	}
+
+	private <T> void runWorkPackagePreflight(String title, Callable<T> operation, Consumer<T> onReady) {
+		Objects.requireNonNull(title, "title");
+		Objects.requireNonNull(operation, "operation");
+		Objects.requireNonNull(onReady, "onReady");
+		long request = applicationBusyOverlay.begin("Checking work package readiness...");
+		if (request == 0) {
+			return;
+		}
+		Task<T> task = new ApplicationBackgroundTask<>(operation);
+		task.setOnSucceeded(_ -> {
+
+			// An obsolete completion must not open a native chooser
+			// after another workflow has acquired the application.
+			if (!applicationBusyOverlay.owns(request)) {
+				return;
+			}
+			applicationBusyOverlay.finish(request);
+			onReady.accept(task.getValue());
+		});
+		task.setOnFailed(_ -> {
+			if (!applicationBusyOverlay.owns(request)) {
+				return;
+			}
+			applicationBusyOverlay.finish(request);
+			showAlert(Alert.AlertType.ERROR, title, "The work package is not ready for export.",
+					failureMessage(task.getException()));
+		});
+		task.setOnCancelled(_ -> applicationBusyOverlay.finish(request));
+		Thread worker = new Thread(task, "examwork-export-preflight");
+		worker.setDaemon(true);
+		try {
+			worker.start();
+		} catch (RuntimeException failure) {
+			applicationBusyOverlay.finish(request);
+			showAlert(Alert.AlertType.ERROR, title, "The export readiness check could not be started.",
+					failureMessage(failure));
+		}
 	}
 
 	private Path scormExportDestination(Path parent, Subject subject) {
@@ -4542,6 +5378,23 @@ public class QuestionBankApplication extends Application {
 		// This existing Exam/Assets API reloads the selection and
 		// its saved booklets, including the zero-booklet case.
 		examAssetsPane.showForCorrection(subject, exam.getId(), null);
+	}
+
+	private ContributorAssignmentDashboardContextResolver.Context selectRemainingContributorAssignment()
+			throws SQLException {
+		SqliteDatabase database = new SqliteDatabase(applicationConfig.databasePath());
+		List<UUID> available = new SqliteContributorAssignmentVisibilityRepository(database).findActiveAssignmentIds();
+		if (available.isEmpty()) {
+			contributorAssignments.clearActive();
+			return null;
+		}
+
+// The visibility repository supplies deterministic installation
+// order and excludes both submitted and removed assignments.
+		UUID first = available.getFirst();
+		var context = contributorAssignmentResolver.require(first);
+		contributorAssignments.select(first);
+		return context;
 	}
 
 	private void setActiveExamBookletContext(ExamBooklet booklet) {
@@ -4618,6 +5471,23 @@ public class QuestionBankApplication extends Application {
 		applicationBody.setCenter(workspaceSplitPane);
 	}
 
+	private String sha256Package(Path archive) throws IOException {
+		MessageDigest digest;
+		try {
+			digest = MessageDigest.getInstance("SHA-256");
+		} catch (NoSuchAlgorithmException failure) {
+			throw new IllegalStateException("SHA-256 is unavailable", failure);
+		}
+		try (InputStream input = Files.newInputStream(archive)) {
+			byte[] buffer = new byte[8192];
+			int count;
+			while ((count = input.read(buffer)) != -1) {
+				digest.update(buffer, 0, count);
+			}
+		}
+		return HexFormat.of().formatHex(digest.digest());
+	}
+
 	private void showAbout() {
 		String version = applicationVersion();
 		Alert alert = new Alert(Alert.AlertType.INFORMATION);
@@ -4632,10 +5502,45 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void showAlert(Alert.AlertType type, String title, String header, String message) {
+		showAlert(type, title, header, message, null);
+	}
+
+	private void showAlert(Alert.AlertType type, String title, String header, String message, Throwable failure) {
 		Alert alert = new Alert(type);
 		alert.setTitle(title);
 		alert.setHeaderText(header);
 		alert.setContentText(message);
+		alert.setResizable(true);
+		if (type == Alert.AlertType.ERROR || type == Alert.AlertType.WARNING) {
+
+			// Use selectable, scrollable text rather than the
+			// standard non-selectable Alert content label.
+			TextArea messageArea = new TextArea(message);
+			messageArea.setId("alert-message");
+			messageArea.setEditable(false);
+			messageArea.setWrapText(true);
+			messageArea.setPrefColumnCount(70);
+			messageArea.setPrefRowCount(6);
+			alert.getDialogPane().setContent(messageArea);
+			alert.getDialogPane().setPrefWidth(680);
+		}
+		if (failure != null) {
+
+			// Preserve the complete exception chain and stack trace.
+			StringWriter output = new StringWriter();
+			try (PrintWriter writer = new PrintWriter(output)) {
+				failure.printStackTrace(writer);
+			}
+			TextArea details = new TextArea(output.toString());
+			details.setId("alert-technical-details");
+			details.setEditable(false);
+			details.setWrapText(false);
+			details.setPrefColumnCount(80);
+			details.setPrefRowCount(15);
+			details.setMaxWidth(Double.MAX_VALUE);
+			details.setMaxHeight(Double.MAX_VALUE);
+			alert.getDialogPane().setExpandableContent(details);
+		}
 		alert.showAndWait();
 	}
 
@@ -4671,6 +5576,59 @@ public class QuestionBankApplication extends Application {
 		refreshActiveExamContext();
 	}
 
+	private void showCloseContributorAssignment(Exam exam) {
+		Objects.requireNonNull(exam, "exam");
+		if (activeAssignmentContext != null || applicationBusyOverlay.isBusy()) {
+			return;
+		}
+		SqliteDatabase database = new SqliteDatabase(applicationConfig.databasePath());
+		SqliteCoordinatorExamLockRepository locks = new SqliteCoordinatorExamLockRepository(database);
+		try {
+			var active = locks.find(exam.getId());
+			if (active.isEmpty()) {
+				showAlert(Alert.AlertType.INFORMATION, "Close Work Package", "This Exam has no active work package.",
+						"Refresh the Dashboard to see its current state.");
+				return;
+			}
+			var lock = active.orElseThrow();
+			TextInputDialog explanation = new TextInputDialog();
+			explanation.initOwner(primaryStage());
+			explanation.setTitle("Close Work Package");
+			explanation.setHeaderText("Cancel the assignment to " + lock.contributorName() + "?");
+			explanation.setContentText("Reason for closure:");
+			Optional<String> entered = explanation.showAndWait();
+			if (entered.isEmpty()) {
+				return;
+			}
+			String reason = entered.orElseThrow().strip();
+			if (reason.isEmpty() || reason.length() > 1024) {
+				showAlert(Alert.AlertType.ERROR, "Close Work Package", "A reason is required.",
+						"Enter between 1 and 1024 characters.");
+				return;
+			}
+			Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+			confirmation.initOwner(primaryStage());
+			confirmation.setTitle("Close Work Package");
+			confirmation.setHeaderText("Unlock this Exam without importing work?");
+			confirmation.setContentText("Contributor: " + lock.contributorName() + "\nExam: " + exam.getName()
+					+ "\n\nThis closes the active assignment permanently. "
+					+ "Any contribution returned under its assignment ID "
+					+ "will not be applied. New work requires a new assignment.");
+			ButtonType closeButton = new ButtonType("Close and Unlock", ButtonBar.ButtonData.OK_DONE);
+			confirmation.getButtonTypes().setAll(closeButton, ButtonType.CANCEL);
+			if (confirmation.showAndWait().orElse(ButtonType.CANCEL) != closeButton) {
+				return;
+			}
+			new WorkAssignmentLedger(database).closeWithoutReturn(lock.assignmentId(), reason);
+			refreshCorpusDashboardHome(-1L);
+			showAlert(Alert.AlertType.INFORMATION, "Work Package Closed", "The assignment has been cancelled.",
+					"The Exam is unlocked. Late contributions from the " + "cancelled assignment cannot be applied.");
+		} catch (SQLException | RuntimeException failure) {
+			showAlert(Alert.AlertType.ERROR, "Close Work Package", "The assignment could not be closed.",
+					failureMessage(failure));
+		}
+	}
+
 	private void showCorpusDashboardBookletQuestionCorrection(Question question) {
 
 		// Dashboard Capture Questions was pressed on a selected
@@ -4682,29 +5640,32 @@ public class QuestionBankApplication extends Application {
 		if (applicationBody == null || corpusDashboardHomePane == null) {
 			return;
 		}
-
-		// Dashboard home owns the Subject selector inside its own titled border.
 		showWorkingSubjectInDashboard();
-		applicationBody.setCenter(corpusDashboardHomePane);
-	}
 
-	private void showCorpusDashboardNoSubject() {
-		corpusDashboardPane = null;
-		Label message = new Label("Select or add a Subject to view its corpus.");
-		message.setId("corpus-dashboard-no-subject");
-
-		// A Subject is application context, not a prerequisite dialog. The empty home
-		// remains usable so the existing + Subject action is always available.
-		corpusDashboardHost.getChildren().setAll(message);
+		// Do not replace the centre node when the Dashboard
+		// is already mounted.
+		if (applicationBody.getCenter() != corpusDashboardHomePane) {
+			applicationBody.setCenter(corpusDashboardHomePane);
+		}
 	}
 
 	private void showCorpusDashboardLoading(Subject subject) {
 
-		// Never expose the previous Subject's rows if replacement loading fails.
+		// A genuine Subject or assignment-context transition must
+		// not expose the previous Subject's Curriculum or Exams.
 		corpusDashboardPane = null;
+		clearDashboardCurriculumSection();
 		Label loading = new Label("Loading " + subject.getName() + " corpus...");
 		loading.setId("corpus-dashboard-loading");
 		corpusDashboardHost.getChildren().setAll(loading);
+	}
+
+	private void showCorpusDashboardNoSubject() {
+		corpusDashboardPane = null;
+		clearDashboardCurriculumSection();
+		Label message = new Label("Select or add a Subject to view its corpus.");
+		message.setId("corpus-dashboard-no-subject");
+		corpusDashboardHost.getChildren().setAll(message);
 	}
 
 	private void showCorpusDashboardQuestionCorrection(Question question) {
@@ -4742,14 +5703,12 @@ public class QuestionBankApplication extends Application {
 		dashboard.setAddCurriculumHandler(() -> showDashboardAddCurriculum(primaryStage(), applicationConfig));
 		dashboard.setMapCurriculumHandler(() -> reviewCurriculumMappings(primaryStage(), applicationConfig));
 
-		// Every Dashboard operation routes into an existing authoritative workflow.
+		// Every Dashboard operation continues to route into the
+		// existing authoritative application workflow.
 		dashboard.setAnswerCaptureHandler(
 				question -> startDashboardAnswerCapture(question, this::refreshAndShowCorpusDashboardHome));
 		dashboard.setMcqExplanationCaptureHandler(question -> {
 			if (!showDashboardMcqExplanationCapture(question, this::refreshAndShowCorpusDashboardHome)) {
-
-				// A failed specialised route returns to the same operational home rather than
-				// leaving an empty Answer workspace mounted.
 				showCorpusDashboardHome();
 			}
 		});
@@ -4767,12 +5726,15 @@ public class QuestionBankApplication extends Application {
 		dashboard.setDescriptorAssignmentHandler(this::showDashboardDescriptorAssignment);
 		dashboard.setQuestionWorkDescriptorAssignmentHandler(this::showDashboardQuestionWorkDescriptorAssignment);
 		dashboard.setQuestionInspectionHandler(this::showDashboardQuestionInspection);
+		dashboard.setCloseContributorAssignmentHandler(this::showCloseContributorAssignment);
 
-		// The assignment is selected at Exam level, not Booklet level.
-		// This also restricts Subject-wide Question Work headline counts.
-		if (activeAssignmentContext != null) {
-			dashboard.setAssignmentExamScope(activeAssignmentContext.session().examLocalId());
-		}
+		// New and reused Dashboards now receive exactly the same
+		// assignment scope and independent Question/Answer authority.
+		applyDashboardAuthority(dashboard, snapshot);
+		dashboard.moveCurriculumSectionTo(corpusDashboardCurriculumHost);
+		corpusDashboardCurriculumHost.setManaged(true);
+		corpusDashboardCurriculumHost.setVisible(true);
+		corpusDashboardSubject = dashboardSubject;
 		corpusDashboardPane = dashboard;
 		corpusDashboardHost.getChildren().setAll(dashboard);
 	}
@@ -4788,7 +5750,7 @@ public class QuestionBankApplication extends Application {
 		if (workingSubject == null || workingSubject.getId() != exam.getSubject().getId()) {
 			showAlert(Alert.AlertType.WARNING, "Create Contributor Assignment",
 					"The selected Exam is no longer in the Working Subject.",
-					"Return to the Corpus Dashboard and select the Exam again.");
+					"Return to the Corpus Dashboard and " + "select the Exam again.");
 			return;
 		}
 		if (!allowWorkingSubjectChange()) {
@@ -4804,7 +5766,7 @@ public class QuestionBankApplication extends Application {
 		examDescription.setWrapText(true);
 		Label explanation = new Label(
 				"The package will contain every Question booklet, " + "required Answer file, existing captured work, "
-						+ "the permitted syllabus hierarchy and an immutable baseline.");
+						+ "the permitted syllabus hierarchy " + "and an immutable baseline.");
 		explanation.setWrapText(true);
 		VBox form = new VBox(SECTION_SPACING, new Label("Selected Exam"), examDescription, new Label("Contributor"),
 				contributorName, legacyCapture, explanation);
@@ -4826,34 +5788,21 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 		String name = contributorName.getText().strip();
-		FileChooser chooser = new FileChooser();
-		chooser.setTitle("Save Contributor Assignment");
-		chooser.getExtensionFilters()
-				.add(new FileChooser.ExtensionFilter("ExamWork assignment (*.examwork)", "*.examwork"));
-		chooser.setInitialFileName("Exam-" + exam.getId() + "-assignment.examwork");
-		File destination = chooser.showSaveDialog(primaryStage);
-		if (destination == null) {
-			return;
-		}
+		boolean legacyCaptureEnabled = legacyCapture.isSelected();
 
-		// Identity is created once for this issuance attempt.
-		// The service records it with the immutable baseline.
-		WorkAssignmentExporter.Request request;
-		try {
-			request = new WorkAssignmentExporter.Request(exam, UUID.randomUUID(), UUID.randomUUID(), name,
-					legacyCapture.isSelected(), destination.toPath());
-		} catch (IllegalArgumentException exception) {
-			showAlert(Alert.AlertType.ERROR, "Create Contributor Assignment", "The assignment details are invalid.",
-					exception.getMessage());
-			return;
-		}
-		startContributorAssignmentIssuance(primaryStage, config, request);
+		// Validate issuance prerequisites before constructing or
+		// displaying the destination chooser.
+		runWorkPackagePreflight("Create Contributor Assignment", () -> {
+			SqliteDatabase database = new SqliteDatabase(config.databasePath());
+			WorkAssignmentIssuanceService service = new WorkAssignmentIssuanceService(database,
+					new ManagedDataLayout(config.dataRoot()));
+			return service.preflight(exam, legacyCaptureEnabled);
+		}, readiness -> chooseContributorAssignmentDestination(primaryStage, config, readiness.exam(), name,
+				legacyCaptureEnabled));
 	}
 
 	private void showCurriculumAuthoring(Stage primaryStage, ApplicationConfig config) {
-		if (workingSubject == null) {
-			showAlert(Alert.AlertType.WARNING, "Curriculum Authoring", "No Subject is selected.",
-					"Select a Subject on the Corpus Dashboard before opening curriculum authoring.");
+		if (!allowCurriculumModification("Curriculum Authoring")) {
 			return;
 		}
 		Subject subject = workingSubject;
@@ -4899,9 +5848,7 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void showDashboardAddCurriculum(Stage primaryStage, ApplicationConfig config) {
-		if (workingSubject == null) {
-			showAlert(Alert.AlertType.WARNING, "Add Curriculum", "No Subject is selected.",
-					"Select or add a Subject on the Corpus Dashboard first.");
+		if (!allowCurriculumModification("Add Curriculum")) {
 			return;
 		}
 		Subject subject = workingSubject;
@@ -5106,9 +6053,6 @@ public class QuestionBankApplication extends Application {
 		if (!allowExamAssetsTransition()) {
 			return;
 		}
-
-		// Change Exam may be invoked from Dashboard-owned Capture. Retain that session
-		// instead of discarding the only route back to the home screen.
 		Runnable dashboardReturnHandler = corpusDashboardCaptureReturnHandler;
 		if (workingSubject == null) {
 			showAlert(Alert.AlertType.WARNING, "Exam / Assets", "No Working Subject is selected.",
@@ -5117,18 +6061,23 @@ public class QuestionBankApplication extends Application {
 		}
 		try (PerformanceOperation navigation = performanceRecorder.start("examAssets.open.general")) {
 			try {
-
-				// Always reconstruct structural state from persistence before exposing it.
+				configureExamAssetsAuthority();
 				examAssetsPane.clearCorpusDashboardReturnHandler();
-				measureExamAssetsPersistence("examAssets.open.general", navigation.id(),
-						() -> examAssetsPane.refresh(workingSubject));
+				measureExamAssetsPersistence("examAssets.open.general", navigation.id(), () -> {
+					if (activeAssignmentContext == null) {
+						examAssetsPane.refresh(workingSubject);
+					} else {
+
+						// Change Exam must not escape the currently
+						// selected contributor assignment.
+						examAssetsPane.showForCorrection(workingSubject,
+								activeAssignmentContext.session().examLocalId(), null);
+					}
+				});
 				bindExamAssetsDashboardReturn(dashboardReturnHandler);
 				setWorkspaceMode(examAssetsPane);
-			} catch (SQLException exception) {
+			} catch (SQLException | IllegalArgumentException | IllegalStateException exception) {
 				navigation.failed();
-
-				// Capture remains mounted if loading fails, so its existing Dashboard
-				// session must remain untouched.
 				examAssetsPane.clearCorpusDashboardReturnHandler();
 				showAlert(Alert.AlertType.ERROR, "Exam / Assets", "Exam assets could not be loaded.",
 						exception.getMessage());
@@ -5146,23 +6095,25 @@ public class QuestionBankApplication extends Application {
 		if (!allowExamAssetsTransition()) {
 			return;
 		}
-
-		// This overload is a fresh structural route, normally from Dashboard Home.
 		clearCorpusDashboardCaptureReturn();
 		if (workingSubject == null || exam.getSubject().getId() != workingSubject.getId()) {
 			showAlert(Alert.AlertType.WARNING, "Exam / Assets", "The requested Exam is outside the Working Subject.",
-					"Return to the Dashboard for the current Working Subject and try again.");
+					"Return to the Dashboard for the current " + "Working Subject and try again.");
+			return;
+		}
+		if (activeAssignmentContext != null && exam.getId() != activeAssignmentContext.session().examLocalId()) {
+			showAlert(Alert.AlertType.WARNING, "Exam / Assets",
+					"The requested Exam is outside the selected assignment.",
+					"Select the required contributor assignment first.");
 			return;
 		}
 		try (PerformanceOperation navigation = performanceRecorder.start("examAssets.open.selected")) {
 			try {
+				configureExamAssetsAuthority();
 				examAssetsPane.clearCorpusDashboardReturnHandler();
 				measureExamAssetsPersistence("examAssets.open.selected", navigation.id(),
 						() -> examAssetsPane.showForCorrection(workingSubject, exam.getId(),
 								booklet == null ? null : Long.valueOf(booklet.getId())));
-
-				// Dashboard ownership is retained at application level so selecting a
-				// booklet can later transfer the same Return action into Capture.
 				bindExamAssetsDashboardReturn(returnHandler);
 				setWorkspaceMode(examAssetsPane);
 			} catch (SQLException | IllegalArgumentException | IllegalStateException exception) {
@@ -5182,22 +6133,23 @@ public class QuestionBankApplication extends Application {
 		if (!allowExamAssetsTransition()) {
 			return;
 		}
-
-		// Add Exam starts a fresh Dashboard-owned structural transaction.
 		clearCorpusDashboardCaptureReturn();
 		if (workingSubject == null) {
 			showAlert(Alert.AlertType.WARNING, "Exam / Assets", "No Subject is selected.",
 					"Select or add a Subject on the Corpus Dashboard first.");
 			return;
 		}
+		if (isWorkingSubjectSnapshotExportRestricted()) {
+			showAlert(Alert.AlertType.WARNING, "Exam / Assets", "This Subject is read-only.",
+					"New Exams must be created in the " + "authoritative coordinator installation.");
+			return;
+		}
 		try (PerformanceOperation navigation = performanceRecorder.start("examAssets.open.new")) {
 			try {
+				configureExamAssetsAuthority();
 				examAssetsPane.clearCorpusDashboardReturnHandler();
 				measureExamAssetsPersistence("examAssets.open.new", navigation.id(),
 						() -> examAssetsPane.showForNewExam(workingSubject));
-
-				// Saving or cancelling structural work restores Return availability.
-				// The same session survives if the new booklet is subsequently activated.
 				bindExamAssetsDashboardReturn(this::refreshAndShowCorpusDashboardHome);
 				setWorkspaceMode(examAssetsPane);
 			} catch (SQLException | IllegalStateException exception) {
@@ -5213,6 +6165,116 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void showExportAssignmentContribution(Stage primaryStage, ApplicationConfig config) {
+		if (activeAssignmentContext == null) {
+			showAlert(Alert.AlertType.WARNING, "Export Assignment Contribution", "No contributor assignment is active.",
+					"Activate an installed assignment before " + "exporting its work.");
+			return;
+		}
+		if (contributionExportRunning || contributorRemovalRunning || contributorAssignmentInstallationRequest != 0
+				|| contributorAssignmentIssuanceRunning || applicationBusyOverlay.isBusy()
+				|| (contributorContextRefreshGeneration != 0L
+						&& contributorContextRefreshGeneration == workingSubjectRefreshGeneration)) {
+			return;
+		}
+		if (!allowWorkingSubjectChange()) {
+			return;
+		}
+		var context = activeAssignmentContext;
+		UUID assignmentId = context.session().assignmentId();
+		long examId = context.session().examLocalId();
+		String contributorName = context.session().contributorName();
+		Subject subject = context.subject();
+
+		// Resolve the saved-work delta and authoritative Exam
+		// identity before requesting an output filename.
+		runWorkPackagePreflight("Export Assignment Contribution", () -> {
+			SqliteDatabase database = new SqliteDatabase(config.databasePath());
+			ContributionExporter exporter = new ContributionExporter(database,
+					new ManagedDataLayout(config.dataRoot()));
+			exporter.preflight(assignmentId);
+			return new SqliteExamWriter(database).findExamsForSubject(subject).stream()
+					.filter(exam -> exam.getId() == examId).findFirst()
+					.orElseThrow(() -> new SQLException("The assigned Exam could not be found."));
+		}, exam -> chooseAssignmentContributionDestination(primaryStage, config, assignmentId, exam, contributorName));
+	}
+
+	private void showExportImportReceipt(Stage primaryStage, ApplicationConfig config) {
+		if (activeAssignmentContext != null || packageImportInProgress || contributionExportRunning
+				|| applicationBusyOverlay.isBusy()) {
+			return;
+		}
+		TextInputDialog reviewInput = new TextInputDialog();
+		reviewInput.initOwner(primaryStage);
+		reviewInput.setTitle("Export Import Receipt");
+		reviewInput.setHeaderText("Enter the Review ID of a committed coordinator reconciliation");
+		reviewInput.setContentText("Review UUID:");
+		Optional<String> entered = reviewInput.showAndWait();
+		if (entered.isEmpty()) {
+			return;
+		}
+		UUID reviewId;
+		try {
+			reviewId = UUID.fromString(entered.get().strip());
+		} catch (IllegalArgumentException failure) {
+			showAlert(Alert.AlertType.ERROR, "Export Import Receipt", "The Review ID is not a valid UUID.",
+					entered.get());
+			return;
+		}
+		FileChooser chooser = new FileChooser();
+		chooser.setTitle("Save Import Receipt");
+		chooser.setInitialFileName("import-receipt-" + reviewId + ".examwork");
+		chooser.getExtensionFilters()
+				.add(new FileChooser.ExtensionFilter("ExamWork receipt (*.examwork)", "*.examwork"));
+		File selected = chooser.showSaveDialog(primaryStage);
+		if (selected == null) {
+			return;
+		}
+		Path destination = selected.toPath().toAbsolutePath().normalize();
+		if (Files.exists(destination, LinkOption.NOFOLLOW_LINKS)
+				|| destination.startsWith(config.dataRoot().toAbsolutePath().normalize())) {
+			showAlert(Alert.AlertType.ERROR, "Export Import Receipt",
+					"Choose a new file outside the managed data directory.",
+					"Existing files and authoritative managed data " + "must not be overwritten.");
+			return;
+		}
+		Task<ReceiptExportData> task = new ApplicationBackgroundTask<>(() -> {
+			SqliteDatabase database = new SqliteDatabase(config.databasePath());
+
+			// Receipt contents come from the actual committed outcomes,
+			// not from a speculative or uncommitted review.
+			ExamWorkManifest manifest = new MasterContributionReceiptExporter(database).export(reviewId, destination);
+			return new ReceiptExportData(manifest, destination, sha256Package(destination));
+		});
+		Alert progress = new Alert(Alert.AlertType.INFORMATION);
+		progress.initOwner(primaryStage);
+		progress.setTitle("Exporting Import Receipt");
+		progress.setHeaderText("Verifying committed outcomes and producing the receipt");
+		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
+		progress.getButtonTypes().setAll(new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE));
+		task.setOnSucceeded(_ -> {
+			progress.close();
+			ReceiptExportData result = task.getValue();
+			showAlert(Alert.AlertType.INFORMATION, "Import Receipt Exported",
+					"The committed reconciliation receipt is ready.",
+					"Package: " + result.manifest().packageId() + "\nDestination: " + result.destination()
+							+ "\n\nSHA-256:\n" + result.sha256() + "\n\nProvide the contributor with the receipt file."
+							+ "\nConfirm its SHA-256 independently of " + "the package itself.");
+		});
+		task.setOnFailed(_ -> {
+			progress.close();
+			showAlert(Alert.AlertType.ERROR, "Import Receipt Export Failed",
+					"A verified receipt could not be exported.",
+					failureMessage(task.getException()) + "\n\nThe completed reconciliation has not "
+							+ "been rolled back. Retain the Review ID " + "and retry receipt export separately.");
+		});
+		task.setOnCancelled(_ -> progress.close());
+		Thread worker = new Thread(task, "examwork-import-receipt-export");
+		worker.setDaemon(true);
+		progress.show();
+		worker.start();
+	}
+
 	/**
 	 * Exports the accepted Working Subject as an independently validated snapshot.
 	 *
@@ -5221,6 +6283,19 @@ public class QuestionBankApplication extends Application {
 	 * The output is created only outside authoritative managed data directories.
 	 */
 	private void showExportWorkingSubjectSnapshot(Stage primaryStage, ApplicationConfig config) {
+		if (activeAssignmentContext != null) {
+			showAlert(Alert.AlertType.WARNING, "Export Subject Snapshot", "An assignment is active.",
+					"Use Export Assignment Contribution for assigned work. "
+							+ "Exit assignment mode to export an ordinary " + "Working Subject snapshot.");
+			return;
+		}
+		if (isWorkingSubjectSnapshotExportRestricted()) {
+			showAlert(Alert.AlertType.WARNING, "Export Subject Snapshot", "This Subject is not locally authoritative.",
+					"Whole-Subject snapshots can be exported only by the "
+							+ "installation that maintains the authoritative Subject. "
+							+ "Contributor work must be returned using Export Assignment Contribution.");
+			return;
+		}
 		Subject subject = workingSubject;
 		if (subject == null) {
 			showAlert(Alert.AlertType.WARNING, "Export Subject Snapshot", "No Working Subject is selected.",
@@ -5266,9 +6341,8 @@ public class QuestionBankApplication extends Application {
 		});
 		task.setOnFailed(_ -> {
 			progress.close();
-			Throwable failure = task.getException();
 			showAlert(Alert.AlertType.ERROR, "Export Subject Snapshot", "The Subject snapshot could not be exported.",
-					failure == null ? "Unknown error" : failure.getMessage());
+					failureMessage(task.getException()));
 		});
 		task.setOnCancelled(_ -> progress.close());
 		Thread worker = new Thread(task, "examwork-subject-snapshot-export");
@@ -5286,36 +6360,25 @@ public class QuestionBankApplication extends Application {
 		dialog.showAndWait();
 	}
 
-	private void showImportContributorAssignment(Stage primaryStage, ApplicationConfig config) {
-		if (contributorAssignmentInstallationRequest != 0 || contributorAssignmentIssuanceRunning
+	private void showImportWorkPackage(Stage primaryStage, ApplicationConfig config, ExamWorkPackageType expectedType) {
+		if (packageImportInProgress || contributorAssignmentInstallationRequest != 0
+				|| contributorAssignmentIssuanceRunning || contributionExportRunning || contributorRemovalRunning
 				|| applicationBusyOverlay.isBusy()) {
 			return;
 		}
 		if (!allowWorkingSubjectChange()) {
 			return;
 		}
+		String title = WorkPackageImportRoute.title(expectedType);
 		FileChooser chooser = new FileChooser();
-		chooser.setTitle("Import Contributor Assignment");
+		chooser.setTitle(title);
 		chooser.getExtensionFilters()
-				.add(new FileChooser.ExtensionFilter("ExamWork assignment (*.examwork)", "*.examwork"));
+				.add(new FileChooser.ExtensionFilter("ExamWork packages (*.examwork)", "*.examwork"));
 		File selected = chooser.showOpenDialog(primaryStage);
 		if (selected == null) {
 			return;
 		}
-		ButtonType installButton = new ButtonType("Install Assignment", ButtonBar.ButtonData.OK_DONE);
-		Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
-		confirmation.initOwner(primaryStage);
-		confirmation.setTitle("Import Contributor Assignment");
-		confirmation.setHeaderText("Install the supplied Exam and activate contributor mode?");
-		confirmation.setContentText("Package:\n" + selected.getAbsolutePath() + "\n\nContributor data directory:\n"
-				+ config.dataRoot() + "\n\nThe importer will install the assigned Exam, "
-				+ "PDFs, curriculum and baseline into this directory. " + "Use a separate contributor data directory, "
-				+ "not your authoritative coordinator data.");
-		confirmation.getButtonTypes().setAll(installButton, ButtonType.CANCEL);
-		if (confirmation.showAndWait().orElse(ButtonType.CANCEL) != installButton) {
-			return;
-		}
-		startContributorAssignmentInstallation(primaryStage, config, selected.toPath());
+		startWorkPackageImport(primaryStage, config, selected.toPath().toAbsolutePath().normalize(), expectedType);
 	}
 
 	private void showLatestPerformanceReport() {
@@ -5339,9 +6402,13 @@ public class QuestionBankApplication extends Application {
 		if (!allowExamAssetsTransition()) {
 			return;
 		}
+		if (isWorkingSubjectSnapshotExportRestricted()) {
+			showAlert(Alert.AlertType.WARNING, "Legacy Question Import", "This Subject is read-only.",
+					"Legacy imports must be performed in the " + "authoritative coordinator installation.");
+			return;
+		}
 
-		// Exam/Assets is already the authoritative structural workspace. The existing
-		// importer owns syllabus/workbook selection, preflight and persistence.
+		// Exam Assets remains the authoritative structural workspace.
 		importLegacyQuestionMetadata(primaryStage(), applicationConfig, false);
 	}
 
@@ -5418,6 +6485,10 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private void showNewCurriculumAuthoring(Stage primaryStage, ApplicationConfig config, Subject subject) {
+		if (workingSubject == null || subject.getId() != workingSubject.getId()
+				|| !allowCurriculumModification("Curriculum Authoring")) {
+			return;
+		}
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
 		SqliteCurriculumWriter curriculumWriter = new SqliteCurriculumWriter(database);
 		CurriculumDraftLoader draftLoader = new CurriculumDraftLoader(
@@ -5432,6 +6503,47 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 		openCurriculumAuthoringWindow(primaryStage, config, database, session);
+	}
+
+	private void showNewSubjectSnapshotApproval(Stage primaryStage, ApplicationConfig config, Path incomingArchive,
+			SubjectSnapshotIntakePreview.Inspection inspection) {
+		Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+		confirmation.initOwner(primaryStage);
+		confirmation.setTitle("Import Subject Snapshot");
+		confirmation.setHeaderText("Import " + inspection.fingerprint().subjectName());
+		confirmation.getDialogPane().setId("subject-snapshot-import-confirmation");
+		confirmation.setContentText("""
+				This Subject will be imported as a new read-only Subject.
+
+				Syllabus versions: %d
+				Curriculum nodes: %d
+				Curriculum mappings: %d
+				Exams: %d
+				Question booklets: %d
+				Answer booklets: %d
+				Questions: %d
+				Answers: %d
+				Shared contexts: %d
+				Assets: %d
+
+				The originating installation remains authoritative.
+				Existing Subjects will not be changed.
+
+				A verified full backup will be created automatically
+				before the import.
+				""".formatted(inspection.count("SYLLABUS_VERSION"), inspection.count("CURRICULUM_NODE"),
+				inspection.count("CURRICULUM_MAPPING"), inspection.count("EXAM"), inspection.count("EXAM_BOOKLET"),
+				inspection.count("ANSWER_FILE"), inspection.count("QUESTION"), inspection.count("ANSWER"),
+				inspection.count("SHARED_QUESTION_CONTEXT"), inspection.assets().references().size()));
+		confirmation.setResizable(true);
+		confirmation.getDialogPane().setPrefWidth(520);
+		ButtonType importButton = new ButtonType("Import Subject", ButtonBar.ButtonData.OK_DONE);
+		confirmation.getButtonTypes().setAll(importButton, ButtonType.CANCEL);
+		if (confirmation.showAndWait().orElse(ButtonType.CANCEL) != importButton) {
+			packageImportInProgress = false;
+			return;
+		}
+		startNewSubjectSnapshotInstallation(primaryStage, config, incomingArchive, inspection);
 	}
 
 	private void showOptions(Stage primaryStage, ApplicationConfig config) {
@@ -5507,6 +6619,36 @@ public class QuestionBankApplication extends Application {
 		QuestionSearchDialog dialog = new QuestionSearchDialog(primaryStage, workingSubject, curriculumRepository,
 				retrievalService, questionRepository::findAll, previewService, outputApplicabilityRepository,
 				questionRepository::updateClassification, searchNarrowing, performanceRecorder);
+		try {
+			SqliteDatabase authorityDatabase = new SqliteDatabase(config.databasePath());
+			Set<Long> assignedExamIds = new SqliteCoordinatorExamLockRepository(authorityDatabase)
+					.findForSubject(workingSubject.getId()).keySet();
+			boolean imported = new SqliteImportedSubjectAuthorityRepository(authorityDatabase)
+					.isImported(workingSubject.getId());
+			boolean contributorSubject = contributorAssignments != null && contributorAssignments.findAll().stream()
+					.anyMatch(session -> session.subjectLocalId() == workingSubject.getId());
+			if (activeAssignmentContext != null && !imported) {
+				var session = activeAssignmentContext.session();
+				long assignedExamId = session.examLocalId();
+				Set<Long> baselineQuestionIds = loadContributorBaselineQuestionIds(session.assignmentId());
+				Set<Long> baselineAnswerIds = loadContributorBaselineIds(session.assignmentId(), EntityType.ANSWER);
+
+				// Each predicate protects its own entity type.
+				// Records belonging to other Exams remain read-only.
+				dialog.setReadOnlyQuestionPredicate(question -> question.getExam().getId() != assignedExamId
+						|| baselineQuestionIds.contains(question.getId()));
+				dialog.setReadOnlyAnswerPredicate(question -> question.getExam().getId() != assignedExamId
+						|| !question.hasAnswer() || baselineAnswerIds.contains(question.getAnswer().getId()));
+			} else {
+				dialog.setReadOnlyQuestionPredicate(question -> imported || contributorSubject
+						|| assignedExamIds.contains(question.getExam().getId()));
+			}
+		} catch (SQLException | IOException failure) {
+			dialog.dispose();
+			showAlert(Alert.AlertType.ERROR, "Search Questions",
+					"Question editing permissions could not be established.", failureMessage(failure));
+			return;
+		}
 		showQuestionSearchDialog(primaryStage, dialog, curriculumRepository, metadataService);
 	}
 
@@ -5840,6 +6982,48 @@ public class QuestionBankApplication extends Application {
 		worker.start();
 	}
 
+	private void showSubjectRefreshApproval(Stage primaryStage, ApplicationConfig config, Path incomingArchive,
+			SubjectRefreshPlan plan) {
+		if (activeAssignmentContext != null) {
+			packageImportInProgress = false;
+			showAlert(Alert.AlertType.WARNING, "Import Subject Snapshot", "A contributor assignment is active.",
+					"A Subject snapshot cannot be refreshed while working " + "on an active contributor assignment.");
+			return;
+		}
+		Alert confirmation = new Alert(Alert.AlertType.CONFIRMATION);
+		confirmation.initOwner(primaryStage);
+		confirmation.setTitle("Refresh Subject Snapshot");
+		confirmation.setHeaderText("Refresh " + plan.evidence().incoming().fingerprint().subjectName());
+		confirmation.getDialogPane().setId("subject-snapshot-refresh-confirmation");
+		TextArea comparison = new TextArea(describeSubjectRefresh(plan));
+		comparison.setId("subject-snapshot-refresh-comparison");
+		comparison.setEditable(false);
+		comparison.setWrapText(true);
+		comparison.setPrefColumnCount(85);
+		comparison.setPrefRowCount(26);
+		comparison.setMaxWidth(Double.MAX_VALUE);
+		comparison.setMaxHeight(Double.MAX_VALUE);
+		confirmation.getDialogPane().setContent(comparison);
+		confirmation.getDialogPane().setPrefWidth(760);
+		confirmation.setResizable(true);
+		ButtonType approveButton = new ButtonType("Approve Subject Refresh", ButtonBar.ButtonData.OK_DONE);
+		confirmation.getButtonTypes().setAll(approveButton, ButtonType.CANCEL);
+
+		// Display the beginning of the authority and eligibility evidence
+		// rather than positioning the comparison at the final paragraph.
+		comparison.positionCaret(0);
+		if (confirmation.showAndWait().orElse(ButtonType.CANCEL) != approveButton) {
+			packageImportInProgress = false;
+			return;
+		}
+
+		// Only an explicit affirmative dialog result creates an approval.
+		// The approval remains bound to the exact immutable comparison.
+		SubjectRefreshPlan.Approval approval = plan
+				.approve("Authoritative Subject refresh explicitly approved " + "through Import Subject Snapshot.");
+		startSubjectSnapshotRefreshInstallation(primaryStage, config, incomingArchive, approval);
+	}
+
 	private void showVersionInformation(ApplicationConfig config) {
 		String applicationVersion = applicationVersion();
 		String javaVersion = System.getProperty("java.version", "Unknown");
@@ -5873,17 +7057,16 @@ public class QuestionBankApplication extends Application {
 		if (workingSubjectContext == null) {
 			return;
 		}
-
-		// Dashboard Home owns the only editable Working Subject selector.
-		// Imported Question work may have locked Subject and syllabus together.
-		// Releasing that lock here restores editing only after navigation has
-		// returned to Dashboard; active capture retains its syllabus constraint.
-		// Assignment mode keeps the same Subject context but does not
-		// expose the ordinary editable Subject selector or Add Subject.
 		curriculumSelectorPane.setSyllabusContextLocked(false);
 		curriculumSelectorPane.setSubjectEditingEnabled(activeAssignmentContext == null);
-		workspaceSubjectHost.getChildren().remove(workingSubjectContext);
-		corpusDashboardSubjectHost.getChildren().setAll(workingSubjectContext);
+
+		// Transfer the selector only when navigation genuinely
+		// changes its parent. Repeated Dashboard refreshes must
+		// not remove and reinsert an already mounted control.
+		if (workingSubjectContext.getParent() != corpusDashboardSubjectHost) {
+			workspaceSubjectHost.getChildren().remove(workingSubjectContext);
+			corpusDashboardSubjectHost.getChildren().setAll(workingSubjectContext);
+		}
 	}
 
 	private void showWorkingSubjectInWorkspace() {
@@ -6001,6 +7184,76 @@ public class QuestionBankApplication extends Application {
 		}
 	}
 
+	private void startAssignmentContributionExport(Stage primaryStage, ApplicationConfig config, UUID assignmentId,
+			Path destination) {
+		if (contributionExportRunning || contributorRemovalRunning || (contributorContextRefreshGeneration != 0L
+				&& contributorContextRefreshGeneration == workingSubjectRefreshGeneration)) {
+			return;
+		}
+		contributionExportRunning = true;
+		updateContributorAssignmentActions();
+		Task<ExamWorkManifest> task = new ApplicationBackgroundTask<>(() -> {
+			ContributionExporter exporter = new ContributionExporter(new SqliteDatabase(config.databasePath()),
+					new ManagedDataLayout(config.dataRoot()));
+
+			// Preserve the exporter's consistent snapshot,
+			// publication validation and durable return ledger.
+			return exporter.export(assignmentId, destination);
+		});
+		Alert progress = new Alert(Alert.AlertType.INFORMATION);
+		progress.initOwner(primaryStage);
+		progress.setTitle("Export Assignment Contribution");
+		progress.setHeaderText("Preparing validated assignment changes");
+		progress.setContentText(
+				"The return is prepared from saved contributor work. " + "No master database is modified.");
+		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
+
+		// Hiding progress does not interrupt durable publication.
+		progress.getButtonTypes().setAll(new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE));
+		task.setOnSucceeded(_ -> {
+			progress.close();
+
+			// The return ledger has already made this assignment
+			// SUBMITTED. Select the next eligible assignment and refresh
+			// the complete application context before releasing controls.
+			refreshAfterContributorAssignmentClosed(failure -> {
+				contributionExportRunning = false;
+				updateContributorAssignmentActions();
+				if (failure != null && !(failure instanceof CancellationException)) {
+					showAlert(Alert.AlertType.WARNING, "Contribution Exported",
+							"The contribution was exported, but the " + "Dashboard could not refresh.",
+							failureMessage(failure) + "\n\nDestination: " + destination
+									+ "\nRetain the exported package.");
+					return;
+				}
+				showAlert(Alert.AlertType.INFORMATION, "Assignment Contribution Submitted",
+						"The contribution package was created and validated.",
+						"Destination: " + destination + "\n\nSend this package to the coordinator."
+								+ "\nThe assignment is now read-only and is "
+								+ "no longer available for further capture." + "\nRetain the original file in case it "
+								+ "must be sent again.");
+			});
+		});
+		task.setOnFailed(_ -> {
+			contributionExportRunning = false;
+			updateContributorAssignmentActions();
+			progress.close();
+			showAlert(Alert.AlertType.ERROR, "Export Assignment Contribution",
+					"The assignment contribution could not be exported.",
+					failureMessage(task.getException()) + "\n\nThe assignment remains available. "
+							+ "Correct the reported problem before retrying.");
+		});
+		task.setOnCancelled(_ -> {
+			contributionExportRunning = false;
+			updateContributorAssignmentActions();
+			progress.close();
+		});
+		Thread worker = new Thread(task, "examwork-assignment-contribution-export");
+		worker.setDaemon(true);
+		progress.show();
+		worker.start();
+	}
+
 	private void startContributorAssignmentInstallation(Stage primaryStage, ApplicationConfig config, Path archive) {
 		Task<WorkAssignmentInstallationCoordinator.Result> task = new ApplicationBackgroundTask<>(
 				() -> new WorkAssignmentInstallationCoordinator(config).install(archive));
@@ -6042,7 +7295,8 @@ public class QuestionBankApplication extends Application {
 				finishContributorAssignmentInstallation(request);
 				progress.close();
 				showAlert(Alert.AlertType.ERROR, "Import Contributor Assignment",
-						"The assignment could not be installed.", failureMessage(task.getException()));
+						"The assignment could not be installed.", failureMessage(task.getException()),
+						task.getException());
 			});
 			task.setOnCancelled(_ -> {
 				finishContributorAssignmentInstallation(request);
@@ -6057,41 +7311,6 @@ public class QuestionBankApplication extends Application {
 			progress.close();
 			throw failure;
 		}
-	}
-
-	private void completeContributorAssignmentInstallation(long request,
-			WorkAssignmentInstallationCoordinator.Result result, Throwable failure) {
-		if (!applicationBusyOverlay.owns(request)) {
-			return;
-		}
-		finishContributorAssignmentInstallation(request);
-		if (failure != null) {
-			corpusDashboardPane = null;
-			corpusDashboardHost.getChildren().setAll(new Label(
-					"The installed assignment could not be displayed. Restart the application to refresh it."));
-
-			// Persistence succeeded; distinguish a presentation failure from a failed
-			// import.
-			showAlert(Alert.AlertType.ERROR, "Contributor Assignment Installed",
-					"The assignment was installed, but the Dashboard could not be refreshed.",
-					failureMessage(failure) + "\n\nRestart the application to restore the active assignment.");
-			return;
-		}
-		String message = result.replay()
-				? "The previously installed assignment was selected without replacing captured work."
-				: "The assignment and its source assets were installed successfully.";
-		if (result.cleanupPending()) {
-			message += "\n\nTemporary installation cleanup is pending. It will be retried by the installer.";
-		}
-		showAlert(Alert.AlertType.INFORMATION, "Contributor Assignment Installed", message, "Assignment ID: "
-				+ result.assignmentId() + "\n\nThe Corpus Dashboard is now scoped to the assigned Subject and Exam.");
-	}
-
-	private void finishContributorAssignmentInstallation(long request) {
-		if (contributorAssignmentInstallationRequest == request) {
-			contributorAssignmentInstallationRequest = 0;
-		}
-		applicationBusyOverlay.finish(request);
 	}
 
 	private void startContributorAssignmentIssuance(Stage primaryStage, ApplicationConfig config,
@@ -6119,6 +7338,7 @@ public class QuestionBankApplication extends Application {
 		task.setOnSucceeded(_ -> {
 			contributorAssignmentIssuanceRunning = false;
 			progress.close();
+			refreshCorpusDashboardHome(-1L);
 			WorkAssignmentLedger.Assignment assignment = task.getValue();
 			showAlert(Alert.AlertType.INFORMATION, "Contributor Assignment Created", "The assignment has been issued.",
 					"Contributor: " + request.contributorName() + "\nAssignment ID: " + assignment.assignmentId()
@@ -6139,6 +7359,152 @@ public class QuestionBankApplication extends Application {
 
 		// Hide means hide progress, not cancel a transaction.
 		// A completed issuance always reports its final result.
+		progress.show();
+		worker.start();
+	}
+
+	private void startCoordinatorContributionApplication(Stage primaryStage, ApplicationConfig config, Path archive,
+			UUID packageId, Path backupDirectory) {
+		Task<ContributionApplicationData> task = new ApplicationBackgroundTask<>(() -> {
+			SqliteDatabase database = new SqliteDatabase(config.databasePath());
+			SubjectImportBackupGate backupGate = new SubjectImportBackupGate(config);
+
+			// A verified recovery backup must exist before
+			// the contribution can modify authoritative data.
+			var certificate = backupGate.createVerifiedFullBackup(packageId, backupDirectory);
+
+			// Reassess the complete contribution and record
+			// approval internally. No partial selection
+			// or manual rationale is accepted here.
+			var review = new MasterContributionDecisionLedger(database).recordMerge(packageId);
+			backupGate.requireIntact(packageId, certificate);
+
+			// The existing application service verifies the
+			// archive, current record revisions, dependencies
+			// and assignment eligibility within its
+			// guarded application workflow.
+			var result = new MasterContributionApplicationCoordinator(database).execute(review.reviewId(), archive,
+					new ManagedDataLayout(config.dataRoot()));
+			return new ContributionApplicationData(result, certificate.backupPath());
+		});
+		Alert progress = new Alert(Alert.AlertType.INFORMATION);
+		progress.initOwner(primaryStage);
+		progress.setTitle("Merging Contribution");
+		progress.setHeaderText("Creating a backup and merging contributor work");
+		progress.setContentText("All returned work will be merged together."
+				+ "\n\nIf validation or application fails, " + "the contribution will not be partially merged.");
+		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
+		progress.getButtonTypes().setAll(new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE));
+		task.setOnSucceeded(_ -> {
+			packageImportInProgress = false;
+			progress.close();
+			ContributionApplicationData data = task.getValue();
+			long applied = data.application().outcomes().stream()
+					.filter(outcome -> outcome.outcome() == MasterContributionApplicationCoordinator.Outcome.APPLIED)
+					.count();
+			try {
+				refreshCorpusDashboardHome(-1L);
+			} catch (RuntimeException failure) {
+				showAlert(Alert.AlertType.WARNING, "Dashboard Refresh",
+						"The contribution was merged, but " + "the Dashboard refresh failed.",
+						"Restart the application to load " + "the authoritative state.\n" + failureMessage(failure));
+			}
+			showAlert(Alert.AlertType.INFORMATION, "Contribution Merged",
+					"The contribution has been merged successfully.",
+					"New records merged: " + applied + "\n\nVerified backup:\n" + data.backupPath()
+							+ "\n\nThe assignment is now closed " + "and its Exam unlocked.");
+		});
+		task.setOnFailed(_ -> {
+			packageImportInProgress = false;
+			progress.close();
+			showAlert(Alert.AlertType.ERROR, "Contribution Merge Failed", "The contribution could not be merged.",
+					failureMessage(task.getException()) + "\n\nRetain the contribution archive "
+							+ "and any recovery backup." + "\nDo not delete recovery files " + "to force a retry.");
+		});
+		task.setOnCancelled(_ -> {
+			packageImportInProgress = false;
+			progress.close();
+		});
+		Thread worker = new Thread(task, "examwork-coordinator-contribution-application");
+		worker.setDaemon(true);
+		progress.show();
+		worker.start();
+	}
+
+	private void startCoordinatorContributionReview(Stage primaryStage, ApplicationConfig config, Path archive) {
+		if (activeAssignmentContext != null) {
+			packageImportInProgress = false;
+			showAlert(Alert.AlertType.ERROR, "Coordinator Contribution", "Exit contributor assignment mode first.",
+					"Contribution reconciliation requires the " + "authoritative coordinator installation.");
+			return;
+		}
+		Task<ContributionReviewData> task = new ApplicationBackgroundTask<>(() -> {
+			SqliteDatabase database = new SqliteDatabase(config.databasePath());
+			MasterContributionIntake intake = new MasterContributionIntake(database);
+
+			// Receipt records that an archive has arrived.
+			// It does not establish that its work was applied.
+			MasterContributionIntake.Receipt receipt = intake.receive(archive);
+			UUID packageId = receipt.received().packageId();
+
+			// Identical, previously received archives may
+			// resume review while their assignment is eligible.
+			var pendingPlan = new MasterContributionReviewPlanner(database).planPending(packageId);
+			if (pendingPlan.isEmpty()) {
+				return new ContributionReviewData(receipt, null, null, List.of(), List.of());
+			}
+			WorkAssignmentLedger ledger = new WorkAssignmentLedger(database);
+			var assignment = ledger.find(receipt.received().assignmentId())
+					.orElseThrow(() -> new SQLException("Issued assignment is missing."));
+			List<ExchangeRecord> baseline = new ExamWorkJsonlCodec()
+					.readRecords(new ByteArrayInputStream(ledger.readBaseline(assignment.assignmentId()).records()));
+			List<ExchangeRecord> proposals = intake.proposedChanges(packageId);
+			return new ContributionReviewData(receipt, pendingPlan.orElseThrow(), assignment, baseline, proposals);
+		});
+		Alert progress = new Alert(Alert.AlertType.INFORMATION);
+		progress.initOwner(primaryStage);
+		progress.setTitle("Receiving Contributor Work");
+		progress.setHeaderText("Validating the incoming contribution");
+		progress.setContentText(
+				"The master Exam remains locked. " + "Received proposals will not be applied " + "during intake.");
+		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
+		progress.getButtonTypes().setAll(new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE));
+		task.setOnSucceeded(_ -> {
+			progress.close();
+			try {
+				ContributionReviewData data = task.getValue();
+
+				// Eligibility, rather than duplicate receipt status,
+				// determines whether review can proceed.
+				if (data.plan() == null) {
+					packageImportInProgress = false;
+					showAlert(Alert.AlertType.WARNING, "Contribution Not Available",
+							"This contribution cannot be merged.",
+							"The contribution may already have been merged, " + "its assignment may have been closed, "
+									+ "or another return may prevent " + "reconciliation."
+									+ "\n\nNo Question or Answer data " + "has been changed.");
+					return;
+				}
+				presentCoordinatorContributionReview(primaryStage, config, archive, data);
+			} catch (RuntimeException failure) {
+				packageImportInProgress = false;
+				showAlert(Alert.AlertType.ERROR, "Contribution Review",
+						"The received contribution could not be displayed.", failureMessage(failure));
+			}
+		});
+		task.setOnFailed(_ -> {
+			packageImportInProgress = false;
+			progress.close();
+			showAlert(Alert.AlertType.ERROR, "Contribution Intake Failed",
+					"The contributor return could not be received.", failureMessage(task.getException())
+							+ "\n\nNo automatic overwrite or conflict " + "resolution has been attempted.");
+		});
+		task.setOnCancelled(_ -> {
+			packageImportInProgress = false;
+			progress.close();
+		});
+		Thread worker = new Thread(task, "examwork-coordinator-contribution-intake");
+		worker.setDaemon(true);
 		progress.show();
 		worker.start();
 	}
@@ -6383,6 +7749,164 @@ public class QuestionBankApplication extends Application {
 		thread.start();
 	}
 
+	private void startLiveSubjectSnapshotReview(Stage primaryStage, ApplicationConfig config, Path incomingArchive) {
+		if (activeAssignmentContext != null) {
+			packageImportInProgress = false;
+			showAlert(Alert.AlertType.WARNING, "Import Subject Snapshot", "A contributor assignment is active.",
+					"A Subject snapshot cannot be imported " + "while working on an active contributor assignment.");
+			return;
+		}
+		Task<SubjectSnapshotIntakePreview.Inspection> task = new ApplicationBackgroundTask<>(() -> {
+			SqliteDatabase database = new SqliteDatabase(config.databasePath());
+
+			// Inspect one complete incoming Subject.
+			// No existing local master snapshot is required.
+			return new SubjectSnapshotIntakePreview(database).inspect(incomingArchive);
+		});
+		Alert progress = new Alert(Alert.AlertType.INFORMATION);
+		progress.initOwner(primaryStage);
+		progress.setTitle("Inspecting Subject Snapshot");
+		progress.setHeaderText("Validating the incoming Subject");
+		progress.setContentText(
+				"Checking the Subject records, assets and " + "destination database. No data is being imported.");
+		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
+		progress.getButtonTypes().setAll(new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE));
+		task.setOnSucceeded(_ -> {
+			progress.close();
+			try {
+				var inspection = task.getValue();
+				switch (inspection.state()) {
+				case NEW_SUBJECT -> showNewSubjectSnapshotApproval(primaryStage, config, incomingArchive, inspection);
+				case ALREADY_IMPORTED -> {
+					packageImportInProgress = false;
+					showAlert(Alert.AlertType.INFORMATION, "Import Subject Snapshot",
+							"This Subject snapshot has already been imported.",
+							inspection.fingerprint().subjectName() + " requires no changes.");
+				}
+				case EXISTING_SUBJECT -> {
+
+					// A name collision does not authorise an overwrite.
+					// The dedicated refresh service establishes provenance,
+					// chronological eligibility and the exact comparison.
+					startSubjectSnapshotRefreshPreview(primaryStage, config, incomingArchive, inspection);
+				}
+				}
+			} catch (RuntimeException failure) {
+				packageImportInProgress = false;
+				showAlert(Alert.AlertType.ERROR, "Import Subject Snapshot",
+						"The Subject import preview could not be displayed.", failureMessage(failure));
+			}
+		});
+		task.setOnFailed(_ -> {
+			packageImportInProgress = false;
+			progress.close();
+			showAlert(Alert.AlertType.ERROR, "Subject Import Preview", "The incoming Subject could not be validated.",
+					failureMessage(task.getException()));
+		});
+		task.setOnCancelled(_ -> {
+			packageImportInProgress = false;
+			progress.close();
+		});
+		Thread worker = new Thread(task, "examwork-subject-snapshot-preview");
+		worker.setDaemon(true);
+		progress.show();
+		try {
+			worker.start();
+		} catch (RuntimeException failure) {
+			packageImportInProgress = false;
+			progress.close();
+			showAlert(Alert.AlertType.ERROR, "Subject Import Preview", "The Subject inspection could not be started.",
+					failureMessage(failure));
+		}
+	}
+
+	private void startNewSubjectSnapshotInstallation(Stage primaryStage, ApplicationConfig config, Path incomingArchive,
+			SubjectSnapshotIntakePreview.Inspection inspection) {
+		if (activeAssignmentContext != null) {
+			packageImportInProgress = false;
+			showAlert(Alert.AlertType.WARNING, "Import Subject Snapshot", "A contributor assignment is active.",
+					"The approved Subject import cannot proceed.");
+			return;
+		}
+		String subjectName = inspection.fingerprint().subjectName();
+		Task<SubjectImportCoordinator.Result> task = new ApplicationBackgroundTask<>(() -> {
+
+			// The service revalidates the approved archive,
+			// destination absence, provider identities and
+			// backup evidence before committing.
+			return new SubjectImportCoordinator(config).executeNewSubject(inspection, incomingArchive);
+		});
+		Alert progress = new Alert(Alert.AlertType.INFORMATION);
+		progress.initOwner(primaryStage);
+		progress.setTitle("Importing Subject Snapshot");
+		progress.setHeaderText("Importing " + subjectName);
+		progress.setContentText("Creating a verified full backup and " + "installing the Subject records and assets.");
+		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
+
+		// Publication must finish through its normal transaction
+		// and recovery boundaries. Closing the progress presentation
+		// does not cancel an installation already in progress.
+		progress.getButtonTypes().setAll(new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE));
+		task.setOnSucceeded(_ -> {
+			progress.close();
+			var result = task.getValue();
+			if (!result.applied()) {
+				packageImportInProgress = false;
+				showAlert(Alert.AlertType.WARNING, "Import Subject Snapshot", "The Subject was not imported.",
+						"No successful import was recorded.");
+				return;
+			}
+			try {
+
+				// Reload the ordinary Subject choices from
+				// persistence. No assignment context is activated.
+				curriculumSelectorPane.refreshSubjects();
+				examMetadataPane.refreshSubjects();
+				refreshAndShowCorpusDashboardHome();
+			} catch (RuntimeException failure) {
+				packageImportInProgress = false;
+
+				// Publication has already committed. A presentation
+				// failure must not be reported as an import rollback.
+				showAlert(Alert.AlertType.ERROR, "Subject Imported", subjectName + " was imported.",
+						"The import completed, but the Dashboard " + "could not be refreshed.\n\n"
+								+ failureMessage(failure));
+				return;
+			}
+			packageImportInProgress = false;
+			if (result.replay()) {
+				showAlert(Alert.AlertType.INFORMATION, "Subject Already Imported",
+						subjectName + " is already available.", "No duplicate records were created.");
+				return;
+			}
+			showAlert(Alert.AlertType.INFORMATION, "Subject Imported", subjectName + " is now available.",
+					"Select the Subject from the ordinary " + "Working Subject selector.\n\n"
+							+ "The imported Subject is read-only.\n\n" + "Pre-import backup:\n"
+							+ result.backupArchivePath());
+		});
+		task.setOnFailed(_ -> {
+			packageImportInProgress = false;
+			progress.close();
+			showAlert(Alert.AlertType.ERROR, "Subject Import Failed", subjectName + " could not be imported.",
+					failureMessage(task.getException()));
+		});
+		task.setOnCancelled(_ -> {
+			packageImportInProgress = false;
+			progress.close();
+		});
+		Thread worker = new Thread(task, "examwork-new-subject-installation");
+		worker.setDaemon(true);
+		progress.show();
+		try {
+			worker.start();
+		} catch (RuntimeException failure) {
+			packageImportInProgress = false;
+			progress.close();
+			showAlert(Alert.AlertType.ERROR, "Subject Import Failed", "The Subject installation could not be started.",
+					failureMessage(failure));
+		}
+	}
+
 	private void startQuestionSplitFromSearch(Stage primaryStage, QuestionSearchDialog searchDialog, Question question,
 			CurriculumRepository curriculumRepository, LegacyQuestionMetadataService metadataService) {
 		SharedQuestionContext existingSharedContext;
@@ -6487,6 +8011,176 @@ public class QuestionBankApplication extends Application {
 			operation.failed();
 			operation.close();
 			throw failure;
+		}
+	}
+
+	private void startSubjectSnapshotRefreshInstallation(Stage primaryStage, ApplicationConfig config,
+			Path incomingArchive, SubjectRefreshPlan.Approval approval) {
+		if (activeAssignmentContext != null) {
+			packageImportInProgress = false;
+			showAlert(Alert.AlertType.WARNING, "Refresh Subject Snapshot", "A contributor assignment is active.",
+					"The approved Subject refresh cannot proceed.");
+			return;
+		}
+		if (!allowWorkingSubjectChange()) {
+			packageImportInProgress = false;
+			return;
+		}
+		var evidence = approval.plan().evidence();
+		String subjectName = evidence.incoming().fingerprint().subjectName();
+		try {
+
+			// Release any PDF handles belonging to the current imported
+			// Subject before its managed files can be replaced or removed.
+			// This occurs only after explicit approval.
+			if (workingSubject != null && workingSubject.getId() == evidence.authority().subjectLocalId()) {
+				pdfWorkspace.clearDocuments();
+			}
+		} catch (RuntimeException failure) {
+			packageImportInProgress = false;
+			showAlert(Alert.AlertType.ERROR, "Subject Refresh Failed", "The Subject refresh could not be started.",
+					failureMessage(failure), failure);
+			return;
+		}
+		Task<SubjectImportCoordinator.Result> task = new ApplicationBackgroundTask<>(() -> {
+
+			// The coordinator owns exact approval revalidation,
+			// automatic backup, transactional graph publication,
+			// managed-file recovery and authority advancement.
+			return new SubjectImportCoordinator(config).executeRefresh(approval, incomingArchive);
+		});
+		Alert progress = new Alert(Alert.AlertType.INFORMATION);
+		progress.initOwner(primaryStage);
+		progress.setTitle("Refreshing Subject Snapshot");
+		progress.setHeaderText("Refreshing " + subjectName);
+		progress.setContentText("Revalidating the approved comparison, creating a verified "
+				+ "full backup and publishing the authoritative changes.\n\n"
+				+ "Publication cannot be cancelled once started.");
+		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
+
+		// Do not allow ordinary application navigation or cancellation
+		// while managed-file and database publication are in progress.
+		progress.getButtonTypes().clear();
+		progress.setOnCloseRequest(event -> event.consume());
+		task.setOnSucceeded(_ -> {
+			var result = task.getValue();
+			if (!result.applied()) {
+				SubjectImportReviewWorkflow.dismissCompletedProgress(progress);
+				packageImportInProgress = false;
+				showAlert(Alert.AlertType.WARNING, "Refresh Subject Snapshot", "The Subject was not refreshed.",
+						"No successful refresh was recorded.");
+				return;
+			}
+			progress.setHeaderText("Reloading Subject data");
+			progress.setContentText("Publication has completed. Reloading the Working Subject, "
+					+ "curriculum, capture queues and Corpus Dashboard.");
+			try {
+				examMetadataPane.refreshSubjects();
+
+				// Reuse the existing complete operating-context reload.
+				// A null assignment context retains ordinary Subject mode.
+				// The new generation invalidates retained pre-refresh data.
+				refreshContributorAssignmentContext(null, true,
+						failure -> finishSubjectSnapshotRefresh(progress, subjectName, result, failure));
+			} catch (RuntimeException failure) {
+				finishSubjectSnapshotRefresh(progress, subjectName, result, failure);
+			}
+		});
+		task.setOnFailed(_ -> {
+			SubjectImportReviewWorkflow.dismissCompletedProgress(progress);
+			packageImportInProgress = false;
+			Throwable failure = task.getException();
+			showAlert(Alert.AlertType.ERROR, "Subject Refresh Failed", subjectName + " could not be refreshed.",
+					failureMessage(failure), failure);
+		});
+		task.setOnCancelled(_ -> {
+			SubjectImportReviewWorkflow.dismissCompletedProgress(progress);
+			packageImportInProgress = false;
+			showAlert(Alert.AlertType.WARNING, "Subject Refresh Snapshot", "The refresh task was cancelled.",
+					"Check the recorded import outcome before retrying.");
+		});
+		Thread worker = new Thread(task, "examwork-subject-refresh-installation");
+		worker.setDaemon(true);
+		progress.show();
+		try {
+			worker.start();
+		} catch (RuntimeException failure) {
+			SubjectImportReviewWorkflow.dismissCompletedProgress(progress);
+			packageImportInProgress = false;
+			showAlert(Alert.AlertType.ERROR, "Subject Refresh Failed", "The Subject refresh could not be started.",
+					failureMessage(failure), failure);
+		}
+	}
+
+	private void startSubjectSnapshotRefreshPreview(Stage primaryStage, ApplicationConfig config, Path incomingArchive,
+			SubjectSnapshotIntakePreview.Inspection inspection) {
+		Task<SubjectRefreshPlan> task = new ApplicationBackgroundTask<>(() -> {
+			SqliteDatabase database = new SqliteDatabase(config.databasePath());
+			SubjectSnapshotIntakePreview preview = new SubjectSnapshotIntakePreview(database);
+
+			// Refuse locally authoritative Subjects and incompatible
+			// originating identities before constructing the comparison.
+			preview.requireRefreshAuthority(inspection);
+			SubjectRefreshPlan plan = preview.previewRefresh(incomingArchive, new ManagedDataLayout(config.dataRoot()));
+
+			// The initial inspection and the complete comparison
+			// must describe the same incoming archive.
+			if (!inspection.fingerprint().equals(plan.evidence().incoming().fingerprint())) {
+				throw new PackageFormatException("The incoming Subject snapshot changed " + "during inspection.");
+			}
+			return plan;
+		});
+		Alert progress = new Alert(Alert.AlertType.INFORMATION);
+		progress.initOwner(primaryStage);
+		progress.setTitle("Comparing Subject Snapshot");
+		progress.setHeaderText("Checking refresh eligibility for " + inspection.fingerprint().subjectName());
+		progress.setContentText("Checking the originating authority, snapshot freshness, "
+				+ "record identities and managed assets.\n\n" + "No destination data is being changed.");
+		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
+		progress.getButtonTypes().clear();
+		progress.setOnCloseRequest(event -> event.consume());
+		task.setOnSucceeded(_ -> {
+			SubjectImportReviewWorkflow.dismissCompletedProgress(progress);
+			try {
+				showSubjectRefreshApproval(primaryStage, config, incomingArchive, task.getValue());
+			} catch (RuntimeException failure) {
+				packageImportInProgress = false;
+				showAlert(Alert.AlertType.ERROR, "Refresh Subject Snapshot",
+						"The Subject refresh comparison could not be displayed.", failureMessage(failure), failure);
+			}
+		});
+		task.setOnFailed(_ -> {
+			SubjectImportReviewWorkflow.dismissCompletedProgress(progress);
+			packageImportInProgress = false;
+			Throwable failure = task.getException();
+			if (failure instanceof PackageFormatException) {
+
+				// Preserve the existing locally authoritative Subject
+				// collision warning while explaining why the dedicated
+				// refresh operation was refused.
+				showAlert(Alert.AlertType.WARNING, "Import Subject Snapshot", "This Subject already exists.",
+						"The incoming snapshot belongs to " + inspection.fingerprint().subjectName()
+								+ ". Existing Subjects cannot be overwritten " + "through new Subject import.\n\n"
+								+ "Authoritative refresh refused:\n" + failureMessage(failure));
+			} else {
+				showAlert(Alert.AlertType.ERROR, "Subject Refresh Preview",
+						"The Subject refresh comparison could not be completed.", failureMessage(failure), failure);
+			}
+		});
+		task.setOnCancelled(_ -> {
+			SubjectImportReviewWorkflow.dismissCompletedProgress(progress);
+			packageImportInProgress = false;
+		});
+		Thread worker = new Thread(task, "examwork-subject-refresh-preview");
+		worker.setDaemon(true);
+		progress.show();
+		try {
+			worker.start();
+		} catch (RuntimeException failure) {
+			SubjectImportReviewWorkflow.dismissCompletedProgress(progress);
+			packageImportInProgress = false;
+			showAlert(Alert.AlertType.ERROR, "Subject Refresh Preview",
+					"The Subject refresh comparison could not be started.", failureMessage(failure), failure);
 		}
 	}
 
@@ -6724,16 +8418,79 @@ public class QuestionBankApplication extends Application {
 		startWorkingSubjectDashboardRefresh(subject, generation);
 	}
 
-	private void switchContributorAssignment() {
-		var selected = assignmentSelector.getValue();
-		if (selected == null) {
+	private void startWorkPackageImport(Stage primaryStage, ApplicationConfig config, Path archive,
+			ExamWorkPackageType expectedType) {
+		if (packageImportInProgress || contributorAssignmentInstallationRequest != 0
+				|| contributorAssignmentIssuanceRunning || contributionExportRunning || contributorRemovalRunning
+				|| applicationBusyOverlay.isBusy()) {
 			return;
 		}
-		if (activeAssignmentContext != null
-				&& activeAssignmentContext.session().assignmentId().equals(selected.assignmentId())) {
-			return;
+		String title = WorkPackageImportRoute.title(expectedType);
+		packageImportInProgress = true;
+		Task<ExamWorkManifest> task = new ApplicationBackgroundTask<>(() -> {
+			SqliteDatabase database = new SqliteDatabase(config.databasePath());
+
+			// Validate both archive integrity and the explicitly
+			// requested import operation before any intake.
+			return WorkPackageImportRoute.validate(archive, ApplicationVersion.current(), database.schemaVersion(),
+					expectedType);
+		});
+		Alert progress = new Alert(Alert.AlertType.INFORMATION);
+		progress.initOwner(primaryStage);
+		progress.setTitle("Inspecting Work Package");
+		progress.setHeaderText("Validating the selected exchange archive");
+		progress.setContentText("No Subject, Exam or contributor records are being changed.");
+		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
+		progress.getButtonTypes().setAll(new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE));
+		task.setOnSucceeded(_ -> {
+			progress.close();
+			try {
+
+				// The validated manifest has already been checked against
+				// the requested operation. Never automatically redirect a
+				// mismatched archive into another import workflow.
+				switch (task.getValue().packageType()) {
+				case SUBJECT_SNAPSHOT -> startLiveSubjectSnapshotReview(primaryStage, config, archive);
+				case WORK_ASSIGNMENT -> {
+					packageImportInProgress = false;
+					confirmContributorAssignmentInstallation(primaryStage, config, archive);
+				}
+				case CONTRIBUTION -> startCoordinatorContributionReview(primaryStage, config, archive);
+				case IMPORT_RECEIPT ->
+					throw new IllegalStateException("Import receipt acknowledgement is not available.");
+				}
+			} catch (RuntimeException failure) {
+				packageImportInProgress = false;
+				showAlert(Alert.AlertType.ERROR, title, "The selected workflow could not be started.",
+						failureMessage(failure));
+			}
+		});
+		task.setOnFailed(_ -> {
+			packageImportInProgress = false;
+			progress.close();
+			showAlert(Alert.AlertType.ERROR, "Invalid Work Package",
+					"The selected package could not be validated for this import.",
+					failureMessage(task.getException()));
+		});
+		task.setOnCancelled(_ -> {
+			packageImportInProgress = false;
+			progress.close();
+		});
+		Thread worker = new Thread(task, "examwork-package-inspection");
+		worker.setDaemon(true);
+		progress.show();
+		try {
+			worker.start();
+		} catch (RuntimeException failure) {
+			packageImportInProgress = false;
+			progress.close();
+			showAlert(Alert.AlertType.ERROR, title, "The package inspection could not be started.",
+					failureMessage(failure));
 		}
-		changeContributorAssignment(selected.assignmentId());
+	}
+
+	private String suggestContributorAssignmentFileName(Exam exam, String contributorName) {
+		return WorkPackageFileNames.assignment(exam, contributorName, LocalDateTime.now());
 	}
 
 	private void synchroniseActiveExamLifecycle(Exam updatedExam) {
@@ -6764,10 +8521,29 @@ public class QuestionBankApplication extends Application {
 
 	private void updateContributorAssignmentActions() {
 		var selected = assignmentSelector.getValue();
-		boolean sameAssignment = selected != null && activeAssignmentContext != null
-				&& selected.assignmentId().equals(activeAssignmentContext.session().assignmentId());
-		assignmentSwitchButton.setDisable(selected == null || sameAssignment);
-		assignmentExitButton.setDisable(activeAssignmentContext == null);
+		boolean busy = contributionExportRunning || contributorRemovalRunning;
+		boolean refreshing = contributorContextRefreshGeneration != 0L
+				&& contributorContextRefreshGeneration == workingSubjectRefreshGeneration;
+		boolean removable = selected != null && activeAssignmentContext != null
+				&& selected.assignmentId().equals(activeAssignmentContext.session().assignmentId())
+				&& selected.assignmentId().equals(removableContributorAssignmentId);
+
+		// Ordinary assignment switching may supersede an earlier refresh.
+		// Removal and contribution publication must wait for current data.
+		assignmentSelector.setDisable(busy);
+		assignmentRemoveButton.setDisable(busy || refreshing || !removable);
+		if (contributionExportMenuItem != null) {
+			contributionExportMenuItem.setDisable(activeAssignmentContext == null || busy || refreshing);
+		}
+		if (subjectSnapshotExportMenuItem != null || curriculumMenu != null) {
+			boolean restricted = isWorkingSubjectSnapshotExportRestricted() || busy || refreshing;
+			if (subjectSnapshotExportMenuItem != null) {
+				subjectSnapshotExportMenuItem.setDisable(restricted);
+			}
+			if (curriculumMenu != null) {
+				curriculumMenu.setDisable(restricted);
+			}
+		}
 	}
 
 	private void useExamAssetsBookletForCapture(ExamBooklet booklet, ApplicationConfig config) {
@@ -6900,6 +8676,28 @@ public class QuestionBankApplication extends Application {
 		RETRY, EXIT_WITHOUT_BACKUP, CANCEL_EXIT
 	}
 
+	private record ReceiptExportData(ExamWorkManifest manifest, Path destination, String sha256) {
+	}
+
+	private record ContributionApplicationData(MasterContributionApplicationCoordinator.ApplicationResult application,
+			Path backupPath) {
+	}
+
+	private record ContributionReviewData(MasterContributionIntake.Receipt receipt,
+			MasterContributionReviewPlanner.ReviewPlan plan, WorkAssignmentLedger.Assignment assignment,
+			List<ExchangeRecord> baseline, List<ExchangeRecord> proposals) {
+	}
+
+	@FunctionalInterface
+	private interface ExamAssetsPersistenceAction {
+
+		void run() throws SQLException;
+	}
+
+	private record PreparedSubjectReview(Path directory, Path masterArchive,
+			SubjectReconciliationPreviewService.Result preview) {
+	}
+
 	private record DashboardAnswerCaptureSnapshot(List<Question> questions, AnswerFile answerFile) {
 
 		private DashboardAnswerCaptureSnapshot {
@@ -6909,28 +8707,26 @@ public class QuestionBankApplication extends Application {
 	}
 
 	private record CorpusDashboardSnapshot(List<ExamCorpusStatus> examStatuses, List<Question> questions,
-			List<CurriculumMappingCoverage> mappingCoverages, boolean curriculumAvailable,
-			Set<Long> reviewedBookletIds) {
+			List<CurriculumMappingCoverage> mappingCoverages, boolean curriculumAvailable, Set<Long> reviewedBookletIds,
+			Map<Long, String> coordinatorExamLocks, boolean importedSubject, boolean installedContributorSubject,
+			UUID assignmentId, Set<Long> baselineQuestionIds, Set<Long> baselineAnswerIds, UUID removableAssignmentId) {
 
 		private CorpusDashboardSnapshot {
-			if (examStatuses == null) {
-				throw new NullPointerException("examStatuses");
-			}
-			if (questions == null) {
-				throw new NullPointerException("questions");
-			}
-			if (mappingCoverages == null) {
-				throw new NullPointerException("mappingCoverages");
-			}
-			if (reviewedBookletIds == null) {
-				throw new NullPointerException("reviewedBookletIds");
-			}
-
-			// The worker publishes immutable snapshots to the FX thread.
+			Objects.requireNonNull(examStatuses, "examStatuses");
+			Objects.requireNonNull(questions, "questions");
+			Objects.requireNonNull(mappingCoverages, "mappingCoverages");
+			Objects.requireNonNull(reviewedBookletIds, "reviewedBookletIds");
+			Objects.requireNonNull(coordinatorExamLocks, "coordinatorExamLocks");
 			examStatuses = List.copyOf(examStatuses);
 			questions = List.copyOf(questions);
 			mappingCoverages = List.copyOf(mappingCoverages);
 			reviewedBookletIds = Set.copyOf(reviewedBookletIds);
+			coordinatorExamLocks = Map.copyOf(coordinatorExamLocks);
+			baselineQuestionIds = Set.copyOf(Objects.requireNonNull(baselineQuestionIds, "baselineQuestionIds"));
+			baselineAnswerIds = Set.copyOf(Objects.requireNonNull(baselineAnswerIds, "baselineAnswerIds"));
+			if (removableAssignmentId != null && !removableAssignmentId.equals(assignmentId)) {
+				throw new IllegalArgumentException("Removal eligibility does not match assignment scope.");
+			}
 		}
 	}
 
@@ -6946,12 +8742,6 @@ public class QuestionBankApplication extends Application {
 			// the JavaFX application thread.
 			mappingCoverages = List.copyOf(mappingCoverages);
 		}
-	}
-
-	@FunctionalInterface
-	private interface ExamAssetsPersistenceAction {
-
-		void run() throws SQLException;
 	}
 
 	private record PendingLegacyQuestionImport(Subject subject, SyllabusVersion syllabusVersion,

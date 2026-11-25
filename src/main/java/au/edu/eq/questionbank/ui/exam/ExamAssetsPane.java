@@ -9,6 +9,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -24,8 +25,8 @@ import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
-import javafx.event.EventHandler;
 import javafx.beans.binding.Bindings;
+import javafx.event.EventHandler;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
@@ -170,6 +171,9 @@ public final class ExamAssetsPane extends VBox {
 	private final Button cancelNewExamButton = new Button("Cancel");
 	private final Button saveNewExamButton = new Button("Save Exam");
 	private final Button returnToCorpusDashboardButton = new Button("Return to Corpus Dashboard");
+	private Long assignedInspectionExamId;
+	private Set<Long> coordinatorLockedExamIds = Set.of();
+	private boolean subjectStructureReadOnly;
 
 	/**
 	 * Creates the Exam/Assets workspace.
@@ -314,19 +318,17 @@ public final class ExamAssetsPane extends VBox {
 	}
 
 	/**
-	 * Publishes a previously loaded Subject snapshot to Exam/Assets.
+	 * Publishes a persistence-derived Subject snapshot when it belongs to the
+	 * current Working Subject.
 	 *
-	 * @param snapshot immutable persistence snapshot
+	 * @param snapshot authoritative Exam and booklet data
+	 * @throws NullPointerException if snapshot is null
 	 */
 	public void applySubjectSnapshot(SubjectSnapshot snapshot) {
 		if (snapshot == null) {
 			throw new NullPointerException("snapshot");
 		}
 		if (!Objects.equals(workingSubject, snapshot.subject())) {
-
-			// The application-level generation guard normally rejects stale work first.
-			// Retain this pane-level check so stale data is also harmless if called
-			// directly.
 			return;
 		}
 		applyingSubjectSnapshot = true;
@@ -335,15 +337,20 @@ public final class ExamAssetsPane extends VBox {
 			examBox.getItems().clear();
 			clearSelectedExam();
 			refreshMetadataOptions();
-			examBox.getItems().setAll(snapshot.exams());
-			ExamSnapshot selectedExam = snapshot.selectedExam();
-			if (selectedExam != null) {
 
-				// Selecting the preloaded Exam must not invoke the ordinary persistence
-				// listener while this snapshot is being published.
+			// Assignment mode exposes only the Exam that the
+			// contributor is currently authorised to work on.
+			List<Exam> visibleExams = snapshot.exams().stream().filter(
+					exam -> assignedInspectionExamId == null || exam.getId() == assignedInspectionExamId.longValue())
+					.toList();
+			examBox.getItems().setAll(visibleExams);
+			ExamSnapshot selectedExam = snapshot.selectedExam();
+			if (selectedExam != null
+					&& visibleExams.stream().anyMatch(exam -> exam.getId() == selectedExam.exam().getId())) {
 				examBox.getSelectionModel().select(selectedExam.exam());
 				applyExamSnapshot(selectedExam);
 			}
+			examBox.setDisable(assignedInspectionExamId != null);
 			updateAddNewExamState();
 		} finally {
 			applyingSubjectSnapshot = false;
@@ -485,6 +492,33 @@ public final class ExamAssetsPane extends VBox {
 			throw new NullPointerException("handler");
 		}
 		legacyQuestionImportHandler = handler;
+	}
+
+	/**
+	 * Configures structural ownership before loading the Exam Assets workspace from
+	 * persistence.
+	 *
+	 * <p>
+	 * Externally authoritative Subjects and locked Exams may be inspected but their
+	 * structural metadata and assets may not be changed. An active contributor
+	 * assignment additionally restricts the visible Exam catalogue to its assigned
+	 * Exam.
+	 *
+	 * @param readOnlySubject whether the Subject is externally owned
+	 * @param lockedExamIds   local identifiers of coordinator-locked Exams
+	 * @param assignedExamId  assigned local Exam ID, or null outside contributor
+	 *                        assignment mode
+	 * @throws NullPointerException     if lockedExamIds or an element is null
+	 * @throws IllegalArgumentException if assignedExamId is not positive
+	 */
+	public void setStructureAuthority(boolean readOnlySubject, Set<Long> lockedExamIds, Long assignedExamId) {
+		Objects.requireNonNull(lockedExamIds, "lockedExamIds");
+		if (assignedExamId != null && assignedExamId < 1) {
+			throw new IllegalArgumentException("Assigned Exam ID must be positive");
+		}
+		coordinatorLockedExamIds = Set.copyOf(lockedExamIds);
+		assignedInspectionExamId = assignedExamId;
+		subjectStructureReadOnly = readOnlySubject || assignedExamId != null;
 	}
 
 	/**
@@ -820,22 +854,17 @@ public final class ExamAssetsPane extends VBox {
 
 	private void beginExamDetailsEdit() {
 		Exam selectedExam = examBox.getValue();
-		if (selectedExam == null || selectedExam.isComplete()) {
+		if (isStructureReadOnly(selectedExam)) {
 			return;
 		}
 
-		// Reassert the persisted values directly into the editable
-		// ComboBox editors. This prevents suggestion-list state
-		// from clearing metadata when Edit begins.
+		// Restore authoritative values before beginning the edit.
 		providerField.setValue(selectedExam.getProvider().getName());
 		providerField.getEditor().setText(selectedExam.getProvider().getName());
 		yearField.setValue(selectedExam.getYear());
 		assessmentField.setValue(selectedExam.getName());
 		assessmentField.getEditor().setText(selectedExam.getName());
 		if (selectedExamAssetExpectations != null) {
-
-			// Exam-level expected asset counts belong to this
-			// authoritative Exam snapshot.
 			expectedQuestionBookletsField
 					.setText(formatExpectedAssetCount(selectedExamAssetExpectations.expectedQuestionBookletCount()));
 			expectedAnswerBookletsField
@@ -867,17 +896,6 @@ public final class ExamAssetsPane extends VBox {
 		// but
 		// cannot abandon the active structural transaction.
 		updateCorpusDashboardReturnState();
-	}
-
-	private void beginSelectedExamCreationAction() {
-		if (!canBeginNewExam()) {
-			return;
-		}
-		if (legacyImportCheckBox.isSelected()) {
-			legacyQuestionImportHandler.run();
-		} else {
-			beginNewExam();
-		}
 	}
 
 	private void beginQuestionBookletAdd() {
@@ -928,6 +946,17 @@ public final class ExamAssetsPane extends VBox {
 		pendingQuestionBookletPreviewOpen = questionBookletSourcePreviewHandler.test(sourcePath);
 	}
 
+	private void beginSelectedExamCreationAction() {
+		if (!canBeginNewExam()) {
+			return;
+		}
+		if (legacyImportCheckBox.isSelected()) {
+			legacyQuestionImportHandler.run();
+		} else {
+			beginNewExam();
+		}
+	}
+
 	private void buildContent() {
 		HBox existingExamControls = new HBox(SPACING, stateLabel, examBox);
 		existingExamControls.setId("exam-assets-existing-exam-controls");
@@ -972,28 +1001,37 @@ public final class ExamAssetsPane extends VBox {
 		getChildren().addAll(dashboardNavigation, bodyScroll, legacyImportRequirementsBox);
 	}
 
-	private boolean canBeginAnswerBookletAdd(Exam exam) {
+	private boolean canActivateCapture(Exam exam) {
+		if (exam == null || exam.isComplete()) {
+			return false;
+		}
 
-		// Question and Answer asset creation are both structural Exam transactions, so
-		// neither may begin while the other is pending.
-		return exam != null && !exam.isComplete() && !editingExamDetails && editingBookletEditor == null
+		// An active contributor may use an issued booklet for
+		// capture without acquiring structural editing permissions.
+		if (assignedInspectionExamId != null) {
+			return exam.getId() == assignedInspectionExamId.longValue();
+		}
+		return !isStructureReadOnly(exam);
+	}
+
+	private boolean canBeginAnswerBookletAdd(Exam exam) {
+		return !isStructureReadOnly(exam) && !editingExamDetails && editingBookletEditor == null
 				&& pendingAnswerBookletEditor == null && pendingQuestionBookletEditor == null;
 	}
 
 	private boolean canBeginNewExam() {
-		return workingSubject != null && !legacyImportPending && !creatingNewExam && !editingExamDetails
-				&& editingBookletEditor == null && pendingQuestionBookletEditor == null
+		return workingSubject != null && !subjectStructureReadOnly && !legacyImportPending && !creatingNewExam
+				&& !editingExamDetails && editingBookletEditor == null && pendingQuestionBookletEditor == null
 				&& pendingAnswerBookletEditor == null;
 	}
 
 	private boolean canBeginQuestionBookletAdd(Exam exam) {
-		if (exam == null || exam.isComplete() || editingExamDetails || editingBookletEditor != null
+		if (isStructureReadOnly(exam) || editingExamDetails || editingBookletEditor != null
 				|| pendingQuestionBookletEditor != null || pendingAnswerBookletEditor != null) {
 			return false;
 		}
 
-		// During pending legacy import, never permit a Question
-		// booklet that has no remaining workbook Paper to claim.
+		// A pending legacy import may add only required Papers.
 		return !legacyImportPending || !remainingLegacyPaperNames(exam).isEmpty();
 	}
 
@@ -1038,11 +1076,9 @@ public final class ExamAssetsPane extends VBox {
 	}
 
 	private boolean canRecheckLegacyQuestionImport() {
-
-		// Recheck reads only authoritative persistence, so every staged structural
-		// transaction must first have been saved or cancelled.
-		return legacyImportPending && !creatingNewExam && !editingExamDetails && editingBookletEditor == null
-				&& pendingQuestionBookletEditor == null && pendingAnswerBookletEditor == null;
+		return !subjectStructureReadOnly && legacyImportPending && !creatingNewExam && !editingExamDetails
+				&& editingBookletEditor == null && pendingQuestionBookletEditor == null
+				&& pendingAnswerBookletEditor == null;
 	}
 
 	private void clearNewExamFields() {
@@ -1341,19 +1377,6 @@ public final class ExamAssetsPane extends VBox {
 		field.getEditor().setOnContextMenuRequested(showRemovalMenu);
 	}
 
-	private ListCell<Exam> createExamCell() {
-		return new ListCell<>() {
-
-			@Override
-			protected void updateItem(Exam exam, boolean empty) {
-				super.updateItem(exam, empty);
-				String identity = empty || exam == null ? null : formatExam(exam);
-				setText(identity);
-				setTooltip(identity == null ? null : new Tooltip(identity));
-			}
-		};
-	}
-
 	private VBox createAnswerBookletsSection() {
 
 		// The Add action creates an asset owned by this section, so present it directly
@@ -1378,13 +1401,12 @@ public final class ExamAssetsPane extends VBox {
 		deleteButton.setMinWidth(Region.USE_PREF_SIZE);
 		deleteButton.setUserData(answerFile);
 		deleteButton.setOnAction(_ -> {
-			if (structuralTransactionActive() || answerFile.getExam().isComplete()) {
+			if (structuralTransactionActive() || isStructureReadOnly(answerFile.getExam())) {
 				return;
 			}
-
-			// Deletion and managed-file cleanup remain application-owned.
 			answerFileDeleteHandler.accept(answerFile);
 		});
+		deleteButton.setDisable(structuralTransactionActive() || isStructureReadOnly(answerFile.getExam()));
 		answerFileDeleteButtons.add(deleteButton);
 		HBox.setHgrow(heading, Priority.ALWAYS);
 		HBox headingRow = new HBox(SPACING, heading, viewButton, deleteButton);
@@ -1393,16 +1415,28 @@ public final class ExamAssetsPane extends VBox {
 		explanations.setId("exam-assets-answer-explanations-" + answerFile.getId());
 		explanations.setSelected(answerFile.hasAnswerExplanations());
 
-		// Changing this flag can create new MCQ explanation
-		// requirements. COMPLETE Exams must retain their
-		// reviewed metadata until explicitly reactivated.
-		explanations.setDisable(answerFile.getExam().isComplete());
+		// Preserve the authoritative metadata for inspection
+		// while denying contributor changes to explanation requirements.
+		explanations.setDisable(isStructureReadOnly(answerFile.getExam()));
 		explanations.setOnAction(_ -> updateAnswerFileExplanationMetadata(answerFile, explanations));
 		VBox row = new VBox(ROW_SPACING, headingRow, explanations);
 		row.setId("exam-assets-answer-file-" + answerFile.getId());
 		row.setPadding(SECTION_PADDING);
 		row.setStyle(BORDER_STYLE);
 		return row;
+	}
+
+	private ListCell<Exam> createExamCell() {
+		return new ListCell<>() {
+
+			@Override
+			protected void updateItem(Exam exam, boolean empty) {
+				super.updateItem(exam, empty);
+				String identity = empty || exam == null ? null : formatExam(exam);
+				setText(identity);
+				setTooltip(identity == null ? null : new Tooltip(identity));
+			}
+		};
 	}
 
 	private VBox createExamDetailsSection() {
@@ -1609,6 +1643,11 @@ public final class ExamAssetsPane extends VBox {
 				&& !editedText(assessmentField).isBlank();
 	}
 
+	private boolean isStructureReadOnly(Exam exam) {
+		return exam == null || exam.isComplete() || subjectStructureReadOnly
+				|| coordinatorLockedExamIds.contains(exam.getId());
+	}
+
 	private String legacyPaperCode(String bookletName) {
 		return switch (bookletName) {
 		case "MCQ booklet", "MCQ" -> "MCQ";
@@ -1725,16 +1764,10 @@ public final class ExamAssetsPane extends VBox {
 		for (Button deleteButton : answerFileDeleteButtons) {
 			Object value = deleteButton.getUserData();
 			if (!(value instanceof AnswerFile answerFile)) {
-
-				// Every retained button must identify the authoritative AnswerFile row it
-				// controls. An invalid row is safer disabled than guessed.
 				deleteButton.setDisable(true);
 				continue;
 			}
-
-			// Asset deletion is structural and follows the same COMPLETE and staged-work
-			// locks as other Exam/Assets changes.
-			deleteButton.setDisable(transactionActive || answerFile.getExam().isComplete());
+			deleteButton.setDisable(transactionActive || isStructureReadOnly(answerFile.getExam()));
 		}
 	}
 
@@ -2049,44 +2082,25 @@ public final class ExamAssetsPane extends VBox {
 	}
 
 	private void setExamDetailsEditing(boolean editing) {
-		editingExamDetails = editing;
-
-		// Identity metadata remains visible at all times and
-		// becomes mutable only after the explicit Edit action.
-		providerField.setDisable(!editing);
-		yearField.setDisable(!editing);
-		assessmentField.setDisable(!editing);
 		Exam selectedExam = examBox.getValue();
-		boolean planningEditable = editing && selectedExam != null && !selectedExam.isComplete();
+		boolean readOnly = isStructureReadOnly(selectedExam);
+		editingExamDetails = editing && !readOnly;
 
-		// Expected asset counts are structural metadata.
-		// COMPLETE Exams expose them read-only until reactivated.
-		expectedQuestionBookletsField.setDisable(!planningEditable);
-		expectedAnswerBookletsField.setDisable(!planningEditable);
-
-		// A COMPLETE Exam may be inspected, but its structural
-		// metadata cannot be edited until it is marked ACTIVE.
-		editExamButton.setDisable(editing || selectedExam == null || selectedExam.isComplete());
-
-		// Cancel remains available throughout an edit.
-		// Save requires an actual change.
-		cancelButton.setDisable(!editing);
+		// Identity and planning values remain visible even
+		// when structural authority prohibits editing.
+		providerField.setDisable(!editingExamDetails);
+		yearField.setDisable(!editingExamDetails);
+		assessmentField.setDisable(!editingExamDetails);
+		expectedQuestionBookletsField.setDisable(!editingExamDetails);
+		expectedAnswerBookletsField.setDisable(!editingExamDetails);
+		editExamButton.setDisable(editingExamDetails || readOnly);
+		cancelButton.setDisable(!editingExamDetails);
 		updateExamDetailsSaveState();
 
-		// Do not allow another Exam to be selected while
-		// unsaved metadata is staged.
-		examBox.setDisable(editing);
-
-		// Exam Details and booklet structural edits are
-		// mutually exclusive transactions.
+		// An active contributor assignment fixes the Exam scope.
+		examBox.setDisable(editingExamDetails || assignedInspectionExamId != null);
 		refreshQuestionBookletActionStates();
-
-		// Capture transition must not silently discard
-		// a staged Exam Details edit.
 		updateUseSelectedBookletState();
-
-		// Exam Details, Question-booklet creation and
-		// Answer-booklet creation are mutually exclusive.
 		updateQuestionBookletAddState();
 		updateAnswerBookletAddState();
 	}
@@ -2203,11 +2217,9 @@ public final class ExamAssetsPane extends VBox {
 	private void updateAnswerFileExplanationMetadata(AnswerFile answerFile, CheckBox explanations) {
 		boolean persistedValue = answerFile.hasAnswerExplanations();
 
-		// The disabled checkbox is the presentation restriction.
-		// Repeat the lifecycle guard here to prevent a stale or
-		// programmatically invoked action from changing a
-		// COMPLETE Exam's reviewed explanation requirements.
-		if (answerFile.getExam().isComplete()) {
+		// Recheck authority at action time rather than relying
+		// exclusively on the checkbox's disabled state.
+		if (isStructureReadOnly(answerFile.getExam())) {
 			explanations.setSelected(persistedValue);
 			return;
 		}
@@ -2218,8 +2230,6 @@ public final class ExamAssetsPane extends VBox {
 		try {
 			answerWriter.setContainsAnswerExplanations(answerFile, requestedValue);
 		} catch (SQLException | IllegalArgumentException exception) {
-
-			// A failed write restores the authoritative value.
 			explanations.setSelected(persistedValue);
 			showAnswerFileError("Answer explanation metadata could not be saved.", exception.getMessage());
 		}
@@ -2264,19 +2274,12 @@ public final class ExamAssetsPane extends VBox {
 	private void updateUseSelectedBookletState() {
 		boolean transactionActive = structuralTransactionActive();
 		Toggle selectedToggle = questionBookletSelectionGroup.getSelectedToggle();
-
-		// A persisted booklet can be selected for inspection
-		// regardless of Exam lifecycle state. Capture activation
-		// is permitted only when its Exam is ACTIVE.
 		boolean captureAvailable = selectedToggle != null && selectedToggle.getUserData() instanceof ExamBooklet booklet
-				&& !booklet.getExam().isComplete();
+				&& canActivateCapture(booklet.getExam());
 
-		// Capture must also wait for any staged structural
-		// transaction to finish.
+		// Capture navigation remains independent of permission
+		// to change the booklet's structure.
 		useSelectedBookletButton.setDisable(transactionActive || !captureAvailable);
-
-		// Pending legacy import may coexist with ordinary booklet
-		// metadata editing, but Recheck must wait for Save or Cancel.
 		legacyImportRecheckButton.setDisable(!canRecheckLegacyQuestionImport());
 		refreshAnswerFileDeleteStates();
 		updateCorpusDashboardReturnState();
@@ -2291,16 +2294,9 @@ public final class ExamAssetsPane extends VBox {
 		if (!(selectedValue instanceof ExamBooklet booklet)) {
 			throw new IllegalStateException("Selected Question booklet has no persisted ExamBooklet");
 		}
-
-		// A COMPLETE Exam may be inspected but cannot be
-		// activated for ordinary Question capture. Repeat the
-		// restriction here so a stale or programmatic action
-		// cannot bypass the disabled button.
-		if (booklet.getExam().isComplete() || structuralTransactionActive()) {
+		if (!canActivateCapture(booklet.getExam()) || structuralTransactionActive()) {
 			return;
 		}
-
-		// Application code owns the actual PDF/capture transition.
 		captureBookletHandler.accept(booklet);
 	}
 
@@ -2849,12 +2845,12 @@ public final class ExamAssetsPane extends VBox {
 		}
 
 		private void beginEdit() {
-			if (editingBookletEditor != null || editingExamDetails || pendingQuestionBookletEditor != null
-					|| pendingAnswerBookletEditor != null || booklet.getExam().isComplete()) {
+			if (isStructureReadOnly(booklet.getExam()) || editingBookletEditor != null || editingExamDetails
+					|| pendingQuestionBookletEditor != null || pendingAnswerBookletEditor != null) {
 				return;
 			}
 
-			// Only one structural row edit may be staged at once.
+			// Only one structural row edit may be staged.
 			editingBookletEditor = this;
 			setEditing(true);
 			editExamButton.setDisable(true);
@@ -2863,9 +2859,8 @@ public final class ExamAssetsPane extends VBox {
 			updateQuestionBookletAddState();
 			updateAnswerBookletAddState();
 
-			// Configuring a booklet deliberately opens its authoritative managed PDF in
-			// read-only VIEWER mode so expected Question count can be checked against the
-			// actual source without activating this booklet for capture.
+			// Inspect the authoritative PDF without activating
+			// this booklet for Question capture.
 			questionBookletViewHandler.accept(booklet);
 		}
 
@@ -3181,22 +3176,22 @@ public final class ExamAssetsPane extends VBox {
 		}
 
 		private void updateActionState() {
+			boolean readOnly = isStructureReadOnly(booklet.getExam());
 			boolean anotherStructuralTransaction = editingExamDetails || pendingQuestionBookletEditor != null
 					|| pendingAnswerBookletEditor != null
 					|| (editingBookletEditor != null && editingBookletEditor != this);
-			editButton.setDisable(editing || booklet.getExam().isComplete() || anotherStructuralTransaction);
+			editButton.setDisable(editing || readOnly || anotherStructuralTransaction);
 
-			// Extra booklets may need to be removed during legacy
-			// preflight. Do not treat the pending workbook itself
-			// as an unsaved edit.
-			deleteButton.setDisable(editing || booklet.getExam().isComplete() || anotherStructuralTransaction);
+			// Structural deletion follows the same ownership
+			// restrictions as metadata correction.
+			deleteButton.setDisable(editing || readOnly || anotherStructuralTransaction);
 			cancelButton.setDisable(!editing);
-			saveButton.setDisable(!editing || !hasValidEditedValues() || !isDirty());
+			saveButton.setDisable(readOnly || !editing || !hasValidEditedValues() || !isDirty());
 			updateLegacyPaperLinkActionState();
 		}
 
 		private void updateLegacyPaperLinkActionState() {
-			boolean unavailable = !legacyImportPending || booklet.getExam().isComplete() || creatingNewExam
+			boolean unavailable = !legacyImportPending || isStructureReadOnly(booklet.getExam()) || creatingNewExam
 					|| editingExamDetails || editingBookletEditor != null || pendingQuestionBookletEditor != null
 					|| pendingAnswerBookletEditor != null;
 			String selected = legacyPaperField.getValue();

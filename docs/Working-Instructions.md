@@ -34,38 +34,130 @@ If I tell you that I have committed, pushed, merged, changed branch, or otherwis
 
 Do not assume that code shown earlier in the conversation is still current when the repository can be checked.
 
-### How I make code changes
+### How I make code changes — mandatory complete-declaration rule
 
 Assume that I make Java changes manually in Eclipse.
 
-For every Java code-change instruction, give:
+To minimise implementation time, editing errors and discrepancies between working copies, all Java code changes MUST be supplied as complete declaration additions, replacements or deletions.
 
-- `Class: <fully-qualified-class-name>`;
-- `Method: <actual method name/signature>` when editing an existing method, including enough scope information to locate it;
-- exactly one operation label: `ADD`, `DELETE`, `REPLACE`, or `EDIT`;
-- exact copy/paste-ready code.
+This rule is mandatory and takes precedence over any conflicting instruction elsewhere in this document.
 
-Omit the filename when the class name makes it obvious.
+#### Permitted operations
 
-For an `EDIT` instruction, give exact starting and ending bounds for the edit.
+Only the following three operation labels are permitted:
 
-Omit placement instructions unless class scope materially matters. Omit import instructions. Let Eclipse organise methods and imports.
+- **ADD** — Supply a complete new declaration.
+- **REPLACE** — Supply the complete replacement declaration.
+- **DELETE** — Identify the complete existing declaration to be removed.
 
-Do not use fully qualified type names in Java snippets. Let me choose the import.
+The permitted declaration types are:
 
-Do not use vague directions such as “put this near...” or “add this somewhere below...”.
+- Classes
+- Interfaces
+- Records
+- Enums
+- Constructors
+- Methods
+- Fields and field constants
 
-For new methods, do not tell me where to insert them within the class. State only that the change is at class scope when that matters.
+The operation label **EDIT** is prohibited.
 
-Prefer smaller methods, explicit responsibilities, fewer anonymous classes, and less “just one more thing” inside an existing method.
+#### Mandatory requirements
 
-If a change is inside an `if`, loop, callback, `try` block, lambda, or other nested structure, identify the exact block being changed.
+1. Never instruct me to insert, replace or delete individual statements, expressions, comments or blocks within an existing method or constructor.
 
-Prefer complete methods or complete replacement sections whenever fragments could be ambiguous.
+2. Even when a change involves only one character or one line, supply the entire replacement method, constructor or field declaration.
 
-Include inline `//` comments that explain the algorithmic meaning of non-obvious code. Do not use `/* ... */` comments for algorithmic explanation.
+3. Every replacement must include all unchanged code belonging to that declaration. Never use ellipses, placeholders, omitted sections or instructions to retain portions of an existing declaration.
 
-When tests contain nested helper classes or fixtures, distinguish the outer test class from the nested class explicitly.
+4. Immediately beneath the declaration heading, display exactly one permitted operation in bold: **ADD**, **REPLACE** or **DELETE**. The operation EDIT is prohibited. Every ADD and REPLACE must supply the complete declaration, including annotations and Javadoc where applicable.
+
+5. When several changes affect the same declaration, consolidate them into one complete replacement. Never require me to revisit the same declaration multiple times within an implementation batch.
+
+6. When adding a declaration, supply its complete implementation, including all required annotations and Javadoc.
+
+7. When deleting a declaration, identify its exact signature and owning class. Do not instruct me to delete individual statements within it.
+
+8. When changing a record, enum, interface or complete class, supply the entire replacement declaration if the change cannot be expressed through complete member additions, replacements or deletions.
+
+9. When renaming a declaration, identify the existing declaration in the heading and supply the complete replacement under the new name.
+
+10. Before supplying a REPLACE or DELETE instruction, verify that the identified declaration actually exists in the current repository or confirmed working-tree state.
+
+11. Before supplying an ADD instruction, verify that the declaration does not already exist.
+
+12. Inspect the current implementation before constructing every replacement. Preserve all existing behaviour that is not explicitly being changed.
+
+13. Group all changes by owning class and follow the declaration ordering rules elsewhere in this document.
+
+14. Omit import instructions. Let Eclipse organise imports.
+
+#### Ambiguous type imports
+
+When supplying Java code:
+
+- Inspect the repository for ambiguous type names used in
+  new or replacement declarations.
+- Explicitly identify the declaring class of every ambiguous
+  nested record, enum, interface or class.
+- Provide the exact required import statement for each
+  ambiguous type, grouped by the class being modified.
+- Identify any ambiguous static imports.
+- Do not rely on Eclipse to select the correct type when
+  multiple candidates exist.
+- Where two identically named nested types are required
+  within the same class, qualify them using their enclosing
+  class names.
+- Continue to omit ordinary, unambiguous import instructions.
+
+These requirements take precedence over the general
+instruction to omit imports.
+
+Include ambiguous type resolution in the mandatory
+pre-delivery compliance gate.
+
+15. Do not use fully qualified type names inside Java code snippets.
+
+16. Include inline // comments explaining non-obvious algorithmic decisions.
+
+17. Explicitly distinguish outer classes from nested classes, including test fixtures.
+
+18. Supply larger, coherent implementation batches wherever practical, with complete production declarations and their corresponding regression tests.
+
+#### Prohibited instruction patterns
+
+Never use instructions such as:
+
+- Insert this code before or after a particular statement.
+- Replace the following section of a method.
+- Change this line.
+- Remove this block.
+- Retain the remainder of the method.
+- Retain the existing method body.
+- Retain the existing Javadoc.
+- Add this statement inside the existing loop, conditional or callback.
+- Apply the same change to another method.
+- Use the method supplied in an earlier response.
+
+Instead, provide the complete affected declaration using ADD, REPLACE or DELETE.
+
+#### Pre-delivery compliance gate
+
+Before delivering any implementation batch, inspect every proposed code change and confirm that:
+
+- Every operation is ADD, REPLACE or DELETE.
+- Every addition and replacement contains a complete declaration.
+- Every replacement and deletion targets an existing declaration.
+- Every addition targets a declaration that does not already exist.
+- No declaration is replaced more than once within the batch.
+- No partial-method changes or omitted code remain.
+- All required annotations and Javadoc are included.
+- All existing unrelated behaviour is preserved.
+- Production changes and corresponding regression tests are included.
+
+If any instruction fails this compliance gate, correct it before presenting the implementation batch.
+
+There are no exceptions to the complete-declaration rule for small changes, compilation corrections, debugging, test changes, Javadoc corrections or subsequent implementation batches.
 
 ### Mandatory visual formatting for Java code changes
 
@@ -222,6 +314,68 @@ Treat Javadoc completeness as a release-blocking requirement for every Java impl
 **Pre-delivery acceptance rule:** A Java implementation batch must not be presented as complete unless its API documentation has been audited and its outstanding verification requirements have been stated explicitly.
 
 The purpose of this gate is to prevent predictable Javadoc failures from reaching the user's Eclipse working tree.
+
+### Mandatory SQLite database migration compliance gate
+
+Treat database migrations as high-risk, repository-wide changes. A migration is not an isolated SQL file. The production migration, historical-schema fixtures, version-dependent tests and backup/restore compatibility must be handled together.
+
+**Before producing any database migration code, complete all of the following steps. No exceptions.**
+
+1. **Establish the current schema.** Inspect the latest migration, `SqliteDatabase`, schema verification code, trigger verifiers, and all supporting migration infrastructure from the current working branch. Identify the exact current and proposed schema versions. Do not rely on remembered versions.
+
+2. **Justify the migration.** Determine whether the requirement can be implemented without changing the schema. Minimise migrations across a planned feature or sprint. Where practical, consolidate related schema additions into one migration, with all required structures planned before implementation.
+
+3. **Perform a repository-wide impact search.** Search production and test sources for:
+   - `schema_version`, `latestSchemaVersion`, schema-version literals and version comparisons.
+   - Every historical migration test and direct `UPDATE schema_version` statement.
+   - `HistoricalSchemaFixture` and all methods that reconstruct older database versions.
+   - `CREATE`, `DROP`, `ALTER` and verification of affected tables, triggers, indices and foreign keys.
+   - Backup, restore, database inspection, import and recovery tests.
+   - Tests or services relying on behaviour or records altered by the migration.
+
+4. **Audit the complete historical cleanup chain.** When introducing schema version N, determine how every supported historical fixture removes version N objects before reconstructing earlier versions. Inspect the entire chain of fixture cleanup calls, not only the immediately preceding version. Add the necessary cleanup method and connect it to the existing chain. Drop dependent triggers before tables and dependent child tables before their parents. Never leave new-version objects in an older-version test fixture.
+
+5. **Audit every version-dependent assertion.** Find tests that hardcode the previous latest version or use it in SQL `WHERE version = ...` clauses. Update assumptions about the latest version while retaining tests that deliberately verify intermediate historical versions. Do not replace legitimate historical assertions with the latest version indiscriminately.
+
+6. **Audit behavioural compatibility.** Review existing integration and regression tests affected by changed application contracts, not just changed SQL. Update superseded tests to reflect agreed requirements. Never weaken production validation, permission checks, data integrity or safety mechanisms merely to make an old test green.
+
+7. **Produce a migration impact report before implementation.** Explicitly identify:
+   - Old and new schema versions.
+   - Every new, altered or removed database object.
+   - Existing data and foreign-key dependencies.
+   - Every historical fixture requiring modification.
+   - Existing tests requiring updates.
+   - New migration, rollback and compatibility tests required.
+   - Backup, restore and data-preservation implications.
+   
+   Do not supply migration implementation code until this inventory is complete.
+
+8. **Deliver production and test changes together.** The same implementation batch that introduces a schema migration must also contain all necessary historical fixture corrections, schema verification updates, version-dependent test changes and new regression tests. Never defer predictable migration-related corrections to a later batch.
+
+9. **Require automated migration regression coverage.** Tests must verify:
+   - Fresh database creation at the new schema version.
+   - Upgrade from the immediately preceding version.
+   - Upgrade from representative earlier supported versions.
+   - Historical fixture reconstruction with no later-version objects remaining.
+   - Successful migration retry after an injected transactional failure.
+   - Preservation of existing records, portable identities and relationships.
+   - Foreign-key integrity, trigger integrity and schema verification.
+   - Backup and restore compatibility, where applicable.
+   - Safe reopening and repeated initialisation of an already migrated database.
+
+10. **Never conceal an incomplete migration.** Do not introduce `CREATE TABLE IF NOT EXISTS`, `DROP TABLE IF EXISTS`, conditional trigger creation or ignored SQL errors into production migrations merely to make broken historical fixtures pass. Production migrations must fail clearly when their starting schema is not the expected version. Conditional cleanup is appropriate in disposable test fixtures, not as a substitute for correct production migrations.
+
+11. **Run the complete migration regression gate.** Provide explicit Maven commands for affected migration and repository tests. Because a schema migration affects the entire database, also require the full `NonUITests` suite before proceeding to a later implementation batch. Run Javadoc verification for affected Java APIs. A small targeted test passing is not sufficient evidence that a migration is complete.
+
+12. **Report verification truthfully.** Distinguish static inspection, tests executed successfully, tests reported green by the user and tests not yet executed. Never claim a migration complete or fully verified based on compilation or a limited test selection. If direct execution is unavailable, provide the full verification commands and identify the remaining gate.
+
+13. **Stop on migration failures.** If any migration, historical-fixture, schema verification or backup/restore regression fails, diagnose and resolve the cause before implementing unrelated functionality or another schema migration. Do not shift predictable migration cleanup into a later feature batch.
+
+**Mandatory pre-delivery rule:** Do not provide a database migration unless the historical fixture chain, version-dependent assertions, schema verification and affected integration tests have all been inspected and their necessary changes included in the same batch.
+
+**Mandatory completion rule:** A database migration is not complete until the full migration regression gate and non-UI suite are green, with no outstanding schema compatibility failures.
+
+These requirements take precedence over the ordinary small-slice testing guidance whenever a database schema migration is involved.
 
 ### Implementation workflow
 

@@ -49,13 +49,14 @@ public final class SqliteContributorAssignmentSessionRepository {
 	}
 
 	/**
-	 * Finds the currently selected contributor assignment.
+	 * Finds the selected assignment only when it remains eligible for capture.
 	 *
 	 * <p>
-	 * Returns empty when ordinary application mode is selected.
+	 * Submitted assignments and locally removed unchanged assignments are excluded.
+	 * Their installation and baseline evidence remain stored.
 	 *
-	 * @return active assignment, or empty
-	 * @throws SQLException if stored session data cannot be read
+	 * @return selected active assignment, or empty when none is available
+	 * @throws SQLException if contributor session state cannot be read
 	 */
 	public Optional<Session> active() throws SQLException {
 		try (Connection connection = database.openConnection();
@@ -63,8 +64,18 @@ public final class SqliteContributorAssignmentSessionRepository {
 						SELECT session.*
 						FROM contributor_assignment_selection selection
 						JOIN contributor_assignment_sessions session
-						    ON session.assignment_id = selection.assignment_id
+						  ON session.assignment_id = selection.assignment_id
 						WHERE selection.singleton_id = 1
+						  AND NOT EXISTS (
+						      SELECT 1
+						      FROM contributor_return_packages packet
+						      WHERE packet.assignment_id = session.assignment_id
+						  )
+						  AND NOT EXISTS (
+						      SELECT 1
+						      FROM contributor_assignment_hidden hidden
+						      WHERE hidden.assignment_id = session.assignment_id
+						  )
 						""");
 				ResultSet result = statement.executeQuery()) {
 			if (!result.next()) {
@@ -227,6 +238,31 @@ public final class SqliteContributorAssignmentSessionRepository {
 			try {
 				Session session = find(connection, assignmentId).orElseThrow(
 						() -> new IllegalArgumentException("Unknown contributor assignment: " + assignmentId));
+				try (PreparedStatement check = connection.prepareStatement("""
+						SELECT CASE
+						    WHEN EXISTS (
+						        SELECT 1
+						        FROM contributor_return_packages packet
+						        WHERE packet.assignment_id = ?
+						    )
+						    OR EXISTS (
+						        SELECT 1
+						        FROM contributor_assignment_hidden hidden
+						        WHERE hidden.assignment_id = ?
+						    )
+						    THEN 1
+						    ELSE 0
+						END
+						""")) {
+					check.setString(1, assignmentId.toString());
+					check.setString(2, assignmentId.toString());
+					try (ResultSet result = check.executeQuery()) {
+						if (!result.next() || result.getInt(1) != 0) {
+							throw new IllegalStateException("This contributor assignment is submitted or removed "
+									+ "and cannot be activated for capture.");
+						}
+					}
+				}
 				try (PreparedStatement statement = connection.prepareStatement("""
 						UPDATE contributor_assignment_selection
 						SET assignment_id = ?,

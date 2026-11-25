@@ -779,6 +779,7 @@ public final class HistoricalSchemaFixture {
 	 */
 	public static void removeVersion47Objects(Statement statement) throws SQLException {
 		Objects.requireNonNull(statement, "statement");
+		removeVersion48Objects(statement);
 		String name = "trg_master_exam_structure_booklet_applicability_reviews_delete";
 		String migration;
 		try {
@@ -807,6 +808,81 @@ public final class HistoricalSchemaFixture {
 		}
 		statement.execute("DROP TRIGGER IF EXISTS " + name);
 		statement.execute(original);
+	}
+
+	/**
+	 * Removes schema v48 operating-context structures from a disposable historical
+	 * migration test database.
+	 *
+	 * <p>
+	 * The operating-context triggers are dropped before their referenced tables.
+	 * The authority and visibility tables are then removed before older fixture
+	 * cleanup drops Subject import and contributor session tables.
+	 *
+	 * <p>
+	 * This method must never be applied to production data.
+	 *
+	 * @param statement statement on the disposable test database connection
+	 * @throws SQLException         if a trigger or table cannot be removed
+	 * @throws NullPointerException if statement is null
+	 */
+	public static void removeVersion48Objects(Statement statement) throws SQLException {
+		Objects.requireNonNull(statement, "statement");
+		removeVersion49Objects(statement);
+
+		// Drop triggers first: SQLite may otherwise reject historical table
+		// reconstruction when a trigger references a subsequently dropped table.
+		statement.execute("""
+				DROP TRIGGER IF EXISTS
+				    trg_operating_context_hidden_after_return
+				""");
+		statement.execute("""
+				DROP TRIGGER IF EXISTS
+				    trg_operating_context_authority_no_delete
+				""");
+		statement.execute("""
+				DROP TRIGGER IF EXISTS
+				    trg_operating_context_authority_origin_immutable
+				""");
+
+		// Remove these before their v27/v29 referenced parent tables.
+		statement.execute("""
+				DROP TABLE IF EXISTS imported_subject_authorities
+				""");
+		statement.execute("""
+				DROP TABLE IF EXISTS contributor_assignment_hidden
+				""");
+	}
+
+	/**
+	 * Removes schema v49 freshness evidence from a disposable historical fixture.
+	 *
+	 * <p>
+	 * Drop the protection triggers before the columns, and drop the digest column
+	 * before the timestamp column because its CHECK refers to the timestamp. This
+	 * must never be used on production data.
+	 *
+	 * @param statement statement for a disposable historical fixture
+	 * @throws SQLException         if cleanup fails
+	 * @throws NullPointerException if statement is null
+	 */
+	public static void removeVersion49Objects(Statement statement) throws SQLException {
+		Objects.requireNonNull(statement, "statement");
+		statement.execute("DROP TRIGGER IF EXISTS trg_subject_import_freshness_no_update");
+		statement.execute("DROP TRIGGER IF EXISTS trg_subject_import_freshness_no_delete");
+		List<String> columns = new ArrayList<>();
+		try (Statement lookup = statement.getConnection().createStatement();
+				ResultSet rows = lookup.executeQuery("PRAGMA table_info(subject_import_packages)")) {
+			while (rows.next()) {
+				columns.add(rows.getString("name"));
+			}
+		}
+		if (columns.contains("originating_snapshot_content_sha256")) {
+			statement.execute("ALTER TABLE subject_import_packages DROP COLUMN originating_snapshot_content_sha256");
+		}
+		if (columns.contains("originating_snapshot_created_at")) {
+			statement.execute("ALTER TABLE subject_import_packages DROP COLUMN originating_snapshot_created_at");
+		}
 	}
 
 	private static void dropAssignmentTriggers(Statement statement, String pattern) throws SQLException {

@@ -32,6 +32,7 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
+import javafx.scene.control.Menu;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.MenuItem;
 import javafx.stage.Stage;
@@ -119,6 +120,66 @@ class ExportWorkflowTest extends QuestionBankApplicationUiTestBase {
 		// Failure must be recorded at both layers without
 		// changing ordinary menu restoration behaviour.
 		assertExportDiagnostics(csv, "revision.scorm.export", "revision.scorm.export.work", false);
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void packageWorkflowMenusAreDiscoverable(FxRobot robot) throws Exception {
+		MenuBar menuBar = robot.lookup(".menu-bar").queryAs(MenuBar.class);
+		Menu fileMenu = menuBar.getMenus().stream().filter(menu -> "_File".equals(menu.getText())).findFirst()
+				.orElseThrow();
+		Menu importMenu = menuBar.getMenus().stream().filter(menu -> "_Import".equals(menu.getText())).findFirst()
+				.orElseThrow();
+		Menu exportMenu = menuBar.getMenus().stream().filter(menu -> "E_xport".equals(menu.getText())).findFirst()
+				.orElseThrow();
+
+		// Each supported archive type has its own explicit import
+		// operation. The former automatically routed command is absent.
+		assertEquals(List.of("import-subject-snapshot", "import-work-assignment", "import-contribution"),
+				importMenu.getItems().stream().map(MenuItem::getId).toList());
+		assertEquals(List.of("Import _Subject Snapshot...", "Import _Work Assignment...", "Import _Contribution..."),
+				importMenu.getItems().stream().map(MenuItem::getText).toList());
+		assertTrue(importMenu.getItems().stream().noneMatch(MenuItem::isDisable));
+		MenuItem subjectExport = exportMenu.getItems().stream()
+				.filter(item -> "export-subject-snapshot".equals(item.getId())).findFirst().orElseThrow();
+		MenuItem contributionExport = exportMenu.getItems().stream()
+				.filter(item -> "export-assignment-contribution".equals(item.getId())).findFirst().orElseThrow();
+		assertEquals("Export Working _Subject Snapshot...", subjectExport.getText());
+		assertEquals("Export Assignment _Contribution...", contributionExport.getText());
+
+		// No assignment exists in the ordinary application fixture.
+		assertTrue(contributionExport.isDisable());
+
+		// Legacy receipt export is deliberately absent.
+		assertFalse(exportMenu.getItems().stream().anyMatch(item -> "export-import-receipt".equals(item.getId())));
+
+		// Do not duplicate package commands under File.
+		assertFalse(
+				fileMenu.getItems().stream()
+						.anyMatch(item -> item.getId() != null && (item.getId().contains("subject-snapshot")
+								|| item.getId().contains("contributor-assignment")
+								|| item.getId().contains("import-work-assignment")
+								|| item.getId().contains("import-contribution"))));
+		assertFalse(
+				fileMenu.getItems().stream().anyMatch(item -> "file-review-subject-snapshots".equals(item.getId())));
+		ComboBox<Subject> subjectPicker = robot.lookup("#curriculum-subject").queryAs(ComboBox.class);
+
+		// Snapshot export is unavailable until a Working Subject
+		// has been chosen.
+		if (subjectPicker.getValue() == null) {
+			assertTrue(subjectExport.isDisable());
+		}
+		Subject chemistry = subjectPicker.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
+				.findFirst().orElseThrow();
+
+		// Chemistry belongs to this local installation, so its
+		// complete Subject snapshot can be exported.
+		robot.interact(() -> subjectPicker.getSelectionModel().select(chemistry));
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> !subjectExport.isDisable()));
+		assertTrue(evaluateOnFx(robot, () -> !subjectExport.isDisable()));
+
+		// Selecting a Subject does not create a contributor assignment.
+		assertTrue(contributionExport.isDisable());
 	}
 
 	@Test

@@ -2,21 +2,31 @@ package au.edu.eq.questionbank.ui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.testfx.api.FxRobot;
 import org.testfx.framework.junit5.Start;
+import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.ApplicationConfig;
+import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.Descriptor;
 import au.edu.eq.questionbank.model.Exam;
@@ -39,11 +49,150 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.audit.BookletCorpusStatus;
 import au.edu.eq.questionbank.service.audit.ExamCorpusAuditService;
 import au.edu.eq.questionbank.service.audit.ExamCorpusStatus;
+import au.edu.eq.questionbank.service.audit.QuestionCorpusWorkItem;
+import au.edu.eq.questionbank.service.workpackage.WorkAssignmentExporter;
+import au.edu.eq.questionbank.service.workpackage.WorkAssignmentIssuanceService;
+import au.edu.eq.questionbank.service.workpackage.WorkAssignmentLedger;
+import au.edu.eq.questionbank.ui.audit.CorpusDashboardPane;
+import javafx.css.PseudoClass;
+import javafx.scene.Node;
+import javafx.scene.control.Button;
+import javafx.scene.control.ComboBox;
+import javafx.scene.control.ScrollPane;
+import javafx.scene.control.TableRow;
+import javafx.scene.control.TableView;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.StackPane;
 import javafx.stage.Stage;
 
 @Tag("ui")
 @Tag("workflow-ui")
 class CorpusDashboardSnapshotReuseTest extends QuestionBankApplicationUiTestBase {
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void dashboardRefreshUpdatesAssignmentLocksWithoutReplacingPane(FxRobot robot) throws Exception {
+		SqliteDatabase database = new SqliteDatabase(databasePath);
+		SqliteCurriculumRepository curriculum = new SqliteCurriculumRepository(database);
+		Subject chemistry = curriculum.findAllSubjects().stream()
+				.filter(subject -> "Chemistry".equals(subject.getName())).findFirst().orElseThrow();
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		Exam exam = examWriter.createExam(chemistry, "QCAA", 2026, "Assignment refresh test");
+
+		// Use a valid PDF in canonical managed Subject storage.
+		ManagedDataLayout layout = new ManagedDataLayout(applicationConfig.dataRoot());
+		String relativePath = "subjects/Chemistry/exams/assignment-refresh.pdf";
+		Path pdf = layout.resolve(relativePath);
+		Files.createDirectories(pdf.getParent());
+		Files.copy(examPdf, pdf);
+		ExamBooklet booklet = examWriter.insertExamBooklet(exam, examWriter.insertSourceDocument(relativePath),
+				"Paper 1", ExamBookletQuestionFormat.MIXED);
+		examWriter.updateExamAssetExpectations(exam, 1, 0);
+		SyllabusVersion syllabus = curriculum.findVersionsForSubject(chemistry).stream()
+				.filter(SyllabusVersion::isCurrent).findFirst().orElseThrow();
+		Descriptor descriptor = (Descriptor) curriculum.findReviewNodes(syllabus).stream()
+				.filter(node -> node.getLevel() == CurriculumLevel.DESCRIPTOR).findFirst().orElseThrow();
+		Question question = new SqliteQuestionRepository(database).save(booklet, "Q1", "", 2,
+				List.of(new QuestionRegion(booklet, 1, 0.10, 0.10, 0.50, 0.20)), descriptor, false);
+		ComboBox<Subject> subjectBox = lookup(robot, "#curriculum-subject", ComboBox.class);
+		robot.interact(() -> subjectBox.getSelectionModel().select(chemistry));
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> {
+			Subject current = field(application, "workingSubject", Subject.class);
+			return current != null && current.getId() == chemistry.getId();
+		});
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "refreshAndShowCorpusDashboardHome", new Class<?>[0]);
+			return null;
+		}).get();
+
+		// Wait for the entire Dashboard to be published and laid out,
+		// not merely for the Exam table to contain its persisted row.
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> WaitForAsyncUtils.asyncFx(() -> {
+			CorpusDashboardPane current = field(application, "corpusDashboardPane", CorpusDashboardPane.class);
+			if (current == null || current.getScene() == null) {
+				return false;
+			}
+			current.applyCss();
+			current.layout();
+			TableView<?> examTable = field(current, "examTable", TableView.class);
+			Button issueButton = field(current, "createContributorAssignmentButton", Button.class);
+			Button closeButton = field(current, "closeContributorAssignmentButton", Button.class);
+			Button manageButton = field(current, "manageExamAssetsButton", Button.class);
+
+			// The Exam table may be populated before the
+			// ScrollPane has attached its action controls.
+			boolean examPublished = examTable.getItems().stream()
+					.anyMatch(item -> item instanceof ExamCorpusStatus status && status.exam().getId() == exam.getId());
+			return examPublished && issueButton.getScene() == current.getScene()
+					&& closeButton.getScene() == current.getScene() && manageButton.getScene() == current.getScene();
+		}).get());
+		CorpusDashboardPane dashboard = field(application, "corpusDashboardPane", CorpusDashboardPane.class);
+
+		// Resolve the actual Dashboard-owned controls rather than
+		// depending on ScrollPane viewport lookup timing.
+		TableView<ExamCorpusStatus> exams = field(dashboard, "examTable", TableView.class);
+		TableView<BookletCorpusStatus> booklets = field(dashboard, "bookletTable", TableView.class);
+		TableView<QuestionCorpusWorkItem> questionWork = field(dashboard, "questionTable", TableView.class);
+		Button issue = field(dashboard, "createContributorAssignmentButton", Button.class);
+		Button close = field(dashboard, "closeContributorAssignmentButton", Button.class);
+		Button manage = field(dashboard, "manageExamAssetsButton", Button.class);
+		robot.interact(() -> {
+			exams.getSelectionModel().selectFirst();
+			booklets.getSelectionModel().selectFirst();
+			questionWork.getSelectionModel().select(questionWork.getItems().stream()
+					.filter(item -> item.question().getId() == question.getId()).findFirst().orElseThrow());
+		});
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> evaluateOnFx(robot, () -> !issue.isDisabled()));
+		assertTrue(close.isDisabled());
+		UUID assignmentId = UUID.randomUUID();
+		Path archive = databasePath.getParent().resolve("assignment-refresh.examwork");
+		var request = new WorkAssignmentExporter.Request(exam, assignmentId, UUID.randomUUID(),
+				"Refresh Test Contributor", false, archive);
+		new WorkAssignmentIssuanceService(database, layout).issue(request);
+
+		// Exercise the same ordinary in-place refresh used after
+		// successful coordinator assignment issuance.
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "refreshCorpusDashboardHome", new Class<?>[] { long.class }, -1L);
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot, () -> issue.isDisabled() && !close.isDisabled() && manage.isDisabled()));
+		assertSame(dashboard, field(application, "corpusDashboardPane", CorpusDashboardPane.class));
+		PseudoClass assigned = PseudoClass.getPseudoClass("exam-assigned");
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot,
+						() -> exams.lookupAll(".table-row-cell").stream().filter(TableRow.class::isInstance)
+								.map(TableRow.class::cast)
+								.anyMatch(row -> row.getItem() instanceof ExamCorpusStatus status
+										&& status.exam().getId() == exam.getId()
+										&& row.getPseudoClassStates().contains(assigned))));
+		assertTrue(evaluateOnFx(robot,
+				() -> exams.getSelectionModel().getSelectedItem().exam().getId() == exam.getId()
+						&& booklets.getSelectionModel().getSelectedItem().booklet().getId() == booklet.getId()
+						&& questionWork.getSelectionModel().getSelectedItem().question().getId() == question.getId()));
+
+		// Cancel the assignment through its authoritative ledger,
+		// then refresh without changing the Working Subject.
+		new WorkAssignmentLedger(database).closeWithoutReturn(assignmentId, "Refresh regression test");
+		WaitForAsyncUtils.asyncFx(() -> {
+			invoke(application, "refreshCorpusDashboardHome", new Class<?>[] { long.class }, -1L);
+			return null;
+		}).get();
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> evaluateOnFx(robot, () -> !issue.isDisabled() && close.isDisabled() && !manage.isDisabled()));
+		assertSame(dashboard, field(application, "corpusDashboardPane", CorpusDashboardPane.class));
+		assertTrue(evaluateOnFx(robot,
+				() -> exams.lookupAll(".table-row-cell").stream().filter(TableRow.class::isInstance)
+						.map(TableRow.class::cast)
+						.noneMatch(row -> row.getItem() instanceof ExamCorpusStatus status
+								&& status.exam().getId() == exam.getId()
+								&& row.getPseudoClassStates().contains(assigned))));
+		assertTrue(evaluateOnFx(robot,
+				() -> exams.getSelectionModel().getSelectedItem().exam().getId() == exam.getId()
+						&& booklets.getSelectionModel().getSelectedItem().booklet().getId() == booklet.getId()
+						&& questionWork.getSelectionModel().getSelectedItem().question().getId() == question.getId()));
+	}
 
 	@Test
 	void dashboardSnapshotReadsOnceAndReflectsPersistenceChanges(FxRobot robot) throws Exception {
@@ -155,6 +304,53 @@ class CorpusDashboardSnapshotReuseTest extends QuestionBankApplicationUiTestBase
 		List<ExamCorpusStatus> legacyStatuses = auditService.assessSubject(chemistry);
 		assertEquals(4, findAllCalls.get());
 		assertAuditEquivalent(legacyStatuses, auditStatuses(afterClassification));
+	}
+
+	@Test
+	@SuppressWarnings("unchecked")
+	void dashboardSubjectAndCurriculumShareHeader(FxRobot robot) throws Exception {
+		ComboBox<Subject> subjects = lookup(robot, "#curriculum-subject", ComboBox.class);
+		Subject chemistry = subjects.getItems().stream().filter(subject -> "Chemistry".equals(subject.getName()))
+				.findFirst().orElseThrow();
+		robot.interact(() -> subjects.getSelectionModel().select(chemistry));
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+				() -> robot.lookup("#corpus-dashboard-curriculum-section").tryQuery().isPresent());
+		HBox header = lookup(robot, "#corpus-dashboard-header", HBox.class);
+		HBox subjectHost = lookup(robot, "#corpus-dashboard-subject-host", HBox.class);
+		StackPane curriculumHost = lookup(robot, "#corpus-dashboard-curriculum-host", StackPane.class);
+		Node curriculumSection = robot.lookup("#corpus-dashboard-curriculum-section").query();
+		ScrollPane headerScroll = lookup(robot, "#corpus-dashboard-header-scroll", ScrollPane.class);
+		robot.interact(() -> {
+			header.applyCss();
+			header.layout();
+
+			// Both controls occupy the same horizontal header.
+			assertSame(header, subjectHost.getParent());
+			assertSame(header, curriculumHost.getParent());
+			assertSame(curriculumHost, curriculumSection.getParent());
+			assertTrue(curriculumHost.isVisible());
+			assertTrue(curriculumHost.isManaged());
+			assertTrue(curriculumHost.getBoundsInParent().getMinX() >= subjectHost.getBoundsInParent().getMaxX());
+			assertSame(header, headerScroll.getContent());
+			assertEquals(ScrollPane.ScrollBarPolicy.AS_NEEDED, headerScroll.getHbarPolicy());
+		});
+		CorpusDashboardPane dashboard = field(application, "corpusDashboardPane", CorpusDashboardPane.class);
+		CompletableFuture<Throwable> refreshed = new CompletableFuture<>();
+		WaitForAsyncUtils.asyncFx(() -> {
+			Subject current = field(application, "workingSubject", Subject.class);
+			long generation = field(application, "workingSubjectRefreshGeneration", Long.class);
+			Consumer<Throwable> completion = failure -> refreshed.complete(failure);
+			invoke(application, "loadCorpusDashboardHome",
+					new Class<?>[] { Subject.class, long.class, long.class, Consumer.class }, current, generation, -1L,
+					completion);
+			return null;
+		}).get();
+		assertNull(refreshed.get(10, TimeUnit.SECONDS));
+
+		// An in-place persistence refresh must not replace either
+		// the Dashboard or the externally hosted Curriculum controls.
+		assertSame(dashboard, field(application, "corpusDashboardPane", CorpusDashboardPane.class));
+		robot.interact(() -> assertSame(curriculumSection, curriculumHost.getChildren().getFirst()));
 	}
 
 	@Override

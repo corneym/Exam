@@ -3,10 +3,10 @@ package au.edu.eq.questionbank.ui.search;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.BiFunction;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 import au.edu.eq.questionbank.ApplicationPaths;
-import au.edu.eq.questionbank.ui.ScreenAwareWindows;
 import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Question;
@@ -15,8 +15,11 @@ import au.edu.eq.questionbank.repository.assessment.QuestionOutputApplicabilityR
 import au.edu.eq.questionbank.repository.curriculum.CurriculumRepository;
 import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
+import au.edu.eq.questionbank.ui.ScreenAwareWindows;
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
+import javafx.beans.property.ObjectProperty;
+import javafx.beans.property.SimpleObjectProperty;
 import javafx.event.ActionEvent;
 import javafx.geometry.Rectangle2D;
 import javafx.scene.Scene;
@@ -43,6 +46,8 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	private final BiFunction<Long, CurriculumNode, Question> classificationUpdater;
 	private boolean persistedClassificationChange;
 	private final QuestionSearchPane searchPane;
+	private final ObjectProperty<Predicate<Question>> readOnlyQuestionPredicate = new SimpleObjectProperty<>(
+			_ -> false);
 
 	// Controls and initial workflow state (initialisation order retained).
 	// A Search edit temporarily hides and later reuses this same Dialog instance.
@@ -57,6 +62,7 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	private final ButtonType recaptureSharedContextButtonType = new ButtonType("Edit Shared Context",
 			ButtonBar.ButtonData.OTHER);
 	private final ButtonType splitQuestionButtonType = new ButtonType("Split Question...", ButtonBar.ButtonData.OTHER);
+	private final ObjectProperty<Predicate<Question>> readOnlyAnswerPredicate = new SimpleObjectProperty<>();
 
 	/**
 	 * Creates an unrestricted question-search dialog owned by the supplied window.
@@ -168,6 +174,38 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 		searchPane.refreshAfterEdit(questionId);
 	}
 
+	/**
+	 * Supplies independent ownership restrictions for Answer editing.
+	 *
+	 * <p>
+	 * Without an explicit Answer predicate, the Question ownership restrictions
+	 * also apply to Answers. Complete Exams remain read-only regardless of the
+	 * supplied predicate.
+	 *
+	 * @param predicate predicate identifying protected Answers
+	 * @throws NullPointerException if the predicate is null
+	 */
+	public void setReadOnlyAnswerPredicate(Predicate<Question> predicate) {
+		readOnlyAnswerPredicate.set(Objects.requireNonNull(predicate, "predicate"));
+	}
+
+	/**
+	 * Restricts Question-editing actions without restricting inspection,
+	 * navigation, searching or filtering.
+	 *
+	 * <p>
+	 * Call before displaying the dialog. The same predicate controls full editing,
+	 * inline Descriptor Save and revision-output applicability.
+	 *
+	 * @param predicate true for Questions whose authoritative data is read-only
+	 * @throws NullPointerException if the predicate is null
+	 */
+	public void setReadOnlyQuestionPredicate(Predicate<Question> predicate) {
+		Objects.requireNonNull(predicate, "predicate");
+		searchPane.setReadOnlyQuestionPredicate(predicate);
+		readOnlyQuestionPredicate.set(predicate);
+	}
+
 	private Button buttonFor(ButtonType buttonType) {
 
 		// Every supplied ButtonType is installed before this lookup, so failure here
@@ -181,26 +219,31 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 
 	private void configureActionButtonBindings(Button editQuestionButton, Button splitQuestionButton,
 			Button editMetadataButton, Button recaptureSharedContextButton, Button editAnswerButton) {
-		editQuestionButton.disableProperty().bind(searchPane.selectedResultProperty().isNull());
+		editQuestionButton.disableProperty()
+				.bind(Bindings.createBooleanBinding(() -> isQuestionReadOnly(searchPane.getSelectedQuestion()),
+						searchPane.selectedResultProperty(), readOnlyQuestionPredicate));
 		splitQuestionButton.disableProperty().bind(Bindings.createBooleanBinding(() -> {
 			Question selected = searchPane.getSelectedQuestion();
-			return searchPane.isClassificationDirty() || selected == null || selected.hasSourceQuestion()
+			return isQuestionReadOnly(selected) || searchPane.isClassificationDirty() || selected.hasSourceQuestion()
 					|| selected.hasSharedContext();
-		}, searchPane.selectedResultProperty(), searchPane.classificationDirtyProperty()));
-		editMetadataButton.disableProperty().bind(
-				Bindings.or(searchPane.selectedResultProperty().isNull(), searchPane.classificationDirtyProperty()));
+		}, searchPane.selectedResultProperty(), searchPane.classificationDirtyProperty(), readOnlyQuestionPredicate));
+		editMetadataButton.disableProperty()
+				.bind(Bindings.createBooleanBinding(
+						() -> isQuestionReadOnly(searchPane.getSelectedQuestion())
+								|| searchPane.isClassificationDirty(),
+						searchPane.selectedResultProperty(), searchPane.classificationDirtyProperty(),
+						readOnlyQuestionPredicate));
 		recaptureSharedContextButton.disableProperty().bind(Bindings.createBooleanBinding(() -> {
 			Question selected = searchPane.getSelectedQuestion();
-
-			// Existing contexts permit recapture. Multipart parts
-			// without context permit source-wide correction.
-			return searchPane.isClassificationDirty() || selected == null
+			return isQuestionReadOnly(selected) || searchPane.isClassificationDirty()
 					|| (!selected.hasSharedContext() && !selected.hasSourceQuestion());
-		}, searchPane.selectedResultProperty(), searchPane.classificationDirtyProperty()));
+		}, searchPane.selectedResultProperty(), searchPane.classificationDirtyProperty(), readOnlyQuestionPredicate));
 		editAnswerButton.disableProperty().bind(Bindings.createBooleanBinding(() -> {
 			Question selected = searchPane.getSelectedQuestion();
-			return searchPane.isClassificationDirty() || selected == null || !selected.hasAnswer();
-		}, searchPane.selectedResultProperty(), searchPane.classificationDirtyProperty()));
+			return selected == null || !selected.hasAnswer() || searchPane.isClassificationDirty()
+					|| isAnswerReadOnly(selected);
+		}, searchPane.selectedResultProperty(), searchPane.classificationDirtyProperty(), readOnlyQuestionPredicate,
+				readOnlyAnswerPredicate));
 	}
 
 	private void configureActionButtonIds(Button editQuestionButton, Button splitQuestionButton,
@@ -260,6 +303,10 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 		// A dirty Descriptor must be resolved before full Question editing begins,
 		// while Edit Question itself remains available.
 		editQuestionButton.addEventFilter(ActionEvent.ACTION, event -> {
+			if (searchPane.isSelectedQuestionReadOnly()) {
+				event.consume();
+				return;
+			}
 			if (!searchPane.isClassificationDirty()) {
 				return;
 			}
@@ -334,6 +381,18 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 			if (selected == null) {
 				return null;
 			}
+
+			// An editable contributor Answer can belong to an
+			// otherwise read-only coordinator Question.
+			if (buttonType == editAnswerButtonType) {
+				if (!selected.hasAnswer() || isAnswerReadOnly(selected) || searchPane.isClassificationDirty()) {
+					return null;
+				}
+				return new EditRequest(selected, EditTarget.ANSWER);
+			}
+			if (searchPane.isSelectedQuestionReadOnly()) {
+				return null;
+			}
 			if (buttonType == editQuestionButtonType) {
 				return new EditRequest(selected, EditTarget.QUESTION);
 			}
@@ -346,11 +405,6 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 			if (buttonType == recaptureSharedContextButtonType) {
 				return new EditRequest(selected, EditTarget.SHARED_CONTEXT);
 			}
-			if (buttonType == editAnswerButtonType) {
-				return new EditRequest(selected, EditTarget.ANSWER);
-			}
-
-			// Close publishes no edit request.
 			return null;
 		});
 	}
@@ -364,6 +418,9 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 		// Inline Save commits only the Descriptor refinement and leaves Search open on
 		// the refreshed Question.
 		searchPane.setClassificationSaveHandler(() -> {
+			if (searchPane.isSelectedQuestionReadOnly()) {
+				throw new IllegalStateException("This Question is read-only and cannot be reclassified.");
+			}
 			Question updated = savePendingClassification();
 			if (updated != null) {
 				searchPane.refreshAfterEdit(updated.getId());
@@ -472,6 +529,25 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 		setWidth(minimum);
 	}
 
+	private boolean isAnswerReadOnly(Question question) {
+		Predicate<Question> predicate = readOnlyAnswerPredicate.get();
+		if (question == null || question.getExam().isComplete()) {
+			return true;
+		}
+
+		// Unless independent Answer authority has been supplied,
+		// inherit the ordinary Question ownership restrictions.
+		return predicate == null ? isQuestionReadOnly(question) : predicate.test(question);
+	}
+
+	private boolean isQuestionReadOnly(Question question) {
+
+		// Read the actual observable property used by the Dialog's
+		// bindings so subsequent permission changes invalidate them.
+		Predicate<Question> predicate = readOnlyQuestionPredicate.get();
+		return question == null || question.getExam().isComplete() || predicate.test(question);
+	}
+
 	private boolean isRememberedPositionVisible() {
 		if (!Double.isFinite(rememberedX) || !Double.isFinite(rememberedY)) {
 			return false;
@@ -564,7 +640,7 @@ public final class QuestionSearchDialog extends Dialog<QuestionSearchDialog.Edit
 	private Question savePendingClassification() {
 		Question selected = searchPane.getSelectedQuestion();
 		CurriculumNode classification = searchPane.getPendingClassification();
-		if (selected == null || classification == null) {
+		if (selected == null || classification == null || searchPane.isSelectedQuestionReadOnly()) {
 			return null;
 		}
 		try {

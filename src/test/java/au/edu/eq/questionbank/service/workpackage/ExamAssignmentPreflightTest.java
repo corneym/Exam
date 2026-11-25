@@ -10,7 +10,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
+import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.UUID;
 
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.encryption.AccessPermission;
@@ -23,53 +25,18 @@ import org.junit.jupiter.params.provider.ValueSource;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.TestPdf;
 import au.edu.eq.questionbank.model.Exam;
+import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Subject;
+import au.edu.eq.questionbank.repository.assessment.SqliteBookletApplicabilityReviewRepository;
+import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
+import au.edu.eq.questionbank.repository.sqlite.SqliteCoordinatorExamLockRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 class ExamAssignmentPreflightTest {
 
 	@TempDir
 	Path directory;
-
-	@ParameterizedTest
-	@ValueSource(strings = { "missing", "directory", "empty", "invalid", "wrong-hash" })
-	void rejectsUnusableQuestionPdfWithoutChangingMaster(String defect) throws Exception {
-		Fixture fixture = fixture();
-		Path source = fixture.questionPdf();
-		switch (defect) {
-		case "missing" -> Files.delete(source);
-		case "directory" -> {
-			Files.delete(source);
-			Files.createDirectory(source);
-		}
-		case "empty" -> Files.write(source, new byte[0]);
-		case "invalid" -> Files.writeString(source, "%PDF-1.4\nInvalid document");
-		case "wrong-hash" -> execute(fixture.database(),
-				"UPDATE source_documents SET content_sha256 = '" + "0".repeat(64) + "' WHERE id = 51");
-		default -> throw new IllegalArgumentException(defect);
-		}
-		byte[] answerBefore = Files.readAllBytes(fixture.answerPdf());
-		assertThrows(IOException.class, () -> fixture.preflight().check(fixture.exam(), false));
-		assertArrayEquals(answerBefore, Files.readAllBytes(fixture.answerPdf()));
-		assertTrue(Files.exists(source) || defect.equals("missing"));
-	}
-
-	@ParameterizedTest
-	@ValueSource(strings = { "missing", "directory", "invalid" })
-	void rejectsUnusableSyllabusPdf(String defect) throws Exception {
-		Fixture fixture = fixture();
-		String relative = "subjects/Biology/curriculum/2025/sources/syllabus.pdf";
-		Path source = directory.resolve("data").resolve(relative);
-		Files.createDirectories(source.getParent());
-		if (defect.equals("directory")) {
-			Files.createDirectory(source);
-		} else if (defect.equals("invalid")) {
-			Files.writeString(source, "%PDF-1.4\nInvalid syllabus");
-		}
-		execute(fixture.database(), "UPDATE syllabus_versions SET source_pdf_path = '" + relative + "' WHERE id = 12");
-		assertThrows(IOException.class, () -> fixture.preflight().check(fixture.exam(), false));
-	}
 
 	@ParameterizedTest
 	@ValueSource(strings = { "", "required-password" })
@@ -84,13 +51,6 @@ class ExamAssignmentPreflightTest {
 		} else {
 			assertThrows(IOException.class, () -> fixture.preflight().check(fixture.exam(), false));
 		}
-	}
-
-	@Test
-	void rejectsNonPdfBytesEvenWithoutStoredHash() throws Exception {
-		Fixture fixture = fixture();
-		Files.writeString(fixture.questionPdf(), "%PDF-1.4\nThis is not a PDF document");
-		assertThrows(IOException.class, () -> fixture.preflight().check(fixture.exam(), false));
 	}
 
 	@Test
@@ -118,6 +78,37 @@ class ExamAssignmentPreflightTest {
 	}
 
 	@Test
+	void rejectsCompletedExamUntilReactivated() throws Exception {
+		Fixture fixture = fixture();
+		ManagedDataLayout layout = new ManagedDataLayout(directory.resolve("data"));
+		Path archive = directory.resolve("prepared-assignment.examwork");
+		UUID assignmentId = UUID.randomUUID();
+
+		// Prepare a valid archive while the Exam is ACTIVE,
+		// but do not register the assignment yet.
+		new WorkAssignmentExporter(fixture.database(), layout).export(new WorkAssignmentExporter.Request(fixture.exam(),
+				assignmentId, UUID.randomUUID(), "Lifecycle Test Contributor", false, archive));
+		new SqliteBookletApplicabilityReviewRepository(fixture.database()).setReviewed(61, true);
+		SqliteExamWriter writer = new SqliteExamWriter(fixture.database());
+		Exam completed = writer.setExamCaptureState(fixture.exam(), ExamCaptureState.COMPLETE);
+
+		// A stale ACTIVE Exam object must not bypass preflight.
+		IOException preflightFailure = assertThrows(IOException.class,
+				() -> fixture.preflight().check(fixture.exam(), false));
+		assertTrue(preflightFailure.getMessage().contains("complete"));
+		WorkAssignmentLedger ledger = new WorkAssignmentLedger(fixture.database());
+
+		// The previously prepared archive must also be rejected.
+		SQLException registrationFailure = assertThrows(SQLException.class, () -> ledger.register(archive));
+		assertTrue(registrationFailure.getMessage().contains("complete"));
+		assertTrue(ledger.find(assignmentId).isEmpty());
+		assertTrue(new SqliteCoordinatorExamLockRepository(fixture.database()).find(fixture.exam().getId()).isEmpty());
+		writer.setExamCaptureState(completed, ExamCaptureState.ACTIVE);
+		assertEquals(1, fixture.preflight().check(fixture.exam(), false).booklets().size());
+		fixture.database().verifyIntegrity();
+	}
+
+	@Test
 	void rejectsCurrentSyllabusContainingOnlyUnitsOrTopics() throws Exception {
 		Fixture fixture = fixture();
 
@@ -139,6 +130,45 @@ class ExamAssignmentPreflightTest {
 		IOException unitsOnly = assertThrows(IOException.class, () -> fixture.preflight().check(fixture.exam(), false));
 		assertTrue(unitsOnly.getMessage().contains("no usable Subtopic or Descriptor"));
 		assertTrue(unitsOnly.getMessage().contains("2025"));
+	}
+
+	@Test
+	void rejectsExamPdfOutsideSubjectExamDirectory() throws Exception {
+		Fixture fixture = fixture();
+
+		// Begin with a valid, complete Exam structure.
+		assertEquals(1, fixture.preflight().check(fixture.exam(), false).booklets().size());
+		Path misplacedPdf = fixture.questionPdf().getParent().getParent().resolve("curriculum/questions.pdf");
+		Files.createDirectories(misplacedPdf.getParent());
+		Files.copy(fixture.questionPdf(), misplacedPdf);
+
+		// The replacement is a genuine readable PDF inside
+		// the correct Subject, but outside its Exam namespace.
+		execute(fixture.database(), """
+				UPDATE source_documents
+				SET relative_path =
+				    'subjects/Biology/curriculum/questions.pdf'
+				WHERE id = 51
+				""");
+		IOException failure = assertThrows(IOException.class, () -> fixture.preflight().check(fixture.exam(), false));
+		assertTrue(failure.getMessage().contains("unsafe Exam PDF path"));
+		assertTrue(failure.getMessage().contains("Question booklet Paper 1"));
+
+		// Refusal must not delete or overwrite either file.
+		assertTrue(Files.isRegularFile(fixture.questionPdf()));
+		assertTrue(Files.isRegularFile(misplacedPdf));
+		assertEquals(-1L, Files.mismatch(fixture.questionPdf(), misplacedPdf));
+
+		// Restoring the original persisted reference makes
+		// the same Exam eligible again.
+		execute(fixture.database(), """
+				UPDATE source_documents
+				SET relative_path =
+				    'subjects/Biology/exams/questions.pdf'
+				WHERE id = 51
+				""");
+		assertEquals(1, fixture.preflight().check(fixture.exam(), false).booklets().size());
+		fixture.database().verifyIntegrity();
 	}
 
 	@Test
@@ -188,6 +218,13 @@ class ExamAssignmentPreflightTest {
 	}
 
 	@Test
+	void rejectsNonPdfBytesEvenWithoutStoredHash() throws Exception {
+		Fixture fixture = fixture();
+		Files.writeString(fixture.questionPdf(), "%PDF-1.4\nThis is not a PDF document");
+		assertThrows(IOException.class, () -> fixture.preflight().check(fixture.exam(), false));
+	}
+
+	@Test
 	void rejectsSyllabusWithoutCurriculum() throws Exception {
 		Fixture fixture = fixture();
 		execute(fixture.database(), """
@@ -215,6 +252,45 @@ class ExamAssignmentPreflightTest {
 		Fixture fixture = fixture();
 		Exam unknown = new Exam(999, new Subject(1, "Biology"), new ExamProvider(1, "QCAA"), 2025, "Unknown Exam");
 		assertThrows(IllegalArgumentException.class, () -> fixture.preflight().check(unknown, false));
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = { "missing", "directory", "empty", "invalid", "wrong-hash" })
+	void rejectsUnusableQuestionPdfWithoutChangingMaster(String defect) throws Exception {
+		Fixture fixture = fixture();
+		Path source = fixture.questionPdf();
+		switch (defect) {
+		case "missing" -> Files.delete(source);
+		case "directory" -> {
+			Files.delete(source);
+			Files.createDirectory(source);
+		}
+		case "empty" -> Files.write(source, new byte[0]);
+		case "invalid" -> Files.writeString(source, "%PDF-1.4\nInvalid document");
+		case "wrong-hash" -> execute(fixture.database(),
+				"UPDATE source_documents SET content_sha256 = '" + "0".repeat(64) + "' WHERE id = 51");
+		default -> throw new IllegalArgumentException(defect);
+		}
+		byte[] answerBefore = Files.readAllBytes(fixture.answerPdf());
+		assertThrows(IOException.class, () -> fixture.preflight().check(fixture.exam(), false));
+		assertArrayEquals(answerBefore, Files.readAllBytes(fixture.answerPdf()));
+		assertTrue(Files.exists(source) || defect.equals("missing"));
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = { "missing", "directory", "invalid" })
+	void rejectsUnusableSyllabusPdf(String defect) throws Exception {
+		Fixture fixture = fixture();
+		String relative = "subjects/Biology/curriculum/2025/sources/syllabus.pdf";
+		Path source = directory.resolve("data").resolve(relative);
+		Files.createDirectories(source.getParent());
+		if (defect.equals("directory")) {
+			Files.createDirectory(source);
+		} else if (defect.equals("invalid")) {
+			Files.writeString(source, "%PDF-1.4\nInvalid syllabus");
+		}
+		execute(fixture.database(), "UPDATE syllabus_versions SET source_pdf_path = '" + relative + "' WHERE id = 12");
+		assertThrows(IOException.class, () -> fixture.preflight().check(fixture.exam(), false));
 	}
 
 	@Test

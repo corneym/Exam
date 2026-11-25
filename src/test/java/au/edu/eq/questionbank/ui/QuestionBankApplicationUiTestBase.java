@@ -577,18 +577,30 @@ abstract class QuestionBankApplicationUiTestBase {
 	// TestFX 4.0.18 discovers only declared @Start methods. Each concrete class
 	// supplies a thin forwarding method so the actual setup remains shared here.
 	void start(Stage stage) throws Exception {
+		start(stage, true);
+	}
+
+	void start(Stage stage, boolean seedCurriculum) throws Exception {
 		Path testRoot = Files.createTempDirectory("question-bank-ui-");
 		pdfDataRoot = Files.createDirectories(testRoot.resolve("exams"));
 		Path curriculumDataRoot = Files.createDirectories(testRoot.resolve("curriculum"));
 		databasePath = testRoot.resolve("questionbank.db");
-		createCurriculumDatabase(databasePath);
-		examPdf = createTwoPagePdf(pdfDataRoot.resolve("exam.pdf"));
+		if (seedCurriculum) {
+			createCurriculumDatabase(databasePath);
+			examPdf = createTwoPagePdf(pdfDataRoot.resolve("exam.pdf"));
+		} else {
+
+			// Initialise the current schema without creating any Subject,
+			// curriculum, examination or capture records.
+			new SqliteDatabase(databasePath).initialiseSchema();
+			examPdf = null;
+		}
 		applicationConfig = new ApplicationConfig(pdfDataRoot, curriculumDataRoot, databasePath);
 		primaryStage = stage;
 		application = new QuestionBankApplication();
 
 		// Prevent ordinary TestFX sessions from recording performance data
-		// against their temporary, initially empty Question databases.
+		// against their temporary Question databases.
 		String previousDiagnosticsOverride = System.getProperty("eqb.performance.enabled");
 		try {
 			System.setProperty("eqb.performance.enabled", "false");
@@ -597,14 +609,15 @@ abstract class QuestionBankApplicationUiTestBase {
 		} finally {
 
 			// Restore the original setting even if application startup fails.
-			// The application has already read its diagnostics preference.
 			if (previousDiagnosticsOverride == null) {
 				System.clearProperty("eqb.performance.enabled");
 			} else {
 				System.setProperty("eqb.performance.enabled", previousDiagnosticsOverride);
 			}
 		}
-		openExamPdfForTest();
+		if (seedCurriculum) {
+			openExamPdfForTest();
+		}
 	}
 
 	@AfterEach

@@ -6,7 +6,7 @@ The application is written in Java 25 with JavaFX. It maintains a local SQLite q
 
 ## Download and installation
 
-**Release 1.0 is complete** (maintainer confirmation, 1 November 2026). See [GitHub Releases](https://github.com/corneym/Exam/releases/latest) for the most recently published Windows installer and its release notes. The [v1.0 release](https://github.com/corneym/Exam/releases/tag/v1.0) is the first completed major version.
+See [GitHub Releases](https://github.com/corneym/Exam/releases/latest) for the most recently published Windows installer and its release notes. The [v1.0 release](https://github.com/corneym/Exam/releases/tag/v1.0) was the first completed major version; [v1.0.1](https://github.com/corneym/Exam/releases/tag/v1.0.1) is the latest published release at the Sprint 24 verification checkpoint (26 November 2026). The offline exchange functionality described below is verified in the Sprint 24 release candidate; availability in a published installer depends on completion of the release process.
 
 The application is distributed as a per-user Windows MSI. You do not need to install Java separately to run the packaged application.
 
@@ -25,8 +25,16 @@ An installation contains the application and required runtime components, **not*
 - Search, inspect and correct captured questions; control their applicability to revision output.
 - Generate static HTML revision resources and SCORM 1.2 packages for learning platforms.
 - Back up and restore the local question bank and managed source assets.
+- Exchange whole-Exam Work Assignments and final Contributions between independent local installations.
+- Export complete Subject Snapshots and import or refresh read-only Subjects in another installation, including a consolidated faculty question bank.
 
-The **Corpus Dashboard** is the main application entry point. Its Working Subject selection governs relevant curriculum, capture, search and export workflows. Built-in Help describes the main workflows.
+The **Corpus Dashboard** is the main application entry point. Its Working Subject selection governs relevant curriculum, capture, search and export workflows. Built-in Help describes the main workflows; the [offline exchange guide](docs/offline-exchange.md) describes the Sprint 24 package workflows and their current limitations.
+
+## Offline collection and faculty consolidation
+
+There is one application, not separate coordinator, contributor and HoD editions. Authority depends on the Subject's provenance and any active Work Assignment. A coordinator issues a whole-Exam assignment and the authoritative Exam is locked until a valid final Contribution is merged or the assignment is cancelled. A contributor captures new assigned work, then publishes a single final Contribution. A HoD can import complete read-only Subject Snapshots from independent coordinators and approve subsequent refreshes from the originating authority.
+
+Packages (`.examwork`) are transferred as files; the application does not require shared live databases, online accounts, a server or two-way synchronisation. Keep original exchange archives and backups until their purpose is fulfilled. See the [offline exchange guide](docs/offline-exchange.md) for the operating contract, backup requirements and accepted release limitations.
 
 ## Data and privacy
 
@@ -39,9 +47,9 @@ The default Windows configuration and data locations are:
 %LOCALAPPDATA%\Exam Question Bank Data\data
 ```
 
-The data root can be configured within the application. Back up your data before significant changes and follow the application's backup/restore workflow.
+The data root can be configured within the application. Back up your data before significant changes and follow the application's backup/restore workflow. Keep production and development data roots independent. The Sprint 24 candidate supports schema v49; startup performs supported sequential schema upgrades. Earlier pre-Subject-first managed layouts must also satisfy the [data-layout migration](docs/data-layout-migration.md) requirements.
 
-**The Windows installer does not include examination papers, curriculum source datasets or user question-bank data.** The repository-root `data/` directory is excluded from Git tracking; a small number of curriculum workbook fixtures remain under `src/test/resources/` for testing and are not part of the installer. Users are responsible for ensuring that their use of third-party educational material complies with applicable permissions and licences.
+**The Windows installer does not include examination papers, curriculum source datasets or user question-bank data.** The repository-root `data/` directory is excluded from Git tracking; a small number of curriculum workbook fixtures remain under `src/test/resources/` for testing and are not part of the installer. Users are responsible for ensuring that their use of third-party educational material complies with applicable permissions and licences. Exchange archives may contain source PDFs and captured educational material; transfer them only to authorised recipients.
 
 ## Building from source
 
@@ -60,11 +68,13 @@ From the repository root in Git Bash on Windows:
 ./mvnw.cmd javadoc:javadoc
 ```
 
-Windows release builds use the PowerShell entry point `scripts/build-release.ps1`, which applies additional validation and packaging gates. Consult [release-build documentation](docs/release-build.md) and the actual scripts before producing a release. The current script uses two-component versions (`major.minor`); do not assume that it yet accepts a three-component semantic version such as `1.0.1`.
+Windows release builds use the PowerShell entry point `scripts/build-release.ps1`, which applies additional validation and packaging gates. Consult [release-build documentation](docs/release-build.md) and the actual scripts before producing a release. New release versions use `major.minor.patch`; the script increments PATCH by default or accepts an explicit higher version. Historical two-component releases retain their original identity.
 
 ## Documentation and project tracking
 
 - [Documentation index](docs/README.md) — architecture, operating instructions and development references.
+- [Offline exchange guide](docs/offline-exchange.md) — coordinator, contributor and HoD workflows.
+- [Sprint 24 verification record](docs/design/sprint-24-offline-exchange.md) — implementation, audit, acceptance and deferred work.
 - [GitHub Issues](https://github.com/corneym/Exam/issues) — authoritative requirements, ongoing work and implementation decisions.
 - [GitHub Releases](https://github.com/corneym/Exam/releases) — versioned Windows installers.
 

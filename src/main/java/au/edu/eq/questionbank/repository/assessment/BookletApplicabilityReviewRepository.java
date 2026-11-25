@@ -39,11 +39,13 @@ public interface BookletApplicabilityReviewRepository {
 	/**
 	 * Records or clears a human review confirmation.
 	 *
-	 * Calling this method repeatedly with the same state is idempotent. Eligibility
-	 * must be checked by the calling application service.
+	 * Repeated requests are idempotent for a mutable active Exam. Eligibility must
+	 * be checked by the calling application service. Confirmations cannot be
+	 * changed while the persisted Exam is complete.
 	 *
 	 * @param bookletId persistent booklet identifier
 	 * @param reviewed  whether the review is confirmed
+	 * @throws IllegalStateException if the confirmation cannot be changed
 	 */
 	void setReviewed(long bookletId, boolean reviewed);
 }

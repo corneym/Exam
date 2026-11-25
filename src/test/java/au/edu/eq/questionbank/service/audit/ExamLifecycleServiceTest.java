@@ -143,13 +143,14 @@ class ExamLifecycleServiceTest {
 		captureCompleteQuestion();
 		confirmBookletReview();
 		Exam completed = lifecycleService.setCaptureState(exam, ExamCaptureState.COMPLETE);
-		reviewRepository.setReviewed(booklet.getId(), false);
-
-		// An existing COMPLETE declaration is not automatically
-		// reversed when a review is cleared.
+		assertThrows(IllegalStateException.class, () -> reviewRepository.setReviewed(booklet.getId(), false));
+		assertTrue(reviewRepository.isReviewed(booklet.getId()));
 		assertEquals(ExamCaptureState.COMPLETE, reloadedExam().getCaptureState());
+
+		// Reactivation must precede deliberate review changes.
 		Exam active = lifecycleService.setCaptureState(completed, ExamCaptureState.ACTIVE);
 		assertEquals(ExamCaptureState.ACTIVE, active.getCaptureState());
+		reviewRepository.setReviewed(booklet.getId(), false);
 		assertThrows(IllegalStateException.class,
 				() -> lifecycleService.setCaptureState(active, ExamCaptureState.COMPLETE));
 		confirmBookletReview();

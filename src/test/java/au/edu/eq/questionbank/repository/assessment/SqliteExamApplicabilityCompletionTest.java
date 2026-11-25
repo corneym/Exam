@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.repository.assessment;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -39,9 +40,17 @@ class SqliteExamApplicabilityCompletionTest {
 		reviewRepository.setReviewed(10, true);
 		reviewRepository.setReviewed(20, true);
 		Exam completed = examWriter.setExamCaptureState(exam, ExamCaptureState.COMPLETE);
-		reviewRepository.setReviewed(20, false);
+
+		// Neither confirmation nor revocation is available
+		// while the persisted Exam remains complete.
+		assertThrows(IllegalStateException.class, () -> reviewRepository.setReviewed(20, false));
+		assertThrows(IllegalStateException.class, () -> reviewRepository.setReviewed(20, true));
+		assertEquals("COMPLETE", persistedState());
+		assertTrue(reviewRepository.isReviewed(20));
 		Exam active = examWriter.setExamCaptureState(completed, ExamCaptureState.ACTIVE);
+		reviewRepository.setReviewed(20, false);
 		assertEquals(ExamCaptureState.ACTIVE, active.getCaptureState());
+		assertFalse(reviewRepository.isReviewed(20));
 		assertThrows(IllegalStateException.class,
 				() -> examWriter.setExamCaptureState(active, ExamCaptureState.COMPLETE));
 		assertEquals("ACTIVE", persistedState());

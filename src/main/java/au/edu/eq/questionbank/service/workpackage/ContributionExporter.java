@@ -33,6 +33,7 @@ import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.repository.identity.SqliteExamAssignmentGraphReader;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqliteSubjectGraphReader.SubjectGraph;
+import au.edu.eq.questionbank.repository.sqlite.SqliteContributorAssignmentVisibilityRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkArchiveWriter.EntrySource;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest.Entry;
@@ -41,22 +42,22 @@ import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest.Scope;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest.ScopeLevel;
 
 /**
- * Exports repeatable, partial contributor returns from an installed whole-Exam
+ * Publishes one final contributor return for an installed whole-Exam
  * assignment.
  *
  * <p>
- * The export uses one consistent SQLite snapshot for assignment metadata, the
- * original baseline and current Question records. Changed records retain their
- * original baseline revision references.
+ * The exporter compares a consistent SQLite snapshot against the original
+ * immutable assignment baseline. Only supported new capture is exported.
+ * Coordinator-owned baseline records cannot be modified by the return.
  *
  * <p>
- * Required binary dependencies are staged and the completed archive is
- * validated before atomic publication. Successful publication is then recorded
- * in the durable contributor return ledger.
+ * Binary dependencies are collected, the complete archive is validated, and the
+ * contribution is published atomically before durable return evidence is
+ * recorded. Published files are retained if ledger recording fails.
  *
  * <p>
- * Exporting does not complete or deselect an assignment, advance its original
- * baseline, or delete unreturned contributor work.
+ * A successfully recorded contribution makes the assignment locally submitted.
+ * Further exports require a newly issued assignment.
  */
 public final class ContributionExporter {
 
@@ -79,34 +80,35 @@ public final class ContributionExporter {
 	}
 
 	/**
-	 * Exports the currently captured changes of an installed assignment.
+	 * Exports the first and only contribution for an installed assignment.
 	 *
 	 * <p>
-	 * The assignment need not be the currently selected assignment. Successive
-	 * returns use new package identities and link to the latest previously
-	 * published package for the same assignment.
+	 * Empty returns and modifications to issued baseline records are refused. A
+	 * successfully recorded return prevents another contribution for that
+	 * assignment. The original published archive remains available for resending.
 	 *
-	 * <p>
-	 * An empty contribution is rejected. If publication succeeds but durable ledger
-	 * recording fails, the published archive is retained for inspection and
-	 * recovery rather than deleted.
-	 *
-	 * @param assignmentId installed contributor assignment identity
+	 * @param assignmentId installed contributor assignment UUID
 	 * @param destination  new .examwork archive destination
-	 * @return validated manifest of the published contribution
-	 * @throws SQLException         if contributor persistence or return lineage
-	 *                              cannot be recorded
-	 * @throws IOException          if snapshot creation, asset collection,
-	 *                              validation or archive publication fails
-	 * @throws NullPointerException if an argument is null
+	 * @return validated published contribution manifest
+	 * @throws SQLException          if assignment or publication evidence cannot be
+	 *                               recorded
+	 * @throws IOException           if snapshot, validation, asset packaging or
+	 *                               publication fails
+	 * @throws IllegalStateException if the assignment has already been submitted
+	 * @throws NullPointerException  if an argument is null
 	 */
 	public ExamWorkManifest export(UUID assignmentId, Path destination) throws SQLException, IOException {
 		Objects.requireNonNull(assignmentId, "assignmentId");
 		Path target = requireDestination(destination);
 		SqliteContributionReturnLedger ledger = new SqliteContributionReturnLedger(database);
 		var latest = ledger.findLatest(assignmentId);
-		UUID previousPackageId = latest.map(SqliteContributionReturnLedger.PublishedReturn::packageId).orElse(null);
-		int returnNumber = latest.isPresent() ? Math.addExact(latest.orElseThrow().returnNumber(), 1) : 1;
+		if (latest.isPresent()) {
+			throw new IllegalStateException("This assignment has already been submitted. "
+					+ "Resend the original contribution package if necessary. "
+					+ "Further work requires a new assignment.");
+		}
+		UUID previousPackageId = null;
+		int returnNumber = 1;
 		Path stagingDirectory = Files.createTempDirectory(target.getParent(), ".examwork-contribution-");
 		try {
 			Path snapshotPath = stagingDirectory.resolve("contributor-snapshot.db");
@@ -172,6 +174,61 @@ public final class ContributionExporter {
 			// evidence; never discard potentially returned work.
 			ledger.recordPublished(verified, previousPackageId, sha256(target));
 			return verified;
+		} finally {
+			deleteTemporaryTree(stagingDirectory);
+		}
+	}
+
+	/**
+	 * Determines whether an installed assignment has saved work that may be
+	 * exported as a contribution.
+	 *
+	 * <p>
+	 * The lifecycle state and saved-work delta are inspected using a consistent
+	 * database snapshot. No contribution archive is created and no return evidence
+	 * is recorded.
+	 *
+	 * <p>
+	 * This advisory check does not replace the validation performed by the final
+	 * export operation.
+	 *
+	 * @param assignmentId installed contributor assignment UUID
+	 * @throws SQLException             if assignment persistence cannot be
+	 *                                  inspected
+	 * @throws IOException              if the snapshot cannot be inspected, the
+	 *                                  contribution is empty, or its changes are
+	 *                                  invalid
+	 * @throws IllegalStateException    if the assignment has been removed or
+	 *                                  already submitted
+	 * @throws IllegalArgumentException if the assignment is not installed
+	 * @throws NullPointerException     if the assignment identity is null
+	 */
+	public void preflight(UUID assignmentId) throws SQLException, IOException {
+		Objects.requireNonNull(assignmentId, "assignmentId");
+		Path stagingDirectory = Files.createTempDirectory("examwork-contribution-preflight-");
+		try {
+			Path snapshotPath = stagingDirectory.resolve("contributor-snapshot.db");
+			database.createConsistentSnapshot(snapshotPath);
+			SqliteDatabase snapshotDatabase = SqliteDatabase.readOnly(snapshotPath);
+			var visibility = new SqliteContributorAssignmentVisibilityRepository(snapshotDatabase);
+			var state = visibility.find(assignmentId)
+					.orElseThrow(() -> new IllegalArgumentException("Unknown contributor assignment: " + assignmentId));
+			if (state == SqliteContributorAssignmentVisibilityRepository.State.SUBMITTED) {
+				throw new IllegalStateException(
+						"This assignment has already been submitted. " + "Resend the original contribution package "
+								+ "if necessary. Further work requires a new assignment.");
+			}
+			if (state != SqliteContributorAssignmentVisibilityRepository.State.ACTIVE) {
+				throw new IllegalStateException("This assignment is no longer available " + "for contribution export.");
+			}
+			var snapshot = new ContributionSnapshotReader(snapshotPath).read(assignmentId);
+
+			// An unchanged assignment must be rejected without
+			// requiring a destination or producing any return evidence.
+			if (snapshot.delta().candidates().isEmpty()) {
+				throw new PackageFormatException("No contributor changes to export. "
+						+ "Capture and save new work before " + "exporting a contribution.");
+			}
 		} finally {
 			deleteTemporaryTree(stagingDirectory);
 		}

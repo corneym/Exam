@@ -20,10 +20,12 @@ import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.SyllabusVersion;
+import au.edu.eq.questionbank.pdf.PdfStore;
 import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteImportedSubjectAuthorityRepository;
 
 /**
  * Checks whether a master-owned Exam can be issued for offline capture and
@@ -49,15 +51,17 @@ public final class ExamAssignmentPreflight {
 	}
 
 	/**
-	 * Verifies that one complete Exam can be issued for offline work, including
-	 * opening every required PDF with the application's PDF reader.
+	 * Verifies that an active Exam has a complete asset structure suitable for
+	 * offline work, including opening every required PDF with the application's PDF
+	 * reader.
 	 *
 	 * @param requestedExam        Exam selected by the coordinator
 	 * @param legacyCaptureEnabled whether the original 2019 syllabus must be
 	 *                             available for legacy capture
 	 * @return authoritative Exam, asset and syllabus references
-	 * @throws SQLException if Exam persistence cannot be read
-	 * @throws IOException  if the Exam is not ready for issuance
+	 * @throws SQLException          if Exam persistence cannot be read
+	 * @throws IOException           if the Exam is not ready for issuance
+	 * @throws IllegalStateException if the Subject is an imported read-only snapshot
 	 */
 	public Result check(Exam requestedExam, boolean legacyCaptureEnabled) throws SQLException, IOException {
 		Objects.requireNonNull(requestedExam, "requestedExam");
@@ -66,9 +70,14 @@ public final class ExamAssignmentPreflight {
 		SqliteAnswerWriter answers = new SqliteAnswerWriter(database, exams);
 		Subject subject = curriculum.findSubjectById(requestedExam.getSubject().getId())
 				.orElseThrow(() -> new IllegalArgumentException("Assigned Subject does not exist"));
+		new SqliteImportedSubjectAuthorityRepository(database).requireLocallyAuthoritative(subject.getId());
 		Exam exam = exams.findExamsForSubject(subject).stream()
 				.filter(candidate -> candidate.getId() == requestedExam.getId()).findFirst().orElseThrow(
 						() -> new IllegalArgumentException("Assigned Exam does not exist in the selected Subject"));
+		if (exam.isComplete()) {
+			throw new IOException("Assignment blocked: the Exam is complete. "
+					+ "Reactivate the Exam before creating a work package.");
+		}
 		List<ExamBooklet> booklets = exams.findExamBooklets(exam);
 		List<AnswerFile> answerFiles = answers.findAnswerFiles(exam);
 		ExamAssetExpectations expectations = exams.findExamAssetExpectations(exam);
@@ -124,23 +133,27 @@ public final class ExamAssignmentPreflight {
 	private void requireManagedPdf(Subject subject, SourceDocument document, String description) throws IOException {
 		Path path;
 		try {
-			path = layout.resolve(document.getRelativePath());
+
+			// Use the same resolution contract as the capture
+			// workspace and contributor assignment asset gate.
+			path = new PdfStore(layout).resolve(document.getRelativePath());
 		} catch (IllegalArgumentException exception) {
-			throw new IOException("Assignment blocked: unsafe path for " + description, exception);
+			throw new IOException("Assignment blocked: unsafe Exam PDF path for " + description, exception);
 		}
 		Path subjectRoot = layout.subjectDirectory(subject.getName());
+		Path examsRoot = layout.examsDirectory(subject.getName());
 
-		// Only master-managed, Subject-owned source files may be issued.
-		if (!path.startsWith(subjectRoot) || !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
-				|| !Files.isReadable(path)) {
+		// Only master-managed, Subject-owned Exam files may be issued.
+		if (!path.startsWith(examsRoot) || path.equals(examsRoot)
+				|| !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) || !Files.isReadable(path)) {
 			throw new IOException(
 					"Assignment blocked: missing or unreadable " + description + ": " + document.getRelativePath());
 		}
 
-		// Physical containment protects against paths redirected through
-		// symbolic-link parent directories.
+		// Physical containment protects against paths redirected
+		// through symbolic-link parent directories.
 		if (!path.toRealPath().startsWith(subjectRoot.toRealPath())) {
-			throw new IOException("Assignment blocked: source file escapes Subject storage: " + description);
+			throw new IOException("Assignment blocked: source file escapes " + "Subject storage: " + description);
 		}
 		if (Files.size(path) == 0) {
 			throw new IOException("Assignment blocked: empty source file: " + description);

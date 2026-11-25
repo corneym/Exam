@@ -19,6 +19,7 @@ import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
 import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.model.SourceQuestionCodeParser;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 
@@ -68,6 +69,8 @@ public final class LegacyQuestionSplitService {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
+				new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.QUESTION,
+						request.originalQuestion().getId());
 				StoredOriginalState originalState = readStoredOriginalState(connection,
 						request.originalQuestion().getId());
 				validatePersistedOriginal(request, originalState);

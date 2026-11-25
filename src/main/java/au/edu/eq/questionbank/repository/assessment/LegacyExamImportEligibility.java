@@ -42,12 +42,22 @@ public final class LegacyExamImportEligibility {
 			throw new IllegalArgumentException("examId must be positive");
 		}
 		try (PreparedStatement statement = connection.prepareStatement("""
-				SELECT capture_state FROM exams WHERE id = ?
+				SELECT capture_state,
+				       EXISTS (
+				           SELECT 1
+				           FROM imported_subject_authorities authority
+				           WHERE authority.subject_local_id = exams.subject_id
+				       ) AS imported_subject
+				FROM exams
+				WHERE id = ?
 				""")) {
 			statement.setLong(1, examId);
 			try (ResultSet result = statement.executeQuery()) {
 				if (!result.next()) {
 					throw new IllegalArgumentException("Exam does not exist: " + examId);
+				}
+				if (result.getBoolean("imported_subject")) {
+					return "This Exam belongs to an imported read-only Subject snapshot.";
 				}
 				if ("COMPLETE".equals(result.getString("capture_state"))) {
 					return "This Exam is COMPLETE. Legacy metadata must not be reimported into a completed Exam.";

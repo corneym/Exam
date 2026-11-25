@@ -14,6 +14,7 @@ import au.edu.eq.questionbank.model.ImageSharedContextContentPart;
 import au.edu.eq.questionbank.model.SharedContextContentPart;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 
@@ -102,6 +103,8 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
+				new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.SHARED_QUESTION_CONTEXT,
+						context.getId());
 
 				// Retain context identity so existing Question relationships
 				// continue referencing this context after correction.
@@ -165,6 +168,8 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
+				new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.SHARED_QUESTION_CONTEXT,
+						context.getId());
 				try (PreparedStatement statement = connection.prepareStatement("""
 						UPDATE shared_question_contexts
 						SET context_label = ?
@@ -277,6 +282,22 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 				}
 			}
 		}
+		try (PreparedStatement check = connection.prepareStatement("""
+				SELECT 1
+				FROM shared_question_contexts
+				WHERE id = ?
+				  AND booklet_id = ?
+				""")) {
+			check.setLong(1, contextId);
+			check.setLong(2, bookletId);
+			try (ResultSet result = check.executeQuery()) {
+				if (!result.next()) {
+					return false;
+				}
+			}
+		}
+		new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.SHARED_QUESTION_CONTEXT,
+				contextId);
 
 		// Release mixed-content references before deleting the records
 		// to which they refer. The caller owns the transaction.
@@ -353,6 +374,7 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 				throw new NullPointerException("regions contains null");
 			}
 		}
+		new SqliteContributorBaselineWriteGuard().requireCaptureCreation(connection, booklet.getId());
 		long contextId = insertContext(connection, booklet, label);
 
 		// Both the source regions and their presentation-order references
@@ -371,6 +393,7 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 			throw new NullPointerException("booklet");
 		}
 		validateContentParts(label, contentParts);
+		new SqliteContributorBaselineWriteGuard().requireCaptureCreation(connection, booklet.getId());
 		long id = insertContext(connection, booklet, label);
 		insertMixedContent(connection, id, contentParts);
 		return SharedQuestionContext.fromContentParts(id, booklet, label, contentParts);
