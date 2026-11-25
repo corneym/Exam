@@ -10,6 +10,7 @@ import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.MappingStatus;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
+import au.edu.eq.questionbank.repository.sqlite.SqliteImportedSubjectAuthorityRepository;
 
 /**
  * Writes directional curriculum mappings from a non-current syllabus version to
@@ -59,6 +60,8 @@ public final class SqliteCurriculumMappingWriter {
 			connection.setAutoCommit(false);
 			try {
 				validatePersistentMapping(connection, source, target);
+				new SqliteImportedSubjectAuthorityRepository(database).requireLocallyAuthoritative(connection,
+						source.getSyllabusVersion().getSubject().getId());
 				CurriculumMapping mapping;
 				try (PreparedStatement statement = connection.prepareStatement("""
 						INSERT INTO curriculum_mappings
@@ -111,6 +114,8 @@ public final class SqliteCurriculumMappingWriter {
 			connection.setAutoCommit(false);
 			try {
 				validatePersistentMapping(connection, mapping.getSource(), mapping.getTarget());
+				new SqliteImportedSubjectAuthorityRepository(database).requireLocallyAuthoritative(connection,
+						mapping.getSource().getSyllabusVersion().getSubject().getId());
 
 				// A status edit must still refer to the same stored source-target pair.
 				validatePersistentMappingIdentity(connection, mapping);

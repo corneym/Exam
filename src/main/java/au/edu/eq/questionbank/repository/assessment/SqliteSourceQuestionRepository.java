@@ -217,6 +217,7 @@ public final class SqliteSourceQuestionRepository implements SourceQuestionRepos
 		if (findByBookletAndCode(connection, booklet, sourceQuestionCode).isPresent()) {
 			throw new IllegalArgumentException("Source question already exists in this booklet: " + sourceQuestionCode);
 		}
+		new SqliteContributorBaselineWriteGuard().requireCaptureCreation(connection, booklet.getId());
 		try (PreparedStatement statement = connection.prepareStatement("""
 				INSERT INTO source_questions
 				    (booklet_id, source_question_code)

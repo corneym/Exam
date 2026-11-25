@@ -16,6 +16,7 @@ import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.pdf.PdfStore;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
 import au.edu.eq.questionbank.service.document.SourceDocumentHashService;
@@ -373,6 +374,8 @@ public final class QuestionBookletPdfReplacementService {
 			connection.setAutoCommit(false);
 			try {
 				verifyPersistedBooklet(connection, booklet);
+				new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.EXAM_BOOKLET,
+						booklet.getId());
 				impact = readImpact(connection, booklet.getId());
 
 				// Selecting the same bytes is not a destructive replacement. It may
@@ -421,6 +424,8 @@ public final class QuestionBookletPdfReplacementService {
 				connection.setAutoCommit(false);
 				try {
 					verifyPersistedBooklet(connection, booklet);
+					new SqliteContributorBaselineWriteGuard().requireMutable(connection, EntityType.EXAM_BOOKLET,
+							booklet.getId());
 					verifyExamActive(connection, booklet);
 					verifySourceDocumentExclusiveToBooklet(connection, booklet);
 					verifyReplacementHashIsNotAnotherManagedDocument(connection, currentSourceDocument.getId(),

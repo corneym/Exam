@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.repository.curriculum;
 
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteImportedSubjectAuthorityRepository;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -53,6 +54,8 @@ public final class SqliteCurriculumWriter {
 	 * @throws NullPointerException     if {@code parent} is {@code null}
 	 * @throws IllegalArgumentException if {@code code} or {@code name} is null or
 	 *                                  blank, or the order is negative
+	 * @throws IllegalStateException    if the persisted parent belongs to an
+	 *                                  imported Subject or a different syllabus
 	 */
 	public Descriptor insertDescriptor(Subtopic parent, String code, String name, int displayOrder)
 			throws SQLException {
@@ -73,6 +76,8 @@ public final class SqliteCurriculumWriter {
 	 * @throws NullPointerException     if {@code parent} is {@code null}
 	 * @throws IllegalArgumentException if {@code code} or {@code name} is null or
 	 *                                  blank, or the order is negative
+	 * @throws IllegalStateException    if the persisted parent belongs to an
+	 *                                  imported Subject or a different syllabus
 	 */
 	public Descriptor insertDescriptor(Topic parent, String code, String name, int displayOrder) throws SQLException {
 		try (Connection connection = database.openConnection()) {
@@ -107,6 +112,8 @@ public final class SqliteCurriculumWriter {
 	 * @throws NullPointerException     if {@code parent} is {@code null}
 	 * @throws IllegalArgumentException if {@code code} or {@code name} is null or
 	 *                                  blank, or the order is negative
+	 * @throws IllegalStateException    if the persisted parent belongs to an
+	 *                                  imported Subject or a different syllabus
 	 */
 	public Subtopic insertSubtopic(Topic parent, String code, String name, int displayOrder) throws SQLException {
 		try (Connection connection = database.openConnection()) {
@@ -124,6 +131,8 @@ public final class SqliteCurriculumWriter {
 	 * @throws SQLException             if the insert fails
 	 * @throws NullPointerException     if {@code subject} is {@code null}
 	 * @throws IllegalArgumentException if {@code syllabusName} is null or blank
+	 * @throws IllegalStateException    if the Subject is an imported read-only
+	 *                                  snapshot
 	 */
 	public SyllabusVersion insertSyllabusVersion(Subject subject, String syllabusName, boolean current)
 			throws SQLException {
@@ -144,6 +153,8 @@ public final class SqliteCurriculumWriter {
 	 * @throws NullPointerException     if {@code parent} is {@code null}
 	 * @throws IllegalArgumentException if {@code code} or {@code name} is null or
 	 *                                  blank, or the order is negative
+	 * @throws IllegalStateException    if the persisted parent belongs to an
+	 *                                  imported Subject or a different syllabus
 	 */
 	public Topic insertTopic(Unit parent, String code, String name, int displayOrder) throws SQLException {
 		try (Connection connection = database.openConnection()) {
@@ -163,6 +174,8 @@ public final class SqliteCurriculumWriter {
 	 * @throws NullPointerException     if {@code syllabusVersion} is {@code null}
 	 * @throws IllegalArgumentException if {@code code} or {@code name} is null or
 	 *                                  blank, or the order is negative
+	 * @throws IllegalStateException    if the syllabus belongs to an imported
+	 *                                  read-only Subject
 	 */
 	public Unit insertUnit(SyllabusVersion syllabusVersion, String code, String name, int displayOrder)
 			throws SQLException {
@@ -188,6 +201,7 @@ public final class SqliteCurriculumWriter {
 		if (displayOrder < 0) {
 			throw new IllegalArgumentException("displayOrder must not be negative");
 		}
+		requireLocallyAuthoritativeParent(connection, parent);
 		try (PreparedStatement statement = connection.prepareStatement("""
 				INSERT INTO curriculum_nodes
 					(syllabus_version_id, parent_id,
@@ -210,6 +224,27 @@ public final class SqliteCurriculumWriter {
 					throw new SQLException("Curriculum node insert did not return an id");
 				}
 				return result.getLong("id");
+			}
+		}
+	}
+
+	private void requireLocallyAuthoritativeParent(Connection connection, CurriculumNode parent) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT syllabus_version_id
+				FROM curriculum_nodes
+				WHERE id = ?
+				""")) {
+			statement.setLong(1, parent.getId());
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalStateException("Curriculum parent does not exist: " + parent.getId());
+				}
+				long persistedSyllabusVersionId = result.getLong("syllabus_version_id");
+				if (persistedSyllabusVersionId != parent.getSyllabusVersion().getId()) {
+					throw new IllegalStateException("Curriculum parent belongs to another syllabus version");
+				}
+				new SqliteImportedSubjectAuthorityRepository(database)
+						.requireLocallyAuthoritativeSyllabusVersion(connection, persistedSyllabusVersionId);
 			}
 		}
 	}
@@ -284,6 +319,7 @@ public final class SqliteCurriculumWriter {
 		if (syllabusName == null || syllabusName.isBlank()) {
 			throw new IllegalArgumentException("syllabusName must not be blank");
 		}
+		new SqliteImportedSubjectAuthorityRepository(database).requireLocallyAuthoritative(connection, subject.getId());
 		try (PreparedStatement statement = connection.prepareStatement("""
 				INSERT INTO syllabus_versions
 					(subject_id, syllabus_name, is_current)
@@ -322,6 +358,8 @@ public final class SqliteCurriculumWriter {
 		if (displayOrder < 0) {
 			throw new IllegalArgumentException("displayOrder must not be negative");
 		}
+		new SqliteImportedSubjectAuthorityRepository(database).requireLocallyAuthoritativeSyllabusVersion(connection,
+				syllabusVersion.getId());
 		try (PreparedStatement statement = connection.prepareStatement("""
 				INSERT INTO curriculum_nodes
 					(syllabus_version_id, parent_id,
