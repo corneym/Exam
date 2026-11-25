@@ -25,6 +25,7 @@ import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteImportedSubjectAuthorityRepository;
 
 /**
  * Checks whether a master-owned Exam can be issued for offline capture and
@@ -58,8 +59,9 @@ public final class ExamAssignmentPreflight {
 	 * @param legacyCaptureEnabled whether the original 2019 syllabus must be
 	 *                             available for legacy capture
 	 * @return authoritative Exam, asset and syllabus references
-	 * @throws SQLException if Exam persistence cannot be read
-	 * @throws IOException  if the Exam is not ready for issuance
+	 * @throws SQLException          if Exam persistence cannot be read
+	 * @throws IOException           if the Exam is not ready for issuance
+	 * @throws IllegalStateException if the Subject is an imported read-only snapshot
 	 */
 	public Result check(Exam requestedExam, boolean legacyCaptureEnabled) throws SQLException, IOException {
 		Objects.requireNonNull(requestedExam, "requestedExam");
@@ -68,6 +70,7 @@ public final class ExamAssignmentPreflight {
 		SqliteAnswerWriter answers = new SqliteAnswerWriter(database, exams);
 		Subject subject = curriculum.findSubjectById(requestedExam.getSubject().getId())
 				.orElseThrow(() -> new IllegalArgumentException("Assigned Subject does not exist"));
+		new SqliteImportedSubjectAuthorityRepository(database).requireLocallyAuthoritative(subject.getId());
 		Exam exam = exams.findExamsForSubject(subject).stream()
 				.filter(candidate -> candidate.getId() == requestedExam.getId()).findFirst().orElseThrow(
 						() -> new IllegalArgumentException("Assigned Exam does not exist in the selected Subject"));

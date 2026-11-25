@@ -174,9 +174,67 @@ public final class SqliteImportedSubjectAuthorityRepository {
 	 * @throws IllegalStateException if the Subject is externally authoritative
 	 */
 	public void requireLocallyAuthoritative(long subjectLocalId) throws SQLException {
-		if (isImported(subjectLocalId)) {
+		try (Connection connection = database.openConnection()) {
+			requireLocallyAuthoritative(connection, subjectLocalId);
+		}
+	}
+
+	/**
+	 * Rejects ordinary editing of an imported Subject using the caller's current
+	 * database view.
+	 *
+	 * <p>
+	 * Mutation repositories use this overload immediately before their first write
+	 * so authority validation participates in the same transaction as the proposed
+	 * change. The caller retains ownership of the connection.
+	 *
+	 * @param connection     caller-owned database connection
+	 * @param subjectLocalId positive local Subject ID
+	 * @throws SQLException          if authority cannot be inspected
+	 * @throws IllegalStateException if the Subject is externally authoritative
+	 * @throws IllegalArgumentException if the Subject ID is not positive
+	 * @throws NullPointerException  if the connection is null
+	 */
+	public void requireLocallyAuthoritative(Connection connection, long subjectLocalId) throws SQLException {
+		if (find(connection, subjectLocalId).isPresent()) {
 			throw new IllegalStateException("Subject " + subjectLocalId + " is an imported snapshot and is read-only. "
 					+ "Edit the authoritative Subject on its originating installation.");
+		}
+	}
+
+	/**
+	 * Rejects ordinary editing of a syllabus version owned by an imported Subject.
+	 *
+	 * <p>
+	 * The owning Subject is resolved from the persisted syllabus row so a stale or
+	 * inconsistent domain object cannot bypass the authority boundary.
+	 *
+	 * @param connection        caller-owned database connection
+	 * @param syllabusVersionId positive local syllabus-version ID
+	 * @throws SQLException             if ownership or authority cannot be inspected
+	 * @throws IllegalStateException    if the syllabus version does not exist or its
+	 *                                  Subject is externally authoritative
+	 * @throws IllegalArgumentException if the syllabus-version ID is not positive
+	 * @throws NullPointerException     if the connection is null
+	 */
+	public void requireLocallyAuthoritativeSyllabusVersion(Connection connection, long syllabusVersionId)
+			throws SQLException {
+		Objects.requireNonNull(connection, "connection");
+		if (syllabusVersionId < 1) {
+			throw new IllegalArgumentException("Syllabus version ID must be positive");
+		}
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT subject_id
+				FROM syllabus_versions
+				WHERE id = ?
+				""")) {
+			statement.setLong(1, syllabusVersionId);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					throw new IllegalStateException("Syllabus version does not exist: " + syllabusVersionId);
+				}
+				requireLocallyAuthoritative(connection, result.getLong("subject_id"));
+			}
 		}
 	}
 

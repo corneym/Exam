@@ -374,6 +374,7 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 				throw new NullPointerException("regions contains null");
 			}
 		}
+		new SqliteContributorBaselineWriteGuard().requireCaptureCreation(connection, booklet.getId());
 		long contextId = insertContext(connection, booklet, label);
 
 		// Both the source regions and their presentation-order references
@@ -392,6 +393,7 @@ public final class SqliteSharedQuestionContextRepository implements SharedQuesti
 			throw new NullPointerException("booklet");
 		}
 		validateContentParts(label, contentParts);
+		new SqliteContributorBaselineWriteGuard().requireCaptureCreation(connection, booklet.getId());
 		long id = insertContext(connection, booklet, label);
 		insertMixedContent(connection, id, contentParts);
 		return SharedQuestionContext.fromContentParts(id, booklet, label, contentParts);

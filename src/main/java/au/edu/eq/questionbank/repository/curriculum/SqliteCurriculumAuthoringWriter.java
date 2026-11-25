@@ -16,6 +16,7 @@ import java.util.UUID;
 import au.edu.eq.questionbank.model.CurriculumStatus;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
+import au.edu.eq.questionbank.repository.sqlite.SqliteImportedSubjectAuthorityRepository;
 import au.edu.eq.questionbank.service.curriculum.CurriculumAuthoringSession;
 import au.edu.eq.questionbank.service.curriculum.CurriculumDraft;
 import au.edu.eq.questionbank.service.curriculum.CurriculumDraftNode;
@@ -236,6 +237,8 @@ public final class SqliteCurriculumAuthoringWriter implements CurriculumAuthorin
 			try {
 
 				// Check lifecycle, snapshot and deletion references before the first mutation.
+				new SqliteImportedSubjectAuthorityRepository(database).requireLocallyAuthoritativeSyllabusVersion(connection,
+						syllabusVersionId);
 				requireSyllabusEditable(connection, syllabusVersionId);
 				requireSessionMatchesDatabase(connection, syllabusVersionId, session);
 				requireDeletionsUnreferenced(connection, deletedPersistentIds);

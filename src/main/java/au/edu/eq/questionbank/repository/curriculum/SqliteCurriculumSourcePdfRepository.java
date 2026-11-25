@@ -9,6 +9,7 @@ import au.edu.eq.questionbank.model.CurriculumStatus;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
+import au.edu.eq.questionbank.repository.sqlite.SqliteImportedSubjectAuthorityRepository;
 
 /**
  * SQLite persistence for managed curriculum source-PDF metadata.
@@ -79,18 +80,21 @@ public final class SqliteCurriculumSourcePdfRepository implements CurriculumSour
 
 		// Recheck editability in SQL before changing the reference; file copying
 		// belongs to the service.
-		try (Connection connection = database.openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
+		try (Connection connection = database.openConnection()) {
+			new SqliteImportedSubjectAuthorityRepository(database).requireLocallyAuthoritativeSyllabusVersion(connection,
+					syllabusVersion.getId());
+			try (PreparedStatement statement = connection.prepareStatement("""
 						UPDATE syllabus_versions
 						SET source_pdf_path = ?
 						WHERE id = ?
 						  AND curriculum_status = 'IN_PROGRESS'
 						""")) {
-			statement.setString(1, relativePath);
-			statement.setLong(2, syllabusVersion.getId());
-			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
-				throw new IllegalStateException(
-						"Syllabus version is not available for source-PDF update: " + syllabusVersion.getId());
+				statement.setString(1, relativePath);
+				statement.setLong(2, syllabusVersion.getId());
+				if (SqliteDirectChanges.executeUpdate(statement) != 1) {
+					throw new IllegalStateException(
+							"Syllabus version is not available for source-PDF update: " + syllabusVersion.getId());
+				}
 			}
 		} catch (SQLException e) {
 			throw new IllegalStateException("Could not store curriculum source-PDF path", e);

@@ -20,6 +20,7 @@ import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
+import au.edu.eq.questionbank.repository.sqlite.SqliteImportedSubjectAuthorityRepository;
 
 /**
  * Inserts examination metadata and source-document references into SQLite,
@@ -898,6 +899,8 @@ public final class SqliteExamWriter {
 	 *                                  {@code null}
 	 * @throws IllegalArgumentException if {@code year} is not positive or
 	 *                                  {@code name} is null or blank
+	 * @throws IllegalStateException    if the Subject is an imported read-only
+	 *                                  snapshot
 	 */
 	public Exam insertExam(Subject subject, ExamProvider provider, int year, String name) throws SQLException {
 		try (Connection connection = database.openConnection()) {
@@ -1070,7 +1073,10 @@ public final class SqliteExamWriter {
 	 * @param exam         persisted Exam
 	 * @param captureState requested lifecycle state
 	 * @return updated Exam identity
-	 * @throws SQLException if persistence fails
+	 * @throws SQLException          if persistence fails
+	 * @throws IllegalStateException if the Subject is an imported read-only
+	 *                               snapshot or the requested transition is not
+	 *                               currently permitted
 	 */
 	public Exam setExamCaptureState(Exam exam, ExamCaptureState captureState) throws SQLException {
 		if (exam == null) {
@@ -1082,6 +1088,8 @@ public final class SqliteExamWriter {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
+				new SqliteImportedSubjectAuthorityRepository(database).requireLocallyAuthoritative(connection,
+						exam.getSubject().getId());
 				if (captureState == ExamCaptureState.COMPLETE) {
 
 					// The persistence boundary must not allow a caller to
@@ -1502,6 +1510,7 @@ public final class SqliteExamWriter {
 		if (expectedAnswerFileCount != null && expectedAnswerFileCount < 0) {
 			throw new IllegalArgumentException("expectedAnswerFileCount must not be negative when supplied");
 		}
+		new SqliteImportedSubjectAuthorityRepository(database).requireLocallyAuthoritative(connection, subject.getId());
 		try (PreparedStatement statement = connection.prepareStatement("""
 				INSERT INTO exams
 				    (subject_id,
@@ -1686,6 +1695,7 @@ public final class SqliteExamWriter {
 					}
 					return new SourceDocument(sourceDocument.getId(), relativePath, storedHash);
 				}
+				requireSourceDocumentLocallyAuthoritative(connection, sourceDocument.getId());
 				try (PreparedStatement update = connection.prepareStatement("""
 						UPDATE source_documents
 						SET content_sha256 = ?
@@ -1713,8 +1723,9 @@ public final class SqliteExamWriter {
 		if (examId < 1) {
 			throw new IllegalArgumentException("examId must be positive");
 		}
+		long subjectId;
 		try (PreparedStatement statement = connection.prepareStatement("""
-				SELECT capture_state
+				SELECT subject_id, capture_state
 				FROM exams
 				WHERE id = ?
 				""")) {
@@ -1723,6 +1734,7 @@ public final class SqliteExamWriter {
 				if (!result.next()) {
 					throw new IllegalArgumentException("Exam does not exist: " + examId);
 				}
+				subjectId = result.getLong("subject_id");
 				ExamCaptureState captureState = ExamCaptureState.valueOf(result.getString("capture_state"));
 				if (captureState == ExamCaptureState.COMPLETE) {
 					throw new IllegalStateException(
@@ -1730,6 +1742,7 @@ public final class SqliteExamWriter {
 				}
 			}
 		}
+		new SqliteImportedSubjectAuthorityRepository(database).requireLocallyAuthoritative(connection, subjectId);
 
 		// Use the same connection as the structural operation.
 		new SqliteMasterExamLockGuard(database).requireUnlocked(connection, examId);
@@ -2085,6 +2098,32 @@ public final class SqliteExamWriter {
 				if (!ownedByExam) {
 					throw new IllegalArgumentException(
 							"Source document does not belong to the corrected exam: " + sourceDocumentId);
+				}
+			}
+		}
+	}
+
+	private void requireSourceDocumentLocallyAuthoritative(Connection connection, long sourceDocumentId)
+			throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT DISTINCT exam.subject_id
+				FROM exams exam
+				JOIN (
+				    SELECT exam_id
+				    FROM exam_booklets
+				    WHERE source_document_id = ?
+				    UNION
+				    SELECT exam_id
+				    FROM answer_files
+				    WHERE source_document_id = ?
+				) reference ON reference.exam_id = exam.id
+				""")) {
+			statement.setLong(1, sourceDocumentId);
+			statement.setLong(2, sourceDocumentId);
+			try (ResultSet result = statement.executeQuery()) {
+				var authorities = new SqliteImportedSubjectAuthorityRepository(database);
+				while (result.next()) {
+					authorities.requireLocallyAuthoritative(connection, result.getLong("subject_id"));
 				}
 			}
 		}

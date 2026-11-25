@@ -1018,6 +1018,7 @@ public final class SqliteQuestionWriter {
 				}
 			}
 		}
+		new SqliteContributorBaselineWriteGuard().requireCaptureCreation(connection, bookletId);
 	}
 
 	private void requireExamActiveForQuestionCodeChange(Connection connection, long questionId,

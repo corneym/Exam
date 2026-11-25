@@ -73,6 +73,31 @@ public final class SqliteContributorBaselineWriteGuard {
 	}
 
 	/**
+	 * Verifies that new contributor-capturable records may be created in a booklet.
+	 *
+	 * <p>
+	 * New Questions, Source Questions and Shared Contexts are allowed within the
+	 * selected active assignment, but not in imported Subjects, inactive contributor
+	 * corpora or another Exam.
+	 *
+	 * @param connection caller-owned database connection
+	 * @param bookletId  positive local ExamBooklet identifier
+	 * @throws SQLException             if ownership validation fails
+	 * @throws IllegalStateException    if creation is prohibited or the booklet does
+	 *                                  not exist
+	 * @throws IllegalArgumentException if the booklet ID is invalid
+	 * @throws NullPointerException     if the connection is null
+	 */
+	public void requireCaptureCreation(Connection connection, long bookletId) throws SQLException {
+		Objects.requireNonNull(connection, "connection");
+		if (bookletId < 1) {
+			throw new IllegalArgumentException("ExamBooklet ID must be positive");
+		}
+		Scope scope = readScope(connection, EntityType.EXAM_BOOKLET, bookletId);
+		requireWritableScope(connection, scope);
+	}
+
+	/**
 	 * Rejects mutation of an externally authoritative or issued baseline record.
 	 *
 	 * <p>

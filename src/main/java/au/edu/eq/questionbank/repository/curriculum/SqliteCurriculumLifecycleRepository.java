@@ -9,6 +9,7 @@ import au.edu.eq.questionbank.model.CurriculumStatus;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
+import au.edu.eq.questionbank.repository.sqlite.SqliteImportedSubjectAuthorityRepository;
 
 /**
  * SQLite persistence for curriculum lifecycle transitions.
@@ -39,19 +40,22 @@ public final class SqliteCurriculumLifecycleRepository implements CurriculumLife
 		}
 
 		// The status predicate guards the transition against a stale in-memory version.
-		try (Connection connection = database.openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
+		try (Connection connection = database.openConnection()) {
+			new SqliteImportedSubjectAuthorityRepository(database).requireLocallyAuthoritativeSyllabusVersion(connection,
+					syllabusVersion.getId());
+			try (PreparedStatement statement = connection.prepareStatement("""
 						UPDATE syllabus_versions
 						SET curriculum_status = 'FINAL',
 						    curriculum_finalised_at = ?
 						WHERE id = ?
 						  AND curriculum_status = 'IN_PROGRESS'
 						""")) {
-			statement.setString(1, finalisedAt.toString());
-			statement.setLong(2, syllabusVersion.getId());
-			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
-				throw new IllegalStateException(
-						"Syllabus version is not available for finalisation: " + syllabusVersion.getId());
+				statement.setString(1, finalisedAt.toString());
+				statement.setLong(2, syllabusVersion.getId());
+				if (SqliteDirectChanges.executeUpdate(statement) != 1) {
+					throw new IllegalStateException(
+							"Syllabus version is not available for finalisation: " + syllabusVersion.getId());
+				}
 			}
 		} catch (SQLException e) {
 			throw new IllegalStateException("Could not finalise curriculum", e);
@@ -65,18 +69,21 @@ public final class SqliteCurriculumLifecycleRepository implements CurriculumLife
 		if (syllabusVersion == null) {
 			throw new NullPointerException("syllabusVersion");
 		}
-		try (Connection connection = database.openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
+		try (Connection connection = database.openConnection()) {
+			new SqliteImportedSubjectAuthorityRepository(database).requireLocallyAuthoritativeSyllabusVersion(connection,
+					syllabusVersion.getId());
+			try (PreparedStatement statement = connection.prepareStatement("""
 						UPDATE syllabus_versions
 						SET curriculum_status = 'IN_PROGRESS',
 						    curriculum_finalised_at = NULL
 						WHERE id = ?
 						  AND curriculum_status = 'FINAL'
 						""")) {
-			statement.setLong(1, syllabusVersion.getId());
-			if (SqliteDirectChanges.executeUpdate(statement) != 1) {
-				throw new IllegalStateException(
-						"Syllabus version is not available for reopening: " + syllabusVersion.getId());
+				statement.setLong(1, syllabusVersion.getId());
+				if (SqliteDirectChanges.executeUpdate(statement) != 1) {
+					throw new IllegalStateException(
+							"Syllabus version is not available for reopening: " + syllabusVersion.getId());
+				}
 			}
 		} catch (SQLException e) {
 			throw new IllegalStateException("Could not reopen curriculum", e);

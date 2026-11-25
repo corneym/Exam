@@ -32,6 +32,7 @@ import au.edu.eq.questionbank.repository.identity.SqliteSubjectGraphReader;
 import au.edu.eq.questionbank.repository.identity.SqliteSubjectGraphReader.SubjectGraph;
 import au.edu.eq.questionbank.repository.identity.SqliteSubjectPortableRecordReader;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
+import au.edu.eq.questionbank.repository.sqlite.SqliteImportedSubjectAuthorityRepository;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkArchiveWriter.EntrySource;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest.Entry;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest.EntryRole;
@@ -118,12 +119,15 @@ public final class SubjectSnapshotExporter {
 	 *                                  publication cannot be completed safely
 	 * @throws IllegalArgumentException if the Subject identifier or destination is
 	 *                                  invalid
+	 * @throws IllegalStateException    if the Subject is an imported read-only
+	 *                                  snapshot owned by another installation
 	 * @throws NullPointerException     if the destination is null
 	 */
 	public ExamWorkManifest export(long subjectId, Path destination) throws SQLException, IOException {
 		if (subjectId < 1) {
 			throw new IllegalArgumentException("subjectId must be positive");
 		}
+		new SqliteImportedSubjectAuthorityRepository(database).requireLocallyAuthoritative(subjectId);
 		Path target = requireDestination(destination);
 		Path stagingDirectory = Files.createTempDirectory(target.getParent(), ".examwork-subject-");
 		try {
