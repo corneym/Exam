@@ -3,6 +3,7 @@ package au.edu.eq.questionbank.service.workpackage;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -339,6 +340,78 @@ public final class SubjectImportGraphWriter {
 			throw new IOException("Incoming archive belongs to an unapproved Subject");
 		}
 		return new DecodedPackage(manifest, List.copyOf(records), index);
+	}
+
+	/**
+	 * Decodes and verifies the exact approved incoming refresh graph.
+	 *
+	 * <p>
+	 * Originating records are validated before translation into the approved
+	 * comparison identity namespace. Existing shared provider revisions are
+	 * preserved.
+	 *
+	 * <p>
+	 * The manifest describes the original archive, while records and logical asset
+	 * owners use comparison identities. No database mutation occurs.
+	 *
+	 * @param staged   complete verified refresh staging
+	 * @param approval exact approved refresh comparison
+	 * @return decoded and normalised graph and asset inventory
+	 * @throws IOException          if archive, record, identity or asset evidence
+	 *                              differs from approval
+	 * @throws NullPointerException if a required argument is null
+	 */
+	public DecodedPackage decodeRefresh(StagedPackage staged, SubjectRefreshPlan.Approval approval) throws IOException {
+		Objects.requireNonNull(staged, "staged");
+		Objects.requireNonNull(approval, "approval");
+		SubjectRefreshPlan plan = approval.plan();
+		var expected = plan.evidence().incoming().fingerprint();
+		if (!staged.packageId().equals(expected.packageId())
+				|| !staged.approvalSha256().equals(approval.approvalSha256())) {
+			throw new IOException("Staged graph belongs to a different refresh approval");
+		}
+		approval.requireFreshIncoming(staged.archive());
+		ExamWorkManifest manifest = new ExamWorkArchiveValidator().validate(staged.archive(),
+				ApplicationVersion.current(), SqliteDatabase.latestSchemaVersion());
+		if (!manifest.packageId().equals(expected.packageId()) || !manifest.subjectId().equals(expected.subjectId())
+				|| !manifest.originInstallationId().equals(expected.originInstallationId())
+				|| !manifest.subjectName().equals(expected.subjectName())) {
+			throw new IOException("Decoded refresh manifest differs from approval");
+		}
+		List<ExchangeRecord> records = new ArrayList<>();
+		ExamWorkAssetIndex index;
+		ExamWorkJsonlCodec codec = new ExamWorkJsonlCodec();
+		try (ZipFile zip = ZipFile.builder().setPath(staged.archive()).get()) {
+			ZipArchiveEntry indexEntry = zip.getEntry(ExamWorkAssetIndex.INDEX_PATH);
+			if (indexEntry == null) {
+				throw new PackageFormatException("Subject refresh has no asset index");
+			}
+			try (InputStream input = zip.getInputStream(indexEntry)) {
+				index = codec.readAssetIndex(input);
+			}
+			index.requireMatchingManifest(manifest);
+			for (var entry : manifest.entries()) {
+				if (entry.role() != EntryRole.RECORDS) {
+					continue;
+				}
+				ZipArchiveEntry recordEntry = zip.getEntry(entry.path());
+				if (recordEntry == null) {
+					throw new IOException("Missing declared refresh records: " + entry.path());
+				}
+				try (InputStream input = zip.getInputStream(recordEntry)) {
+					records.addAll(codec.readRecords(input));
+				}
+			}
+		}
+
+		// Validate originating domain semantics before translating identities.
+		PortableDomainRecordValidator.validate(manifest.subjectId(), records);
+		SubjectRefreshIdentityNormaliser normaliser = new SubjectRefreshIdentityNormaliser();
+		List<ExchangeRecord> normalised = normaliser.normalise(records, plan.identities());
+		ExamWorkAssetIndex normalisedAssets = normaliser.normaliseAssets(index, plan.identities());
+		List<ExchangeRecord> approvedRecords = requireApprovedRefreshRecords(plan, normalised);
+		requireVerifiedRefreshAssets(plan, staged, normalisedAssets);
+		return new DecodedPackage(manifest, approvedRecords, normalisedAssets);
 	}
 
 	/**
@@ -897,6 +970,62 @@ public final class SubjectImportGraphWriter {
 	}
 
 	/**
+	 * Requires decoded records to match the approved comparison while retaining
+	 * existing shared examination provider revisions.
+	 */
+	private List<ExchangeRecord> requireApprovedRefreshRecords(SubjectRefreshPlan plan, List<ExchangeRecord> records)
+			throws IOException {
+		Map<SubjectRefreshChangeClassifier.RecordKey, SubjectRefreshChangeClassifier.RecordChange> expected = new HashMap<>();
+		for (var change : plan.recordChanges()) {
+			if (change.incoming() != null) {
+				expected.put(change.key(), change);
+			}
+		}
+		List<ExchangeRecord> approved = new ArrayList<>();
+		for (ExchangeRecord record : records) {
+			EntityType type;
+			try {
+				type = EntityType.valueOf(record.recordType());
+			} catch (IllegalArgumentException failure) {
+				throw new IOException("Unsupported refresh entity type", failure);
+			}
+			if (!TABLES.containsKey(type)) {
+				throw new IOException("Refresh entity has no supported persistence mapping");
+			}
+			var key = new SubjectRefreshChangeClassifier.RecordKey(record.recordType(), record.recordId());
+			var change = expected.remove(key);
+			if (change == null) {
+				throw new IOException("Unapproved incoming refresh record: " + key);
+			}
+			if (type == EntityType.EXAM_PROVIDER
+					&& change.kind() == SubjectRefreshChangeClassifier.ChangeKind.UNCHANGED) {
+
+				// Shared provider values must match, but the destination
+				// revision remains authoritative across all Subjects.
+				if (!record.values().equals(change.incoming().values())) {
+					throw new IOException("Refresh would modify a shared examination provider");
+				}
+				approved.add(change.incoming());
+			} else {
+				if (!record.equals(change.incoming())) {
+					throw new IOException("Decoded refresh record differs from approval: " + key);
+				}
+				approved.add(record);
+			}
+		}
+		for (var remaining : expected.values()) {
+
+			// A provider may no longer be referenced by this Subject.
+			// That does not authorise deletion from the global registry.
+			if (!"EXAM_PROVIDER".equals(remaining.key().recordType())
+					|| remaining.kind() != SubjectRefreshChangeClassifier.ChangeKind.UNCHANGED) {
+				throw new IOException("Approved incoming refresh record is missing: " + remaining.key());
+			}
+		}
+		return List.copyOf(approved);
+	}
+
+	/**
 	 * Finds a mandatory already-inserted local foreign key.
 	 */
 	private long requiredReference(Map<Key, Long> ids, EntityType type, JsonNode value) throws SQLException {
@@ -963,6 +1092,79 @@ public final class SubjectImportGraphWriter {
 					throw new SQLException("Duplicate existing assignment source row");
 				}
 			}
+		}
+	}
+
+	/**
+	 * Verifies approved logical asset coverage and actual private staged bytes.
+	 */
+	private void requireVerifiedRefreshAssets(SubjectRefreshPlan plan, StagedPackage staged, ExamWorkAssetIndex index)
+			throws IOException {
+		Map<String, SubjectRefreshChangeClassifier.AssetContent> expected = new HashMap<>();
+		for (var change : plan.assetChanges()) {
+			if (change.incoming() != null) {
+				expected.put(change.managedPath(), change.incoming());
+			}
+		}
+		Path assetDirectory = staged.directory().resolve("assets");
+		if (!Files.isDirectory(staged.directory(), LinkOption.NOFOLLOW_LINKS)
+				|| !Files.isDirectory(assetDirectory, LinkOption.NOFOLLOW_LINKS)) {
+			throw new IOException("Unsafe refresh graph staging directory");
+		}
+		Map<String, StagedAsset> assets = new HashMap<>();
+		for (StagedAsset asset : staged.assets()) {
+			if (assets.putIfAbsent(asset.managedPath(), asset) != null) {
+				throw new IOException("Duplicate staged refresh graph asset");
+			}
+			var approved = expected.get(asset.managedPath());
+			if (approved == null || !approved.sha256().equals(asset.sha256()) || approved.size() != asset.size()) {
+				throw new IOException("Unapproved staged refresh graph asset: " + asset.managedPath());
+			}
+			Path file = asset.stagedPath();
+			if (!file.getParent().equals(assetDirectory) || !file.getFileName().toString().matches("[0-9]{5}\\.bin")
+					|| !Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) || Files.size(file) != asset.size()) {
+				throw new IOException("Missing or unsafe staged refresh graph asset: " + asset.managedPath());
+			}
+			MessageDigest digest;
+			try {
+				digest = MessageDigest.getInstance("SHA-256");
+			} catch (NoSuchAlgorithmException failure) {
+				throw new IllegalStateException("SHA-256 is unavailable", failure);
+			}
+
+			// Stream the bytes instead of loading large PDFs into memory.
+			try (InputStream input = Files.newInputStream(file)) {
+				byte[] buffer = new byte[8192];
+				for (int count; (count = input.read(buffer)) != -1;) {
+					digest.update(buffer, 0, count);
+				}
+			}
+			String actual = HexFormat.of().formatHex(digest.digest());
+			if (!actual.equals(asset.sha256())) {
+				throw new IOException("Staged refresh graph asset checksum changed: " + asset.managedPath());
+			}
+		}
+		if (!assets.keySet().equals(expected.keySet())) {
+			throw new IOException("Staged refresh graph asset inventory is incomplete");
+		}
+		Set<String> represented = new HashSet<>();
+		for (Reference reference : index.references()) {
+			StagedAsset asset = assets.get(reference.managedPath());
+			AssetKind kind;
+			try {
+				kind = SubjectImportAssetStager.kindFor(reference);
+			} catch (IllegalArgumentException failure) {
+				throw new IOException("Unsupported refresh asset kind", failure);
+			}
+			if (asset == null || asset.kind() != kind || !asset.archivePath().equals(reference.archivePath())
+					|| !asset.sha256().equals(reference.sha256()) || asset.size() != reference.size()) {
+				throw new IOException(
+						"Refresh graph asset reference lacks verified staging: " + reference.managedPath());
+			}
+			represented.add(reference.managedPath());
+		}
+		if (!represented.equals(expected.keySet())) {
+			throw new IOException("Decoded refresh asset index differs from approval");
 		}
 	}
 

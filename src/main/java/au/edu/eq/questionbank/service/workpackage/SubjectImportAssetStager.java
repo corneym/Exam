@@ -10,14 +10,17 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Stream;
 
@@ -26,6 +29,7 @@ import org.apache.commons.compress.archivers.zip.ZipFile;
 
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ApplicationVersion;
+import au.edu.eq.questionbank.ManagedAssetPublicationLock;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkAssetIndex.Reference;
@@ -169,6 +173,162 @@ public final class SubjectImportAssetStager {
 	}
 
 	/**
+	 * Stages the exact approved incoming refresh archive and its binary assets.
+	 *
+	 * <p>
+	 * Embedded image identities are normalised into the approved comparison
+	 * namespace. Existing managed files are not modified.
+	 *
+	 * <p>
+	 * The caller must retain the publication lock and revalidate the approved
+	 * comparison under the SQLite writer reservation before publication.
+	 *
+	 * @param approval        exact approved refresh comparison
+	 * @param certificate     verified pre-refresh full backup
+	 * @param incomingArchive originating Subject snapshot
+	 * @param lock            held managed-asset publication lock
+	 * @return verified private archive and staged asset inventory
+	 * @throws IOException          if archive, backup or filesystem validation
+	 *                              fails
+	 * @throws NullPointerException if a required argument is null
+	 */
+	public StagedPackage stageRefresh(SubjectRefreshPlan.Approval approval, Certificate certificate,
+			Path incomingArchive, ManagedAssetPublicationLock lock) throws IOException {
+		Objects.requireNonNull(approval, "approval");
+		Objects.requireNonNull(certificate, "certificate");
+		Objects.requireNonNull(incomingArchive, "incomingArchive");
+		Objects.requireNonNull(lock, "lock");
+		lock.requireHeld(config.dataRoot());
+		SubjectRefreshPlan plan = approval.plan();
+		var expected = plan.evidence().incoming().fingerprint();
+		UUID packageId = expected.packageId();
+		SubjectImportBackupGate gate = new SubjectImportBackupGate(config);
+		gate.requireIntact(packageId, certificate);
+		Path source = incomingArchive.toAbsolutePath().normalize();
+		if (!Files.isRegularFile(source, LinkOption.NOFOLLOW_LINKS) || Files.size(source) > MAX_ARCHIVE_BYTES) {
+			throw new IOException("Incoming refresh package must be an ordinary supported archive");
+		}
+		Path root = config.dataRoot();
+		if (!Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) {
+			throw new IOException("Refresh data root must be an ordinary directory");
+		}
+		Path stagingParent = root.resolve(".subject-import-staging");
+		if (Files.exists(stagingParent, LinkOption.NOFOLLOW_LINKS)
+				&& !Files.isDirectory(stagingParent, LinkOption.NOFOLLOW_LINKS)) {
+			throw new IOException("Unsafe Subject refresh staging root");
+		}
+		Files.createDirectories(stagingParent);
+		if (!Files.isDirectory(stagingParent, LinkOption.NOFOLLOW_LINKS)) {
+			throw new IOException("Unsafe Subject refresh staging directory");
+		}
+		Path packageDirectory = stagingParent.resolve(packageId.toString());
+
+		// An existing package directory must be resolved through recovery.
+		Files.createDirectory(packageDirectory);
+		try {
+			Path archiveCopy = packageDirectory.resolve("incoming.examwork");
+			Files.copy(source, archiveCopy, LinkOption.NOFOLLOW_LINKS);
+			if (!Files.isRegularFile(archiveCopy, LinkOption.NOFOLLOW_LINKS)) {
+				throw new IOException("Staged refresh archive is not an ordinary file");
+			}
+			try (FileChannel channel = FileChannel.open(archiveCopy, StandardOpenOption.WRITE)) {
+				channel.force(true);
+			}
+
+			// Validate the private archive used by subsequent operations.
+			approval.requireFreshIncoming(archiveCopy);
+			ExamWorkManifest manifest = new ExamWorkArchiveValidator().validate(archiveCopy,
+					ApplicationVersion.current(), SqliteDatabase.latestSchemaVersion());
+			if (!manifest.packageId().equals(packageId) || !manifest.subjectName().equals(expected.subjectName())) {
+				throw new IOException("Staged refresh differs from approved identity");
+			}
+			Path assetDirectory = Files.createDirectory(packageDirectory.resolve("assets"));
+			List<StagedAsset> assets = extractRefreshAssets(plan, manifest, archiveCopy, assetDirectory);
+			gate.requireIntact(packageId, certificate);
+			return new StagedPackage(packageId, approval.approvalSha256(), packageDirectory, archiveCopy, assets);
+		} catch (IOException | RuntimeException failure) {
+			try {
+				deleteStagingTree(packageDirectory);
+			} catch (IOException cleanupFailure) {
+				failure.addSuppressed(cleanupFailure);
+			}
+			throw failure;
+		}
+	}
+
+	/**
+	 * Selects approved physical managed-file changes, excluding embedded images.
+	 *
+	 * @param plan approved refresh comparison
+	 * @return immutable changed physical asset inventory
+	 * @throws IOException if an approved destination is unsafe
+	 */
+	List<SubjectRefreshChangeClassifier.AssetChange> managedRefreshChanges(SubjectRefreshPlan plan) throws IOException {
+		Objects.requireNonNull(plan, "plan");
+		String subjectName = plan.evidence().incoming().fingerprint().subjectName();
+		List<SubjectRefreshChangeClassifier.AssetChange> managed = new ArrayList<>();
+		for (var change : plan.assetChanges()) {
+			Path destination = requireRefreshPath(change.managedPath(), subjectName);
+			if (isEmbeddedRefreshPath(destination, subjectName)) {
+
+				// A real file must not occupy the synthetic BLOB namespace.
+				if (Files.exists(destination, LinkOption.NOFOLLOW_LINKS)) {
+					throw new IOException(
+							"Physical file occupies reserved embedded-image path: " + change.managedPath());
+				}
+				continue;
+			}
+			if (change.kind() != SubjectRefreshChangeClassifier.ChangeKind.UNCHANGED) {
+				managed.add(change);
+			}
+		}
+		return List.copyOf(managed);
+	}
+
+	/**
+	 * Restricts complete refresh staging to physical additions and replacements.
+	 *
+	 * @param staged   complete verified incoming asset staging
+	 * @param approval exact approved refresh
+	 * @return publication-only view of the private staging directory
+	 * @throws IOException if staging differs from approval
+	 */
+	StagedPackage publicationStage(StagedPackage staged, SubjectRefreshPlan.Approval approval) throws IOException {
+		Objects.requireNonNull(staged, "staged");
+		Objects.requireNonNull(approval, "approval");
+		SubjectRefreshPlan plan = approval.plan();
+		if (!staged.packageId().equals(plan.evidence().incoming().fingerprint().packageId())
+				|| !staged.approvalSha256().equals(approval.approvalSha256())) {
+			throw new IOException("Refresh staging belongs to a different approval");
+		}
+		Map<String, SubjectRefreshChangeClassifier.AssetChange> expected = new HashMap<>();
+		for (var change : managedRefreshChanges(plan)) {
+			if (change.incoming() != null) {
+				expected.put(change.managedPath(), change);
+			}
+		}
+		List<StagedAsset> selected = new ArrayList<>();
+		for (StagedAsset asset : staged.assets()) {
+			if (asset.kind() != AssetKind.MANAGED_FILE) {
+				continue;
+			}
+			var change = expected.remove(asset.managedPath());
+			if (change == null) {
+				continue;
+			}
+			if (!asset.sha256().equals(change.incoming().sha256()) || asset.size() != change.incoming().size()) {
+				throw new IOException("Staged publication bytes differ from approval: " + asset.managedPath());
+			}
+			selected.add(asset);
+		}
+		if (!expected.isEmpty()) {
+			throw new IOException("Approved physical refresh assets are missing from staging");
+		}
+		return new StagedPackage(staged.packageId(), staged.approvalSha256(), staged.directory(), staged.archive(),
+				selected);
+	}
+
+	/**
 	 * Deletes only a package staging tree created by this operation.
 	 */
 	private void deleteStagingTree(Path directory) throws IOException {
@@ -277,6 +437,103 @@ public final class SubjectImportAssetStager {
 	}
 
 	/**
+	 * Extracts approved incoming assets in the comparison identity namespace.
+	 */
+	private List<StagedAsset> extractRefreshAssets(SubjectRefreshPlan plan, ExamWorkManifest manifest, Path archiveCopy,
+			Path assetDirectory) throws IOException {
+		Map<String, SubjectRefreshChangeClassifier.AssetChange> expected = new HashMap<>();
+		Set<Path> destinations = new HashSet<>();
+		String subjectName = manifest.subjectName();
+
+		// Validate additions, existing assets and removals before extraction.
+		for (var change : plan.assetChanges()) {
+			Path destination = requireRefreshPath(change.managedPath(), subjectName);
+			if (!destinations.add(destination)) {
+				throw new IOException("Ambiguous refresh destination: " + change.managedPath());
+			}
+			boolean embedded = isEmbeddedRefreshPath(destination, subjectName);
+			if (embedded) {
+				if (Files.exists(destination, LinkOption.NOFOLLOW_LINKS)) {
+					throw new IOException("Physical file occupies reserved embedded-image path");
+				}
+			} else if (change.current() == null) {
+				if (Files.exists(destination, LinkOption.NOFOLLOW_LINKS)) {
+					throw new IOException(
+							"Refresh addition would overwrite an existing managed file: " + change.managedPath());
+				}
+			} else if (!Files.isRegularFile(destination, LinkOption.NOFOLLOW_LINKS)) {
+				throw new IOException("Approved original managed file is missing: " + change.managedPath());
+			}
+			if (change.incoming() != null) {
+				expected.put(change.managedPath(), change);
+			}
+		}
+		try (ZipFile archive = ZipFile.builder().setPath(archiveCopy).get()) {
+			ZipArchiveEntry indexEntry = archive.getEntry(ExamWorkAssetIndex.INDEX_PATH);
+			if (indexEntry == null) {
+				throw new PackageFormatException("Subject refresh has no asset index");
+			}
+			ExamWorkAssetIndex original;
+			try (InputStream input = archive.getInputStream(indexEntry)) {
+				original = new ExamWorkJsonlCodec().readAssetIndex(input);
+			}
+			original.requireMatchingManifest(manifest);
+			ExamWorkAssetIndex normalised = new SubjectRefreshIdentityNormaliser().normaliseAssets(original,
+					plan.identities());
+			Map<String, StagedAsset> staged = new LinkedHashMap<>();
+			long stagedBytes = 0;
+			for (Reference reference : normalised.references()) {
+				var change = expected.get(reference.managedPath());
+				if (change == null || !change.incoming().sha256().equals(reference.sha256())
+						|| change.incoming().size() != reference.size()) {
+					throw new IOException(
+							"Incoming refresh asset differs from approved comparison: " + reference.managedPath());
+				}
+				AssetKind kind;
+				try {
+					kind = kindFor(reference);
+				} catch (IllegalArgumentException failure) {
+					throw new IOException("Unsupported refresh asset usage", failure);
+				}
+				Path destination = requireRefreshPath(reference.managedPath(), subjectName);
+				boolean embedded = isEmbeddedRefreshPath(destination, subjectName);
+				if (embedded != (kind == AssetKind.EMBEDDED_PNG)) {
+					throw new IOException("Refresh asset usage contradicts its managed namespace");
+				}
+				StagedAsset previous = staged.get(reference.managedPath());
+				if (previous != null) {
+					if (!previous.sha256().equals(reference.sha256()) || previous.size() != reference.size()
+							|| previous.kind() != kind) {
+						throw new IOException("Conflicting incoming refresh asset references");
+					}
+					continue;
+				}
+
+				// Bound logical staging expansion as well as ZIP expansion.
+				stagedBytes += reference.size();
+				if (stagedBytes > 1024L * 1024 * 1024 || staged.size() >= 100_000) {
+					throw new IOException("Refresh asset staging exceeds supported limits");
+				}
+				Path stagedPath = assetDirectory.resolve(String.format(Locale.ROOT, "%05d.bin", staged.size()));
+				StagedAsset asset = extractOne(archive, reference, stagedPath, kind);
+				staged.put(reference.managedPath(), asset);
+			}
+			if (!staged.keySet().equals(expected.keySet())) {
+				throw new IOException("Incoming refresh archive does not cover approved asset inventory");
+			}
+			return List.copyOf(staged.values());
+		}
+	}
+
+	/**
+	 * Identifies reserved synthetic paths for embedded database images.
+	 */
+	private boolean isEmbeddedRefreshPath(Path destination, String subjectName) {
+		Path embeddedRoot = layout.subjectDirectory(subjectName).resolve("exams").resolve("_examwork_embedded");
+		return destination.startsWith(embeddedRoot);
+	}
+
+	/**
 	 * Creates a SHA-256 digest using the standard JDK provider.
 	 */
 	private MessageDigest newDigest() {
@@ -285,6 +542,38 @@ public final class SubjectImportAssetStager {
 		} catch (NoSuchAlgorithmException exception) {
 			throw new IllegalStateException("SHA-256 is unavailable", exception);
 		}
+	}
+
+	/**
+	 * Resolves a refresh path within the selected Subject without traversing
+	 * symbolic links or non-directory intermediate components.
+	 */
+	private Path requireRefreshPath(String relativePath, String subjectName) throws IOException {
+		Path destination;
+		Path subjectRoot;
+		try {
+			destination = layout.resolve(relativePath);
+			subjectRoot = layout.subjectDirectory(subjectName);
+		} catch (IllegalArgumentException failure) {
+			throw new IOException("Invalid Subject refresh path", failure);
+		}
+		if (!destination.startsWith(subjectRoot) || destination.equals(subjectRoot)) {
+			throw new IOException("Refresh asset escapes its Subject: " + relativePath);
+		}
+		Path current = config.dataRoot();
+		for (Path component : config.dataRoot().relativize(destination)) {
+			current = current.resolve(component);
+			if (Files.isSymbolicLink(current)) {
+				throw new IOException("Symbolic link in refresh asset path: " + current);
+			}
+			if (!Files.exists(current, LinkOption.NOFOLLOW_LINKS)) {
+				continue;
+			}
+			if (!current.equals(destination) && !Files.isDirectory(current, LinkOption.NOFOLLOW_LINKS)) {
+				throw new IOException("Non-directory refresh path component: " + current);
+			}
+		}
+		return destination;
 	}
 
 	/**

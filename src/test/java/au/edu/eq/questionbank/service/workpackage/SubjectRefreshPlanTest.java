@@ -25,6 +25,75 @@ class SubjectRefreshPlanTest {
 	private static final String DESTINATION_DIGEST = "a".repeat(64);
 
 	@Test
+	void approvalFingerprintBindsApprovalRationale() throws Exception {
+		SubjectRefreshPlan reviewed = createPlan();
+		String first = reviewed.approve("Approved authoritative refresh").approvalSha256();
+		String second = reviewed.approve("Different approval rationale").approvalSha256();
+		assertTrue(first.matches("[0-9a-f]{64}"));
+		assertFalse(first.equals(second));
+	}
+
+	@Test
+	void approvalFingerprintBindsIdentityMappingsAndOperations() throws Exception {
+		SubjectRefreshPlan reviewed = createPlan();
+		String original = reviewed.approve("Approved refresh").approvalSha256();
+		var mappings = new HashMap<>(reviewed.identities());
+		mappings.replaceAll((_, _) -> UUID.randomUUID());
+		var changedIdentities = new SubjectRefreshPlan(reviewed.evidence(), reviewed.destinationContentSha256(),
+				mappings, reviewed.recordChanges(), reviewed.assetChanges());
+		assertFalse(original.equals(changedIdentities.approve("Approved refresh").approvalSha256()));
+		var changedRecords = new SubjectRefreshPlan(reviewed.evidence(), reviewed.destinationContentSha256(),
+				reviewed.identities(), List.of(), reviewed.assetChanges());
+		assertFalse(original.equals(changedRecords.approve("Approved refresh").approvalSha256()));
+		var changedAssets = new SubjectRefreshPlan(reviewed.evidence(), reviewed.destinationContentSha256(),
+				reviewed.identities(), reviewed.recordChanges(), List.of());
+		assertFalse(original.equals(changedAssets.approve("Approved refresh").approvalSha256()));
+		var changedDestination = new SubjectRefreshPlan(reviewed.evidence(), "f".repeat(64), reviewed.identities(),
+				reviewed.recordChanges(), reviewed.assetChanges());
+		assertFalse(original.equals(changedDestination.approve("Approved refresh").approvalSha256()));
+	}
+
+	@Test
+	void approvalFingerprintIsDeterministicForRegeneratedPlan() throws Exception {
+		SubjectRefreshPlan reviewed = createPlan();
+		var regenerated = new SubjectRefreshPlan(reviewed.evidence(), reviewed.destinationContentSha256(),
+				new HashMap<>(reviewed.identities()), new ArrayList<>(reviewed.recordChanges()),
+				new ArrayList<>(reviewed.assetChanges()));
+		var first = reviewed.approve("Approved refresh");
+		var second = regenerated.approve(" Approved refresh ");
+		assertEquals(first.approvalSha256(), second.approvalSha256());
+		assertTrue(first.approvalSha256().matches("[0-9a-f]{64}"));
+		first.requireUnchanged(regenerated);
+	}
+
+	@Test
+	void approvalFingerprintUsesCanonicalRecordValues() throws Exception {
+		SubjectRefreshPlan reviewed = createPlan();
+		var original = reviewed.recordChanges().getFirst();
+		var record = original.incoming();
+		var firstValues = JsonNodeFactory.instance.objectNode();
+		firstValues.put("marks", 3);
+		firstValues.put("question_text", "Updated question");
+		var secondValues = JsonNodeFactory.instance.objectNode();
+		secondValues.put("question_text", "Updated question");
+		secondValues.put("marks", 3);
+		var firstRecord = new ExchangeRecord(record.recordVersion(), record.recordType(), record.recordId(),
+				record.revisionId(), record.baselineRevisionId(), firstValues);
+		var secondRecord = new ExchangeRecord(record.recordVersion(), record.recordType(), record.recordId(),
+				record.revisionId(), record.baselineRevisionId(), secondValues);
+		var classifier = new SubjectRefreshChangeClassifier();
+		var first = new SubjectRefreshPlan(reviewed.evidence(), reviewed.destinationContentSha256(),
+				reviewed.identities(), classifier.compareRecords(List.of(original.current()), List.of(firstRecord)),
+				reviewed.assetChanges());
+		var second = new SubjectRefreshPlan(reviewed.evidence(), reviewed.destinationContentSha256(),
+				reviewed.identities(), classifier.compareRecords(List.of(original.current()), List.of(secondRecord)),
+				reviewed.assetChanges());
+		assertEquals(first, second);
+		assertEquals(first.approve("Approved refresh").approvalSha256(),
+				second.approve("Approved refresh").approvalSha256());
+	}
+
+	@Test
 	void approvalRejectsChangedDestinationContent() throws Exception {
 		SubjectRefreshPlan reviewed = createPlan();
 		var approval = reviewed.approve("Approved refresh");
