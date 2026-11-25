@@ -366,6 +366,11 @@ public final class SqliteSubjectImportLedger {
 
 	/**
 	 * Identifies the result of one reviewed record or asset.
+	 *
+	 * <p>
+	 * Subject refresh entries retain the existing persisted outcome vocabulary. For
+	 * refresh operations, the explanation records the exact authoritative change
+	 * classification, including replacement and removal.
 	 */
 	public enum ItemOutcome {
 		/** New canonical master record inserted. */
@@ -374,7 +379,10 @@ public final class SqliteSubjectImportLedger {
 		ALIAS_LINKED,
 		/** Existing master record or asset retained unchanged. */
 		PRESERVED,
-		/** Verified packaged asset published in managed storage. */
+		/**
+		 * Verified packaged asset published, or approved authoritative refresh
+		 * difference applied to the destination.
+		 */
 		COPIED,
 		/** Coordinator rejected the proposed change. */
 		REJECTED,

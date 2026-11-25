@@ -11,9 +11,11 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Stream;
 
@@ -269,6 +271,132 @@ public final class SubjectImportCoordinator {
 	}
 
 	/**
+	 * Executes an explicitly approved refresh of an externally authoritative
+	 * Subject, or reports an exact previously applied refresh as a replay.
+	 *
+	 * <p>
+	 * The complete operation runs under the shared managed-asset publication lock.
+	 * A verified full backup precedes all graph and managed-file changes. The
+	 * reviewed comparison is regenerated under a SQLite writer reservation before
+	 * any mutation is permitted.
+	 *
+	 * <p>
+	 * Graph changes, identity aliases and retirements, package audit records and
+	 * imported authority advancement commit in one SQLite transaction. Durable
+	 * publication evidence supports filesystem recovery if the transaction fails or
+	 * the application is interrupted.
+	 *
+	 * @param approval        exact reviewed and explicitly approved refresh
+	 * @param incomingArchive originating snapshot selected during review
+	 * @return committed refresh result or exact idempotent replay
+	 * @throws SQLException         if destination validation or persistence fails
+	 * @throws IOException          if archive, approval, publication or recovery
+	 *                              fails
+	 * @throws BackupException      if a verified full backup cannot be created
+	 * @throws NullPointerException if either argument is null
+	 */
+	public Result executeRefresh(SubjectRefreshPlan.Approval approval, Path incomingArchive)
+			throws SQLException, IOException, BackupException {
+		Objects.requireNonNull(approval, "approval");
+		Objects.requireNonNull(incomingArchive, "incomingArchive");
+		SubjectRefreshPlan plan = approval.plan();
+		var incoming = plan.evidence().incoming().fingerprint();
+		UUID packageId = incoming.packageId();
+		ManagedDataLayout layout = new ManagedDataLayout(config.dataRoot());
+		try (var lock = ManagedAssetPublicationLock.acquire(config.dataRoot())) {
+
+			// Resolve interrupted Subject and assignment publication
+			// before inspecting the current authoritative destination.
+			ManagedAssetPublicationRecovery.recoverPending(config, lock);
+			approval.requireFreshIncoming(incomingArchive);
+			var existing = ledger.find(packageId);
+			if (existing.isPresent()) {
+				return requireRefreshReplay(approval, existing.orElseThrow());
+			}
+			SubjectSnapshotIntakePreview preview = new SubjectSnapshotIntakePreview(database);
+
+			// Reject already stale approvals before creating an unnecessary
+			// backup. The decisive revalidation occurs again under reservation.
+			approval.requireUnchanged(preview.previewRefresh(incomingArchive, layout));
+			Path backupDirectory = config.dataRoot().resolve("backups").resolve("pre-import");
+			Files.createDirectories(backupDirectory);
+			SubjectImportBackupGate gate = new SubjectImportBackupGate(config);
+			Certificate backup = gate.createVerifiedFullBackup(packageId, backupDirectory);
+			SubjectImportAssetStager stager = new SubjectImportAssetStager(config);
+			StagedPackage staged = stager.stageRefresh(approval, backup, incomingArchive, lock);
+			SubjectImportPublicationJournal journal = new SubjectImportPublicationJournal(config);
+			boolean committed = false;
+			try {
+				SubjectImportGraphWriter writer = new SubjectImportGraphWriter(database);
+				try (Connection connection = database.openConnection()) {
+					connection.setAutoCommit(false);
+					try {
+						reserveWriter(connection);
+						approval.requireUnchanged(preview.previewRefresh(staged.archive(), layout));
+						var physicalChanges = stager.managedRefreshChanges(plan);
+						StagedPackage publication = stager.publicationStage(staged, approval);
+						gate.requireIntact(packageId, backup);
+
+						// Establish durable original-file recovery evidence
+						// before exposing any filesystem changes.
+						journal.prepareRefresh(publication, backup, physicalChanges, lock);
+						var applied = writer.applyRefreshGraph(connection, approval, staged, layout, lock);
+						requireRemovedRefreshPathsUnreferenced(connection, layout, physicalChanges);
+						requireForeignKeyIntegrity(connection);
+						gate.requireIntact(packageId, backup);
+
+						// The database changes remain uncommitted while
+						// the approved managed files are published.
+						journal.publishFiles(packageId);
+						journal.verifyPublished(packageId);
+						gate.requireIntact(packageId, backup);
+						recordRefreshPackage(connection, approval, backup);
+						recordRefreshItems(connection, plan, applied);
+						new SqliteImportedSubjectAuthorityRepository(database).recordImported(connection,
+								plan.evidence().authority().subjectLocalId(), packageId);
+						connection.commit();
+						committed = true;
+					} catch (SQLException | IOException | RuntimeException failure) {
+						try {
+							connection.rollback();
+						} catch (SQLException rollbackFailure) {
+							failure.addSuppressed(rollbackFailure);
+						}
+						throw failure;
+					}
+				}
+
+				// Once committed, cleanup failure must never be represented
+				// as a rolled-back import. Retain the recoverable journal.
+				try {
+					journal.recover(packageId, lock);
+				} catch (SQLException | IOException cleanupFailure) {
+					return new Result(packageId, true, false, backup.backupPath().toString());
+				}
+				return new Result(packageId, true, false, backup.backupPath().toString());
+			} catch (SQLException | IOException | RuntimeException failure) {
+				if (!committed) {
+					try {
+
+						// Preparation can itself fail after writing some
+						// private evidence. Inspect the durable journal
+						// rather than relying on an in-memory prepared flag.
+						Path intent = staged.directory().resolve("publication.properties");
+						if (Files.exists(intent, LinkOption.NOFOLLOW_LINKS)) {
+							journal.recover(packageId, lock);
+						} else if (Files.exists(staged.directory(), LinkOption.NOFOLLOW_LINKS)) {
+							discardUnpublishedStaging(staged.directory());
+						}
+					} catch (SQLException | IOException recoveryFailure) {
+						failure.addSuppressed(recoveryFailure);
+					}
+				}
+				throw failure;
+			}
+		}
+	}
+
+	/**
 	 * Acquires the shared publication lock and restores both kinds of interrupted
 	 * package publication. The path argument must identify this root's Subject
 	 * stage.
@@ -383,6 +511,100 @@ public final class SubjectImportCoordinator {
 	}
 
 	/**
+	 * Records the actual approved refresh operations and their canonical identity
+	 * or retirement evidence.
+	 */
+	private void recordRefreshItems(Connection connection, SubjectRefreshPlan plan,
+			Map<SubjectRefreshChangeClassifier.RecordKey, Long> applied) throws SQLException {
+		UUID packageId = plan.evidence().incoming().fingerprint().packageId();
+		SqlitePortableIdentityRepository identities = new SqlitePortableIdentityRepository(database);
+		for (var change : plan.recordChanges()) {
+			EntityType type = EntityType.valueOf(change.key().recordType());
+			UUID canonicalId = change.key().recordId();
+			UUID revision;
+			String classification = switch (change.kind()) {
+			case ADD -> "NEW";
+			case UNCHANGED -> "IDENTICAL";
+			case UPDATE, REMOVE, REVISION_ONLY -> "CONFLICT";
+			};
+			ItemOutcome outcome = switch (change.kind()) {
+			case ADD -> ItemOutcome.INSERTED;
+			case UNCHANGED -> ItemOutcome.PRESERVED;
+			case UPDATE, REMOVE, REVISION_ONLY -> ItemOutcome.COPIED;
+			};
+			if (change.kind() == SubjectRefreshChangeClassifier.ChangeKind.REMOVE) {
+
+				// The graph writer has verified the corresponding durable
+				// retirement. Record the retired canonical revision.
+				if (identities.findByPortableId(connection, type, canonicalId).isPresent()) {
+					throw new SQLException("Removed refresh identity remains active");
+				}
+				revision = change.current().revisionId();
+			} else {
+				var identity = identities.findByPortableId(connection, type, canonicalId)
+						.orElseThrow(() -> new SQLException("Missing applied refresh canonical identity"));
+				Long appliedLocalId = applied.get(change.key());
+				if (appliedLocalId == null) {
+
+					// An unchanged global provider may no longer be
+					// referenced by the refreshed Subject.
+					if (type != EntityType.EXAM_PROVIDER
+							|| change.kind() != SubjectRefreshChangeClassifier.ChangeKind.UNCHANGED) {
+						throw new SQLException("Missing applied refresh record mapping");
+					}
+				} else if (identity.localId() != appliedLocalId.longValue()) {
+					throw new SQLException("Applied refresh identity mapping differs");
+				}
+				revision = identity.revisionId();
+			}
+			String explanation = "Refresh operation: " + change.kind().name() + "; previous revision: "
+					+ (change.current() == null ? "none" : change.current().revisionId()) + "; resulting revision: "
+					+ (change.kind() == SubjectRefreshChangeClassifier.ChangeKind.REMOVE ? "retired" : revision);
+			ledger.recordItem(connection, new ItemEntry(packageId, EntryKind.RECORD, type.name() + ":" + canonicalId,
+					classification, CoordinatorDecision.ACCEPT, outcome, canonicalId, revision, explanation));
+		}
+		for (var change : plan.assetChanges()) {
+			String classification = switch (change.kind()) {
+			case ADD -> "NEW";
+			case UNCHANGED -> "IDENTICAL";
+			case UPDATE, REMOVE -> "CONFLICT";
+			case REVISION_ONLY -> throw new SQLException("Invalid asset revision-only operation");
+			};
+			ItemOutcome outcome = change.kind() == SubjectRefreshChangeClassifier.ChangeKind.UNCHANGED
+					? ItemOutcome.PRESERVED
+					: ItemOutcome.COPIED;
+			String previous = change.current() == null ? "none"
+					: change.current().sha256() + " (" + change.current().size() + " bytes)";
+			String incoming = change.incoming() == null ? "none"
+					: change.incoming().sha256() + " (" + change.incoming().size() + " bytes)";
+			String explanation = "Refresh operation: " + change.kind().name() + "; previous content: " + previous
+					+ "; resulting content: " + incoming;
+			ledger.recordItem(connection, new ItemEntry(packageId, EntryKind.ASSET, change.managedPath(),
+					classification, CoordinatorDecision.ACCEPT, outcome, null, null, explanation));
+		}
+	}
+
+	/**
+	 * Records terminal refresh approval and originating freshness evidence within
+	 * the graph transaction.
+	 */
+	private void recordRefreshPackage(Connection connection, SubjectRefreshPlan.Approval approval, Certificate backup)
+			throws SQLException, IOException {
+		SubjectRefreshPlan plan = approval.plan();
+		var incomingEvidence = plan.evidence().incoming();
+		var incoming = incomingEvidence.fingerprint();
+		PackageEntry entry = new PackageEntry(incoming.packageId(), incoming.archiveSha256(),
+				incoming.originInstallationId(), incoming.subjectId(), plan.destinationContentSha256(),
+				approval.approvalSha256(), PackageOutcome.APPLIED, backup.backupPath().toString(),
+				approval.approvalNote());
+		OriginatingSnapshotEvidence evidence = new OriginatingSnapshotEvidence(incomingEvidence.createdAt(),
+				incoming.contentSha256());
+		if (!ledger.recordPackage(connection, entry, evidence)) {
+			throw new SQLException("Refresh package was recorded concurrently");
+		}
+	}
+
+	/**
 	 * Confirms SQLite relationships before committing the imported graph.
 	 */
 	private void requireForeignKeyIntegrity(Connection connection) throws SQLException {
@@ -450,6 +672,87 @@ public final class SubjectImportCoordinator {
 		// planning and the reserved installation transaction.
 		if (!approved.equals(current)) {
 			throw new SQLException("Shared examination providers changed " + "since import preparation");
+		}
+	}
+
+	/**
+	 * Recognises an exact previously committed refresh without changing authority,
+	 * graph records, assets or backup history.
+	 */
+	private Result requireRefreshReplay(SubjectRefreshPlan.Approval approval, PackageEntry previous)
+			throws SQLException, IOException {
+		SubjectRefreshPlan plan = approval.plan();
+		var incomingEvidence = plan.evidence().incoming();
+		var incoming = incomingEvidence.fingerprint();
+		if (!previous.packageId().equals(incoming.packageId())
+				|| !previous.archiveSha256().equals(incoming.archiveSha256())
+				|| !previous.originInstallationId().equals(incoming.originInstallationId())
+				|| !previous.subjectPortableId().equals(incoming.subjectId())
+				|| !previous.masterStateSha256().equals(plan.destinationContentSha256())
+				|| !previous.approvalSha256().equals(approval.approvalSha256())) {
+			throw new IOException(
+					"Refresh package identity already recorded " + "with different approval or archive evidence");
+		}
+		if (previous.outcome() != PackageOutcome.APPLIED) {
+			throw new IOException("This refresh package was previously rejected");
+		}
+		var recorded = ledger.findOriginatingSnapshotEvidence(previous.packageId())
+				.orElseThrow(() -> new IOException("Recorded refresh has no originating freshness evidence"));
+		var expected = new OriginatingSnapshotEvidence(incomingEvidence.createdAt(), incoming.contentSha256());
+		if (!recorded.equals(expected)) {
+			throw new IOException("Recorded refresh freshness evidence differs from approval");
+		}
+
+		// Replaying an older, already accepted package must not replace
+		// the latest imported authority with that older package.
+		return new Result(previous.packageId(), true, true, previous.backupArchivePath());
+	}
+
+	/**
+	 * Prevents publication of a managed-file removal while any surviving
+	 * authoritative database record still references that file.
+	 */
+	private void requireRemovedRefreshPathsUnreferenced(Connection connection, ManagedDataLayout layout,
+			List<SubjectRefreshChangeClassifier.AssetChange> physicalChanges) throws SQLException, IOException {
+		Set<Path> removed = new HashSet<>();
+		for (var change : physicalChanges) {
+			if (change.kind() == SubjectRefreshChangeClassifier.ChangeKind.REMOVE) {
+				removed.add(layout.resolve(change.managedPath()));
+			}
+		}
+		if (removed.isEmpty()) {
+			return;
+		}
+		try (Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery("""
+				SELECT relative_path AS managed_path
+				FROM source_documents
+
+				UNION
+
+				SELECT source_pdf_path AS managed_path
+				FROM syllabus_versions
+				WHERE source_pdf_path IS NOT NULL
+				""")) {
+			while (rows.next()) {
+				String relativePath = rows.getString("managed_path");
+				Path reference;
+				try {
+					reference = layout.resolve(relativePath);
+				} catch (IllegalArgumentException | NullPointerException failure) {
+					throw new IOException("Cannot verify surviving managed-file references", failure);
+				}
+				for (Path destination : removed) {
+					boolean same = reference.equals(destination);
+					if (!same && Files.isRegularFile(reference, LinkOption.NOFOLLOW_LINKS)
+							&& Files.isRegularFile(destination, LinkOption.NOFOLLOW_LINKS)) {
+						same = Files.isSameFile(reference, destination);
+					}
+					if (same) {
+						throw new IOException("Approved refresh removal still has "
+								+ "an authoritative database reference: " + relativePath);
+					}
+				}
+			}
 		}
 	}
 

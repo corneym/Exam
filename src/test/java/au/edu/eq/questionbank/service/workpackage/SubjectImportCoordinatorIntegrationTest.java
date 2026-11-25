@@ -464,6 +464,339 @@ class SubjectImportCoordinatorIntegrationTest {
 	}
 
 	@Test
+	void refreshExecutionCommitsGraphAssetsLedgerAndAuthorityTogether() throws Exception {
+		RefreshStagingFixture original = createRefreshStagingFixture();
+		SqliteDatabase sourceDatabase = new SqliteDatabase(original.source().databasePath());
+
+		// Include an authoritative addition and removal alongside
+		// the existing Question update and managed-file changes.
+		execute(sourceDatabase, """
+				INSERT INTO source_questions (
+				    id,
+				    booklet_id,
+				    source_question_code
+				)
+				VALUES (92, 61, '2')
+				""", """
+				DELETE FROM question_content_parts
+				WHERE question_id = 81
+				  AND image_id = 131
+				""", """
+				DELETE FROM question_images
+				WHERE id = 131
+				""");
+		RefreshStagingFixture fixture = exportRefreshRemovalFixture(original, "refresh-complete-execution.examwork");
+		SqliteDatabase database = fixture.destinationDatabase();
+		SubjectImportCoordinator coordinator = new SubjectImportCoordinator(fixture.destination());
+
+		// Import another independently authoritative Subject.
+		Path chemistry = createIndependentSnapshot("Chemistry", "complete-refresh-chemistry-source");
+		var preview = new SubjectSnapshotIntakePreview(database);
+		assertTrue(coordinator.executeNewSubject(preview.inspect(chemistry), chemistry).applied());
+		ManagedDataLayout layout = new ManagedDataLayout(fixture.destination().dataRoot());
+		SubjectRefreshPlan plan = preview.previewRefresh(fixture.newer(), layout);
+		var approval = plan.approve("Approve complete authoritative Biology refresh");
+		long chemistryId = findSubjectId(database, "Chemistry");
+		var authorities = new SqliteImportedSubjectAuthorityRepository(database);
+		var chemistryAuthority = authorities.find(chemistryId).orElseThrow();
+		var identities = new SqlitePortableIdentityRepository(database);
+		var questionChange = plan.recordChanges().stream()
+				.filter(change -> "QUESTION".equals(change.key().recordType())).findFirst().orElseThrow();
+		var originalQuestion = identities
+				.findByPortableId(SqlitePortableIdentityRepository.EntityType.QUESTION, questionChange.key().recordId())
+				.orElseThrow();
+		var imageRemoval = plan.recordChanges().stream()
+				.filter(change -> "QUESTION_IMAGE".equals(change.key().recordType()))
+				.filter(change -> change.kind() == SubjectRefreshChangeClassifier.ChangeKind.REMOVE).findFirst()
+				.orElseThrow();
+		var result = coordinator.executeRefresh(approval, fixture.newer());
+		assertTrue(result.applied());
+		assertFalse(result.replay());
+		assertEquals(plan.evidence().incoming().fingerprint().packageId(), result.packageId());
+		Path backup = Path.of(result.backupArchivePath());
+		assertTrue(Files.isRegularFile(backup));
+		assertTrue(backup.startsWith(fixture.destination().dataRoot().resolve("backups").resolve("pre-import")));
+		assertEquals("Updated authoritative question document",
+				Files.readString(layout.resolve("subjects/Biology/exams/questions.pdf")));
+		assertEquals("Biology answer document", Files.readString(layout.resolve("subjects/Biology/exams/answers.pdf")));
+		assertEquals("New authoritative notes",
+				Files.readString(layout.resolve("subjects/Biology/exams/new-notes.txt")));
+		assertFalse(Files.exists(layout.resolve("subjects/Biology/exams/retired-notes.txt")));
+		assertEquals("Chemistry question document",
+				Files.readString(layout.resolve("subjects/Chemistry/exams/questions.pdf")));
+		assertEquals(chemistryAuthority, authorities.find(chemistryId).orElseThrow());
+		long biologyId = plan.evidence().authority().subjectLocalId();
+		var updatedAuthority = authorities.find(biologyId).orElseThrow();
+		assertEquals(plan.evidence().authority().originInstallationId(), updatedAuthority.originInstallationId());
+		assertEquals(plan.evidence().authority().originSubjectPortableId(), updatedAuthority.originSubjectPortableId());
+		assertEquals(result.packageId(), updatedAuthority.latestPackageId());
+		assertEquals(plan.evidence().incoming().fingerprint().archiveSha256(), updatedAuthority.archiveSha256());
+		var updatedQuestion = identities
+				.findByPortableId(SqlitePortableIdentityRepository.EntityType.QUESTION, questionChange.key().recordId())
+				.orElseThrow();
+		assertEquals(originalQuestion.localId(), updatedQuestion.localId());
+		assertEquals(originalQuestion.portableId(), updatedQuestion.portableId());
+		assertEquals(questionChange.incoming().revisionId(), updatedQuestion.revisionId());
+		assertTrue(identities.findByPortableId(SqlitePortableIdentityRepository.EntityType.QUESTION_IMAGE,
+				imageRemoval.key().recordId()).isEmpty());
+		var ledger = new SqliteSubjectImportLedger(database);
+		var packet = ledger.find(result.packageId()).orElseThrow();
+		assertEquals(SqliteSubjectImportLedger.PackageOutcome.APPLIED, packet.outcome());
+		assertEquals(approval.approvalSha256(), packet.approvalSha256());
+		assertEquals(plan.destinationContentSha256(), packet.masterStateSha256());
+		assertEquals(result.backupArchivePath(), packet.backupArchivePath());
+		var evidence = ledger.findOriginatingSnapshotEvidence(result.packageId()).orElseThrow();
+		assertEquals(plan.evidence().incoming().createdAt(), evidence.createdAt());
+		assertEquals(plan.evidence().incoming().fingerprint().contentSha256(), evidence.contentSha256());
+		var items = ledger.findItems(result.packageId());
+		assertEquals(plan.recordChanges().size() + plan.assetChanges().size(), items.size());
+		assertTrue(items.stream().anyMatch(item -> item.key().equals("QUESTION_IMAGE:" + imageRemoval.key().recordId())
+				&& item.explanation().startsWith("Refresh operation: REMOVE")));
+		assertTrue(items.stream().anyMatch(item -> item.key().endsWith("/questions.pdf")
+				&& item.explanation().startsWith("Refresh operation: UPDATE")));
+		assertTrue(items.stream().anyMatch(item -> item.key().endsWith("/new-notes.txt")
+				&& item.explanation().startsWith("Refresh operation: ADD")));
+		assertTrue(items.stream().anyMatch(item -> item.key().endsWith("/retired-notes.txt")
+				&& item.explanation().startsWith("Refresh operation: REMOVE")));
+		try (Connection connection = database.openConnection()) {
+			assertEquals(2, count(connection, "SELECT COUNT(*) FROM subjects"));
+			assertEquals(1, count(connection, "SELECT COUNT(*) FROM exam_providers"));
+			assertEquals(1, count(connection, "SELECT COUNT(*) FROM questions WHERE marks = 3"));
+			assertEquals(1, count(connection, "SELECT COUNT(*) FROM questions WHERE marks = 2"));
+			assertEquals(3, count(connection, "SELECT COUNT(*) FROM source_questions"));
+			assertEquals(1, count(connection, "SELECT COUNT(*) FROM question_images"));
+			assertEquals(2, count(connection, "SELECT COUNT(*) FROM shared_question_context_images"));
+			assertEquals(3, count(connection, "SELECT COUNT(*) FROM subject_import_packages"));
+		}
+		assertFalse(Files.exists(refreshStageDirectory(fixture)));
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void refreshExecutionRejectsArchiveSubstitution() throws Exception {
+		RefreshStagingFixture fixture = createRefreshStagingFixture();
+		var approval = fixture.plan().approve("Approve exact reviewed snapshot");
+		Path replacement = createIndependentSnapshot("Biology", "refresh-execution-substitute");
+		SubjectImportCoordinator coordinator = new SubjectImportCoordinator(fixture.destination());
+		long originalBackups = countRefreshBackups(fixture.destination());
+		assertThrows(IOException.class, () -> coordinator.executeRefresh(approval, replacement));
+		assertEquals(originalBackups, countRefreshBackups(fixture.destination()));
+		assertFalse(Files.exists(refreshStageDirectory(fixture)));
+		assertRefreshDestinationUnchanged(fixture);
+	}
+
+	@Test
+	void refreshExecutionRejectsStaleDestinationApproval() throws Exception {
+		RefreshStagingFixture fixture = createRefreshStagingFixture();
+		SqliteDatabase database = fixture.destinationDatabase();
+		var approval = fixture.plan().approve("Approve exact destination comparison");
+
+		// Simulate destination state changing after approval.
+		// Ordinary application editing of an imported Subject remains
+		// prohibited; this is deliberately injected persistence state.
+		execute(database, """
+				UPDATE questions
+				SET marks = 9
+				WHERE marks = 2
+				""");
+		long originalBackups = countRefreshBackups(fixture.destination());
+		SubjectImportCoordinator coordinator = new SubjectImportCoordinator(fixture.destination());
+		assertThrows(IOException.class, () -> coordinator.executeRefresh(approval, fixture.newer()));
+		assertEquals(originalBackups, countRefreshBackups(fixture.destination()));
+		var authorities = new SqliteImportedSubjectAuthorityRepository(database);
+		assertEquals(fixture.plan().evidence().authority(),
+				authorities.find(fixture.plan().evidence().authority().subjectLocalId()).orElseThrow());
+		assertTrue(new SqliteSubjectImportLedger(database)
+				.find(fixture.plan().evidence().incoming().fingerprint().packageId()).isEmpty());
+		try (Connection connection = database.openConnection()) {
+			assertEquals(1, count(connection, "SELECT COUNT(*) FROM questions WHERE marks = 9"));
+			assertEquals(0, count(connection, "SELECT COUNT(*) FROM questions WHERE marks = 3"));
+			assertEquals(1, count(connection, "SELECT COUNT(*) FROM subject_import_packages"));
+		}
+		Path exams = fixture.destination().dataRoot().resolve("subjects/Biology/exams");
+		assertEquals("Biology question document", Files.readString(exams.resolve("questions.pdf")));
+		assertTrue(Files.exists(exams.resolve("retired-notes.txt")));
+		assertFalse(Files.exists(exams.resolve("new-notes.txt")));
+		assertFalse(Files.exists(refreshStageDirectory(fixture)));
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void refreshExecutionReplaysWithoutAdditionalBackupOrMutation() throws Exception {
+		RefreshStagingFixture fixture = createRefreshStagingFixture();
+		SqliteDatabase database = fixture.destinationDatabase();
+		var plan = fixture.plan();
+		var approval = plan.approve("Approve authoritative refresh");
+		SubjectImportCoordinator coordinator = new SubjectImportCoordinator(fixture.destination());
+		var first = coordinator.executeRefresh(approval, fixture.newer());
+		assertTrue(first.applied());
+		assertFalse(first.replay());
+		long backupCount = countRefreshBackups(fixture.destination());
+		var ledger = new SqliteSubjectImportLedger(database);
+		var originalPacket = ledger.find(first.packageId()).orElseThrow();
+		var originalItems = ledger.findItems(first.packageId());
+		var authorities = new SqliteImportedSubjectAuthorityRepository(database);
+		long subjectId = plan.evidence().authority().subjectLocalId();
+		var originalAuthority = authorities.find(subjectId).orElseThrow();
+		var replay = coordinator.executeRefresh(approval, fixture.newer());
+		assertTrue(replay.applied());
+		assertTrue(replay.replay());
+		assertEquals(first.packageId(), replay.packageId());
+		assertEquals(first.backupArchivePath(), replay.backupArchivePath());
+		assertEquals(backupCount, countRefreshBackups(fixture.destination()));
+		assertEquals(originalPacket, ledger.find(first.packageId()).orElseThrow());
+		assertEquals(originalItems, ledger.findItems(first.packageId()));
+		assertEquals(originalAuthority, authorities.find(subjectId).orElseThrow());
+
+		// The same package UUID cannot be replayed using a different
+		// approval rationale or different reviewed operations.
+		var differentApproval = plan.approve("Different approval rationale");
+		assertThrows(IOException.class, () -> coordinator.executeRefresh(differentApproval, fixture.newer()));
+		assertEquals(backupCount, countRefreshBackups(fixture.destination()));
+		try (Connection connection = database.openConnection()) {
+			assertEquals(1, count(connection, "SELECT COUNT(*) FROM questions"));
+			assertEquals(1, count(connection, "SELECT COUNT(*) FROM questions WHERE marks = 3"));
+			assertEquals(2, count(connection, "SELECT COUNT(*) FROM subject_import_packages"));
+		}
+		assertFalse(Files.exists(refreshStageDirectory(fixture)));
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void refreshExecutionRollsBackGraphAssetsLedgerAndAuthorityOnFailure() throws Exception {
+		RefreshStagingFixture original = createRefreshStagingFixture();
+		SqliteDatabase sourceDatabase = new SqliteDatabase(original.source().databasePath());
+
+		// Include an actual portable retirement and new alias in the
+		// transaction that will subsequently be forced to fail.
+		execute(sourceDatabase, """
+				INSERT INTO source_questions (
+				    id,
+				    booklet_id,
+				    source_question_code
+				)
+				VALUES (92, 61, '2')
+				""", """
+				DELETE FROM question_content_parts
+				WHERE question_id = 81
+				  AND image_id = 131
+				""", """
+				DELETE FROM question_images
+				WHERE id = 131
+				""");
+		RefreshStagingFixture fixture = exportRefreshRemovalFixture(original, "refresh-terminal-failure.examwork");
+		SqliteDatabase database = fixture.destinationDatabase();
+		var plan = fixture.plan();
+		var approval = plan.approve("Approve refresh with injected authority failure");
+		long originalAliases;
+		long originalRetirements;
+		long originalDecisions;
+		try (Connection connection = database.openConnection()) {
+			originalAliases = count(connection, "SELECT COUNT(*) FROM portable_identity_aliases");
+			originalRetirements = count(connection, "SELECT COUNT(*) FROM portable_entity_retirements");
+			originalDecisions = count(connection, "SELECT COUNT(*) FROM subject_import_decisions");
+		}
+
+		// Fail after graph mutation, file publication, retirement,
+		// alias creation and terminal ledger recording.
+		execute(database, """
+				CREATE TRIGGER test_reject_refresh_authority
+				BEFORE UPDATE ON imported_subject_authorities
+				BEGIN
+				    SELECT RAISE(
+				        ABORT,
+				        'Injected refresh authority advancement failure'
+				    );
+				END
+				""");
+		SubjectImportCoordinator coordinator = new SubjectImportCoordinator(fixture.destination());
+		SQLException failure = assertThrows(SQLException.class,
+				() -> coordinator.executeRefresh(approval, fixture.newer()));
+		assertTrue(failure.getMessage().contains("Injected refresh authority advancement failure"));
+		assertRefreshDestinationUnchanged(fixture);
+		assertFalse(Files.exists(refreshStageDirectory(fixture)));
+		try (Connection connection = database.openConnection()) {
+			assertEquals(originalAliases, count(connection, "SELECT COUNT(*) FROM portable_identity_aliases"));
+			assertEquals(originalRetirements, count(connection, "SELECT COUNT(*) FROM portable_entity_retirements"));
+			assertEquals(originalDecisions, count(connection, "SELECT COUNT(*) FROM subject_import_decisions"));
+			assertEquals(1, count(connection, "SELECT COUNT(*) FROM source_questions"));
+		}
+		database.verifyIntegrity();
+		execute(database, """
+				DROP TRIGGER test_reject_refresh_authority
+				""");
+
+		// The identical previously approved operation can be retried
+		// once rollback and managed-file recovery have completed.
+		var retry = coordinator.executeRefresh(approval, fixture.newer());
+		assertTrue(retry.applied());
+		assertFalse(retry.replay());
+		try (Connection connection = database.openConnection()) {
+			assertEquals(2, count(connection, "SELECT COUNT(*) FROM source_questions"));
+			assertEquals(0, count(connection, "SELECT COUNT(*) FROM question_images"));
+			assertEquals(1, count(connection, "SELECT COUNT(*) FROM questions WHERE marks = 3"));
+			assertEquals(2, count(connection, "SELECT COUNT(*) FROM subject_import_packages"));
+			assertEquals(originalRetirements + 1,
+					count(connection, "SELECT COUNT(*) FROM portable_entity_retirements"));
+		}
+		var authority = new SqliteImportedSubjectAuthorityRepository(database)
+				.find(plan.evidence().authority().subjectLocalId()).orElseThrow();
+		assertEquals(retry.packageId(), authority.latestPackageId());
+		Path exams = fixture.destination().dataRoot().resolve("subjects/Biology/exams");
+		assertEquals("Updated authoritative question document", Files.readString(exams.resolve("questions.pdf")));
+		assertTrue(Files.exists(exams.resolve("new-notes.txt")));
+		assertFalse(Files.exists(exams.resolve("retired-notes.txt")));
+		assertFalse(Files.exists(refreshStageDirectory(fixture)));
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void refreshExecutionSubsequentIdenticalSnapshotAdvancesAuthority() throws Exception {
+		RefreshStagingFixture fixture = createRefreshStagingFixture();
+		SqliteDatabase database = fixture.destinationDatabase();
+		SubjectImportCoordinator coordinator = new SubjectImportCoordinator(fixture.destination());
+		var firstApproval = fixture.plan().approve("Approve first authoritative refresh");
+		var first = coordinator.executeRefresh(firstApproval, fixture.newer());
+		assertTrue(first.applied());
+		SqliteDatabase sourceDatabase = new SqliteDatabase(fixture.source().databasePath());
+		Path later = directory.resolve("refresh-later-identical.examwork");
+
+		// Export another package without changing any authoritative
+		// originating domain records or managed assets.
+		new SubjectSnapshotExporter(sourceDatabase, new ManagedDataLayout(fixture.source().dataRoot())).export(1L,
+				later);
+		var preview = new SubjectSnapshotIntakePreview(database);
+		ManagedDataLayout layout = new ManagedDataLayout(fixture.destination().dataRoot());
+		var laterPlan = preview.previewRefresh(later, layout);
+		assertEquals(SubjectSnapshotFreshness.Outcome.NEWER_UNCHANGED, laterPlan.evidence().outcome());
+		assertFalse(laterPlan.hasContentChanges());
+		assertFalse(first.packageId().equals(laterPlan.evidence().incoming().fingerprint().packageId()));
+		long backupCount = countRefreshBackups(fixture.destination());
+		var second = coordinator.executeRefresh(laterPlan.approve("Approve newer identical authoritative snapshot"),
+				later);
+		assertTrue(second.applied());
+		assertFalse(second.replay());
+		assertEquals(backupCount + 1, countRefreshBackups(fixture.destination()));
+		long subjectId = laterPlan.evidence().authority().subjectLocalId();
+		var authorities = new SqliteImportedSubjectAuthorityRepository(database);
+		var latestAuthority = authorities.find(subjectId).orElseThrow();
+		assertEquals(second.packageId(), latestAuthority.latestPackageId());
+
+		// Replaying the first accepted refresh must never rewind
+		// the latest accepted authoritative package.
+		var oldReplay = coordinator.executeRefresh(firstApproval, fixture.newer());
+		assertTrue(oldReplay.replay());
+		assertEquals(latestAuthority, authorities.find(subjectId).orElseThrow());
+		assertEquals(backupCount + 1, countRefreshBackups(fixture.destination()));
+		try (Connection connection = database.openConnection()) {
+			assertEquals(1, count(connection, "SELECT COUNT(*) FROM questions"));
+			assertEquals(1, count(connection, "SELECT COUNT(*) FROM questions WHERE marks = 3"));
+			assertEquals(3, count(connection, "SELECT COUNT(*) FROM subject_import_packages"));
+		}
+		database.verifyIntegrity();
+	}
+
+	@Test
 	void refreshGraphAddsNewRecordAndPreservesExistingCanonicalIdentity() throws Exception {
 		RefreshStagingFixture fixture = createRefreshStagingFixture();
 		SqliteDatabase sourceDatabase = new SqliteDatabase(fixture.source().databasePath());
@@ -1627,6 +1960,19 @@ class SubjectImportCoordinatorIntegrationTest {
 		try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery(sql)) {
 			assertTrue(result.next());
 			return result.getInt(1);
+		}
+	}
+
+	/**
+	 * Counts automatically published pre-import full backup files.
+	 */
+	private long countRefreshBackups(ApplicationConfig config) throws IOException {
+		Path root = config.dataRoot().resolve("backups").resolve("pre-import");
+		if (!Files.isDirectory(root)) {
+			return 0L;
+		}
+		try (var files = Files.walk(root)) {
+			return files.filter(Files::isRegularFile).count();
 		}
 	}
 
