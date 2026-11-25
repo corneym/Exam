@@ -1,123 +1,36 @@
 # Exam Question Bank Backlog
 
-> **Authoritative deferred/unresolved-work list:** 7 October 2026.  
-> Sprint 13 is complete and merged. Sprint 14 Subject-first managed-data work is active. Sprint 15 has selected #99, #94 and #27, with performance decomposition recorded in #109–#111 and `docs/design/sprint-15.md`.
->
-> Priority here means priority among deliberately deferred/unresolved work. An item is not active sprint scope until it is explicitly promoted.
+> Reference date: 26 November 2026, Sprint 24 audited-candidate checkpoint. GitHub Issues and the development Project are authoritative for live state, sprint assignment and priority. This document preserves deferred design intent; it is not a parallel issue register.
 
-## Active / selected sprint work — not backlog
+## Active closeout — not backlog
 
-Do not duplicate these items as deferred backlog while their sprint work is active or selected.
+Sprint 24 integration [#276](https://github.com/corneym/Exam/issues/276) is functionally complete and independently audited. The latest audited branch passed all 22 CI checks and strict Javadoc. Documentation, integration, PR/merge and formal release remain pending at this checkpoint. See [Sprint 24 record](sprint-24-offline-exchange.md). Historical Sprint 14 and Sprint 15 scope is preserved in their respective sprint design records; it is not current active scope.
 
-### Sprint 14
+## Deferred Sprint 24 findings
 
-Subject-first managed-data work is tracked under umbrella #100 and child issues #101–#106.
+The maintainer explicitly accepted these limitations for the initial release. They are not release blockers and are not resolved. No priority, sprint or implementation order is assigned here.
 
-### Sprint 15
+| Issue | Deferred work |
+| --- | --- |
+| [#301](https://github.com/corneym/Exam/issues/301) | Disposable submitted contributor corpus; simplify independent subsequent assignment installation and remove redundant worker reconciliation (D21). |
+| [#302](https://github.com/corneym/Exam/issues/302) | Measure and correct delayed Dashboard capture-control activation (D23). |
+| [#303](https://github.com/corneym/Exam/issues/303) | Restrict contributor Search and revision output to active assignment scope (D24). |
+| [#304](https://github.com/corneym/Exam/issues/304) | Read-only Exam asset/PDF inspection, remove redundant standalone PDF menu routes (D25/D28). |
+| [#305](https://github.com/corneym/Exam/issues/305) | Consistent Subject Snapshot export spinner (D26). |
+| [#306](https://github.com/corneym/Exam/issues/306) | Import Contribution menu availability based on active coordinator assignments (D27). |
+| [#307](https://github.com/corneym/Exam/issues/307) | Mixed-Exam MCQ Answer/Explanation capture and reporting (D29). |
+| [#308](https://github.com/corneym/Exam/issues/308) | Human-readable Subject refresh review (D30). |
+| [#309](https://github.com/corneym/Exam/issues/309) | Safe cleanup of successfully imported package archives (D31). |
 
-Selected product/performance work is:
+#301 is a candidate for Codex-led implementation after an approved dependency audit. The worker is finished when a final Contribution is durably published, regardless of whether the coordinator accepts it. Remove obsolete working data and unnecessary worker reconciliation rather than extend it. Retain durable replay/submission evidence and the original archive for resend; protect unsent work, unrelated Subjects, shared assets and other active assignments. Distinguish cache eviction from authoritative deletion and preserve production upgrade compatibility. Coordinate #303 and #309 with #301, but distinguish archive file cleanup from working-corpus disposal. The existing coordinator merge and HoD refresh mechanisms remain essential.
 
-- #99 — Dashboard workflow for assigning missing Question descriptors;
-- #94 — richer retrieval-oriented Question Search filters;
-- #27 — measured performance umbrella;
-- #109 — opt-in runtime performance instrumentation;
-- #110 — repeatable real-corpus performance benchmark runner;
-- #111 — evidence-led Question reconstruction and SQLite hot-path investigation.
+## Open shared-faculty and data lifecycle work
 
-Sprint 15 performance work must establish measurements before optimisation. Search benchmarking is repeated after #94 so optimisation decisions use the richer real workload rather than an incomplete Search implementation.
+[#36](https://github.com/corneym/Exam/issues/36) remains the shared-faculty parent. The first offline distributed collection and faculty consolidation workflow is implemented in Sprint 24, rather than a future proposal. The chosen `.examwork` manifest/portable UUID/validated lineage design is described in [offline-exchange.md](../offline-exchange.md). Do not introduce a shared concurrently edited SQLite database, role-selection system or arbitrary two-way synchronisation to extend it.
 
-## Planned future capability
-
-### Portable collection packages / offline distributed collection — #36
-
-Support multiple collectors working independently without sharing or concurrently editing the authoritative SQLite database.
-
-Preferred model:
-
-```text
-Collector
-    local capture/review
-        ↓
-    export .eqwork package
-        ↓
-Coordinator
-    validate / preview
-        ↓
-    resolve duplicate/conflict
-        ↓
-    import accepted work
-        ↓
-Authoritative Question Bank
-```
-
-Collectors should work in their own local application/database. Do not place a live SQLite database on SharePoint, a synchronised drive or another concurrently edited shared location.
-
-The package design should include:
-
-- versioned manifest;
-- stable portable identities, normally UUIDs, rather than database-local integer IDs;
-- package identity and idempotent import detection;
-- duplicate/conflict classification;
-- source-document hash use where appropriate;
-- collection/import provenance;
-- explicit reference-data authority boundaries;
-- preview and coordinator confirmation before mutation.
-
-A later assignment-package extension may let a coordinator distribute a defined collection task and receive completed work through the same reconciliation architecture.
-
-### Capture-workflow productivity assistance — #95
-
-Use #95 as a deferred evidence/design tracker for possible:
-
-- skip/defer current work;
-- previous unresolved item;
-- keyboard/efficiency shortcuts;
-- Question-boundary suggestions;
-- multipart/dependency suggestions.
-
-Promote individual implementation issues only when sustained real-corpus use demonstrates repeated cost.
-
-Suggestions must remain non-authoritative until confirmed by the teacher.
-
-### Explicit resolved-but-intentionally-incomplete dispositions — #20
-
-Consider whether corpus management eventually needs reviewed states such as source unavailable, Answer unavailable or deliberately out of scope.
-
-Do not conflate these with persisted Exam `COMPLETE` or revision-output exclusions.
-
-## Retrieval / performance hardening after Sprint 15 evidence
-
-### Strengthen retrieval-domain invariants — #25
-
-Review applicability/result rules including compatible curriculum levels, same-Subject enforcement, duplicate handling and invalid-level rejection.
-
-Use evidence from Sprint 15 #27/#111 before broadening this work.
-
-### Extend SQLite retrieval integration coverage — #26
-
-Add broader realistic retrieval/reopen cases when a concrete regression risk or Sprint 15 measurement justifies them.
-
-### Measure preview rendering overlap — #28
-
-Measure large/multi-region previews and rapid selection changes before changing threading or serialisation.
-
-Sprint 15 instrumentation may provide useful evidence for this later issue, but #28 is not part of the selected Sprint 15 scope unless measurements demonstrate that preview rendering is the dominant current slowdown and the issue is explicitly promoted.
-
-## Curriculum mapping hardening
-
-### Database enforcement decision — #29
-
-Application writers enforce same Subject, different versions, same level and allowed mapping direction.
-
-Decide later whether direct-SQL bypass risk justifies database triggers or other enforcement.
-
-### Mapping workflow assistance — #30
-
-Consider additional mapping-review assistance only after the current review workflow remains stable under real corpus use.
-
-### Richer mapping relation metadata — #31
-
-Decide whether mapping relationships need persisted metadata beyond the current accepted mapping structure only if a concrete use case requires it.
+- [#300](https://github.com/corneym/Exam/issues/300) — safe whole-Subject deletion and subsequent snapshot reimport. Do not conflate this with contributor cache eviction or current approved Subject refresh.
+- [#297](https://github.com/corneym/Exam/issues/297) — consolidated baseline schema for new database installations. Preserve supported historical migration and existing corpus data.
+- [#217](https://github.com/corneym/Exam/issues/217) — trusted signing of Windows installers and application binaries. Follow the [code-signing policy](../code-signing-policy.md).
 
 ## Later product areas
 
@@ -129,92 +42,68 @@ Exam Builder consumes the bank and must not become a dependency of revision/SCOR
 
 ### Printable/vector-preserving assessment and solution output — #38
 
-This remains future product work after the Sprint 14 reprioritisation.
+For print-oriented generation, evaluate direct source-PDF page/viewport clipping rather than rasterising web assets. Preserve generated numbering, solution alignment and source attribution.
 
-For print-oriented generation, evaluate direct source-PDF page/viewport clipping rather than rasterising web assets.
+### Capture-workflow productivity assistance
 
-Preserve generated numbering, solution alignment and source attribution.
+Promote individual implementation issues when sustained real-corpus use demonstrates repeated cost. Current open issues are:
+
+- [#166](https://github.com/corneym/Exam/issues/166) — optional Ctrl+S for capture work.
+- [#167](https://github.com/corneym/Exam/issues/167) — suggest Question codes from PDF text.
+- [#168](https://github.com/corneym/Exam/issues/168) — investigate teacher-confirmed Question-boundary suggestions.
+- [#169](https://github.com/corneym/Exam/issues/169) — investigate PDF-assisted multipart/Shared Context grouping.
+
+Suggestions remain non-authoritative until confirmed by a teacher. Earlier #95 design discussions included skip/defer and previous unresolved work; consult current issue history rather than silently reinstating older requirements.
 
 ## Some day / maybe
 
 ### Curriculum authoring follow-on work — #17 / #18
 
-Possible assistance includes PDF region-based text extraction, diagram/image handling, manual maths exclusion regions, Markdown/LaTeX editing/preview and later equation-recognition support.
-
-Curriculum hierarchy remains expert-authored.
-
-### Additional real-world workbook variants — #23
-
-Test representative legacy workbook variants only if continued real use makes the coverage worthwhile.
-
-Do not infer multipart/Shared Context relationships merely from patterned workbook data.
+Possible assistance includes PDF region-based text extraction, diagram/image handling, manual maths exclusion regions, Markdown/LaTeX editing/preview and later equation-recognition support. Curriculum hierarchy remains expert-authored.
 
 ### Multiple original classifications — #19
 
-Current `Question` stores one best-fit original Subtopic or Descriptor.
+Current `Question` stores one best-fit original Subtopic or Descriptor. Reconsider many-to-many original classification only if real use shows one provenance location is inadequate.
 
-Reconsider many-to-many original classification only if real use shows one provenance location is inadequate.
+### Legacy image-snip import — #24
 
-## Corpus completion / review work
+Decide whether legacy image-snip import remains needed; do not reintroduce workbook/filesystem naming as runtime authority.
 
-The following open issues represent real-corpus completion or review rather than current feature development:
+## Historical design dispositions and evidence rules
 
-- #5 — complete systematic curriculum mapping review;
-- #6 — resolve Questions with unknown response type;
-- #7 — complete missing Question source capture;
-- #8 — resolve outstanding Shared Context requirements;
-- #9 — complete missing Answers;
-- #10 — correct outstanding Question and Exam metadata;
-- #11 — complete outstanding legacy Question split corrections;
-- #12 — exercise Revision HTML and SCORM against the real Chemistry corpus.
+Older backlog entries and completed/superseded issue decisions remain available in Git history and their issue records. The following design principles remain useful without reopening closed issues:
 
-These may proceed as corpus work without redefining sprint feature scope unless deliberately promoted.
+- Explicitly reviewed but intentionally incomplete corpus states (#20) must not be conflated with Exam `COMPLETE` or revision-output exclusions. Check current disposition before proposing new states.
+- Retrieval/domain invariants, realistic reopen coverage and preview-rendering overlap (#25/#26/#28) should be revisited only against evidence of a current problem. Measure before optimisation.
+- Mapping writers enforce same Subject, different syllabus versions, same level and allowed direction. Revisit direct-SQL enforcement, review assistance or richer mapping metadata (#29/#30/#31) only if justified by concrete needs and current implementation.
+- Additional legacy workbook variants (#23) should be evidence-driven. Do not infer multipart or Shared Context relationships merely from patterned workbook data.
+- Real-corpus completion/review (#5–#12) is distinct from product feature work. Check current issue state and actual corpus audit rather than treating historical open lists as active development.
 
 ## Rejected / superseded directions
 
 ### Multi-page Shared Context capture — rejected
 
-A Shared Context is contained within one source page.
-
-Do not re-add multi-page Shared Context as planned/backlog work.
+A Shared Context is contained within one source page. Do not re-add multi-page Shared Context as planned/backlog work without an explicit new decision.
 
 ### Concurrent shared SQLite database for faculty collection — rejected as first distributed model
 
-Portable local work packages are the preferred first distributed-collection direction.
-
-A future centrally hosted service may be reconsidered only if later deployment requirements justify it.
+Independent local data roots and portable packages are the first deployed architecture. A future centrally hosted service may be reconsidered only if later deployment requirements justify it.
 
 ### Per-response-type expected counts for mixed Question booklets — #73 not planned
 
-Sprint 12 retained one total expected top-level Question count for mixed booklets.
-
-Do not reintroduce expected-MCQ/expected-written subcounts without new evidence.
+Sprint 12 retained one total expected top-level Question count for mixed booklets. Do not reintroduce expected-MCQ/expected-written subcounts without new evidence.
 
 ### Parallel import-audit/reconciliation system — #22 superseded
 
-The broad #22 concept is covered by #58, #65, #68 and #81.
+The broad #22 concept is covered by #58, #65, #68 and #81. Do not build another parallel reporting model.
 
-Do not build another parallel reporting model.
+### Routine receipt/rebase, multiple partial returns and general same-Subject merge — superseded
+
+The Sprint 24 decision replaces these as ordinary workflows with one final Contribution and explicitly approved authoritative Subject refresh. Internal identity, import, recovery and audit evidence is retained as necessary; obsolete worker-side reconciliation is a future simplification under #301.
 
 ## Completed/scheduled elsewhere — not backlog
 
-Do not re-add completed Sprint 12/13 work.
-
-### Managed syllabus PDFs — #83 completed
-
-Issue #83 was reviewed after Sprint 12 planning and found to describe functionality already present.
-
-Implemented behaviour includes:
-
-- managed syllabus-PDF storage;
-- persisted portable `source_pdf_path` on `SyllabusVersion`;
-- Subject/version/current-version identity supplied by the syllabus model;
-- automatic resolution/opening of the managed source PDF in Curriculum Authoring;
-- replacement support subject to curriculum lifecycle rules.
-
-Sprint 14 moves the managed destination into the Subject-first layout without changing that completed feature status.
-
-Issue #34 is also not backlog work: its requested old-backup regression already existed and the issue is closed.
+Do not re-add completed work. Managed syllabus PDFs (#83) were already implemented and moved to Subject-first managed storage under Sprint 14. The old-backup regression requested by #34 already existed and the issue was closed. Historical sprint records and GitHub issues retain their original evidence. First offline collection and HoD snapshot/refresh are implemented under #276; only the explicitly recorded follow-ups remain here.
 
 ## Backlog rules
 
@@ -226,3 +115,4 @@ Issue #34 is also not backlog work: its requested old-backup regression already 
 - Do not invent placeholder data to resolve unclear ownership/semantics.
 - Expected asset/question counts are planning/audit metadata, not permission to create fictitious authoritative records.
 - Prefer safe, reviewable import/reconciliation over direct cross-database mutation.
+- Confirm the actual issue and Project state before assigning any work to a sprint.
