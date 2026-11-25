@@ -157,9 +157,7 @@ public final class SubjectRefreshIdentityNormaliser {
 	private JsonNode normaliseValues(JsonNode node, Map<RecordKey, UUID> mappings) throws PackageFormatException {
 		if (node.isObject()) {
 			ObjectNode result = JsonNodeFactory.instance.objectNode();
-			var fields = node.fields();
-			while (fields.hasNext()) {
-				var field = fields.next();
+			for (var field : node.properties()) {
 				String name = field.getKey();
 				JsonNode value = field.getValue();
 				String referenceType = REFERENCE_TYPES.get(name);
@@ -196,9 +194,7 @@ public final class SubjectRefreshIdentityNormaliser {
 
 	private void requireReferenceClosure(JsonNode node, Set<RecordKey> targetKeys) throws PackageFormatException {
 		if (node.isObject()) {
-			var fields = node.fields();
-			while (fields.hasNext()) {
-				var field = fields.next();
+			for (var field : node.properties()) {
 				String referenceType = REFERENCE_TYPES.get(field.getKey());
 				JsonNode value = field.getValue();
 				if (referenceType != null && !value.isNull()) {
