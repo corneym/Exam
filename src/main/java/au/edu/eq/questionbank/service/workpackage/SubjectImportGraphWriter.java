@@ -5,6 +5,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
@@ -34,14 +35,18 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.TextNode;
 
 import au.edu.eq.questionbank.ApplicationVersion;
+import au.edu.eq.questionbank.ManagedAssetPublicationLock;
+import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableAliasRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableContentRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.Identity;
+import au.edu.eq.questionbank.repository.identity.SqliteSubjectGraphReader;
 import au.edu.eq.questionbank.repository.sqlite.SqliteContributorIdentityBinder;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDirectChanges;
+import au.edu.eq.questionbank.repository.sqlite.SqliteImportedSubjectAuthorityRepository;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkAssetIndex.Reference;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest.EntryRole;
 import au.edu.eq.questionbank.service.workpackage.SubjectImportApprovalPlan.Action;
@@ -629,6 +634,278 @@ public final class SubjectImportGraphWriter {
 		}
 	}
 
+	/**
+	 * Applies approved Subject graph additions, updates and revision changes inside
+	 * the caller-owned SQLite transaction.
+	 *
+	 * <p>
+	 * The caller must hold the publication lock and must have regenerated the
+	 * approved comparison before invoking this operation. Physical asset
+	 * publication, package ledger recording and authority advancement remain the
+	 * caller's responsibility.
+	 *
+	 * <p>
+	 * Existing canonical identities are preserved. New records receive the
+	 * previously approved provisional comparison identities. Shared resources are
+	 * protected from changes affecting unrelated Subjects.
+	 *
+	 * <p>
+	 * Record removals are not supported by this application increment.
+	 *
+	 * @param connection caller-owned destination transaction
+	 * @param approval   exact approved refresh comparison
+	 * @param staged     verified private archive and binary assets
+	 * @param layout     authoritative managed-data layout
+	 * @param lock       held managed-asset publication lock
+	 * @return immutable mapping from comparison identities to local identifiers
+	 * @throws SQLException          if graph persistence or ownership validation
+	 *                               fails
+	 * @throws IOException           if package or asset validation fails
+	 * @throws IllegalStateException if the connection uses autocommit
+	 */
+	Map<SubjectRefreshChangeClassifier.RecordKey, Long> applyRefreshGraph(Connection connection,
+			SubjectRefreshPlan.Approval approval, StagedPackage staged, ManagedDataLayout layout,
+			ManagedAssetPublicationLock lock) throws SQLException, IOException {
+		Objects.requireNonNull(connection, "connection");
+		Objects.requireNonNull(approval, "approval");
+		Objects.requireNonNull(staged, "staged");
+		Objects.requireNonNull(layout, "layout");
+		Objects.requireNonNull(lock, "lock");
+
+		if (connection.getAutoCommit()) {
+			throw new IllegalStateException("Subject refresh requires a caller-owned transaction");
+		}
+
+		lock.requireHeld(layout.dataRoot());
+
+		SubjectRefreshPlan plan = approval.plan();
+
+		if (plan.countRecords(SubjectRefreshChangeClassifier.ChangeKind.REMOVE) != 0) {
+			throw new SQLException("Subject graph record removal is not yet supported");
+		}
+
+		DecodedPackage decoded = decodeRefresh(staged, approval);
+
+		long subjectId = plan.evidence().authority().subjectLocalId();
+
+		// Reserve the SQLite writer before checking mutable database evidence.
+		try (Statement statement = connection.createStatement()) {
+			if (statement.executeUpdate("""
+					UPDATE installation_identity
+					SET installation_id = installation_id
+					WHERE singleton_id = 1
+					""") != 1) {
+				throw new SQLException("Cannot reserve authoritative Subject refresh writer");
+			}
+		}
+
+		var authority = new SqliteImportedSubjectAuthorityRepository(database).find(connection, subjectId)
+				.orElseThrow(() -> new SQLException("Destination Subject has no imported authority"));
+
+		if (!authority.equals(plan.evidence().authority())) {
+			throw new SQLException("Imported Subject authority changed after approval");
+		}
+
+		SqlitePortableContentRepository content = new SqlitePortableContentRepository(database);
+
+		var graph = SqliteSubjectGraphReader.readInTransaction(connection, subjectId);
+
+		Map<Key, Long> localIds = requireRefreshCurrentGraph(connection, content, graph, plan);
+
+		requireRefreshResourceOwnership(connection, graph, plan, decoded, staged, layout, localIds);
+
+		Map<EntityType, List<ExchangeRecord>> ordered = new EnumMap<>(EntityType.class);
+
+		for (ExchangeRecord record : decoded.records()) {
+			EntityType type = EntityType.valueOf(record.recordType());
+
+			ordered.computeIfAbsent(type, _ -> new ArrayList<>()).add(record);
+		}
+
+		for (List<ExchangeRecord> group : ordered.values()) {
+			group.sort(Comparator.comparing(record -> record.recordId().toString()));
+		}
+
+		Savepoint checkpoint = connection.setSavepoint();
+
+		try {
+			SqliteContributorIdentityBinder binder = new SqliteContributorIdentityBinder(connection);
+
+			Set<Key> inserted = new HashSet<>();
+			Set<Key> baseUpdated = new HashSet<>();
+
+			// Release the current-syllabus uniqueness constraint before
+			// inserting or promoting a newly authoritative syllabus.
+			demoteRefreshSyllabuses(connection, plan, localIds);
+
+			for (EntityType type : ORDER) {
+				for (ExchangeRecord record : ordered.getOrDefault(type, List.of())) {
+					Key key = SubjectReconciliationReview.recordKey(type.name(), record.recordId());
+
+					if (localIds.containsKey(key)) {
+						continue;
+					}
+
+					long localId = insertBase(connection, type, record, decoded, staged, localIds);
+
+					localIds.put(key, localId);
+					inserted.add(key);
+				}
+			}
+
+			// Existing records retain their primary keys. Asset paths are
+			// compared separately because they are omitted from portable
+			// scalar content.
+			for (EntityType type : ORDER) {
+				if (type == EntityType.EXAM_PROVIDER) {
+					continue;
+				}
+
+				for (ExchangeRecord record : ordered.getOrDefault(type, List.of())) {
+					Key key = SubjectReconciliationReview.recordKey(type.name(), record.recordId());
+
+					if (inserted.contains(key)) {
+						continue;
+					}
+
+					long localId = localIds.get(key);
+
+					ExchangeRecord actual = content.snapshot(connection, type, localId).record();
+
+					boolean scalarChanged = !scalarValues(type, actual).equals(scalarValues(type, record));
+
+					boolean pathChanged = refreshManagedPathChanged(connection, type, localId, record, decoded, staged);
+
+					if (scalarChanged || pathChanged) {
+						updateAssignmentBase(connection, type, localId, record, decoded, staged, localIds);
+
+						baseUpdated.add(key);
+					}
+				}
+			}
+
+			// Deferred references are repaired once every local target exists.
+			for (EntityType type : ORDER) {
+				for (ExchangeRecord record : ordered.getOrDefault(type, List.of())) {
+					Key key = SubjectReconciliationReview.recordKey(type.name(), record.recordId());
+
+					if (inserted.contains(key) || baseUpdated.contains(key)) {
+						repairDeferredReferences(connection, type, localIds.get(key), record.values(), localIds);
+					}
+				}
+			}
+
+			// Restore ordinary children before applicability attestations,
+			// which can be invalidated by Question and Answer mutations.
+			for (EntityType type : ORDER) {
+				if (type == EntityType.EXAM_BOOKLET) {
+					continue;
+				}
+
+				for (ExchangeRecord record : ordered.getOrDefault(type, List.of())) {
+					Key key = SubjectReconciliationReview.recordKey(type.name(), record.recordId());
+
+					long localId = localIds.get(key);
+
+					if (inserted.contains(key)) {
+						insertChildren(connection, type, localId, record, decoded, staged, localIds);
+					} else {
+						replaceChangedAssignmentChildren(connection, content, type, localId, record, decoded, staged,
+								localIds);
+					}
+				}
+			}
+
+			for (ExchangeRecord record : ordered.getOrDefault(EntityType.EXAM_BOOKLET, List.of())) {
+				Key key = SubjectReconciliationReview.recordKey(EntityType.EXAM_BOOKLET.name(), record.recordId());
+
+				long localId = localIds.get(key);
+
+				if (inserted.contains(key)) {
+					insertChildren(connection, EntityType.EXAM_BOOKLET, localId, record, decoded, staged, localIds);
+				} else {
+					replaceChangedAssignmentChildren(connection, content, EntityType.EXAM_BOOKLET, localId, record,
+							decoded, staged, localIds);
+				}
+			}
+
+			List<SqliteContributorIdentityBinder.Binding> bindings = new ArrayList<>();
+
+			for (ExchangeRecord record : decoded.records()) {
+				EntityType type = EntityType.valueOf(record.recordType());
+
+				Key key = SubjectReconciliationReview.recordKey(type.name(), record.recordId());
+
+				if (inserted.contains(key)) {
+					bindings.add(new SqliteContributorIdentityBinder.Binding(type, localIds.get(key), record.recordId(),
+							record.revisionId()));
+				}
+			}
+
+			// Bind new identities only after domain writes and their revision
+			// triggers have completed.
+			binder.bindNew(bindings);
+
+			for (ExchangeRecord record : decoded.records()) {
+				EntityType type = EntityType.valueOf(record.recordType());
+
+				Key key = SubjectReconciliationReview.recordKey(type.name(), record.recordId());
+
+				if (!inserted.contains(key) && type != EntityType.EXAM_PROVIDER) {
+					restoreAssignmentRevision(connection, type, localIds.get(key), record);
+				}
+			}
+
+			Map<SubjectRefreshChangeClassifier.RecordKey, Long> result = new HashMap<>();
+
+			UUID origin = decoded.manifest().originInstallationId();
+
+			// Persist aliases only after all corresponding canonical entities
+			// have been successfully established.
+			for (var mapping : plan.identities().entrySet()) {
+				var originating = mapping.getKey();
+
+				EntityType type = EntityType.valueOf(originating.recordType());
+
+				UUID canonical = mapping.getValue();
+
+				Key key = SubjectReconciliationReview.recordKey(type.name(), canonical);
+
+				Long localId = localIds.get(key);
+
+				if (localId == null) {
+					throw new SQLException("Missing refresh canonical identity: " + canonical);
+				}
+
+				aliases.approveAlias(connection, origin, type, originating.recordId(), canonical,
+						approval.approvalNote());
+
+				result.put(new SubjectRefreshChangeClassifier.RecordKey(type.name(), canonical), localId);
+			}
+
+			requireAppliedRefreshGraph(connection, content, subjectId, decoded, staged, localIds);
+
+			connection.releaseSavepoint(checkpoint);
+
+			return Map.copyOf(result);
+
+		} catch (SQLException | IOException | RuntimeException failure) {
+			try {
+				connection.rollback(checkpoint);
+			} catch (SQLException rollbackFailure) {
+				failure.addSuppressed(rollbackFailure);
+			}
+
+			try {
+				connection.releaseSavepoint(checkpoint);
+			} catch (SQLException releaseFailure) {
+				failure.addSuppressed(releaseFailure);
+			}
+
+			throw failure;
+		}
+	}
+
 	private StagedPackage assignmentStaging(WorkAssignmentPackageInspector.Inspection inspection,
 			WorkAssignmentAssetExtractor.Extraction extraction) throws IOException {
 		Map<String, ExamWorkManifest.Entry> declared = new HashMap<>();
@@ -750,6 +1027,43 @@ public final class SubjectImportGraphWriter {
 			throw new SQLException("Missing Subject import table: " + table);
 		}
 		return names;
+	}
+
+	/**
+	 * Demotes an existing current syllabus before another syllabus is installed or
+	 * promoted as current.
+	 */
+	private void demoteRefreshSyllabuses(Connection connection, SubjectRefreshPlan plan, Map<Key, Long> localIds)
+			throws SQLException {
+		for (var change : plan.recordChanges()) {
+			if (!EntityType.SYLLABUS_VERSION.name().equals(change.key().recordType()) || change.current() == null
+					|| change.incoming() == null) {
+				continue;
+			}
+
+			boolean wasCurrent = change.current().values().path("is_current").asInt() == 1;
+
+			boolean willBeCurrent = change.incoming().values().path("is_current").asInt() == 1;
+
+			if (!wasCurrent || willBeCurrent) {
+				continue;
+			}
+
+			Key key = SubjectReconciliationReview.recordKey(EntityType.SYLLABUS_VERSION.name(),
+					change.key().recordId());
+
+			try (PreparedStatement statement = connection.prepareStatement("""
+					UPDATE syllabus_versions
+					SET is_current = 0
+					WHERE id = ?
+					""")) {
+				statement.setLong(1, localIds.get(key));
+
+				if (statement.executeUpdate() != 1) {
+					throw new SQLException("Cannot demote previous current syllabus");
+				}
+			}
+		}
 	}
 
 	/**
@@ -914,6 +1228,46 @@ public final class SubjectImportGraphWriter {
 	}
 
 	/**
+	 * Compares separately packaged managed paths that are not included in portable
+	 * scalar record content.
+	 */
+	private boolean refreshManagedPathChanged(Connection connection, EntityType type, long localId,
+			ExchangeRecord record, DecodedPackage decoded, StagedPackage staged) throws SQLException, IOException {
+		String sql;
+		String usage;
+
+		switch (type) {
+		case SOURCE_DOCUMENT -> {
+			sql = "SELECT relative_path FROM source_documents WHERE id = ?";
+			usage = "SOURCE_PDF";
+		}
+		case SYLLABUS_VERSION -> {
+			sql = "SELECT source_pdf_path FROM syllabus_versions WHERE id = ?";
+			usage = "SYLLABUS_PDF";
+		}
+		default -> {
+			return false;
+		}
+		}
+
+		String expected = managedPath(decoded.index(), staged, usage, type, record.recordId());
+
+		try (PreparedStatement statement = connection.prepareStatement(sql)) {
+			statement.setLong(1, localId);
+
+			try (ResultSet rows = statement.executeQuery()) {
+				if (!rows.next()) {
+					throw new SQLException("Missing managed-path owner: " + type + " " + localId);
+				}
+
+				String actual = rows.getString(1);
+
+				return !Objects.equals(actual, expected);
+			}
+		}
+	}
+
+	/**
 	 * Populates deferred optional foreign keys after all entity rows exist.
 	 */
 	private void repairDeferredReferences(Connection connection, EntityType type, long localId, JsonNode json,
@@ -967,6 +1321,59 @@ public final class SubjectImportGraphWriter {
 		// Reuse the established portable child and asset
 		// insertion routines to reconstruct ordered content.
 		insertChildren(connection, type, localId, record, decoded, staged, ids);
+	}
+
+	/**
+	 * Verifies the complete resulting Subject graph, including portable identities,
+	 * revisions, relationships, children and managed paths.
+	 */
+	private void requireAppliedRefreshGraph(Connection connection, SqlitePortableContentRepository content,
+			long subjectId, DecodedPackage decoded, StagedPackage staged, Map<Key, Long> localIds)
+			throws SQLException, IOException {
+		var graph = SqliteSubjectGraphReader.readInTransaction(connection, subjectId);
+
+		Map<EntityType, Set<Long>> expected = new EnumMap<>(EntityType.class);
+
+		for (EntityType type : EntityType.values()) {
+			expected.put(type, new HashSet<>());
+		}
+
+		for (ExchangeRecord record : decoded.records()) {
+			EntityType type = EntityType.valueOf(record.recordType());
+
+			Key key = SubjectReconciliationReview.recordKey(type.name(), record.recordId());
+
+			Long localId = localIds.get(key);
+
+			if (localId == null || !expected.get(type).add(localId)) {
+				throw new SQLException("Missing or duplicate applied refresh identity: " + key);
+			}
+
+			ExchangeRecord persisted = content.snapshot(connection, type, localId).record();
+
+			if (!persisted.equals(record)) {
+				throw new SQLException("Applied Subject refresh record differs from approval: " + key);
+			}
+
+			if (refreshManagedPathChanged(connection, type, localId, record, decoded, staged)) {
+				throw new SQLException("Applied Subject refresh managed path differs from approval: " + key);
+			}
+		}
+
+		// Checking individual records alone cannot detect unexpected
+		// additional entities or records accidentally moved outside the Subject.
+		for (EntityType type : EntityType.values()) {
+			if (!expected.get(type).equals(new HashSet<>(graph.ids(type)))) {
+				throw new SQLException("Applied Subject refresh has incorrect graph coverage: " + type);
+			}
+		}
+
+		try (Statement statement = connection.createStatement();
+				ResultSet violations = statement.executeQuery("PRAGMA foreign_key_check")) {
+			if (violations.next()) {
+				throw new SQLException("Applied Subject refresh contains foreign-key violations");
+			}
+		}
 	}
 
 	/**
@@ -1090,6 +1497,251 @@ public final class SubjectImportGraphWriter {
 				}
 				if (result.next()) {
 					throw new SQLException("Duplicate existing assignment source row");
+				}
+			}
+		}
+	}
+
+	/**
+	 * Requires the current destination graph to match the approved comparison
+	 * before permitting any domain mutation.
+	 */
+	private Map<Key, Long> requireRefreshCurrentGraph(Connection connection, SqlitePortableContentRepository content,
+			SqliteSubjectGraphReader.SubjectGraph graph, SubjectRefreshPlan plan) throws SQLException {
+		if (!graph.subjectName().equals(plan.evidence().incoming().fingerprint().subjectName())) {
+			throw new SQLException("Destination Subject name changed after approval");
+		}
+
+		Map<Key, SubjectRefreshChangeClassifier.RecordChange> reviewed = new HashMap<>();
+
+		Map<Key, Long> localIds = new HashMap<>();
+
+		for (var change : plan.recordChanges()) {
+			Key key = SubjectReconciliationReview.recordKey(change.key().recordType(), change.key().recordId());
+
+			reviewed.put(key, change);
+		}
+
+		// Every existing Subject entity must occur in the approved comparison.
+		for (EntityType type : EntityType.values()) {
+			for (long localId : graph.ids(type)) {
+				ExchangeRecord actual = content.snapshot(connection, type, localId).record();
+
+				Key key = SubjectReconciliationReview.recordKey(type.name(), actual.recordId());
+
+				var change = reviewed.get(key);
+
+				if (change == null || change.current() == null || !change.current().equals(actual)) {
+					throw new SQLException("Destination graph changed after refresh approval: " + key);
+				}
+
+				if (localIds.putIfAbsent(key, localId) != null) {
+					throw new SQLException("Duplicate current Subject refresh identity");
+				}
+			}
+		}
+
+		for (var change : plan.recordChanges()) {
+			EntityType type = EntityType.valueOf(change.key().recordType());
+
+			Key key = SubjectReconciliationReview.recordKey(type.name(), change.key().recordId());
+
+			if (change.current() == null) {
+				if (localIds.containsKey(key)
+						|| identities.findByPortableId(connection, type, change.key().recordId()).isPresent()) {
+					throw new SQLException("Approved new refresh identity already exists: " + key);
+				}
+
+				continue;
+			}
+
+			if (type == EntityType.EXAM_PROVIDER) {
+				if (change.kind() != SubjectRefreshChangeClassifier.ChangeKind.UNCHANGED) {
+					throw new SQLException("Refresh cannot modify an existing shared provider");
+				}
+
+				if (!localIds.containsKey(key)) {
+
+					// An approved shared provider may already exist globally
+					// without being referenced by the current Subject.
+					var identity = identities.findByPortableId(connection, type, change.key().recordId())
+							.orElseThrow(() -> new SQLException("Reviewed shared provider no longer exists"));
+
+					ExchangeRecord actual = content.snapshot(connection, type, identity.localId()).record();
+
+					if (!change.current().equals(actual)) {
+						throw new SQLException("Shared provider changed after approval");
+					}
+
+					localIds.put(key, identity.localId());
+				}
+			} else if (!localIds.containsKey(key)) {
+				throw new SQLException("Reviewed entity is missing from destination Subject: " + key);
+			}
+		}
+
+		return localIds;
+	}
+
+	/**
+	 * Resolves a persisted managed resource path without allowing symbolic links or
+	 * other indirect filesystem components.
+	 */
+	private Path requireRefreshReferencePath(ManagedDataLayout layout, String relativePath) throws IOException {
+		Path destination;
+
+		try {
+			destination = layout.resolve(relativePath);
+		} catch (IllegalArgumentException | NullPointerException failure) {
+			throw new IOException("Cannot establish ownership of persisted managed resource", failure);
+		}
+
+		Path current = layout.dataRoot();
+
+		for (Path component : layout.dataRoot().relativize(destination)) {
+			current = current.resolve(component);
+
+			if (Files.isSymbolicLink(current)) {
+				throw new IOException("Indirect persisted managed resource path: " + current);
+			}
+
+			if (!Files.exists(current, LinkOption.NOFOLLOW_LINKS)) {
+				break;
+			}
+
+			var attributes = Files.readAttributes(current, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+
+			if (attributes.isOther()) {
+				throw new IOException("Unsupported persisted managed resource path: " + current);
+			}
+		}
+
+		return destination;
+	}
+
+	/**
+	 * Prevents refresh graph changes or physical asset changes from modifying
+	 * resources belonging to unrelated Subjects.
+	 */
+	private void requireRefreshResourceOwnership(Connection connection, SqliteSubjectGraphReader.SubjectGraph graph,
+			SubjectRefreshPlan plan, DecodedPackage decoded, StagedPackage staged, ManagedDataLayout layout,
+			Map<Key, Long> localIds) throws SQLException, IOException {
+		Set<Long> selectedDocuments = new HashSet<>(graph.ids(EntityType.SOURCE_DOCUMENT));
+
+		Set<Long> sharedDocuments = new HashSet<>();
+		Set<Path> protectedPaths = new HashSet<>();
+
+		String documentSql = """
+				SELECT
+				    d.id,
+				    d.relative_path,
+				    EXISTS (
+				        SELECT 1
+				        FROM exam_booklets b
+				        JOIN exams e ON e.id = b.exam_id
+				        WHERE b.source_document_id = d.id
+				          AND e.subject_id <> ?
+				    )
+				    OR EXISTS (
+				        SELECT 1
+				        FROM answer_files a
+				        JOIN exams e ON e.id = a.exam_id
+				        WHERE a.source_document_id = d.id
+				          AND e.subject_id <> ?
+				    ) AS externally_referenced
+				FROM source_documents d
+				""";
+
+		try (PreparedStatement statement = connection.prepareStatement(documentSql)) {
+			statement.setLong(1, graph.subjectId());
+			statement.setLong(2, graph.subjectId());
+
+			try (ResultSet rows = statement.executeQuery()) {
+				while (rows.next()) {
+					long documentId = rows.getLong("id");
+
+					boolean external = rows.getBoolean("externally_referenced");
+
+					boolean selected = selectedDocuments.contains(documentId);
+
+					if (external && selected) {
+						sharedDocuments.add(documentId);
+					}
+
+					// Protect documents belonging to other Subjects,
+					// shared documents and unselected inventory records.
+					if (external || !selected) {
+						protectedPaths.add(requireRefreshReferencePath(layout, rows.getString("relative_path")));
+					}
+				}
+			}
+		}
+
+		// Syllabus source PDFs are independently referenced managed
+		// resources and require the same cross-Subject protection.
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT source_pdf_path
+				FROM syllabus_versions
+				WHERE subject_id <> ?
+				  AND source_pdf_path IS NOT NULL
+				""")) {
+			statement.setLong(1, graph.subjectId());
+
+			try (ResultSet rows = statement.executeQuery()) {
+				while (rows.next()) {
+					protectedPaths.add(requireRefreshReferencePath(layout, rows.getString(1)));
+				}
+			}
+		}
+
+		// An existing shared SourceDocument must retain both its
+		// domain content and its persisted managed path.
+		for (var change : plan.recordChanges()) {
+			if (!EntityType.SOURCE_DOCUMENT.name().equals(change.key().recordType()) || change.current() == null) {
+				continue;
+			}
+
+			Key key = SubjectReconciliationReview.recordKey(EntityType.SOURCE_DOCUMENT.name(), change.key().recordId());
+
+			Long localId = localIds.get(key);
+
+			if (localId == null || !sharedDocuments.contains(localId)) {
+				continue;
+			}
+
+			if (change.kind() != SubjectRefreshChangeClassifier.ChangeKind.UNCHANGED || change.incoming() == null
+					|| refreshManagedPathChanged(connection, EntityType.SOURCE_DOCUMENT, localId, change.incoming(),
+							decoded, staged)) {
+				throw new SQLException("Refresh would modify a shared SourceDocument: " + change.key().recordId());
+			}
+		}
+
+		Path embeddedRoot = layout.subjectDirectory(graph.subjectName()).resolve("exams").resolve("_examwork_embedded");
+
+		// Protect physical resources even where separate database
+		// records refer to the same managed file.
+		for (var change : plan.assetChanges()) {
+			if (change.kind() == SubjectRefreshChangeClassifier.ChangeKind.UNCHANGED) {
+				continue;
+			}
+
+			Path destination = requireRefreshReferencePath(layout, change.managedPath());
+
+			if (destination.startsWith(embeddedRoot)) {
+				continue;
+			}
+
+			for (Path protectedPath : protectedPaths) {
+				boolean samePath = destination.equals(protectedPath);
+
+				if (!samePath && Files.isRegularFile(destination, LinkOption.NOFOLLOW_LINKS)
+						&& Files.isRegularFile(protectedPath, LinkOption.NOFOLLOW_LINKS)) {
+					samePath = Files.isSameFile(destination, protectedPath);
+				}
+
+				if (samePath) {
+					throw new IOException("Refresh would modify a managed resource "
+							+ "referenced outside the Subject: " + change.managedPath());
 				}
 			}
 		}

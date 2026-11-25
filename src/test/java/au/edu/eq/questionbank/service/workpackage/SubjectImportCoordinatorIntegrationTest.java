@@ -29,6 +29,8 @@ import org.junit.jupiter.api.io.TempDir;
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ManagedAssetPublicationLock;
 import au.edu.eq.questionbank.ManagedDataLayout;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableAliasRepository;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.repository.sqlite.SqliteImportedSubjectAuthorityRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteSubjectImportLedger;
@@ -458,6 +460,410 @@ class SubjectImportCoordinatorIntegrationTest {
 		// of publishing an eligible subsequent snapshot.
 		assertThrows(IOException.class, () -> coordinator.executeNewSubject(inspection, updated));
 		assertImportedSubjectGraph(database, destination, "Biology");
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void refreshGraphAddsNewRecordAndPreservesExistingCanonicalIdentity() throws Exception {
+		RefreshStagingFixture fixture = createRefreshStagingFixture();
+
+		SqliteDatabase sourceDatabase = new SqliteDatabase(fixture.source().databasePath());
+
+		SqliteDatabase destinationDatabase = fixture.destinationDatabase();
+
+		// Introduce a genuinely new authoritative SourceQuestion.
+		execute(sourceDatabase, """
+				INSERT INTO source_questions (
+				    id,
+				    booklet_id,
+				    source_question_code
+				)
+				VALUES (92, 61, '2')
+				""");
+
+		Path incoming = directory.resolve("refresh-with-new-source-question.examwork");
+
+		new SubjectSnapshotExporter(sourceDatabase, new ManagedDataLayout(fixture.source().dataRoot())).export(1L,
+				incoming);
+
+		ManagedDataLayout layout = new ManagedDataLayout(fixture.destination().dataRoot());
+
+		var preview = new SubjectSnapshotIntakePreview(destinationDatabase);
+
+		var plan = preview.previewRefresh(incoming, layout);
+		var approval = plan.approve("Approve new authoritative record");
+
+		var newRecord = plan.recordChanges().stream()
+				.filter(change -> change.kind() == SubjectRefreshChangeClassifier.ChangeKind.ADD)
+				.filter(change -> "SOURCE_QUESTION".equals(change.key().recordType())).findFirst().orElseThrow();
+
+		var questionChange = plan.recordChanges().stream()
+				.filter(change -> "QUESTION".equals(change.key().recordType())).findFirst().orElseThrow();
+
+		var identities = new SqlitePortableIdentityRepository(destinationDatabase);
+
+		var originalQuestion = identities
+				.findByPortableId(SqlitePortableIdentityRepository.EntityType.QUESTION, questionChange.key().recordId())
+				.orElseThrow();
+
+		var providerChange = plan.recordChanges().stream()
+				.filter(change -> "EXAM_PROVIDER".equals(change.key().recordType())).findFirst().orElseThrow();
+
+		var originalProvider = identities.findByPortableId(SqlitePortableIdentityRepository.EntityType.EXAM_PROVIDER,
+				providerChange.key().recordId()).orElseThrow();
+
+		var stager = new SubjectImportAssetStager(fixture.destination());
+
+		var writer = new SubjectImportGraphWriter(destinationDatabase);
+
+		try (var lock = ManagedAssetPublicationLock.acquire(fixture.destination().dataRoot())) {
+			var backup = new SubjectImportBackupGate(fixture.destination()).createVerifiedFullBackup(
+					plan.evidence().incoming().fingerprint().packageId(), directory.resolve("graph-addition-backups"));
+
+			var staged = stager.stageRefresh(approval, backup, incoming, lock);
+
+			try (Connection connection = destinationDatabase.openConnection()) {
+				connection.setAutoCommit(false);
+
+				var result = writer.applyRefreshGraph(connection, approval, staged, layout, lock);
+
+				long addedId = result.get(newRecord.key());
+
+				assertTrue(addedId > 0);
+
+				var addedIdentity = identities
+						.findByLocalId(connection, SqlitePortableIdentityRepository.EntityType.SOURCE_QUESTION, addedId)
+						.orElseThrow();
+
+				assertEquals(newRecord.key().recordId(), addedIdentity.portableId());
+
+				assertEquals(newRecord.incoming().revisionId(), addedIdentity.revisionId());
+
+				var updatedQuestion = identities.findByPortableId(connection,
+						SqlitePortableIdentityRepository.EntityType.QUESTION, questionChange.key().recordId())
+						.orElseThrow();
+
+				assertEquals(originalQuestion.localId(), updatedQuestion.localId());
+
+				assertEquals(originalQuestion.portableId(), updatedQuestion.portableId());
+
+				assertEquals(questionChange.incoming().revisionId(), updatedQuestion.revisionId());
+
+				var updatedProvider = identities.findByPortableId(connection,
+						SqlitePortableIdentityRepository.EntityType.EXAM_PROVIDER, providerChange.key().recordId())
+						.orElseThrow();
+
+				assertEquals(originalProvider, updatedProvider);
+
+				assertEquals(2, count(connection, """
+						SELECT COUNT(*)
+						FROM source_questions
+						"""));
+
+				assertEquals(1, count(connection, """
+						SELECT COUNT(*)
+						FROM source_questions
+						WHERE source_question_code = '2'
+						"""));
+
+				assertEquals(1, count(connection, """
+						SELECT COUNT(*)
+						FROM questions
+						WHERE marks = 3
+						"""));
+
+				var originatingKey = plan.identities().entrySet().stream()
+						.filter(entry -> "SOURCE_QUESTION".equals(entry.getKey().recordType()))
+						.filter(entry -> newRecord.key().recordId().equals(entry.getValue())).map(Map.Entry::getKey)
+						.findFirst().orElseThrow();
+
+				var alias = new SqlitePortableAliasRepository(destinationDatabase)
+						.findAlias(connection, plan.evidence().incoming().fingerprint().originInstallationId(),
+								SqlitePortableIdentityRepository.EntityType.SOURCE_QUESTION, originatingKey.recordId())
+						.orElseThrow();
+
+				assertEquals(addedIdentity.portableId(), alias);
+
+				// This increment does not yet publish the package ledger.
+				// Roll back the graph rather than committing it independently.
+				connection.rollback();
+			}
+		}
+
+		assertRefreshDestinationUnchanged(fixture);
+
+		try (Connection connection = destinationDatabase.openConnection()) {
+			assertEquals(1, count(connection, """
+					SELECT COUNT(*)
+					FROM source_questions
+					"""));
+		}
+
+		assertTrue(identities.findByPortableId(SqlitePortableIdentityRepository.EntityType.SOURCE_QUESTION,
+				newRecord.key().recordId()).isEmpty());
+
+		destinationDatabase.verifyIntegrity();
+	}
+
+	@Test
+	void refreshGraphRejectsManagedAssetReferencedByUnrelatedSubject() throws Exception {
+		RefreshStagingFixture fixture = createRefreshStagingFixture();
+
+		SqliteDatabase database = fixture.destinationDatabase();
+
+		// Create a second Subject whose syllabus references the same
+		// physical PDF that Biology's refresh would replace.
+		execute(database, """
+				INSERT INTO subjects (
+				    id,
+				    subject_name
+				)
+				VALUES (9991, 'Chemistry')
+				""", """
+				INSERT INTO syllabus_versions (
+				    id,
+				    subject_id,
+				    syllabus_name,
+				    is_current,
+				    source_pdf_path
+				)
+				VALUES (
+				    9992,
+				    9991,
+				    'Chemistry syllabus',
+				    1,
+				    'subjects/Biology/exams/questions.pdf'
+				)
+				""");
+
+		ManagedDataLayout layout = new ManagedDataLayout(fixture.destination().dataRoot());
+
+		var preview = new SubjectSnapshotIntakePreview(database);
+
+		var plan = preview.previewRefresh(fixture.newer(), layout);
+
+		var approval = plan.approve("Approve Biology refresh subject to ownership checks");
+
+		var stager = new SubjectImportAssetStager(fixture.destination());
+
+		var writer = new SubjectImportGraphWriter(database);
+
+		try (var lock = ManagedAssetPublicationLock.acquire(fixture.destination().dataRoot())) {
+			var backup = new SubjectImportBackupGate(fixture.destination()).createVerifiedFullBackup(
+					plan.evidence().incoming().fingerprint().packageId(), directory.resolve("shared-path-backups"));
+
+			var staged = stager.stageRefresh(approval, backup, fixture.newer(), lock);
+
+			try (Connection connection = database.openConnection()) {
+				connection.setAutoCommit(false);
+
+				IOException failure = assertThrows(IOException.class,
+						() -> writer.applyRefreshGraph(connection, approval, staged, layout, lock));
+
+				assertTrue(failure.getMessage().contains("referenced outside the Subject"));
+
+				assertEquals(1, count(connection, """
+						SELECT COUNT(*)
+						FROM questions
+						WHERE marks = 2
+						"""));
+
+				assertEquals(1, count(connection, """
+						SELECT COUNT(*)
+						FROM syllabus_versions
+						WHERE id = 9992
+						  AND source_pdf_path =
+						      'subjects/Biology/exams/questions.pdf'
+						"""));
+
+				connection.rollback();
+			}
+		}
+
+		assertEquals("Biology question document",
+				Files.readString(layout.resolve("subjects/Biology/exams/questions.pdf")));
+
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void refreshGraphRejectsSourceDocumentSharedWithAnotherSubject() throws Exception {
+		RefreshStagingFixture fixture = createRefreshStagingFixture();
+
+		SqliteDatabase database = fixture.destinationDatabase();
+
+		execute(database, """
+				INSERT INTO subjects (
+				    id,
+				    subject_name
+				)
+				VALUES (9991, 'Chemistry')
+				""", """
+				INSERT INTO exams (
+				    id,
+				    subject_id,
+				    provider_id,
+				    exam_year,
+				    exam_name
+				)
+				SELECT
+				    9992,
+				    9991,
+				    id,
+				    2025,
+				    'Chemistry External Assessment'
+				FROM exam_providers
+				WHERE provider_name = 'QCAA'
+				""", """
+				INSERT INTO exam_booklets (
+				    id,
+				    exam_id,
+				    source_document_id,
+				    booklet_name
+				)
+				SELECT
+				    9993,
+				    9992,
+				    id,
+				    'Chemistry Paper 1'
+				FROM source_documents
+				WHERE relative_path =
+				      'subjects/Biology/exams/questions.pdf'
+				""");
+
+		ManagedDataLayout layout = new ManagedDataLayout(fixture.destination().dataRoot());
+
+		var preview = new SubjectSnapshotIntakePreview(database);
+
+		var plan = preview.previewRefresh(fixture.newer(), layout);
+
+		var approval = plan.approve("Approve refresh subject to shared document protection");
+
+		var stager = new SubjectImportAssetStager(fixture.destination());
+
+		var writer = new SubjectImportGraphWriter(database);
+
+		try (var lock = ManagedAssetPublicationLock.acquire(fixture.destination().dataRoot())) {
+			var backup = new SubjectImportBackupGate(fixture.destination()).createVerifiedFullBackup(
+					plan.evidence().incoming().fingerprint().packageId(), directory.resolve("shared-document-backups"));
+
+			var staged = stager.stageRefresh(approval, backup, fixture.newer(), lock);
+
+			try (Connection connection = database.openConnection()) {
+				connection.setAutoCommit(false);
+
+				Exception failure = assertThrows(Exception.class,
+						() -> writer.applyRefreshGraph(connection, approval, staged, layout, lock));
+
+				assertTrue(failure instanceof SQLException || failure instanceof IOException);
+
+				assertTrue(failure.getMessage().contains("shared SourceDocument")
+						|| failure.getMessage().contains("referenced outside the Subject"));
+
+				assertEquals(1, count(connection, """
+						SELECT COUNT(*)
+						FROM exam_booklets
+						WHERE id = 9993
+						"""));
+
+				assertEquals(1, count(connection, """
+						SELECT COUNT(*)
+						FROM questions
+						WHERE marks = 2
+						"""));
+
+				connection.rollback();
+			}
+		}
+
+		assertEquals("Biology question document",
+				Files.readString(layout.resolve("subjects/Biology/exams/questions.pdf")));
+
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void refreshGraphUpdatesExistingQuestionWithoutIndependentCommit() throws Exception {
+		RefreshStagingFixture fixture = createRefreshStagingFixture();
+
+		var plan = fixture.plan();
+
+		var approval = plan.approve("Approve authoritative graph updates");
+
+		SqliteDatabase database = fixture.destinationDatabase();
+
+		ManagedDataLayout layout = new ManagedDataLayout(fixture.destination().dataRoot());
+
+		var stager = new SubjectImportAssetStager(fixture.destination());
+
+		var writer = new SubjectImportGraphWriter(database);
+
+		var questionChange = plan.recordChanges().stream()
+				.filter(change -> "QUESTION".equals(change.key().recordType())).findFirst().orElseThrow();
+
+		var identities = new SqlitePortableIdentityRepository(database);
+
+		var originalQuestion = identities
+				.findByPortableId(SqlitePortableIdentityRepository.EntityType.QUESTION, questionChange.key().recordId())
+				.orElseThrow();
+
+		try (var lock = ManagedAssetPublicationLock.acquire(fixture.destination().dataRoot())) {
+			var backup = new SubjectImportBackupGate(fixture.destination()).createVerifiedFullBackup(
+					plan.evidence().incoming().fingerprint().packageId(), directory.resolve("graph-update-backups"));
+
+			var staged = stager.stageRefresh(approval, backup, fixture.newer(), lock);
+
+			try (Connection connection = database.openConnection()) {
+				connection.setAutoCommit(false);
+
+				var result = writer.applyRefreshGraph(connection, approval, staged, layout, lock);
+
+				assertEquals(originalQuestion.localId(), result.get(questionChange.key()).longValue());
+
+				assertEquals(1, count(connection, """
+						SELECT COUNT(*)
+						FROM questions
+						WHERE marks = 3
+						"""));
+
+				assertEquals(0, count(connection, """
+						SELECT COUNT(*)
+						FROM questions
+						WHERE marks = 2
+						"""));
+
+				var updatedIdentity = identities.findByPortableId(connection,
+						SqlitePortableIdentityRepository.EntityType.QUESTION, questionChange.key().recordId())
+						.orElseThrow();
+
+				assertEquals(originalQuestion.localId(), updatedIdentity.localId());
+
+				assertEquals(originalQuestion.portableId(), updatedIdentity.portableId());
+
+				assertEquals(questionChange.incoming().revisionId(), updatedIdentity.revisionId());
+
+				assertEquals(1, count(connection, """
+						SELECT COUNT(*)
+						FROM question_images
+						"""));
+
+				assertEquals(1, count(connection, """
+						SELECT COUNT(*)
+						FROM shared_question_context_images
+						"""));
+
+				// Graph application must not independently advance
+				// the authority or create a terminal package record.
+				connection.rollback();
+			}
+		}
+
+		assertRefreshDestinationUnchanged(fixture);
+
+		assertEquals(originalQuestion, identities
+				.findByPortableId(SqlitePortableIdentityRepository.EntityType.QUESTION, questionChange.key().recordId())
+				.orElseThrow());
+
 		database.verifyIntegrity();
 	}
 
