@@ -132,6 +132,33 @@ class PrintableRegionFeasibilityTest {
 		}
 	}
 
+	@Test
+	void reproducesRegionsFromOffsetCropBox() throws Exception {
+		Path originalPath = tempDir.resolve("zero-origin-source.pdf");
+		Path croppedPath = tempDir.resolve("offset-origin-source.pdf");
+		createSourcePdf(originalPath);
+		try (PDDocument source = Loader.loadPDF(originalPath.toFile())) {
+
+			// Reproduce the essential geometry of the
+			// affected Biology source document.
+			source.getPage(0).setCropBox(new PDRectangle(20, 30, 560, 740));
+			source.save(croppedPath.toFile());
+		}
+		byte[] originalBytes = Files.readAllBytes(originalPath);
+		byte[] croppedBytes = Files.readAllBytes(croppedPath);
+		BufferedImage expected = renderCapturedRegions(originalPath, 0, 0);
+		BufferedImage actual = renderCapturedRegions(croppedPath, 20, 30);
+		assertEquals(expected.getWidth(), actual.getWidth());
+		assertEquals(expected.getHeight(), actual.getHeight());
+
+		// Equivalent captures must have identical visible content,
+		// including answer lines and replacement part identifiers.
+		assertEquals(0, countDifferentPixels(expected, 0, 0, actual, 0, 0, expected.getWidth(), expected.getHeight()),
+				"Offset crop box changed the generated appearance");
+		assertArrayEquals(originalBytes, Files.readAllBytes(originalPath));
+		assertArrayEquals(croppedBytes, Files.readAllBytes(croppedPath));
+	}
+
 	private int countDifferentPixels(BufferedImage source, int sourceX, int sourceY, BufferedImage output, int outputX,
 			int outputY, int width, int height) {
 		int sourceTop = source.getHeight() - sourceY - height;
@@ -164,6 +191,29 @@ class PrintableRegionFeasibilityTest {
 				writeText(stream, 50, 390, "UNRELATED CONTENT BELOW QUESTION");
 			}
 			document.save(path.toFile());
+		}
+	}
+
+	private BufferedImage renderCapturedRegions(Path sourcePath, float offsetX, float offsetY) throws IOException {
+		try (PDDocument source = Loader.loadPDF(sourcePath.toFile()); PDDocument output = new PDDocument()) {
+			PDPage page = new PDPage(PDRectangle.A4);
+			output.addPage(page);
+			PDRectangle firstRegion = new PDRectangle(40 - offsetX, 560 - offsetY, 480, 100);
+			PDRectangle secondRegion = new PDRectangle(40 - offsetX, 420 - offsetY, 480, 100);
+			try (PDPageContentStream stream = new PDPageContentStream(output, page)) {
+
+				// Exercise ordinary reproduction.
+				PrintablePdfRegionWriter.appendRegion(source, 1, output, stream, firstRegion, 50, 650, "", "");
+
+				// Exercise the original label replacement API.
+				PrintablePdfRegionWriter.appendRegion(source, 1, output, stream, firstRegion, 50, 510, "(b)", "(a)");
+
+				// Exercise the current examination label
+				// replacement API.
+				PrintablePdfRegionWriter.appendRegionWithLabel(source, 1, output, stream, secondRegion, secondRegion,
+						50, 370, List.of("(c)", "c)"), "b)", new PDType1Font(Standard14Fonts.FontName.HELVETICA), true);
+			}
+			return new PDFRenderer(output).renderImageWithDPI(0, 72);
 		}
 	}
 

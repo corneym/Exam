@@ -22,6 +22,7 @@ import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 
+import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ImageQuestionContentPart;
 import au.edu.eq.questionbank.model.ImageSharedContextContentPart;
 import au.edu.eq.questionbank.model.PdfQuestionContentPart;
@@ -82,24 +83,18 @@ public final class PrintableAssessmentWriter {
 	}
 
 	/**
-	 * Appends a multiple-choice question book using the assessment plan.
+	 * Appends the multiple-choice booklet with generated Question numbering.
 	 *
 	 * <p>
-	 * Each Question heading and its captured content remain together on one page.
-	 * Consecutive Questions sharing the same Shared Context are placed together
-	 * with that context on a single page.
-	 *
-	 * <p>
-	 * No pages are appended when the selection contains no multiple-choice
-	 * Questions.
+	 * Consecutive Questions sharing a stimulus are kept together. An oversized
+	 * individual Question may continue onto another page.
 	 *
 	 * @param document destination PDF document
 	 * @param fonts    student examination fonts
-	 * @param subject  assessment subject
-	 * @param year     mock assessment year
-	 * @param plan     numbered assessment selections
-	 * @throws IOException if PDF processing fails or a Question group cannot fit
-	 *                     together on a page
+	 * @param subject  examination Subject name
+	 * @param year     assessment year
+	 * @param plan     ordered examination selections
+	 * @throws IOException if content cannot be reproduced
 	 */
 	public void appendMultipleChoiceBooklet(PDDocument document, PrintableExamFonts fonts, String subject, int year,
 			PrintableAssessmentPlan plan) throws IOException {
@@ -116,8 +111,7 @@ public final class PrintableAssessmentWriter {
 			int end = start + 1;
 			if (context != null) {
 
-				// Collect all consecutive Questions referring
-				// to the same persistent Shared Context.
+				// Collect consecutive Questions sharing the same stimulus.
 				while (end < questions.size()) {
 					SharedQuestionContext nextContext = questions.get(end).question().getSharedContext();
 					if (nextContext == null || nextContext.getId() != context.getId()) {
@@ -134,12 +128,18 @@ public final class PrintableAssessmentWriter {
 			String description = end - start == 1 ? "Question " + first.number()
 					: "Questions " + first.number() + "–" + questions.get(end - 1).number()
 							+ " and their Shared Context";
+			boolean keepTogether = writer.canFitGroup(requiredHeight);
+			if (keepTogether || end - start > 1) {
 
-			// Reserve the complete group before writing any
-			// stimulus, Question heading or Question content.
-			writer.reserveGroup(requiredHeight, description);
+				// Shared stimuli for multiple MCQs must not be
+				// separated from their dependent Questions.
+				writer.reserveGroup(requiredHeight, description);
+			}
 			if (context != null) {
 				appendSharedContext(writer, context);
+			}
+			if (!keepTogether) {
+				writer.reserveQuestionStart(measureFirstQuestionContent(writer, first.question()), description);
 			}
 			for (int index = start; index < end; index++) {
 				var numbered = questions.get(index);
@@ -354,23 +354,46 @@ public final class PrintableAssessmentWriter {
 		Question question = numbered.question();
 		String originalLabel = numbered.originalPartLabel();
 		String replacementLabel = numbered.replacementPartLabel();
-		boolean firstPart = true;
+		boolean labelPending = !originalLabel.isEmpty();
+		Exam exam = question.getExam();
+		boolean allowBareLabel = "Oxford".equalsIgnoreCase(exam.getProvider().getName());
 		for (QuestionContentPart part : question.getContentParts()) {
 			if (part instanceof PdfQuestionContentPart pdfPart) {
 				QuestionRegion region = pdfPart.region();
-				appendPdfRegion(writer, region.booklet().getSourceDocument().getRelativePath(), region.pageNumber(),
-						region.x(), region.y(), region.width(), region.height(), firstPart ? originalLabel : "",
-						firstPart ? replacementLabel : "");
-			} else if (part instanceof ImageQuestionContentPart imagePart) {
+				Path path = pdfStore.resolve(region.booklet().getSourceDocument().getRelativePath());
+				try (PDDocument source = Loader.loadPDF(path.toFile())) {
+					PDRectangle cropBox = source.getPage(region.pageNumber() - 1).getCropBox();
+					float pageWidth = cropBox.getWidth();
+					float pageHeight = cropBox.getHeight();
+					PDRectangle rectangle = new PDRectangle((float) (region.x() * pageWidth),
+							(float) ((1.0 - region.y() - region.height()) * pageHeight),
+							(float) (region.width() * pageWidth), (float) (region.height() * pageHeight));
+					String matchedLabel = "";
+					if (labelPending) {
 
-				// Text-based part-label replacement requires a PDF
-				// region. Do not silently retain an incorrect label.
-				if (firstPart && !originalLabel.isEmpty()) {
-					throw new IOException("Cannot replace part label in image content: " + question.getQuestionCode());
+						// Earlier captured regions may contain
+						// stimulus material rather than the part label.
+						matchedLabel = PrintablePdfRegionWriter.findQuestionPartLabel(source, region.pageNumber(),
+								rectangle, originalLabel, allowBareLabel);
+					}
+					writer.appendRegion(source, region.pageNumber(), rectangle, matchedLabel,
+							matchedLabel.isEmpty() ? "" : replacementLabel);
+					if (!matchedLabel.isEmpty()) {
+						labelPending = false;
+					}
 				}
+			} else if (part instanceof ImageQuestionContentPart imagePart) {
 				writer.appendImage(imagePart.pngBytes());
 			}
-			firstPart = false;
+		}
+		if (labelPending) {
+
+			// Do not silently accept a different original part
+			// identifier. It may indicate an incorrect capture.
+			throw new IOException("%s %d — %s — %s — Q%s [ID %d]: ".formatted(exam.getProvider().getName(),
+					exam.getYear(), exam.getName(), question.getBooklet().getName(), question.getQuestionCode(),
+					question.getId()) + "Cannot locate original part identifier " + originalLabel
+					+ " in any captured Question region.");
 		}
 	}
 
@@ -394,8 +417,8 @@ public final class PrintableAssessmentWriter {
 			int number = questions.get(start).number();
 			int end = start + 1;
 
-			// All selected parts assigned to this generated
-			// Question number belong to the same group.
+			// Collect all selected parts belonging to this
+			// generated top-level Question number.
 			while (end < questions.size() && questions.get(end).number() == number) {
 				end++;
 			}
@@ -413,10 +436,19 @@ public final class PrintableAssessmentWriter {
 				}
 				requiredHeight += measureQuestionBody(writer, question);
 			}
+			String description = "Paper " + paper + ", Question " + number;
+			if (writer.canFitGroup(requiredHeight)) {
+				writer.reserveGroup(requiredHeight, description);
+			} else {
 
-			// Keep the generated Question number, stimulus
-			// and all selected parts together.
-			writer.reserveGroup(requiredHeight, "Paper " + paper + ", Question " + number);
+				// An oversized Question may span pages, but
+				// its heading must accompany its initial content.
+				Question first = questions.get(start).question();
+				float firstContentHeight = first.hasSharedContext()
+						? measureFirstSharedContextContent(writer, first.getSharedContext())
+						: measureFirstQuestionContent(writer, first);
+				writer.reserveQuestionStart(firstContentHeight, description);
+			}
 			writer.appendText(
 					"QUESTION " + number + " (" + questionMarks + (questionMarks == 1 ? " mark)" : " marks)"));
 			includedContexts.clear();
@@ -459,6 +491,34 @@ public final class PrintableAssessmentWriter {
 			PrintableExamPage.writeText(stream, cover, fonts.regular(), 8, 42.5f, 797,
 					"CC BY 4.0 — exceptions apply: " + "www.qcaa.qld.edu.au/copyright");
 		}
+	}
+
+	private float measureFirstQuestionContent(PrintablePageWriter writer, Question question) throws IOException {
+		for (QuestionContentPart part : question.getContentParts()) {
+			if (part instanceof PdfQuestionContentPart pdfPart) {
+				QuestionRegion region = pdfPart.region();
+				return measurePdfRegion(writer, region.booklet().getSourceDocument().getRelativePath(),
+						region.pageNumber(), region.width(), region.height());
+			}
+			if (part instanceof ImageQuestionContentPart imagePart) {
+				return measurePngContent(writer, imagePart.pngBytes());
+			}
+		}
+		throw new IOException("Missing content for Question " + question.getQuestionCode());
+	}
+
+	private float measureFirstSharedContextContent(PrintablePageWriter writer, SharedQuestionContext context)
+			throws IOException {
+		String relativePath = context.getBooklet().getSourceDocument().getRelativePath();
+		for (SharedContextContentPart part : context.getContentParts()) {
+			if (part instanceof SharedQuestionContextRegion region) {
+				return measurePdfRegion(writer, relativePath, region.pageNumber(), region.width(), region.height());
+			}
+			if (part instanceof ImageSharedContextContentPart imagePart) {
+				return measurePngContent(writer, imagePart.pngBytes());
+			}
+		}
+		throw new IOException("Missing Shared Context content: " + context.getId());
 	}
 
 	private float measurePdfRegion(PrintablePageWriter writer, String relativePath, int pageNumber, double width,

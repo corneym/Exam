@@ -59,6 +59,61 @@ class PrintableAssessmentWriterTest {
 	Path tempDir;
 
 	@Test
+	void allowsOversizedQuestionToContinueAcrossPages() throws Exception {
+		createPdf(tempDir.resolve("questions.pdf"), List.of("First captured Question region.",
+				"Second captured Question region.", "Third captured Question region."));
+		createPdf(tempDir.resolve("answers.pdf"), List.of("22    Sample response."));
+		ExamBooklet booklet = createBooklet();
+		CurriculumNode classification = createClassification(booklet.getExam().getSubject());
+		Question question = new Question(1, booklet, "22", "", 6,
+				List.of(new QuestionRegion(booklet, 1, 0.05, 0.05, 0.9, 0.9),
+						new QuestionRegion(booklet, 2, 0.05, 0.05, 0.9, 0.35),
+						new QuestionRegion(booklet, 3, 0.05, 0.05, 0.9, 0.35)),
+				classification, false, null, null, QuestionResponseType.WRITTEN_RESPONSE);
+		AnswerFile answerFile = new AnswerFile(1, booklet.getExam(), "Marking guide",
+				new SourceDocument(2, "answers.pdf"));
+		question.setAnswer(new Answer(1, null, List.of(new AnswerRegion(answerFile, 1, 0.05, 0.05, 0.9, 0.25))));
+		PrintableAssessmentPlan plan = new PrintableAssessmentPlan(List.of(), List.of(), List.of(question));
+		PrintableAssessmentWriter writer = new PrintableAssessmentWriter(new PdfStore(tempDir));
+		Path output = tempDir.resolve("oversized-question.pdf");
+		try (PDDocument document = new PDDocument()) {
+			writer.appendPaperTwo(document, createStudentTestFonts(), "Chemistry", 2027, 5, 60, plan);
+			document.save(output.toFile());
+		}
+		try (PDDocument document = Loader.loadPDF(output.toFile())) {
+			int headingPage = -1;
+			int firstRegionPage = -1;
+			int secondRegionPage = -1;
+			int thirdRegionPage = -1;
+			int headingCount = 0;
+			for (int page = 1; page <= document.getNumberOfPages(); page++) {
+				String text = extractPageText(document, page);
+				if (text.contains("QUESTION 1 (6 marks)")) {
+					headingPage = page;
+					headingCount++;
+				}
+				if (text.contains("First captured Question region.")) {
+					firstRegionPage = page;
+				}
+				if (text.contains("Second captured Question region.")) {
+					secondRegionPage = page;
+				}
+				if (text.contains("Third captured Question region.")) {
+					thirdRegionPage = page;
+				}
+			}
+			assertTrue(headingPage > 0);
+
+			// The heading must not be orphaned on a preceding page.
+			assertEquals(headingPage, firstRegionPage);
+			assertTrue(secondRegionPage > firstRegionPage);
+			assertTrue(thirdRegionPage >= secondRegionPage);
+			assertEquals(1, headingCount);
+			verifyAdditionalPages(document);
+		}
+	}
+
+	@Test
 	void continuesAnswerGridBeyondTwentyQuestions() throws Exception {
 		Path output = tempDir.resolve("extended-grid.pdf");
 		try (PDDocument document = new PDDocument()) {
@@ -350,6 +405,63 @@ class PrintableAssessmentWriterTest {
 	}
 
 	@Test
+	void generatesMarkingGuideWhenOriginalIdentifierWasNotCaptured() throws Exception {
+		Path answerPath = tempDir.resolve("answers.pdf");
+		try (PDDocument source = new PDDocument()) {
+			PDPage page = new PDPage(new PDRectangle(PDRectangle.A4.getHeight(), PDRectangle.A4.getWidth()));
+			source.addPage(page);
+			try (PDPageContentStream stream = new PDPageContentStream(source, page)) {
+				PrintableExamFonts fonts = createGuideTestFonts();
+				PrintableExamPage.writeText(stream, page, fonts.bold(), 11, 85, 70, "Q");
+				PrintableExamPage.writeText(stream, page, fonts.bold(), 11, 115, 70, "Sample response");
+				PrintableExamPage.writeText(stream, page, fonts.bold(), 11, 380, 70, "The response:");
+				PrintableExamPage.writeText(stream, page, fonts.regular(), 11, 85, 100, "22");
+				PrintableExamPage.writeText(stream, page, fonts.regular(), 11, 120, 100, "Concentration = 22 mol/L");
+				PrintableExamPage.writeText(stream, page, fonts.regular(), 11, 380, 100, "Correct calculation");
+			}
+			source.save(answerPath.toFile());
+		}
+		ExamBooklet booklet = createBooklet();
+		CurriculumNode classification = createClassification(booklet.getExam().getSubject());
+		Question question = new Question(1, booklet, "22", "", 2,
+				List.of(new QuestionRegion(booklet, 1, 0.05, 0.05, 0.9, 0.25)), classification, false, null, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		AnswerFile answerFile = new AnswerFile(1, booklet.getExam(), "Marking guide",
+				new SourceDocument(2, "answers.pdf"));
+		float pageWidth = PDRectangle.A4.getHeight();
+		float pageHeight = PDRectangle.A4.getWidth();
+
+		// The capture starts in the Sample response column.
+		// Original Question number 22 is intentionally excluded.
+		question.setAnswer(new Answer(1, null, List.of(
+				new AnswerRegion(answerFile, 1, 110 / pageWidth, 80 / pageHeight, 650 / pageWidth, 70 / pageHeight))));
+		PrintableAssessmentPlan plan = new PrintableAssessmentPlan(List.of(), List.of(question), List.of());
+		byte[] original = Files.readAllBytes(answerPath);
+		try (PDDocument source = Loader.loadPDF(answerPath.toFile())) {
+			float responseColumn = PrintablePdfRegionWriter.sampleResponseColumnLeft(source, 1);
+			assertEquals(108, responseColumn, 0.5f);
+		}
+		Path output = tempDir.resolve("guide-with-reconstructed-column.pdf");
+		PrintableAssessmentWriter writer = new PrintableAssessmentWriter(new PdfStore(tempDir));
+		try (PDDocument document = new PDDocument()) {
+			writer.appendMarkingGuide(document, createGuideTestFonts(), "Chemistry", 2027, plan);
+			document.save(output.toFile());
+		}
+		try (PDDocument document = Loader.loadPDF(output.toFile())) {
+			assertEquals(2, document.getNumberOfPages());
+			String text = extractPageText(document, 2);
+			assertTrue(text.lines().map(String::trim).anyMatch("1"::equals));
+
+			// An identical number occurring in an actual answer
+			// must not be mistaken for an original Question label.
+			assertTrue(text.contains("Concentration = 22 mol/L"));
+			assertTrue(text.contains("Correct calculation"));
+			assertTrue(text.contains("Source: QCAA 2026"));
+		}
+		assertArrayEquals(original, Files.readAllBytes(answerPath));
+	}
+
+	@Test
 	void keepsConsecutiveMultipleChoiceQuestionsWithTheirSharedContext() throws Exception {
 		PrintableAssessmentPlan base = createMultipleChoicePlan();
 		var original = base.getMultipleChoice();
@@ -430,6 +542,49 @@ class PrintableAssessmentWriterTest {
 	}
 
 	@Test
+	void locatesPartLabelAfterInitialStimulusRegion() throws Exception {
+		PrintableAssessmentPlan base = createWrittenAssessmentPlan();
+		Question original = base.getPaperOne().getFirst().question();
+		ExamBooklet booklet = original.getBooklet();
+		Question question = new Question(original.getId(), booklet, "12b", "", original.getMarks(),
+				List.of(new QuestionRegion(booklet, 1, 0.05, 0.05, 0.9, 0.25),
+						new QuestionRegion(booklet, 2, 0.05, 0.05, 0.9, 0.25)),
+				createClassification(booklet.getExam().getSubject()), false, new SourceQuestion(1, booklet, "12"), null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		question.setAnswer(original.getAnswer());
+		PrintableAssessmentPlan plan = new PrintableAssessmentPlan(List.of(), List.of(), List.of(question));
+		PrintableAssessmentWriter writer = new PrintableAssessmentWriter(new PdfStore(tempDir));
+		Path output = tempDir.resolve("later-part-label.pdf");
+		try (PDDocument document = new PDDocument()) {
+			writer.appendPaperTwo(document, createStudentTestFonts(), "Chemistry", 2027, 5, 60, plan);
+			document.save(output.toFile());
+		}
+		String text = extractText(output);
+		assertTrue(text.contains("QUESTION 1 (2 marks)"));
+		assertTrue(text.contains("Select the correct species."));
+		assertTrue(text.contains("Calculate the equilibrium constant."));
+	}
+
+	@Test
+	void rejectsIncorrectlyCapturedPartIdentifier() throws Exception {
+		PrintableAssessmentPlan base = createWrittenAssessmentPlan();
+		Question original = base.getPaperOne().getFirst().question();
+
+		// Replace the source with a different printed part
+		// while retaining the stored Question code 12b.
+		createPdf(tempDir.resolve("questions.pdf"),
+				List.of("Stimulus.", "c) Describe the reaction.", "Other content.", "Other content."));
+		PrintableAssessmentPlan plan = new PrintableAssessmentPlan(List.of(), List.of(), List.of(original));
+		PrintableAssessmentWriter writer = new PrintableAssessmentWriter(new PdfStore(tempDir));
+		try (PDDocument document = new PDDocument()) {
+			IOException failure = assertThrows(IOException.class,
+					() -> writer.appendPaperTwo(document, createStudentTestFonts(), "Chemistry", 2027, 5, 60, plan));
+			assertTrue(failure.getMessage().contains("Q12b"));
+			assertTrue(failure.getMessage().contains("Cannot locate original part identifier"));
+		}
+	}
+
+	@Test
 	void rejectsQuestionGroupTooLargeForOnePage() throws Exception {
 		try (PDDocument document = new PDDocument()) {
 			PrintablePageWriter writer = new PrintablePageWriter(document, createStudentTestFonts());
@@ -454,6 +609,53 @@ class PrintableAssessmentWriterTest {
 		assertTrue(PrintableAssessmentWriter.canSelect(question));
 		PrintableAssessmentPlan plan = new PrintableAssessmentPlan(List.of(question), List.of(), List.of());
 		assertEquals(1, plan.getMultipleChoiceCount());
+	}
+
+	@Test
+	void renumbersOxfordBarePartLabels() throws Exception {
+		Path sourcePath = tempDir.resolve("oxford-questions.pdf");
+		try (PDDocument document = new PDDocument()) {
+			for (String label : List.of("b", "c")) {
+				PDPage page = new PDPage(PDRectangle.A4);
+				document.addPage(page);
+				try (PDPageContentStream stream = new PDPageContentStream(document, page)) {
+					PrintableExamFonts fonts = createStudentTestFonts();
+					PrintableExamPage.writeText(stream, page, fonts.bold(), 12, 36, 90, label);
+					PrintableExamPage.writeText(stream, page, fonts.regular(), 12, 60, 90,
+							"Describe the reaction in part " + label);
+				}
+			}
+			document.save(sourcePath.toFile());
+		}
+		createPdf(tempDir.resolve("answers.pdf"), List.of("Sample response."));
+		Subject subject = new Subject(1, "Chemistry");
+		Exam exam = new Exam(1, subject, new ExamProvider(1, "Oxford"), 2025, "Practice Examination");
+		ExamBooklet booklet = new ExamBooklet(1, exam, "Paper 2", new SourceDocument(1, "oxford-questions.pdf"));
+		SourceQuestion source = new SourceQuestion(1, booklet, "12");
+		AnswerFile answerFile = new AnswerFile(1, exam, "Marking guide", new SourceDocument(2, "answers.pdf"));
+		List<Question> questions = new ArrayList<>();
+		for (int index = 0; index < 2; index++) {
+			String code = index == 0 ? "12b" : "12c";
+			Question question = new Question(index + 1, booklet, code, "", 2,
+					List.of(new QuestionRegion(booklet, index + 1, 0, 0.09, 1, 0.20)), createClassification(subject),
+					false, source, null, QuestionResponseType.WRITTEN_RESPONSE);
+			question.setAnswer(
+					new Answer(index + 1, null, List.of(new AnswerRegion(answerFile, 1, 0.05, 0.05, 0.9, 0.25))));
+			questions.add(question);
+		}
+		PrintableAssessmentPlan plan = new PrintableAssessmentPlan(List.of(), List.of(), questions);
+		PrintableAssessmentWriter writer = new PrintableAssessmentWriter(new PdfStore(tempDir));
+		Path output = tempDir.resolve("oxford-renumbered.pdf");
+		try (PDDocument document = new PDDocument()) {
+			writer.appendPaperTwo(document, createStudentTestFonts(), "Chemistry", 2027, 5, 60, plan);
+			document.save(output.toFile());
+		}
+		String text = extractText(output);
+		assertTrue(text.contains("QUESTION 1 (4 marks)"));
+		assertTrue(text.contains("a)"));
+		assertTrue(text.contains("b)"));
+		assertTrue(text.contains("Describe the reaction in part b"));
+		assertTrue(text.contains("Describe the reaction in part c"));
 	}
 
 	@Test

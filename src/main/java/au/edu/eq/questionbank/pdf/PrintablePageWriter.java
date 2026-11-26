@@ -37,6 +37,7 @@ public final class PrintablePageWriter {
 	private int responseMarks;
 	private int responsePaper;
 	private int responseQuestionCount;
+	private float nextContentMaximumHeight = Float.POSITIVE_INFINITY;
 
 	/**
 	 * Creates a plain page writer for a destination PDF document.
@@ -115,8 +116,9 @@ public final class PrintablePageWriter {
 	public void appendImage(byte[] pngBytes) throws IOException {
 		PDImageXObject image = PDImageXObject.createFromByteArray(document, pngBytes, "question-image");
 		float availableWidth = PDRectangle.A4.getWidth() - 2 * leftMargin();
-		float scale = Math.min(1.0f,
-				Math.min(availableWidth / image.getWidth(), availableHeight() / image.getHeight()));
+		float maximumHeight = Math.min(availableHeight(), nextContentMaximumHeight);
+		nextContentMaximumHeight = Float.POSITIVE_INFINITY;
+		float scale = Math.min(1.0f, Math.min(availableWidth / image.getWidth(), maximumHeight / image.getHeight()));
 		float width = image.getWidth() * scale;
 		float height = image.getHeight() * scale;
 		ensureSpace(height);
@@ -133,7 +135,8 @@ public final class PrintablePageWriter {
 	 *
 	 * <p>
 	 * Short-response part labels are reproduced using the supplied student font and
-	 * the generated examination label format.
+	 * generated examination label format. Bare-letter labels are restricted to
+	 * their supported source identifier column.
 	 *
 	 * @param source           source PDF document
 	 * @param pageNumber       one-based source page number
@@ -145,8 +148,9 @@ public final class PrintablePageWriter {
 	public void appendRegion(PDDocument source, int pageNumber, PDRectangle region, String originalLabel,
 			String replacementLabel) throws IOException {
 		float availableWidth = PDRectangle.A4.getWidth() - 2 * leftMargin();
-		float scale = Math.min(1.0f,
-				Math.min(availableWidth / region.getWidth(), availableHeight() / region.getHeight()));
+		float maximumHeight = Math.min(availableHeight(), nextContentMaximumHeight);
+		nextContentMaximumHeight = Float.POSITIVE_INFINITY;
+		float scale = Math.min(1.0f, Math.min(availableWidth / region.getWidth(), maximumHeight / region.getHeight()));
 		float height = region.getHeight() * scale;
 		ensureSpace(height);
 		float bottom = cursorY - height;
@@ -155,12 +159,16 @@ public final class PrintablePageWriter {
 			stream.saveGraphicsState();
 			stream.transform(new Matrix(scale, 0, 0, scale, leftMargin(), bottom));
 			if (responsePaper != 0 && !originalLabel.isEmpty()) {
-
-				// Existing numbering uses (a). Original providers
-				// may print either (a) or a).
-				List<String> alternatives = List.of(originalLabel, originalLabel.replace("(", ""));
-				PrintablePdfRegionWriter.appendRegionWithLabel(source, pageNumber, document, stream, region, region, 0,
-						0, alternatives, replacementLabel.replace("(", ""), fonts.regular(), true);
+				PDRectangle searchRegion = PrintablePdfRegionWriter.questionPartLabelSearchRegion(source, pageNumber,
+						region, originalLabel);
+				if (searchRegion == null) {
+					throw new IOException(
+							"Original part identifier is outside " + "the captured region: " + originalLabel);
+				}
+				List<String> alternatives = originalLabel.matches("[a-z]") ? List.of(originalLabel)
+						: List.of(originalLabel, originalLabel.replace("(", ""));
+				PrintablePdfRegionWriter.appendRegionWithLabel(source, pageNumber, document, stream, region,
+						searchRegion, 0, 0, alternatives, replacementLabel.replace("(", ""), fonts.regular(), true);
 			} else {
 				PrintablePdfRegionWriter.appendRegion(source, pageNumber, document, stream, region, 0, 0, originalLabel,
 						replacementLabel);
@@ -195,6 +203,13 @@ public final class PrintablePageWriter {
 		cursorY -= TEXT_HEIGHT + GAP;
 	}
 
+	boolean canFitGroup(float height) {
+
+		// The trailing gap follows the last content item and
+		// does not need to fit inside the printable page.
+		return Float.isFinite(height) && height > GAP && height - GAP + 0.5f <= availableHeight();
+	}
+
 	float measureContent(float width, float height) {
 		float availableWidth = PDRectangle.A4.getWidth() - 2 * leftMargin();
 		float scale = Math.min(1.0f, Math.min(availableWidth / width, availableHeight() / height));
@@ -206,20 +221,30 @@ public final class PrintablePageWriter {
 	}
 
 	void reserveGroup(float height, String description) throws IOException {
-
-		// Allow a small clearance for accumulated floating-point
-		// differences between measurement and actual placement.
-		float requiredHeight = height + 0.5f;
-		if (!Float.isFinite(requiredHeight) || height <= 0 || requiredHeight > availableHeight()) {
+		if (!canFitGroup(height)) {
 			throw new IOException(description + " cannot fit together on one examination page.");
 		}
-
-		// The existing page-creation method retains the appropriate
-		// running header or response outline.
+		float requiredHeight = height - GAP + 0.5f;
 		ensureSpace(requiredHeight);
 		if (cursorY - requiredHeight < bottomMargin()) {
 			throw new IOException("Insufficient page space for " + description);
 		}
+	}
+
+	void reserveQuestionStart(float firstContentHeight, String description) throws IOException {
+		if (!Float.isFinite(firstContentHeight) || firstContentHeight <= GAP) {
+			throw new IOException("Missing or invalid content for " + description);
+		}
+
+		// Only the initial region may require additional scaling
+		// to accommodate the Question heading on the same page.
+		float maximumContentHeight = availableHeight() - measureText() - 0.5f;
+		float reservedContentHeight = Math.min(firstContentHeight - GAP, maximumContentHeight);
+		reserveGroup(measureText() + reservedContentHeight + GAP, description);
+
+		// Consume this restriction when the first region or image
+		// is written. Subsequent regions retain their normal scale.
+		nextContentMaximumHeight = reservedContentHeight;
 	}
 
 	private float availableHeight() {

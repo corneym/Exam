@@ -5,10 +5,12 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Year;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.BiFunction;
 
 import au.edu.eq.questionbank.model.Exam;
@@ -49,12 +51,12 @@ import javafx.stage.Window;
  */
 public final class ExamBuilderDialog extends Dialog<Void> {
 
-	private final Button addButton = new Button("Add Question...");
+	private final Button addButton = new Button("Add Questions...");
 	private final ExamBuilderDraft draft;
 	private final Button moveDownButton = new Button("Move down");
 	private final Button moveUpButton = new Button("Move up");
 	private final ListView<PrintableQuestionNumbering.NumberedQuestion> questionList = new ListView<>();
-	private final BiFunction<Window, ExamBuilderDraft.Section, Optional<Question>> questionSelector;
+	private final BiFunction<Window, ExamBuilderDraft.Section, Optional<List<Question>>> questionSelector;
 	private final Button removeButton = new Button("Remove");
 	private final ComboBox<ExamBuilderDraft.Section> sectionBox = new ComboBox<>();
 	private final Label summaryLabel = new Label();
@@ -65,9 +67,9 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 	private boolean generating;
 	private GenerationAction generationAction;
 	private Path managedDataRoot;
-	private final TextField paperOnePerusalField = new TextField("10");
+	private final TextField paperOnePerusalField = new TextField("5");
 	private final TextField paperOneWorkingField = new TextField("90");
-	private final TextField paperTwoPerusalField = new TextField("10");
+	private final TextField paperTwoPerusalField = new TextField("5");
 	private final TextField paperTwoWorkingField = new TextField("90");
 	private final Label statusLabel = new Label();
 	private final TextField yearField = new TextField(Integer.toString(Year.now().getValue()));
@@ -81,11 +83,12 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 	 *
 	 * @param owner            owning application window
 	 * @param draft            editable examination selections
-	 * @param questionSelector read-only Question selection operation
+	 * @param questionSelector read-only selection operation returning an ordered
+	 *                         list of selected Questions
 	 * @throws NullPointerException if any argument is null
 	 */
 	public ExamBuilderDialog(Window owner, ExamBuilderDraft draft,
-			BiFunction<Window, ExamBuilderDraft.Section, Optional<Question>> questionSelector) {
+			BiFunction<Window, ExamBuilderDraft.Section, Optional<List<Question>>> questionSelector) {
 		this.draft = Objects.requireNonNull(draft, "draft");
 		this.questionSelector = Objects.requireNonNull(questionSelector, "questionSelector");
 		initOwner(Objects.requireNonNull(owner, "owner"));
@@ -245,12 +248,26 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 
 	private void addQuestion() {
 		ExamBuilderDraft.Section section = sectionBox.getValue();
-		questionSelector.apply(getDialogPane().getScene().getWindow(), section).ifPresent(question -> {
-			if (draft.add(section, question)) {
-				changed();
-				selectQuestion(question.getId());
+		List<Question> selected = questionSelector.apply(getDialogPane().getScene().getWindow(), section)
+				.orElse(List.of());
+		if (selected.isEmpty()) {
+			return;
+		}
+		Set<Long> identifiers = new HashSet<>();
+
+		// Validate the complete selection before modifying the draft.
+		// Reject an invalid batch rather than adding only part of it.
+		for (Question question : selected) {
+			if (!draft.canAdd(section, question) || !identifiers.add(question.getId())) {
+				statusLabel.setText("The selection contains an unavailable " + "or duplicate Question.");
+				return;
 			}
-		});
+		}
+		for (Question question : selected) {
+			draft.add(section, question);
+		}
+		changed();
+		selectQuestion(selected.getLast().getId());
 	}
 
 	private void changed() {

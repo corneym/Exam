@@ -72,6 +72,7 @@ import javafx.scene.control.Menu;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.image.ImageView;
@@ -884,17 +885,19 @@ class QuestionCaptureWorkflowTest extends QuestionBankApplicationUiTestBase {
 	void dashboardHomeMenusRemoveRedundantNavigation(FxRobot robot) throws Exception {
 		MenuBar menuBar = lookup(robot, ".menu-bar", MenuBar.class);
 
-		// The Exam menu no longer exists. All its former replacement
-		// actions are superseded by Exam/Assets Delete and Add.
+		// Exam management remains available through the Dashboard.
 		assertEquals(List.of("_File", "_Curriculum", "_Questions", "_Import", "E_xport", "_Help"),
 				menuBar.getMenus().stream().map(Menu::getText).toList());
 		Menu questionMenu = menuBar.getMenus().stream().filter(menu -> "_Questions".equals(menu.getText())).findFirst()
 				.orElseThrow();
 
-		// Dashboard is already Home, so Questions contains only
-		// the specialised Search action.
-		assertEquals(1, questionMenu.getItems().size());
+		// Search and Exam Builder are specialised workflows.
+		// Neither duplicates Dashboard navigation.
+		assertEquals(3, questionMenu.getItems().size());
 		assertEquals("_Search...", questionMenu.getItems().getFirst().getText());
+		assertTrue(questionMenu.getItems().get(1) instanceof SeparatorMenuItem);
+		assertEquals("_Exam Builder...", questionMenu.getItems().getLast().getText());
+		assertEquals("questions-exam-builder", questionMenu.getItems().getLast().getId());
 		assertFalse(questionMenu.getItems().stream().anyMatch(item -> "question-corpus-audit".equals(item.getId())));
 	}
 

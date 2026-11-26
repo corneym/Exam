@@ -72,13 +72,12 @@ class ExamBuilderDialogTest {
 	@Test
 	void addsReordersRemovesAndTransfersQuestions(FxRobot robot) {
 		ExamBuilderDraft draft = new ExamBuilderDraft(subject);
-		Queue<Question> available = new ArrayDeque<>();
 		Question first = createQuestion(1, "7", 1, QuestionResponseType.MULTIPLE_CHOICE);
 		Question second = createQuestion(2, "8", 1, QuestionResponseType.MULTIPLE_CHOICE);
 		Question written = createQuestion(3, "21", 4, QuestionResponseType.WRITTEN_RESPONSE);
-		available.add(first);
-		available.add(second);
-		available.add(written);
+		Queue<List<Question>> available = new ArrayDeque<>();
+		available.add(List.of(first, second));
+		available.add(List.of(written));
 		AtomicReference<ExamBuilderDialog> holder = new AtomicReference<>();
 		robot.interact(
 				() -> holder.set(new ExamBuilderDialog(stage, draft, (_, _) -> Optional.ofNullable(available.poll()))));
@@ -97,14 +96,13 @@ class ExamBuilderDialogTest {
 			var mcqSection = ExamBuilderDraft.Section.MULTIPLE_CHOICE;
 			assertTrue(up.isDisabled());
 			assertTrue(remove.isDisabled());
-			robot.interact(add::fire);
+
+			// One chooser confirmation adds both Questions.
 			robot.interact(add::fire);
 			assertEquals(List.of(first, second), draft.getQuestions(mcqSection));
 			assertEquals(2, questions.getItems().size());
 			assertFalse(up.isDisabled());
 			assertTrue(down.isDisabled());
-
-			// The second addition is selected automatically.
 			robot.interact(up::fire);
 			assertEquals(List.of(second, first), draft.getQuestions(mcqSection));
 			assertEquals(second.getId(), questions.getItems().getFirst().question().getId());
@@ -122,6 +120,28 @@ class ExamBuilderDialogTest {
 			assertEquals(List.of(written), draft.getQuestions(ExamBuilderDraft.Section.PAPER_TWO_WRITTEN));
 			assertEquals("1", questions.getItems().getFirst().label());
 			assertTrue(total.getText().contains("Total: 5 marks"));
+		} finally {
+			robot.interact(dialog::close);
+		}
+	}
+
+	@Test
+	void defaultsBothPerusalTimesToFiveMinutes(FxRobot robot) {
+		ExamBuilderDraft draft = new ExamBuilderDraft(subject);
+		AtomicReference<ExamBuilderDialog> holder = new AtomicReference<>();
+		robot.interact(() -> {
+			ExamBuilderDialog dialog = new ExamBuilderDialog(stage, draft, (_, _) -> Optional.empty());
+			dialog.configureGeneration((_, _, _) -> {
+			}, tempDirectory);
+			holder.set(dialog);
+		});
+		ExamBuilderDialog dialog = holder.get();
+		try {
+			robot.interact(dialog::show);
+			TextField paperOne = robot.lookup("#exam-builder-paper-one-perusal").queryAs(TextField.class);
+			TextField paperTwo = robot.lookup("#exam-builder-paper-two-perusal").queryAs(TextField.class);
+			assertEquals("5", paperOne.getText());
+			assertEquals("5", paperTwo.getText());
 		} finally {
 			robot.interact(dialog::close);
 		}

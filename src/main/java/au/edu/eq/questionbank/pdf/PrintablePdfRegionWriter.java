@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.pdf;
 
 import java.awt.Color;
+import java.awt.geom.AffineTransform;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -35,22 +36,22 @@ public final class PrintablePdfRegionWriter {
 	 * Appends a selected source region to a destination PDF page.
 	 *
 	 * <p>
-	 * Coordinates are expressed in PDF points measured from the bottom-left corner.
-	 * This operation supports ordinary unrotated source pages with a zero-origin
-	 * crop box.
+	 * Coordinates are expressed in PDF points measured from the bottom-left corner
+	 * of the source crop box. Both zero-origin and offset crop boxes are supported
+	 * for unrotated source pages.
 	 *
 	 * @param source           the source PDF document
 	 * @param pageNumber       the one-based source page number
 	 * @param output           the destination PDF document
 	 * @param stream           the destination page content stream
-	 * @param region           the selected source rectangle
+	 * @param region           the selected crop-relative source rectangle
 	 * @param destinationX     the destination left edge
 	 * @param destinationY     the destination bottom edge
 	 * @param originalLabel    the original printed label, or an empty string when
 	 *                         no replacement is required
 	 * @param replacementLabel the replacement label, or an empty string to remove
 	 *                         the original label
-	 * @throws IOException if PDF processing fails, the source page geometry is
+	 * @throws IOException if PDF processing fails, the source page rotation is
 	 *                     unsupported, or a requested original label cannot be
 	 *                     located
 	 */
@@ -59,8 +60,8 @@ public final class PrintablePdfRegionWriter {
 			throws IOException {
 		PDPage sourcePage = source.getPage(pageNumber - 1);
 		PDRectangle cropBox = sourcePage.getCropBox();
-		if (sourcePage.getRotation() != 0 || cropBox.getLowerLeftX() != 0 || cropBox.getLowerLeftY() != 0) {
-			throw new IOException("Unsupported source page geometry.");
+		if (sourcePage.getRotation() != 0) {
+			throw new IOException("Unsupported source page geometry: rotation " + sourcePage.getRotation());
 		}
 		List<TextPosition> labelPositions = List.of();
 		if (!originalLabel.isEmpty()) {
@@ -68,6 +69,11 @@ public final class PrintablePdfRegionWriter {
 		}
 		LayerUtility layers = new LayerUtility(output);
 		PDFormXObject form = layers.importPageAsForm(source, pageNumber - 1);
+
+		// Establish a consistent crop-relative coordinate system.
+		// The imported form retains the original page content
+		// coordinates, so its crop-box origin must map to (0, 0).
+		form.setMatrix(AffineTransform.getTranslateInstance(-cropBox.getLowerLeftX(), -cropBox.getLowerLeftY()));
 		float translateX = destinationX - region.getLowerLeftX();
 		float translateY = destinationY - region.getLowerLeftY();
 
@@ -163,6 +169,96 @@ public final class PrintablePdfRegionWriter {
 			stream.endText();
 		}
 		stream.restoreGraphicsState();
+	}
+
+	static String findQuestionPartLabel(PDDocument source, int pageNumber, PDRectangle region, String originalLabel,
+			boolean allowBareLabel) throws IOException {
+		if (originalLabel.isEmpty()) {
+			return "";
+		}
+		List<String> alternatives = List.of(originalLabel, originalLabel.replace("(", ""));
+		for (String alternative : alternatives) {
+			if (!findOptionalLabel(source, pageNumber, region, alternative).isEmpty()) {
+				return alternative;
+			}
+		}
+		if (allowBareLabel) {
+			String bareLabel = originalLabel.replace("(", "").replace(")", "").trim();
+			if (bareLabel.matches("[a-z]")) {
+				PDRectangle searchRegion = questionPartLabelSearchRegion(source, pageNumber, region, bareLabel);
+				if (searchRegion != null && !findOptionalLabel(source, pageNumber, searchRegion, bareLabel).isEmpty()) {
+					return bareLabel;
+				}
+			}
+		}
+		return "";
+	}
+
+	static PDRectangle questionPartLabelSearchRegion(PDDocument source, int pageNumber, PDRectangle region,
+			String originalLabel) {
+		if (!originalLabel.matches("[a-z]")) {
+			return region;
+		}
+		PDRectangle cropBox = source.getPage(pageNumber - 1).getCropBox();
+		float pageWidth = cropBox.getWidth();
+
+		// Oxford's verified bare-letter identifiers occupy
+		// a narrow column approximately 6% across the page.
+		// Do not search ordinary Question text for bare letters.
+		float left = Math.max(region.getLowerLeftX(), pageWidth * 0.055f);
+		float right = Math.min(region.getUpperRightX(), pageWidth * 0.067f);
+		float top = region.getUpperRightY();
+		float bottom = Math.max(region.getLowerLeftY(), top - 35);
+		if (right <= left || top <= bottom) {
+			return null;
+		}
+		return new PDRectangle(left, bottom, right - left, top - bottom);
+	}
+
+	static float sampleResponseColumnLeft(PDDocument source, int pageNumber) throws IOException {
+		PDRectangle cropBox = source.getPage(pageNumber - 1).getCropBox();
+		float pageWidth = cropBox.getWidth();
+		float pageHeight = cropBox.getHeight();
+		PDRectangle headerSearch = new PDRectangle(0, Math.max(0, pageHeight - 145), pageWidth * 0.30f,
+				Math.min(145, pageHeight));
+		List<TextPosition> sample = findOptionalLabel(source, pageNumber, headerSearch, "Sample");
+		if (sample.isEmpty()) {
+			return Float.NaN;
+		}
+		TextPosition first = sample.getFirst();
+		float x = first.getXDirAdj();
+		float baseline = pageHeight - first.getYDirAdj();
+		if (x <= 7) {
+			return Float.NaN;
+		}
+
+		// Confirm that Sample belongs to the table header,
+		// rather than an unrelated occurrence in the document.
+		PDRectangle precedingHeader = new PDRectangle(0, baseline - 2, x, 4);
+		PDRectangle followingHeader = new PDRectangle(x, baseline - 2, Math.min(130, pageWidth - x), 4);
+		if (findOptionalLabel(source, pageNumber, precedingHeader, "Q").isEmpty()) {
+			return Float.NaN;
+		}
+		if (findOptionalLabel(source, pageNumber, followingHeader, "response").isEmpty()) {
+			return Float.NaN;
+		}
+
+		// Reference QCAA tables position this header approximately
+		// 5.6 points inside the Sample response column. Retain a
+		// slightly wider left clearance to protect response content.
+		return x - 7;
+	}
+
+	private static List<TextPosition> findOptionalLabel(PDDocument source, int pageNumber, PDRectangle region,
+			String label) throws IOException {
+		try {
+			return locateLabel(source, pageNumber, region, label);
+		} catch (IOException failure) {
+			if (("Cannot locate part label: " + label).equals(failure.getMessage())) {
+				return List.of();
+			}
+			throw failure;
+		}
 	}
 
 	private static List<TextPosition> locateLabel(PDDocument source, int pageNumber, PDRectangle region,

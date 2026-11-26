@@ -1,7 +1,6 @@
 package au.edu.eq.questionbank.pdf;
 
 import java.io.IOException;
-import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -17,7 +16,6 @@ import org.apache.pdfbox.util.Matrix;
 import au.edu.eq.questionbank.model.AnswerRegion;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.Question;
-import au.edu.eq.questionbank.model.SourceQuestionCodeParser;
 
 /**
  * Generates the mock examination marking guide from the same numbered
@@ -34,6 +32,7 @@ public final class PrintableMarkingGuide {
 	private static final float HEADER_HEIGHT = 24;
 	private static final float MCQ_ROW_HEIGHT = 23;
 	private static final int MCQ_ROWS_PER_PAGE = 26;
+	private static final float QUESTION_COLUMN_FRACTION = 0.043f;
 	private final PdfStore pdfStore;
 
 	/**
@@ -98,10 +97,8 @@ public final class PrintableMarkingGuide {
 
 	private static void drawWrittenHeader(PDPageContentStream stream, PDPage page, PrintableExamFonts fonts, float top,
 			float tableWidth) throws IOException {
-
-		// Use the proportions of the representative QCAA
-		// landscape table. Outer widths remain consistent.
-		float[] widths = { tableWidth * 0.043f, tableWidth * 0.375f, tableWidth * 0.332f, tableWidth * 0.250f };
+		float[] widths = { tableWidth * QUESTION_COLUMN_FRACTION, tableWidth * 0.375f, tableWidth * 0.332f,
+				tableWidth * 0.250f };
 		drawHeader(stream, page, fonts, GUIDE_MARGIN, top, widths,
 				List.of("Q", "Sample response", "The response:", "Notes"));
 	}
@@ -147,35 +144,26 @@ public final class PrintableMarkingGuide {
 
 	private void appendAnswerRegion(PDDocument document, PDPage page, PDPageContentStream stream, PDDocument source,
 			PrintableExamFonts fonts, int pageNumber, PDRectangle region,
-			PrintableQuestionNumbering.NumberedQuestion numbered, boolean qcaa, boolean firstRegion, float top,
+			PrintableQuestionNumbering.NumberedQuestion numbered, boolean qcaa, float questionColumnWidth, float top,
 			float scale) throws IOException {
-		float bottom = page.getMediaBox().getHeight() - top - region.getHeight() * scale;
+		float height = region.getHeight() * scale;
+		float bottom = page.getMediaBox().getHeight() - top - height;
+		float left = GUIDE_MARGIN + (qcaa ? questionColumnWidth : 0);
 		stream.saveGraphicsState();
-		stream.transform(new Matrix(scale, 0, 0, scale, GUIDE_MARGIN, bottom));
-		if (qcaa) {
-			String code = numbered.question().getQuestionCode().trim().replaceFirst("^[Qq]", "");
-			List<String> alternatives;
-			if (SourceQuestionCodeParser.derive(code) != null) {
-				String sourceCode = code.substring(0, code.length() - 1);
-				String part = code.substring(code.length() - 1);
-				alternatives = List.of(code + ")", sourceCode + "(" + part + ")", code);
-			} else {
-				alternatives = List.of(code);
-			}
+		stream.transform(new Matrix(scale, 0, 0, scale, left, bottom));
 
-			// The original identifier must be in the narrow
-			// Question column, not in the marking criteria.
-			PDRectangle identifierColumn = new PDRectangle(region.getLowerLeftX(), region.getLowerLeftY(),
-					region.getWidth() * 0.09f, region.getHeight());
-			PrintablePdfRegionWriter.appendRegionWithLabel(source, pageNumber, document, stream, region,
-					identifierColumn, 0, 0, alternatives, printedLabel(numbered), fonts.regular(), firstRegion);
-		} else {
-
-			// Other providers retain their original Answer
-			// layout. A generated identifier precedes the box.
-			PrintablePdfRegionWriter.appendRegion(source, pageNumber, document, stream, region, 0, 0, "", "");
-		}
+		// The source Answer body is reproduced without searching
+		// its sample response or marking criteria for identifiers.
+		PrintablePdfRegionWriter.appendRegion(source, pageNumber, document, stream, region, 0, 0, "", "");
 		stream.restoreGraphicsState();
+		if (qcaa) {
+
+			// Draw a new authoritative Question identifier column,
+			// independently of the original capture convention.
+			drawVerticalLine(stream, page, left, top, top + height);
+			writeCentredText(stream, page, fonts.regular(), 10, GUIDE_MARGIN + questionColumnWidth / 2,
+					top + Math.min(13, height - 2), printedLabel(numbered));
+		}
 	}
 
 	private PDPage appendLandscapePage(PDDocument document, PrintableExamFonts fonts, String title) throws IOException {
@@ -224,34 +212,51 @@ public final class PrintableMarkingGuide {
 		float pageWidth = PDRectangle.A4.getHeight();
 		float pageHeight = PDRectangle.A4.getWidth();
 		float tableWidth = pageWidth - 2 * GUIDE_MARGIN;
+		float questionColumnWidth = tableWidth * QUESTION_COLUMN_FRACTION;
 		float bottomLimit = pageHeight - GUIDE_MARGIN;
 		for (var numbered : questions) {
 			Question question = numbered.question();
-			boolean qcaa = "QCAA".equalsIgnoreCase(question.getExam().getProvider().getName());
+			Exam exam = question.getExam();
+			boolean qcaa = "QCAA".equalsIgnoreCase(exam.getProvider().getName());
 			boolean firstRegion = true;
 			for (AnswerRegion answerRegion : question.getAnswer().getRegions()) {
-				Path path = pdfStore.resolve(answerRegion.answerFile().getSourceDocument().getRelativePath());
-				try (PDDocument source = Loader.loadPDF(path.toFile())) {
+				String relativePath = answerRegion.answerFile().getSourceDocument().getRelativePath();
+				try (PDDocument source = Loader.loadPDF(pdfStore.resolve(relativePath).toFile())) {
 					PDRectangle region = sourceRectangle(source, answerRegion);
-					float scale = qcaa ? tableWidth / region.getWidth()
-							: Math.min(1.0f, tableWidth / region.getWidth());
+					boolean originalLayoutRetained = false;
+					if (qcaa) {
+						float responseColumnLeft = PrintablePdfRegionWriter.sampleResponseColumnLeft(source,
+								answerRegion.pageNumber());
+						if (Float.isFinite(responseColumnLeft)) {
+
+							// Exclude only the original identifier
+							// column when it is present in the capture.
+							float bodyLeft = Math.max(region.getLowerLeftX(), responseColumnLeft);
+							float bodyWidth = region.getUpperRightX() - bodyLeft;
+							if (bodyWidth <= 0) {
+								throw new IOException("Captured Answer has no response body.");
+							}
+							region = new PDRectangle(bodyLeft, region.getLowerLeftY(), bodyWidth, region.getHeight());
+						} else {
+
+							// Without a recognisable source header,
+							// preserve rather than guess at content
+							// that might contain a valid answer.
+							originalLayoutRetained = true;
+						}
+					}
+					float bodyWidth = qcaa ? tableWidth - questionColumnWidth : tableWidth;
+					float scale = qcaa ? bodyWidth / region.getWidth() : Math.min(1.0f, bodyWidth / region.getWidth());
 					float maximumHeight = bottomLimit - 82 - HEADER_HEIGHT - 24;
 					if (!qcaa) {
-
-						// Trial baseline for non-QCAA material:
-						// preserve original size unless reducing
-						// it is necessary to fit the page.
 						scale = Math.min(scale, maximumHeight / region.getHeight());
 					}
 					float height = region.getHeight() * scale;
-					float width = region.getWidth() * scale;
+					float width = qcaa ? tableWidth : region.getWidth() * scale;
 					if (height > maximumHeight) {
-						throw new IOException("QCAA Answer region cannot fit at " + "the required table width: "
-								+ question.getQuestionCode());
+						throw new IOException("QCAA Answer region cannot fit " + "at the required table width.");
 					}
 					float headingHeight = qcaa ? (tableOpen ? 0 : HEADER_HEIGHT) : 22;
-
-					// Leave room for the source attribution line.
 					float requiredHeight = headingHeight + height + 24;
 					if (page == null || top + requiredHeight > bottomLimit) {
 						page = appendLandscapePage(document, fonts, sectionTitle);
@@ -272,17 +277,29 @@ public final class PrintableMarkingGuide {
 							tableOpen = false;
 						}
 						appendAnswerRegion(document, page, stream, source, fonts, answerRegion.pageNumber(), region,
-								numbered, qcaa, firstRegion, top, scale);
+								numbered, qcaa, questionColumnWidth, top, scale);
 						drawOutline(stream, page, GUIDE_MARGIN, top, width, height);
 						top += height;
-						if (firstRegion) {
-							Exam exam = question.getExam();
+						if (firstRegion || originalLayoutRetained) {
+							String attribution = "Source: " + exam.getProvider().getName() + " " + exam.getYear()
+									+ " — Q" + question.getQuestionCode();
+							if (originalLayoutRetained) {
+								attribution += " (original layout retained)";
+							}
 							PrintableExamPage.writeText(stream, page, fonts.regular(), 8, GUIDE_MARGIN, top + 11,
-									"Source: " + exam.getProvider().getName() + " " + exam.getYear() + " — Q"
-											+ question.getQuestionCode());
+									attribution);
 						}
 						top += 16 + GAP;
 					}
+				} catch (IOException failure) {
+
+					// Report the exact source record that prevented
+					// generation, not merely the original identifier.
+					throw new IOException(
+							"%s %d — %s — %s — Q%s — Answer page %d: %s".formatted(exam.getProvider().getName(),
+									exam.getYear(), exam.getName(), question.getBooklet().getName(),
+									question.getQuestionCode(), answerRegion.pageNumber(), failure.getMessage()),
+							failure);
 				}
 				firstRegion = false;
 			}
