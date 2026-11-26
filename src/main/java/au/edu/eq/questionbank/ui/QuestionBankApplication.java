@@ -3,23 +3,16 @@ package au.edu.eq.questionbank.ui;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -192,14 +185,11 @@ import au.edu.eq.questionbank.service.workpackage.ExchangeRecord;
 import au.edu.eq.questionbank.service.workpackage.MasterContributionApplicationCoordinator;
 import au.edu.eq.questionbank.service.workpackage.MasterContributionDecisionLedger;
 import au.edu.eq.questionbank.service.workpackage.MasterContributionIntake;
-import au.edu.eq.questionbank.service.workpackage.MasterContributionReceiptExporter;
 import au.edu.eq.questionbank.service.workpackage.MasterContributionReviewPlanner;
 import au.edu.eq.questionbank.service.workpackage.PackageFormatException;
 import au.edu.eq.questionbank.service.workpackage.SqliteContributorAssignmentSessionRepository;
 import au.edu.eq.questionbank.service.workpackage.SubjectImportBackupGate;
 import au.edu.eq.questionbank.service.workpackage.SubjectImportCoordinator;
-import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationPreviewService;
-import au.edu.eq.questionbank.service.workpackage.SubjectReconciliationReview;
 import au.edu.eq.questionbank.service.workpackage.SubjectRefreshChangeClassifier;
 import au.edu.eq.questionbank.service.workpackage.SubjectRefreshChangeClassifier.ChangeKind;
 import au.edu.eq.questionbank.service.workpackage.SubjectRefreshPlan;
@@ -1420,20 +1410,6 @@ public class QuestionBankApplication extends Application {
 		// QUESTION and SHARED_CONTEXT both live inside QuestionCapturePane, which
 		// clears the appropriate stale local state without touching the PDF rectangle.
 		questionCapturePane.discardCurrentSelectionForOwnershipLoss();
-	}
-
-	private void cleanupPreparedSubjectReview(PreparedSubjectReview prepared) {
-		try {
-			Files.deleteIfExists(prepared.masterArchive());
-			Files.deleteIfExists(prepared.directory());
-		} catch (IOException failure) {
-			showAlert(Alert.AlertType.ERROR, "Subject Review Cleanup",
-					"The temporary master review files could not be removed.",
-					failureMessage(failure) + "\n\nReview and remove this temporary directory "
-							+ "only after ensuring no import is running:\n" + prepared.directory());
-		} finally {
-			packageImportInProgress = false;
-		}
 	}
 
 	private void clearCaptureSelection(CaptureSelectionOwner owner) {
@@ -3177,28 +3153,6 @@ public class QuestionBankApplication extends Application {
 					+ " is recorded as having a shared context, but no shared context could be found");
 		}
 		return matchingContext;
-	}
-
-	private long findMasterSubjectId(ApplicationConfig config, String subjectName) throws SQLException {
-		try (Connection connection = new SqliteDatabase(config.databasePath()).openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
-						SELECT id
-						FROM subjects
-						WHERE subject_name = ?
-						""")) {
-			statement.setString(1, subjectName);
-			try (ResultSet result = statement.executeQuery()) {
-				if (!result.next()) {
-					throw new SQLException("The coordinator database has no Subject named " + subjectName
-							+ ". Create the Subject before importing " + "a snapshot of its records.");
-				}
-				long id = result.getLong(1);
-				if (result.next()) {
-					throw new SQLException("The coordinator Subject identity is ambiguous.");
-				}
-				return id;
-			}
-		}
 	}
 
 	private void finishContributorAssignmentInstallation(long request) {
@@ -5471,23 +5425,6 @@ public class QuestionBankApplication extends Application {
 		applicationBody.setCenter(workspaceSplitPane);
 	}
 
-	private String sha256Package(Path archive) throws IOException {
-		MessageDigest digest;
-		try {
-			digest = MessageDigest.getInstance("SHA-256");
-		} catch (NoSuchAlgorithmException failure) {
-			throw new IllegalStateException("SHA-256 is unavailable", failure);
-		}
-		try (InputStream input = Files.newInputStream(archive)) {
-			byte[] buffer = new byte[8192];
-			int count;
-			while ((count = input.read(buffer)) != -1) {
-				digest.update(buffer, 0, count);
-			}
-		}
-		return HexFormat.of().formatHex(digest.digest());
-	}
-
 	private void showAbout() {
 		String version = applicationVersion();
 		Alert alert = new Alert(Alert.AlertType.INFORMATION);
@@ -6199,82 +6136,6 @@ public class QuestionBankApplication extends Application {
 		}, exam -> chooseAssignmentContributionDestination(primaryStage, config, assignmentId, exam, contributorName));
 	}
 
-	private void showExportImportReceipt(Stage primaryStage, ApplicationConfig config) {
-		if (activeAssignmentContext != null || packageImportInProgress || contributionExportRunning
-				|| applicationBusyOverlay.isBusy()) {
-			return;
-		}
-		TextInputDialog reviewInput = new TextInputDialog();
-		reviewInput.initOwner(primaryStage);
-		reviewInput.setTitle("Export Import Receipt");
-		reviewInput.setHeaderText("Enter the Review ID of a committed coordinator reconciliation");
-		reviewInput.setContentText("Review UUID:");
-		Optional<String> entered = reviewInput.showAndWait();
-		if (entered.isEmpty()) {
-			return;
-		}
-		UUID reviewId;
-		try {
-			reviewId = UUID.fromString(entered.get().strip());
-		} catch (IllegalArgumentException failure) {
-			showAlert(Alert.AlertType.ERROR, "Export Import Receipt", "The Review ID is not a valid UUID.",
-					entered.get());
-			return;
-		}
-		FileChooser chooser = new FileChooser();
-		chooser.setTitle("Save Import Receipt");
-		chooser.setInitialFileName("import-receipt-" + reviewId + ".examwork");
-		chooser.getExtensionFilters()
-				.add(new FileChooser.ExtensionFilter("ExamWork receipt (*.examwork)", "*.examwork"));
-		File selected = chooser.showSaveDialog(primaryStage);
-		if (selected == null) {
-			return;
-		}
-		Path destination = selected.toPath().toAbsolutePath().normalize();
-		if (Files.exists(destination, LinkOption.NOFOLLOW_LINKS)
-				|| destination.startsWith(config.dataRoot().toAbsolutePath().normalize())) {
-			showAlert(Alert.AlertType.ERROR, "Export Import Receipt",
-					"Choose a new file outside the managed data directory.",
-					"Existing files and authoritative managed data " + "must not be overwritten.");
-			return;
-		}
-		Task<ReceiptExportData> task = new ApplicationBackgroundTask<>(() -> {
-			SqliteDatabase database = new SqliteDatabase(config.databasePath());
-
-			// Receipt contents come from the actual committed outcomes,
-			// not from a speculative or uncommitted review.
-			ExamWorkManifest manifest = new MasterContributionReceiptExporter(database).export(reviewId, destination);
-			return new ReceiptExportData(manifest, destination, sha256Package(destination));
-		});
-		Alert progress = new Alert(Alert.AlertType.INFORMATION);
-		progress.initOwner(primaryStage);
-		progress.setTitle("Exporting Import Receipt");
-		progress.setHeaderText("Verifying committed outcomes and producing the receipt");
-		progress.getDialogPane().setGraphic(new ProgressIndicator(ProgressIndicator.INDETERMINATE_PROGRESS));
-		progress.getButtonTypes().setAll(new ButtonType("Hide", ButtonBar.ButtonData.CANCEL_CLOSE));
-		task.setOnSucceeded(_ -> {
-			progress.close();
-			ReceiptExportData result = task.getValue();
-			showAlert(Alert.AlertType.INFORMATION, "Import Receipt Exported",
-					"The committed reconciliation receipt is ready.",
-					"Package: " + result.manifest().packageId() + "\nDestination: " + result.destination()
-							+ "\n\nSHA-256:\n" + result.sha256() + "\n\nProvide the contributor with the receipt file."
-							+ "\nConfirm its SHA-256 independently of " + "the package itself.");
-		});
-		task.setOnFailed(_ -> {
-			progress.close();
-			showAlert(Alert.AlertType.ERROR, "Import Receipt Export Failed",
-					"A verified receipt could not be exported.",
-					failureMessage(task.getException()) + "\n\nThe completed reconciliation has not "
-							+ "been rolled back. Retain the Review ID " + "and retry receipt export separately.");
-		});
-		task.setOnCancelled(_ -> progress.close());
-		Thread worker = new Thread(task, "examwork-import-receipt-export");
-		worker.setDaemon(true);
-		progress.show();
-		worker.start();
-	}
-
 	/**
 	 * Exports the accepted Working Subject as an independently validated snapshot.
 	 *
@@ -6918,68 +6779,6 @@ public class QuestionBankApplication extends Application {
 
 	private void showStartupError(String title, String message) {
 		showAlert(Alert.AlertType.ERROR, title, "The application could not start.", message);
-	}
-
-	/**
-	 * Reviews independently exported Subject snapshots and permits a separate
-	 * explicitly approved, verified and recoverable import request.
-	 *
-	 * @param primaryStage application owner
-	 * @param config       authoritative master configuration
-	 */
-	private void showSubjectReconciliationReview(Stage primaryStage, ApplicationConfig config) {
-		FileChooser chooser = new FileChooser();
-		chooser.setTitle("Select coordinator Subject snapshot");
-		chooser.getExtensionFilters()
-				.add(new FileChooser.ExtensionFilter("ExamWork packages (*.examwork)", "*.examwork"));
-		File masterFile = chooser.showOpenDialog(primaryStage);
-		if (masterFile == null) {
-			return;
-		}
-		chooser.setTitle("Select independently exported contributor Subject snapshot");
-		File incomingFile = chooser.showOpenDialog(primaryStage);
-		if (incomingFile == null) {
-			return;
-		}
-		Task<SubjectReconciliationPreviewService.Result> task = new Task<>() {
-
-			@Override
-			protected SubjectReconciliationPreviewService.Result call() throws Exception {
-				return new SubjectReconciliationPreviewService().preview(masterFile.toPath(), incomingFile.toPath());
-			}
-		};
-		Alert progress = new Alert(Alert.AlertType.INFORMATION);
-		progress.initOwner(primaryStage);
-		progress.setTitle("Comparing Subject snapshots");
-		progress.setHeaderText("Validating packages and preparing a read-only preview");
-		progress.setContentText("No records or managed files will be changed.");
-		progress.getButtonTypes().setAll(ButtonType.CANCEL);
-		progress.setOnHidden(_ -> {
-			if (task.isRunning()) {
-				task.cancel(true);
-			}
-		});
-		task.setOnSucceeded(_ -> {
-			progress.close();
-			SubjectReconciliationReviewDialog dialog = new SubjectReconciliationReviewDialog(primaryStage,
-					new SubjectReconciliationReview(task.getValue()), config.dataRoot());
-			dialog.showAndWait();
-			if (dialog.importRequested()) {
-				new SubjectImportReviewWorkflow(primaryStage, config, dialog.review(), masterFile.toPath(),
-						incomingFile.toPath(), () -> refreshCorpusDashboardHome(-1L)).run();
-			}
-		});
-		task.setOnFailed(_ -> {
-			progress.close();
-			Throwable failure = task.getException();
-			showAlert(Alert.AlertType.ERROR, "Subject Reconciliation", "The snapshots could not be compared.",
-					failure == null ? "Unknown error" : failure.getMessage());
-		});
-		task.setOnCancelled(_ -> progress.close());
-		Thread worker = new Thread(task, "examwork-subject-preview");
-		worker.setDaemon(true);
-		progress.show();
-		worker.start();
 	}
 
 	private void showSubjectRefreshApproval(Stage primaryStage, ApplicationConfig config, Path incomingArchive,
@@ -8676,9 +8475,6 @@ public class QuestionBankApplication extends Application {
 		RETRY, EXIT_WITHOUT_BACKUP, CANCEL_EXIT
 	}
 
-	private record ReceiptExportData(ExamWorkManifest manifest, Path destination, String sha256) {
-	}
-
 	private record ContributionApplicationData(MasterContributionApplicationCoordinator.ApplicationResult application,
 			Path backupPath) {
 	}
@@ -8692,10 +8488,6 @@ public class QuestionBankApplication extends Application {
 	private interface ExamAssetsPersistenceAction {
 
 		void run() throws SQLException;
-	}
-
-	private record PreparedSubjectReview(Path directory, Path masterArchive,
-			SubjectReconciliationPreviewService.Result preview) {
 	}
 
 	private record DashboardAnswerCaptureSnapshot(List<Question> questions, AnswerFile answerFile) {

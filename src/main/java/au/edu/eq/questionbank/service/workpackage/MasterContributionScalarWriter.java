@@ -253,11 +253,6 @@ final class MasterContributionScalarWriter {
 		}
 	}
 
-	private Long optionalReference(Connection connection, EntityType type, JsonNode value,
-			Map<RecordKey, Long> newLocalIds) throws SQLException {
-		return value == null || value.isNull() ? null : reference(connection, type, value, newLocalIds);
-	}
-
 	private void permit(Connection connection, UUID reviewId, RecordDecision decision, long examId, boolean create)
 			throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
