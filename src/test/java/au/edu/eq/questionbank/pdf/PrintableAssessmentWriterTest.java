@@ -350,6 +350,97 @@ class PrintableAssessmentWriterTest {
 	}
 
 	@Test
+	void keepsConsecutiveMultipleChoiceQuestionsWithTheirSharedContext() throws Exception {
+		PrintableAssessmentPlan base = createMultipleChoicePlan();
+		var original = base.getMultipleChoice();
+
+		// Place two unrelated Questions before the two
+		// Questions that share a common stimulus.
+		PrintableAssessmentPlan plan = new PrintableAssessmentPlan(List.of(original.get(2).question(),
+				original.get(3).question(), original.get(0).question(), original.get(1).question()), List.of(),
+				List.of());
+		PrintableAssessmentWriter writer = new PrintableAssessmentWriter(new PdfStore(tempDir));
+		Path output = tempDir.resolve("grouped-multiple-choice.pdf");
+		try (PDDocument document = new PDDocument()) {
+			writer.appendMultipleChoiceBooklet(document, createStudentTestFonts(), "Chemistry", 2027, plan);
+			document.save(output.toFile());
+		}
+		try (PDDocument document = Loader.loadPDF(output.toFile())) {
+			assertEquals(3, document.getNumberOfPages());
+			String firstContentPage = extractPageText(document, 2);
+			String secondContentPage = extractPageText(document, 3);
+			assertTrue(firstContentPage.contains("QUESTION 1"));
+			assertTrue(firstContentPage.contains("MCQ content 3."));
+			assertTrue(firstContentPage.contains("QUESTION 2"));
+			assertTrue(firstContentPage.contains("MCQ content 4."));
+
+			// No part of the next group may appear at the
+			// bottom of the preceding page.
+			assertFalse(firstContentPage.contains("Common galvanic cell stimulus."));
+			assertFalse(firstContentPage.contains("QUESTION 3"));
+			assertFalse(firstContentPage.contains("QUESTION 4"));
+
+			// The complete stimulus and both dependent
+			// Questions must appear on the same page.
+			assertTrue(secondContentPage.contains("Common galvanic cell stimulus."));
+			assertTrue(secondContentPage.contains("QUESTION 3"));
+			assertTrue(secondContentPage.contains("MCQ content 1."));
+			assertTrue(secondContentPage.contains("QUESTION 4"));
+			assertTrue(secondContentPage.contains("MCQ content 2."));
+			assertTrue(secondContentPage.contains("THIS PAGE WILL NOT BE MARKED"));
+			assertTrue(secondContentPage.indexOf("Common galvanic cell stimulus.") < secondContentPage
+					.indexOf("QUESTION 3"));
+		}
+	}
+
+	@Test
+	void keepsWrittenQuestionHeadingAndSelectedPartsTogether() throws Exception {
+		PrintableAssessmentPlan base = createWrittenAssessmentPlan();
+
+		// Place a standalone short-response Question before
+		// the two selected parts of a multipart Question.
+		PrintableAssessmentPlan plan = new PrintableAssessmentPlan(
+				base.getMultipleChoice().stream().map(PrintableQuestionNumbering.NumberedQuestion::question).toList(),
+				List.of(base.getPaperTwo().getFirst().question(), base.getPaperOne().get(0).question(),
+						base.getPaperOne().get(1).question()),
+				List.of());
+		PrintableAssessmentWriter writer = new PrintableAssessmentWriter(new PdfStore(tempDir));
+		Path output = tempDir.resolve("grouped-short-response.pdf");
+		try (PDDocument document = new PDDocument()) {
+			writer.appendPaperOne(document, createStudentTestFonts(), "Chemistry", 2027, 5, 60, plan);
+			document.save(output.toFile());
+		}
+		try (PDDocument document = Loader.loadPDF(output.toFile())) {
+
+			// Page 1: cover.
+			// Page 2: hatched page.
+			// Page 3: MCQ response grid.
+			// Page 4: first short-response Question.
+			// Page 5: complete multipart Question.
+			String firstResponsePage = extractPageText(document, 4);
+			String secondResponsePage = extractPageText(document, 5);
+			assertTrue(firstResponsePage.contains("QUESTION 2 (2 marks)"));
+			assertTrue(firstResponsePage.contains("Determine the oxidation state."));
+			assertFalse(firstResponsePage.contains("QUESTION 3 (5 marks)"));
+			assertFalse(firstResponsePage.contains("Calculate the equilibrium constant."));
+			assertTrue(secondResponsePage.contains("QUESTION 3 (5 marks)"));
+			assertTrue(secondResponsePage.contains("Calculate the equilibrium constant."));
+			assertTrue(secondResponsePage.contains("Explain the effect of temperature."));
+		}
+	}
+
+	@Test
+	void rejectsQuestionGroupTooLargeForOnePage() throws Exception {
+		try (PDDocument document = new PDDocument()) {
+			PrintablePageWriter writer = new PrintablePageWriter(document, createStudentTestFonts());
+			IOException failure = assertThrows(IOException.class,
+					() -> writer.reserveGroup(10000, "Questions 7–8 and their Shared Context"));
+			assertTrue(failure.getMessage().contains("cannot fit together on one examination page"));
+			assertEquals(0, document.getNumberOfPages());
+		}
+	}
+
+	@Test
 	void rejectsQuestionWithoutCompleteAnswer() throws Exception {
 		ExamBooklet booklet = createBooklet();
 		Question question = new Question(1, booklet, "7", "", 1,

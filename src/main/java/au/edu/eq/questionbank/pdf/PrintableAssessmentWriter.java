@@ -1,5 +1,7 @@
 package au.edu.eq.questionbank.pdf;
 
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.FileAlreadyExistsException;
@@ -11,6 +13,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+
+import javax.imageio.ImageIO;
 
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -81,9 +85,9 @@ public final class PrintableAssessmentWriter {
 	 * Appends a multiple-choice question book using the assessment plan.
 	 *
 	 * <p>
-	 * The cover, instructions and running headers are generated. Question content
-	 * is reproduced from its captured source material. Consecutive Questions using
-	 * the same Shared Context reproduce that context only once.
+	 * Each Question heading and its captured content remain together on one page.
+	 * Consecutive Questions sharing the same Shared Context are placed together
+	 * with that context on a single page.
 	 *
 	 * <p>
 	 * No pages are appended when the selection contains no multiple-choice
@@ -94,7 +98,8 @@ public final class PrintableAssessmentWriter {
 	 * @param subject  assessment subject
 	 * @param year     mock assessment year
 	 * @param plan     numbered assessment selections
-	 * @throws IOException if source or destination PDF processing fails
+	 * @throws IOException if PDF processing fails or a Question group cannot fit
+	 *                     together on a page
 	 */
 	public void appendMultipleChoiceBooklet(PDDocument document, PrintableExamFonts fonts, String subject, int year,
 			PrintableAssessmentPlan plan) throws IOException {
@@ -103,24 +108,45 @@ public final class PrintableAssessmentWriter {
 		}
 		PrintableExamCover.appendMultipleChoiceCover(document, fonts, subject, year);
 		PrintablePageWriter writer = new PrintablePageWriter(document, fonts);
-		Long previousContextId = null;
-		for (var numbered : plan.getMultipleChoice()) {
-			Question question = numbered.question();
-			if (question.hasSharedContext()) {
-				SharedQuestionContext context = question.getSharedContext();
+		var questions = plan.getMultipleChoice();
+		int start = 0;
+		while (start < questions.size()) {
+			var first = questions.get(start);
+			SharedQuestionContext context = first.question().getSharedContext();
+			int end = start + 1;
+			if (context != null) {
 
-				// Include a common stimulus once for consecutive
-				// Questions, but repeat it when encountered again
-				// after unrelated Questions.
-				if (!Objects.equals(previousContextId, context.getId())) {
-					appendSharedContext(writer, context);
+				// Collect all consecutive Questions referring
+				// to the same persistent Shared Context.
+				while (end < questions.size()) {
+					SharedQuestionContext nextContext = questions.get(end).question().getSharedContext();
+					if (nextContext == null || nextContext.getId() != context.getId()) {
+						break;
+					}
+					end++;
 				}
-				previousContextId = context.getId();
-			} else {
-				previousContextId = null;
 			}
-			writer.appendText("QUESTION " + numbered.number());
-			appendQuestionBody(writer, numbered);
+			float requiredHeight = context == null ? 0 : measureSharedContext(writer, context);
+			for (int index = start; index < end; index++) {
+				requiredHeight += writer.measureText();
+				requiredHeight += measureQuestionBody(writer, questions.get(index).question());
+			}
+			String description = end - start == 1 ? "Question " + first.number()
+					: "Questions " + first.number() + "–" + questions.get(end - 1).number()
+							+ " and their Shared Context";
+
+			// Reserve the complete group before writing any
+			// stimulus, Question heading or Question content.
+			writer.reserveGroup(requiredHeight, description);
+			if (context != null) {
+				appendSharedContext(writer, context);
+			}
+			for (int index = start; index < end; index++) {
+				var numbered = questions.get(index);
+				writer.appendText("QUESTION " + numbered.number());
+				appendQuestionBody(writer, numbered);
+			}
+			start = end;
 		}
 	}
 
@@ -363,28 +389,49 @@ public final class PrintableAssessmentWriter {
 	private void appendShortResponse(PDDocument document, PrintableExamFonts fonts, int paper, int questionCount,
 			int marks, List<PrintableQuestionNumbering.NumberedQuestion> questions) throws IOException {
 		PrintablePageWriter writer = new PrintablePageWriter(document, fonts, paper, questionCount, marks);
-		int previousNumber = 0;
-		Set<Long> includedContexts = new HashSet<>();
-		for (var numbered : questions) {
-			Question question = numbered.question();
-			if (numbered.number() != previousNumber) {
-				int questionMarks = questions.stream().filter(item -> item.number() == numbered.number())
-						.mapToInt(item -> item.question().getMarks()).sum();
-				writer.appendText("QUESTION " + numbered.number() + " (" + questionMarks
-						+ (questionMarks == 1 ? " mark)" : " marks)"));
-				previousNumber = numbered.number();
-				includedContexts.clear();
+		int start = 0;
+		while (start < questions.size()) {
+			int number = questions.get(start).number();
+			int end = start + 1;
+
+			// All selected parts assigned to this generated
+			// Question number belong to the same group.
+			while (end < questions.size() && questions.get(end).number() == number) {
+				end++;
+			}
+			int questionMarks = 0;
+			float requiredHeight = writer.measureText();
+			Set<Long> includedContexts = new HashSet<>();
+			for (int index = start; index < end; index++) {
+				Question question = questions.get(index).question();
+				questionMarks += question.getMarks();
+				if (question.hasSharedContext()) {
+					SharedQuestionContext context = question.getSharedContext();
+					if (includedContexts.add(context.getId())) {
+						requiredHeight += measureSharedContext(writer, context);
+					}
+				}
+				requiredHeight += measureQuestionBody(writer, question);
 			}
 
-			// Shared stimulus is reproduced once within each
-			// generated top-level Question.
-			if (question.hasSharedContext()) {
-				SharedQuestionContext context = question.getSharedContext();
-				if (includedContexts.add(context.getId())) {
-					appendSharedContext(writer, context);
+			// Keep the generated Question number, stimulus
+			// and all selected parts together.
+			writer.reserveGroup(requiredHeight, "Paper " + paper + ", Question " + number);
+			writer.appendText(
+					"QUESTION " + number + " (" + questionMarks + (questionMarks == 1 ? " mark)" : " marks)"));
+			includedContexts.clear();
+			for (int index = start; index < end; index++) {
+				var numbered = questions.get(index);
+				Question question = numbered.question();
+				if (question.hasSharedContext()) {
+					SharedQuestionContext context = question.getSharedContext();
+					if (includedContexts.add(context.getId())) {
+						appendSharedContext(writer, context);
+					}
 				}
+				appendQuestionBody(writer, numbered);
 			}
-			appendQuestionBody(writer, numbered);
+			start = end;
 		}
 		writer.appendEndOfPaper();
 		PrintableExamPage.appendAdditionalResponsePages(document, fonts);
@@ -412,6 +459,55 @@ public final class PrintableAssessmentWriter {
 			PrintableExamPage.writeText(stream, cover, fonts.regular(), 8, 42.5f, 797,
 					"CC BY 4.0 — exceptions apply: " + "www.qcaa.qld.edu.au/copyright");
 		}
+	}
+
+	private float measurePdfRegion(PrintablePageWriter writer, String relativePath, int pageNumber, double width,
+			double height) throws IOException {
+		Path path = pdfStore.resolve(relativePath);
+		try (PDDocument source = Loader.loadPDF(path.toFile())) {
+			PDRectangle cropBox = source.getPage(pageNumber - 1).getCropBox();
+
+			// Use the same physical dimensions and scaling
+			// as the actual captured-region writing operation.
+			return writer.measureContent((float) (width * cropBox.getWidth()), (float) (height * cropBox.getHeight()));
+		}
+	}
+
+	private float measurePngContent(PrintablePageWriter writer, byte[] pngBytes) throws IOException {
+		try (ByteArrayInputStream input = new ByteArrayInputStream(pngBytes)) {
+			BufferedImage image = ImageIO.read(input);
+			if (image == null) {
+				throw new IOException("Cannot measure captured Question image.");
+			}
+			return writer.measureContent(image.getWidth(), image.getHeight());
+		}
+	}
+
+	private float measureQuestionBody(PrintablePageWriter writer, Question question) throws IOException {
+		float height = 0;
+		for (QuestionContentPart part : question.getContentParts()) {
+			if (part instanceof PdfQuestionContentPart pdfPart) {
+				QuestionRegion region = pdfPart.region();
+				height += measurePdfRegion(writer, region.booklet().getSourceDocument().getRelativePath(),
+						region.pageNumber(), region.width(), region.height());
+			} else if (part instanceof ImageQuestionContentPart imagePart) {
+				height += measurePngContent(writer, imagePart.pngBytes());
+			}
+		}
+		return height;
+	}
+
+	private float measureSharedContext(PrintablePageWriter writer, SharedQuestionContext context) throws IOException {
+		float height = 0;
+		String relativePath = context.getBooklet().getSourceDocument().getRelativePath();
+		for (SharedContextContentPart part : context.getContentParts()) {
+			if (part instanceof SharedQuestionContextRegion region) {
+				height += measurePdfRegion(writer, relativePath, region.pageNumber(), region.width(), region.height());
+			} else if (part instanceof ImageSharedContextContentPart imagePart) {
+				height += measurePngContent(writer, imagePart.pngBytes());
+			}
+		}
+		return height;
 	}
 
 	private void saveNewDocument(PDDocument document, Path destination) throws IOException {

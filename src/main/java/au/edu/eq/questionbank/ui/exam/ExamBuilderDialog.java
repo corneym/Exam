@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Year;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.BiFunction;
@@ -17,11 +18,14 @@ import au.edu.eq.questionbank.pdf.PrintableExamSettings;
 import au.edu.eq.questionbank.pdf.PrintableQuestionNumbering;
 import au.edu.eq.questionbank.ui.ScreenAwareWindows;
 import au.edu.eq.questionbank.ui.model.ExamBuilderDraft;
+import au.edu.eq.questionbank.ui.model.ExamBuilderDraftFile;
 import javafx.concurrent.Task;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.geometry.Rectangle2D;
+import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Dialog;
@@ -36,6 +40,7 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
+import javafx.stage.FileChooser;
 import javafx.stage.Window;
 
 /**
@@ -66,6 +71,10 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 	private final TextField paperTwoWorkingField = new TextField("90");
 	private final Label statusLabel = new Label();
 	private final TextField yearField = new TextField(Integer.toString(Year.now().getValue()));
+	private boolean dirty;
+	private ExamBuilderDraftFile draftFileService;
+	private final Button openDraftButton = new Button("Open Draft...");
+	private final Button saveDraftButton = new Button("Save Draft...");
 
 	/**
 	 * Creates an examination builder for the supplied draft.
@@ -85,6 +94,47 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 		configureHandlers();
 		configureLayout();
 		refresh();
+	}
+
+	/**
+	 * Enables saving and reopening examination drafts.
+	 *
+	 * <p>
+	 * Call after configuring generation and before displaying the dialog.
+	 *
+	 * @param service portable examination draft-file service
+	 * @throws NullPointerException  if service is null
+	 * @throws IllegalStateException if generation has not been configured or
+	 *                               draft-file controls already exist
+	 */
+	public void configureDraftFiles(ExamBuilderDraftFile service) {
+		if (generationAction == null) {
+			throw new IllegalStateException("Configure generation first.");
+		}
+		if (draftFileService != null) {
+			throw new IllegalStateException("Draft-file controls are already configured.");
+		}
+		draftFileService = Objects.requireNonNull(service, "service");
+		openDraftButton.setId("exam-builder-open-draft");
+		saveDraftButton.setId("exam-builder-save-draft");
+		openDraftButton.setOnAction(_ -> chooseOpenDraft());
+		saveDraftButton.setOnAction(_ -> chooseSaveDraft());
+		HBox fileActions = new HBox(8, openDraftButton, saveDraftButton);
+		fileActions.setAlignment(Pos.CENTER_LEFT);
+		workspace.getChildren().add(0, fileActions);
+
+		// Examination metadata changes are unsaved draft changes,
+		// just as adding or reordering a Question is.
+		for (TextField field : List.of(yearField, paperOnePerusalField, paperOneWorkingField, paperTwoPerusalField,
+				paperTwoWorkingField)) {
+			field.textProperty().addListener((_, _, _) -> dirty = true);
+		}
+		setOnCloseRequest(event -> {
+			if (generating || !confirmDiscardChanges()) {
+				event.consume();
+			}
+		});
+		dirty = !draft.isEmpty();
 	}
 
 	/**
@@ -204,6 +254,7 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 	}
 
 	private void changed() {
+		dirty = true;
 		refresh();
 	}
 
@@ -222,6 +273,58 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 		File destination = chooser.showDialog(getDialogPane().getScene().getWindow());
 		if (destination != null) {
 			startGeneration(destination.toPath());
+		}
+	}
+
+	private void chooseOpenDraft() {
+		FileChooser chooser = createDraftChooser();
+		chooser.setTitle("Open Examination Draft");
+		File selected = chooser.showOpenDialog(getDialogPane().getScene().getWindow());
+		if (selected == null) {
+			return;
+		}
+		if (!confirmDiscardChanges()) {
+			return;
+		}
+		try {
+			openDraft(selected.toPath());
+		} catch (IOException | IllegalArgumentException failure) {
+			statusLabel.setText("Cannot open draft: " + failure.getMessage());
+		}
+	}
+
+	private void chooseSaveDraft() {
+		try {
+			readSettings();
+		} catch (IllegalArgumentException failure) {
+			statusLabel.setText(failure.getMessage());
+			return;
+		}
+		FileChooser chooser = createDraftChooser();
+		chooser.setTitle("Save Examination Draft");
+		chooser.setInitialFileName(draft.getSubject().getName() + "-mock-exam.exam.json");
+		File selected = chooser.showSaveDialog(getDialogPane().getScene().getWindow());
+		if (selected == null) {
+			return;
+		}
+		Path destination = selected.toPath();
+		if (!destination.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".exam.json")) {
+			destination = destination.resolveSibling(destination.getFileName() + ".exam.json");
+		}
+		if (Files.exists(destination)) {
+			Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+			confirm.initOwner(getDialogPane().getScene().getWindow());
+			confirm.setTitle("Replace Examination Draft");
+			confirm.setHeaderText("Replace the existing draft file?");
+			confirm.setContentText(destination.toString());
+			if (confirm.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) {
+				return;
+			}
+		}
+		try {
+			saveDraft(destination);
+		} catch (IOException | IllegalArgumentException failure) {
+			statusLabel.setText("Cannot save draft: " + failure.getMessage());
 		}
 	}
 
@@ -292,6 +395,27 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 		getDialogPane().setContent(workspace);
 	}
 
+	private boolean confirmDiscardChanges() {
+		if (!dirty) {
+			return true;
+		}
+		Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+		confirm.initOwner(getDialogPane().getScene().getWindow());
+		confirm.setTitle("Unsaved Examination Draft");
+		confirm.setHeaderText("Discard unsaved examination changes?");
+		confirm.setContentText("Save the current draft first if you " + "want to retain these selections.");
+		ButtonType discard = new ButtonType("Discard Changes", ButtonBar.ButtonData.OK_DONE);
+		confirm.getButtonTypes().setAll(discard, ButtonType.CANCEL);
+		return confirm.showAndWait().orElse(ButtonType.CANCEL) == discard;
+	}
+
+	private FileChooser createDraftChooser() {
+		FileChooser chooser = new FileChooser();
+		chooser.getExtensionFilters()
+				.setAll(new FileChooser.ExtensionFilter("Examination drafts (*.exam.json)", "*.exam.json"));
+		return chooser;
+	}
+
 	private void finishGeneration(String message) {
 		generating = false;
 		workspace.setDisable(false);
@@ -311,6 +435,32 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 			changed();
 			selectQuestion(questionId);
 		}
+	}
+
+	private void openDraft(Path file) throws IOException {
+		ExamBuilderDraftFile.LoadedDraft loaded = draftFileService.load(file, draft.getSubject());
+
+		// Loading resolves and validates every Question before
+		// publication. Preserve the existing draft object because
+		// the Search selection callback also refers to it.
+		draft.clear();
+		for (ExamBuilderDraft.Section section : ExamBuilderDraft.Section.values()) {
+			for (Question question : loaded.draft().getQuestions(section)) {
+				if (!draft.add(section, question)) {
+					throw new IllegalStateException("Validated draft selection could " + "not be restored.");
+				}
+			}
+		}
+		PrintableExamSettings settings = loaded.settings();
+		yearField.setText(Integer.toString(settings.year()));
+		paperOnePerusalField.setText(Integer.toString(settings.paperOnePerusalMinutes()));
+		paperOneWorkingField.setText(Integer.toString(settings.paperOneWorkingMinutes()));
+		paperTwoPerusalField.setText(Integer.toString(settings.paperTwoPerusalMinutes()));
+		paperTwoWorkingField.setText(Integer.toString(settings.paperTwoWorkingMinutes()));
+		sectionBox.getSelectionModel().selectFirst();
+		refresh();
+		dirty = false;
+		statusLabel.setText("Examination draft opened: " + file);
 	}
 
 	private int readInteger(TextField field, String description) {
@@ -374,6 +524,14 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 		if (destination.startsWith(managedRoot)) {
 			throw new IOException("Select a destination outside the " + "managed Question Bank data directory.");
 		}
+	}
+
+	private void saveDraft(Path file) throws IOException {
+		Path destination = file.toAbsolutePath().normalize();
+		requireOutsideManagedData(destination.getParent());
+		draftFileService.save(destination, draft, readSettings());
+		dirty = false;
+		statusLabel.setText("Examination draft saved: " + destination);
 	}
 
 	private long selectedQuestionId() {

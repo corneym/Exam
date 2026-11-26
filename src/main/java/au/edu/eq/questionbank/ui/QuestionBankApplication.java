@@ -226,6 +226,7 @@ import au.edu.eq.questionbank.ui.help.HelpDialog;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModelFactory;
 import au.edu.eq.questionbank.ui.model.ExamBuilderDraft;
+import au.edu.eq.questionbank.ui.model.ExamBuilderDraftFile;
 import au.edu.eq.questionbank.ui.pdf.PdfFilePicker;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import au.edu.eq.questionbank.ui.pdf.SelectedPdf;
@@ -6142,6 +6143,8 @@ public class QuestionBankApplication extends Application {
 		PrintableAssessmentWriter assessmentWriter = new PrintableAssessmentWriter(pdfStore);
 		dialog.configureGeneration((settings, plan, destination) -> assessmentWriter.generate(settings, plan,
 				PrintableExamFonts.windowsFontDirectory(), destination), config.dataRoot());
+		SqlitePortableIdentityRepository identities = new SqlitePortableIdentityRepository(database);
+		dialog.configureDraftFiles(new ExamBuilderDraftFile(identities, questionRepository));
 		dialog.showAndWait();
 	}
 

@@ -1,12 +1,21 @@
 package au.edu.eq.questionbank.ui.model;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import au.edu.eq.questionbank.model.Answer;
 import au.edu.eq.questionbank.model.AnswerFile;
@@ -25,11 +34,125 @@ import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.pdf.PrintableAssessmentPlan;
+import au.edu.eq.questionbank.pdf.PrintableExamSettings;
 import au.edu.eq.questionbank.pdf.PrintableQuestionNumbering;
 
 class ExamBuilderDraftTest {
 
 	private final Subject chemistry = new Subject(1, "Chemistry");
+	@TempDir
+	Path tempDirectory;
+
+	@Test
+	void draftFileRejectsWrongSubjectAndMissingOrIncompleteQuestions() throws Exception {
+		ExamBuilderDraft draft = new ExamBuilderDraft(chemistry);
+		ExamBooklet booklet = createBooklet(chemistry, 1);
+		Question question = createQuestion(10, booklet, "7", 1, QuestionResponseType.MULTIPLE_CHOICE, null, true);
+		assertTrue(draft.add(ExamBuilderDraft.Section.MULTIPLE_CHOICE, question));
+		UUID subjectUuid = UUID.randomUUID();
+		UUID questionUuid = UUID.randomUUID();
+		PrintableExamSettings settings = new PrintableExamSettings("Chemistry", 2027, 5, 60, 10, 75);
+		Path file = tempDirectory.resolve("validation.exam.json");
+		ExamBuilderDraftFile service = new ExamBuilderDraftFile(
+				id -> id == chemistry.getId() ? subjectUuid : UUID.randomUUID(), _ -> questionUuid,
+				_ -> Optional.of(question));
+		service.save(file, draft, settings);
+		IOException wrongSubject = assertThrows(IOException.class, () -> service.load(file, new Subject(2, "Physics")));
+		assertTrue(wrongSubject.getMessage().contains("another Subject"));
+		ExamBuilderDraftFile missingQuestionService = new ExamBuilderDraftFile(_ -> subjectUuid, _ -> questionUuid,
+				_ -> Optional.empty());
+		IOException missingQuestion = assertThrows(IOException.class,
+				() -> missingQuestionService.load(file, chemistry));
+		assertTrue(missingQuestion.getMessage().contains("no longer exists"));
+		Question incomplete = createQuestion(10, booklet, "7", 1, QuestionResponseType.MULTIPLE_CHOICE, null, false);
+		ExamBuilderDraftFile incompleteQuestionService = new ExamBuilderDraftFile(_ -> subjectUuid, _ -> questionUuid,
+				_ -> Optional.of(incomplete));
+		IOException incompleteAnswer = assertThrows(IOException.class,
+				() -> incompleteQuestionService.load(file, chemistry));
+		assertTrue(incompleteAnswer.getMessage().contains("no longer eligible"));
+
+		// Rejected load operations must not alter the
+		// examination already being edited.
+		assertEquals(List.of(question), draft.getQuestions(ExamBuilderDraft.Section.MULTIPLE_CHOICE));
+	}
+
+	@Test
+	void draftFilesPreserveOrderSettingsAndPortableIdentities() throws Exception {
+		ExamBuilderDraft draft = new ExamBuilderDraft(chemistry);
+		ExamBooklet booklet = createBooklet(chemistry, 1);
+		Question mcq = createQuestion(10, booklet, "7", 1, QuestionResponseType.MULTIPLE_CHOICE, null, true);
+		SourceQuestion source = new SourceQuestion(1, booklet, "21");
+		Question partB = createQuestion(20, booklet, "21b", 2, QuestionResponseType.WRITTEN_RESPONSE, source, true);
+		Question partC = createQuestion(30, booklet, "21c", 3, QuestionResponseType.WRITTEN_RESPONSE, source, true);
+		assertTrue(draft.add(ExamBuilderDraft.Section.MULTIPLE_CHOICE, mcq));
+		assertTrue(draft.add(ExamBuilderDraft.Section.PAPER_ONE_WRITTEN, partC));
+		assertTrue(draft.add(ExamBuilderDraft.Section.PAPER_ONE_WRITTEN, partB));
+		UUID subjectUuid = UUID.randomUUID();
+		UUID mcqUuid = UUID.randomUUID();
+		UUID partBUuid = UUID.randomUUID();
+		UUID partCUuid = UUID.randomUUID();
+		Map<Long, UUID> portableIds = Map.of(10L, mcqUuid, 20L, partBUuid, 30L, partCUuid);
+		ExamBuilderDraftFile writer = new ExamBuilderDraftFile(_ -> subjectUuid, portableIds::get,
+				_ -> Optional.empty());
+		PrintableExamSettings settings = new PrintableExamSettings("Chemistry", 2027, 5, 60, 10, 75);
+		Path file = tempDirectory.resolve("chemistry.exam.json");
+		writer.save(file, draft, settings);
+		assertTrue(Files.isRegularFile(file));
+		String json = Files.readString(file);
+		assertTrue(json.contains(mcqUuid.toString()));
+		assertTrue(json.contains(partBUuid.toString()));
+		assertTrue(json.contains(partCUuid.toString()));
+
+		// Simulate a restored corpus in which persistent
+		// portable UUIDs are retained but local IDs have changed.
+		Subject restoredSubject = new Subject(200, "Chemistry");
+		ExamBooklet restoredBooklet = createBooklet(restoredSubject, 200);
+		SourceQuestion restoredSource = new SourceQuestion(201, restoredBooklet, "21");
+		Question restoredMcq = createQuestion(1010, restoredBooklet, "7", 1, QuestionResponseType.MULTIPLE_CHOICE, null,
+				true);
+		Question restoredPartB = createQuestion(1020, restoredBooklet, "21b", 2, QuestionResponseType.WRITTEN_RESPONSE,
+				restoredSource, true);
+		Question restoredPartC = createQuestion(1030, restoredBooklet, "21c", 3, QuestionResponseType.WRITTEN_RESPONSE,
+				restoredSource, true);
+		Map<UUID, Question> restoredQuestions = Map.of(mcqUuid, restoredMcq, partBUuid, restoredPartB, partCUuid,
+				restoredPartC);
+		ExamBuilderDraftFile reader = new ExamBuilderDraftFile(_ -> subjectUuid, _ -> {
+			throw new AssertionError("Not saving a draft.");
+		}, id -> Optional.ofNullable(restoredQuestions.get(id)));
+		ExamBuilderDraftFile.LoadedDraft loaded = reader.load(file, restoredSubject);
+		assertEquals(settings, loaded.settings());
+		assertEquals(restoredSubject, loaded.draft().getSubject());
+		assertEquals(List.of(restoredMcq), loaded.draft().getQuestions(ExamBuilderDraft.Section.MULTIPLE_CHOICE));
+		assertEquals(List.of(restoredPartC, restoredPartB),
+				loaded.draft().getQuestions(ExamBuilderDraft.Section.PAPER_ONE_WRITTEN));
+		PrintableAssessmentPlan plan = loaded.draft().buildPlan();
+		assertEquals(List.of("2(a)", "2(b)"),
+				plan.getPaperOne().stream().map(PrintableQuestionNumbering.NumberedQuestion::label).toList());
+		assertEquals(6, plan.getTotalMarks());
+		assertEquals(10, mcq.getId());
+		assertEquals(1010, restoredMcq.getId());
+	}
+
+	@Test
+	void failedDraftSavePreservesExistingFile() throws Exception {
+		ExamBuilderDraft draft = new ExamBuilderDraft(chemistry);
+		ExamBooklet booklet = createBooklet(chemistry, 1);
+		Question question = createQuestion(10, booklet, "7", 1, QuestionResponseType.MULTIPLE_CHOICE, null, true);
+		assertTrue(draft.add(ExamBuilderDraft.Section.MULTIPLE_CHOICE, question));
+		PrintableExamSettings settings = new PrintableExamSettings("Chemistry", 2027, 5, 60, 10, 75);
+		UUID subjectUuid = UUID.randomUUID();
+		UUID questionUuid = UUID.randomUUID();
+		Path file = tempDirectory.resolve("existing.exam.json");
+		ExamBuilderDraftFile service = new ExamBuilderDraftFile(_ -> subjectUuid, _ -> questionUuid,
+				_ -> Optional.of(question));
+		service.save(file, draft, settings);
+		byte[] original = Files.readAllBytes(file);
+		ExamBuilderDraftFile failingService = new ExamBuilderDraftFile(_ -> subjectUuid, _ -> {
+			throw new IllegalStateException("Missing Question identity");
+		}, _ -> Optional.empty());
+		assertThrows(IOException.class, () -> failingService.save(file, draft, settings));
+		assertArrayEquals(original, Files.readAllBytes(file));
+	}
 
 	@Test
 	void rejectsDuplicatesAcrossTheEntireExamination() {

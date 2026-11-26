@@ -195,6 +195,33 @@ public final class PrintablePageWriter {
 		cursorY -= TEXT_HEIGHT + GAP;
 	}
 
+	float measureContent(float width, float height) {
+		float availableWidth = PDRectangle.A4.getWidth() - 2 * leftMargin();
+		float scale = Math.min(1.0f, Math.min(availableWidth / width, availableHeight() / height));
+		return height * scale + GAP;
+	}
+
+	float measureText() {
+		return TEXT_HEIGHT + GAP;
+	}
+
+	void reserveGroup(float height, String description) throws IOException {
+
+		// Allow a small clearance for accumulated floating-point
+		// differences between measurement and actual placement.
+		float requiredHeight = height + 0.5f;
+		if (!Float.isFinite(requiredHeight) || height <= 0 || requiredHeight > availableHeight()) {
+			throw new IOException(description + " cannot fit together on one examination page.");
+		}
+
+		// The existing page-creation method retains the appropriate
+		// running header or response outline.
+		ensureSpace(requiredHeight);
+		if (cursorY - requiredHeight < bottomMargin()) {
+			throw new IOException("Insufficient page space for " + description);
+		}
+	}
+
 	private float availableHeight() {
 		if (responsePaper != 0) {
 

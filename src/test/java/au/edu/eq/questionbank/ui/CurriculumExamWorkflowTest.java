@@ -1241,9 +1241,13 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 		assertTrue(pane.getHeaderText().contains("Chemistry"));
 		Button generate = (Button) pane.lookup("#exam-builder-generate");
 		assertNotNull(generate);
-
-		// A new examination is empty and cannot be generated.
 		assertTrue(generate.isDisabled());
+		Button open = (Button) pane.lookup("#exam-builder-open-draft");
+		Button save = (Button) pane.lookup("#exam-builder-save-draft");
+		assertNotNull(open);
+		assertNotNull(save);
+		assertFalse(open.isDisabled());
+		assertFalse(save.isDisabled());
 		Button close = (Button) pane.lookupButton(ButtonType.CLOSE);
 		robot.interact(close::fire);
 		waitForDialogHidden(robot, "Exam Builder");
