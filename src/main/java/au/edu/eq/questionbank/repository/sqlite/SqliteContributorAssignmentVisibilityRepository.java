@@ -14,8 +14,9 @@ import java.util.UUID;
  * Determines which installed contributor assignments remain available for work.
  *
  * <p>
- * Published return evidence takes precedence over local visibility. An
- * assignment with a published contribution is SUBMITTED. An unchanged
+ * Published return evidence and unresolved publication attempts take precedence
+ * over local visibility. Such an assignment is SUBMITTED and remains fail-closed
+ * until publication is finalised or confirmed not to have started. An unchanged
  * assignment deliberately hidden by its contributor is REMOVED. Otherwise, an
  * installed assignment is ACTIVE.
  *
@@ -53,6 +54,10 @@ public final class SqliteContributorAssignmentVisibilityRepository {
 						        SELECT 1
 						        FROM contributor_return_packages packet
 						        WHERE packet.assignment_id = session.assignment_id
+						    ) OR EXISTS (
+						        SELECT 1
+						        FROM contribution_publication_attempts attempt
+						        WHERE attempt.assignment_id = session.assignment_id
 						    ) THEN 'SUBMITTED'
 						    WHEN EXISTS (
 						        SELECT 1
@@ -104,6 +109,11 @@ public final class SqliteContributorAssignmentVisibilityRepository {
 						    FROM contributor_assignment_hidden hidden
 						    WHERE hidden.assignment_id = session.assignment_id
 						)
+						AND NOT EXISTS (
+						    SELECT 1
+						    FROM contribution_publication_attempts attempt
+						    WHERE attempt.assignment_id = session.assignment_id
+						)
 						ORDER BY session.installed_at, session.assignment_id
 						""");
 				ResultSet result = statement.executeQuery()) {
@@ -122,7 +132,7 @@ public final class SqliteContributorAssignmentVisibilityRepository {
 		ACTIVE,
 		/** An unchanged assignment was removed from the active interface. */
 		REMOVED,
-		/** At least one contribution has been durably published. */
+		/** A final Contribution exists or its publication remains unresolved. */
 		SUBMITTED
 	}
 }

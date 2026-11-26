@@ -11,9 +11,12 @@ import java.util.UUID;
 
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ManagedAssetPublicationLock;
+import au.edu.eq.questionbank.ManagedDataLayout;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 
 /**
- * Resolves both package journal generations before either importer may proceed.
+ * Resolves Contribution, Subject-import and assignment-install publication
+ * journals before a managed importer may proceed.
  */
 final class ManagedAssetPublicationRecovery {
 
@@ -23,6 +26,8 @@ final class ManagedAssetPublicationRecovery {
 	static void recoverPending(ApplicationConfig config, ManagedAssetPublicationLock lock)
 			throws IOException, SQLException {
 		lock.requireHeld(config.dataRoot());
+		new ContributionPublicationJournal(new SqliteDatabase(config.databasePath()),
+				new ManagedDataLayout(config.dataRoot())).recoverPending(lock);
 		for (String name : List.of(".subject-import-staging", ".assignment-install-staging")) {
 			Path root = config.dataRoot().resolve(name);
 			if (!Files.exists(root, LinkOption.NOFOLLOW_LINKS)) {
