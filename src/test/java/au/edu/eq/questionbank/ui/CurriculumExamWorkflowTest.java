@@ -1224,6 +1224,33 @@ class CurriculumExamWorkflowTest extends QuestionBankApplicationUiTestBase {
 	}
 
 	@Test
+	void examBuilderOpensForAuthoritativeWorkingSubject(FxRobot robot) throws Exception {
+		ComboBox<Subject> subjects = comboBox(robot, "#curriculum-subject");
+		Subject subject = subjects.getItems().stream().filter(item -> "Chemistry".equals(item.getName())).findFirst()
+				.orElseThrow();
+		robot.interact(() -> subjects.setValue(subject));
+		assertEquals(subject, field(application, "workingSubject", Subject.class));
+		Menu questionMenu = (Menu) invoke(application, "createQuestionMenu",
+				new Class<?>[] { Stage.class, ApplicationConfig.class }, primaryStage, applicationConfig);
+		MenuItem builder = questionMenu.getItems().stream()
+				.filter(item -> "questions-exam-builder".equals(item.getId())).findFirst().orElseThrow();
+		Platform.runLater(builder::fire);
+		waitForDialogShowing(robot, "Exam Builder");
+		DialogPane pane = showingDialogPane(robot, "Exam Builder");
+		assertNotNull(pane);
+		assertTrue(pane.getHeaderText().contains("Chemistry"));
+		Button generate = (Button) pane.lookup("#exam-builder-generate");
+		assertNotNull(generate);
+
+		// A new examination is empty and cannot be generated.
+		assertTrue(generate.isDisabled());
+		Button close = (Button) pane.lookupButton(ButtonType.CLOSE);
+		robot.interact(close::fire);
+		waitForDialogHidden(robot, "Exam Builder");
+		assertEquals(subject, field(application, "workingSubject", Subject.class));
+	}
+
+	@Test
 	@SuppressWarnings("unchecked")
 	void importedExamPdfUsesSubjectFirstAssessmentHierarchy(FxRobot robot) throws Exception {
 		ExamMetadataPane pane = examMetadataPane();

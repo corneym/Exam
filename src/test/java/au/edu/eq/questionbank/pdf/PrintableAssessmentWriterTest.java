@@ -149,7 +149,7 @@ class PrintableAssessmentWriterTest {
 		PrintableAssessmentWriter writer = new PrintableAssessmentWriter(new PdfStore(tempDir));
 		Path output = tempDir.resolve("generated");
 		writer.generate(settings, plan, output,
-				(document, guide) -> guide ? createGuideTestFonts() : createStudentTestFonts());
+				(_, guide) -> guide ? createGuideTestFonts() : createStudentTestFonts());
 		for (String filename : List.of("MCQ.pdf", "Paper 1.pdf", "Paper 2.pdf", "Marking Guide.pdf")) {
 			assertTrue(Files.isRegularFile(output.resolve(filename)));
 		}
@@ -180,7 +180,7 @@ class PrintableAssessmentWriterTest {
 		// A second generation must not overwrite the original output.
 		byte[] originalOutput = Files.readAllBytes(output.resolve("Paper 1.pdf"));
 		assertThrows(FileAlreadyExistsException.class, () -> writer.generate(settings, plan, output,
-				(document, markingGuide) -> markingGuide ? createGuideTestFonts() : createStudentTestFonts()));
+				(_, markingGuide) -> markingGuide ? createGuideTestFonts() : createStudentTestFonts()));
 		assertArrayEquals(originalOutput, Files.readAllBytes(output.resolve("Paper 1.pdf")));
 	}
 

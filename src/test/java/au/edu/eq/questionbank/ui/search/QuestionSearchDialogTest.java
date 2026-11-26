@@ -27,6 +27,7 @@ import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.Constants;
+import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.Answer;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
@@ -36,6 +37,7 @@ import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.model.Subject;
@@ -51,6 +53,7 @@ import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
 import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
+import au.edu.eq.questionbank.ui.model.ExamBuilderDraft;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Rectangle2D;
@@ -580,6 +583,79 @@ class QuestionSearchDialogTest {
 	}
 
 	@Test
+	void examQuestionSelectionRequiresEligibleQuestion(FxRobot robot) throws TimeoutException {
+		Subject chemistry = new Subject(100, "Chemistry");
+		Question eligible = examSelectionQuestion(chemistry, 1000, true);
+		Question unanswered = examSelectionQuestion(chemistry, 2000, false);
+		Question alreadySelected = examSelectionQuestion(chemistry, 3000, true);
+		ExamBuilderDraft draft = new ExamBuilderDraft(chemistry);
+		var section = ExamBuilderDraft.Section.MULTIPLE_CHOICE;
+		assertTrue(draft.add(section, alreadySelected));
+		InMemoryCurriculumRepository curriculum = new InMemoryCurriculumRepository();
+		QuestionRetrievalRepository retrievalRepository = _ -> List.of();
+		QuestionRetrievalService retrieval = new QuestionRetrievalService(retrievalRepository,
+				new CurriculumSearchNodeExpansionService(curriculum));
+		QuestionPreviewService preview = new QuestionPreviewService(new PdfStore(tempDirectory),
+				new QuestionExtractor());
+		PerformanceRecorder recorder = new PerformanceRecorder(false, tempDirectory.resolve("performance.csv"));
+		AtomicReference<ExamQuestionSelectionDialog> holder = new AtomicReference<>();
+		robot.interact(() -> holder.set(new ExamQuestionSelectionDialog(stage, draft, section, curriculum, retrieval,
+				() -> List.of(eligible, unanswered, alreadySelected), preview,
+				new InMemoryQuestionOutputApplicabilityRepository(), recorder)));
+		ExamQuestionSelectionDialog dialog = holder.get();
+		try {
+			robot.interact(dialog::show);
+			ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+			Button add = robot.lookup("#exam-question-selection-add").queryButton();
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 3);
+			robot.interact(() -> results.getSelectionModel().clearSelection());
+			assertTrue(add.isDisabled());
+			robot.interact(() -> {
+				QuestionSearchResult result = results.getItems().stream()
+						.filter(item -> item.question().getId() == unanswered.getId()).findFirst().orElseThrow();
+				results.getSelectionModel().select(result);
+			});
+			assertTrue(add.isDisabled());
+			robot.interact(() -> {
+				QuestionSearchResult result = results.getItems().stream()
+						.filter(item -> item.question().getId() == alreadySelected.getId()).findFirst().orElseThrow();
+				results.getSelectionModel().select(result);
+			});
+			assertTrue(add.isDisabled());
+			robot.interact(() -> {
+				QuestionSearchResult result = results.getItems().stream()
+						.filter(item -> item.question().getId() == eligible.getId()).findFirst().orElseThrow();
+				results.getSelectionModel().select(result);
+			});
+			assertFalse(add.isDisabled());
+			Button saveClassification = robot.lookup("#question-search-save-classification").queryButton();
+			Button include = robot.lookup("#question-search-output-include").queryButton();
+			Button exclude = robot.lookup("#question-search-output-exclude").queryButton();
+
+			// Source Question records remain read-only.
+			assertTrue(saveClassification.isDisabled());
+			assertTrue(include.isDisabled());
+			assertTrue(exclude.isDisabled());
+			robot.interact(add::fire);
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> !dialog.isShowing());
+			assertNotNull(dialog.getResult());
+			assertEquals(eligible.getId(), dialog.getResult().getId());
+
+			// Returning a selection does not change the draft.
+			// The owning Exam Builder performs the addition.
+			assertEquals(1, draft.getTotalSelectedCount());
+			assertTrue(draft.add(section, dialog.getResult()));
+			assertEquals(2, draft.getTotalSelectedCount());
+		} finally {
+			robot.interact(() -> {
+				if (dialog.isShowing()) {
+					dialog.close();
+				}
+			});
+		}
+	}
+
+	@Test
 	void fullHeightPositionSurvivesHideAndReshow(FxRobot robot) {
 		InMemoryCurriculumRepository curriculumRepository = new InMemoryCurriculumRepository();
 		QuestionRetrievalRepository retrievalRepository = _ -> List.of();
@@ -703,6 +779,23 @@ class QuestionSearchDialogTest {
 		}, previewService, new InMemoryQuestionOutputApplicabilityRepository(), (_, _) -> {
 			throw new AssertionError("Classification persistence was not expected");
 		}, narrowing);
+	}
+
+	private Question examSelectionQuestion(Subject subject, long baseId, boolean answered) {
+		SyllabusVersion syllabus = new SyllabusVersion(baseId, subject, "2025", true);
+		Unit unit = new Unit(baseId + 1, syllabus, "3", "Unit 3", 1);
+		Topic topic = new Topic(baseId + 2, syllabus, unit, "3.1", "Equilibrium", 1);
+		Subtopic subtopic = new Subtopic(baseId + 3, syllabus, topic, "3.1.1", "Equilibrium", 1);
+		ExamProvider provider = new ExamProvider(baseId + 4, "QCAA");
+		Exam exam = new Exam(baseId + 5, subject, provider, 2025, "External");
+		SourceDocument document = new SourceDocument(baseId + 6, "exam-" + baseId + ".pdf");
+		ExamBooklet booklet = new ExamBooklet(baseId + 7, exam, "Paper 1", document);
+		Question question = new Question(baseId + 8, booklet, "7", "Test multiple-choice Question", 1, List.of(),
+				subtopic, false, null, null, QuestionResponseType.MULTIPLE_CHOICE);
+		if (answered) {
+			question.setAnswer(new Answer(baseId + 9, "C", List.of()));
+		}
+		return question;
 	}
 
 	private QuestionSearchDialog extracted(InMemoryCurriculumRepository curriculumRepository,

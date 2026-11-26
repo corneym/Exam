@@ -84,6 +84,8 @@ import au.edu.eq.questionbank.output.scorm.ScormPackageValidator;
 import au.edu.eq.questionbank.output.scorm.ScormSchemaSupport;
 import au.edu.eq.questionbank.output.scorm.ScormZipWriter;
 import au.edu.eq.questionbank.pdf.PdfStore;
+import au.edu.eq.questionbank.pdf.PrintableAssessmentWriter;
+import au.edu.eq.questionbank.pdf.PrintableExamFonts;
 import au.edu.eq.questionbank.pdf.QuestionExtractor;
 import au.edu.eq.questionbank.repository.ExamMetadataOptionsRepository;
 import au.edu.eq.questionbank.repository.assessment.AnswerFileReassignmentService;
@@ -212,6 +214,7 @@ import au.edu.eq.questionbank.ui.curriculum.CurriculumMappingReviewDialog;
 import au.edu.eq.questionbank.ui.curriculum.CurriculumSelectorPane;
 import au.edu.eq.questionbank.ui.curriculum.NewCurriculumDialog;
 import au.edu.eq.questionbank.ui.exam.ExamAssetsPane;
+import au.edu.eq.questionbank.ui.exam.ExamBuilderDialog;
 import au.edu.eq.questionbank.ui.exam.ExamMetadataPane;
 import au.edu.eq.questionbank.ui.exam.LegacyExamMappingDialog;
 import au.edu.eq.questionbank.ui.exam.LegacyQuestionImportDialog;
@@ -222,9 +225,11 @@ import au.edu.eq.questionbank.ui.export.ScormExportTask;
 import au.edu.eq.questionbank.ui.help.HelpDialog;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModelFactory;
+import au.edu.eq.questionbank.ui.model.ExamBuilderDraft;
 import au.edu.eq.questionbank.ui.pdf.PdfFilePicker;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import au.edu.eq.questionbank.ui.pdf.SelectedPdf;
+import au.edu.eq.questionbank.ui.search.ExamQuestionSelectionDialog;
 import au.edu.eq.questionbank.ui.search.QuestionSearchDialog;
 import au.edu.eq.questionbank.ui.search.QuestionSearchNarrowing;
 import javafx.application.Application;
@@ -2516,10 +2521,12 @@ public class QuestionBankApplication extends Application {
 	private Menu createQuestionMenu(Stage primaryStage, ApplicationConfig config) {
 		Menu questionMenu = createMenu("_Questions");
 
-		// The Corpus Dashboard is now the main application home surface, so navigation
-		// back to Home does not need a duplicate Questions-menu action.
+		// The Corpus Dashboard remains the main application
+		// home surface.
 		MenuItem searchItem = createMenuItem("_Search...", () -> showQuestionSearch(primaryStage, config));
-		questionMenu.getItems().add(searchItem);
+		MenuItem examBuilderItem = createMenuItem("_Exam Builder...", () -> showExamBuilder(primaryStage, config));
+		examBuilderItem.setId("questions-exam-builder");
+		questionMenu.getItems().addAll(searchItem, new SeparatorMenuItem(), examBuilderItem);
 		return questionMenu;
 	}
 
@@ -6100,6 +6107,42 @@ public class QuestionBankApplication extends Application {
 				throw failure;
 			}
 		}
+	}
+
+	private void showExamBuilder(Stage primaryStage, ApplicationConfig config) {
+		Subject subject = workingSubject;
+		if (subject == null) {
+			showAlert(Alert.AlertType.WARNING, "Exam Builder", "No Working Subject is selected.",
+					"Select a Working Subject before " + "building an examination.");
+			return;
+		}
+		if (activeAssignmentContext != null || packageImportInProgress || contributionExportRunning
+				|| applicationBusyOverlay.isBusy()) {
+			showAlert(Alert.AlertType.WARNING, "Exam Builder", "Exam Builder is currently unavailable.",
+					"Return to the ordinary Question Bank " + "workspace and complete any active "
+							+ "collection or import operation.");
+			return;
+		}
+		SqliteDatabase database = new SqliteDatabase(config.databasePath());
+		CurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
+		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database, performanceRecorder);
+		QuestionRetrievalService retrievalService = new QuestionRetrievalService(questionRepository,
+				new CurriculumSearchNodeExpansionService(curriculumRepository), performanceRecorder);
+		PdfStore pdfStore = createExamPdfStore(config);
+		QuestionPreviewService previewService = new QuestionPreviewService(pdfStore, questionExtractor);
+		SqliteQuestionOutputApplicabilityRepository outputApplicabilityRepository = new SqliteQuestionOutputApplicabilityRepository(
+				database);
+		ExamBuilderDraft draft = new ExamBuilderDraft(subject);
+		ExamBuilderDialog dialog = new ExamBuilderDialog(primaryStage, draft, (owner, section) -> {
+			ExamQuestionSelectionDialog selection = new ExamQuestionSelectionDialog(owner, draft, section,
+					curriculumRepository, retrievalService, questionRepository::findAll, previewService,
+					outputApplicabilityRepository, performanceRecorder);
+			return selection.showAndWait();
+		});
+		PrintableAssessmentWriter assessmentWriter = new PrintableAssessmentWriter(pdfStore);
+		dialog.configureGeneration((settings, plan, destination) -> assessmentWriter.generate(settings, plan,
+				PrintableExamFonts.windowsFontDirectory(), destination), config.dataRoot());
+		dialog.showAndWait();
 	}
 
 	private void showExportAssignmentContribution(Stage primaryStage, ApplicationConfig config) {
