@@ -81,14 +81,14 @@ public final class SqliteCurriculumSourcePdfRepository implements CurriculumSour
 		// Recheck editability in SQL before changing the reference; file copying
 		// belongs to the service.
 		try (Connection connection = database.openConnection()) {
-			new SqliteImportedSubjectAuthorityRepository(database).requireLocallyAuthoritativeSyllabusVersion(connection,
-					syllabusVersion.getId());
+			new SqliteImportedSubjectAuthorityRepository(database)
+					.requireLocallyAuthoritativeSyllabusVersion(connection, syllabusVersion.getId());
 			try (PreparedStatement statement = connection.prepareStatement("""
-						UPDATE syllabus_versions
-						SET source_pdf_path = ?
-						WHERE id = ?
-						  AND curriculum_status = 'IN_PROGRESS'
-						""")) {
+					UPDATE syllabus_versions
+					SET source_pdf_path = ?
+					WHERE id = ?
+					  AND curriculum_status = 'IN_PROGRESS'
+					""")) {
 				statement.setString(1, relativePath);
 				statement.setLong(2, syllabusVersion.getId());
 				if (SqliteDirectChanges.executeUpdate(statement) != 1) {

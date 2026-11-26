@@ -237,8 +237,8 @@ public final class SqliteCurriculumAuthoringWriter implements CurriculumAuthorin
 			try {
 
 				// Check lifecycle, snapshot and deletion references before the first mutation.
-				new SqliteImportedSubjectAuthorityRepository(database).requireLocallyAuthoritativeSyllabusVersion(connection,
-						syllabusVersionId);
+				new SqliteImportedSubjectAuthorityRepository(database)
+						.requireLocallyAuthoritativeSyllabusVersion(connection, syllabusVersionId);
 				requireSyllabusEditable(connection, syllabusVersionId);
 				requireSessionMatchesDatabase(connection, syllabusVersionId, session);
 				requireDeletionsUnreferenced(connection, deletedPersistentIds);

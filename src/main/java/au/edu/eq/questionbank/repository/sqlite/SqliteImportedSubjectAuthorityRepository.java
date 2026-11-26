@@ -190,10 +190,10 @@ public final class SqliteImportedSubjectAuthorityRepository {
 	 *
 	 * @param connection     caller-owned database connection
 	 * @param subjectLocalId positive local Subject ID
-	 * @throws SQLException          if authority cannot be inspected
-	 * @throws IllegalStateException if the Subject is externally authoritative
+	 * @throws SQLException             if authority cannot be inspected
+	 * @throws IllegalStateException    if the Subject is externally authoritative
 	 * @throws IllegalArgumentException if the Subject ID is not positive
-	 * @throws NullPointerException  if the connection is null
+	 * @throws NullPointerException     if the connection is null
 	 */
 	public void requireLocallyAuthoritative(Connection connection, long subjectLocalId) throws SQLException {
 		if (find(connection, subjectLocalId).isPresent()) {
@@ -211,9 +211,10 @@ public final class SqliteImportedSubjectAuthorityRepository {
 	 *
 	 * @param connection        caller-owned database connection
 	 * @param syllabusVersionId positive local syllabus-version ID
-	 * @throws SQLException             if ownership or authority cannot be inspected
-	 * @throws IllegalStateException    if the syllabus version does not exist or its
-	 *                                  Subject is externally authoritative
+	 * @throws SQLException             if ownership or authority cannot be
+	 *                                  inspected
+	 * @throws IllegalStateException    if the syllabus version does not exist or
+	 *                                  its Subject is externally authoritative
 	 * @throws IllegalArgumentException if the syllabus-version ID is not positive
 	 * @throws NullPointerException     if the connection is null
 	 */
