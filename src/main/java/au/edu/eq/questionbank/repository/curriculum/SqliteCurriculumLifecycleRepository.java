@@ -41,15 +41,15 @@ public final class SqliteCurriculumLifecycleRepository implements CurriculumLife
 
 		// The status predicate guards the transition against a stale in-memory version.
 		try (Connection connection = database.openConnection()) {
-			new SqliteImportedSubjectAuthorityRepository(database).requireLocallyAuthoritativeSyllabusVersion(connection,
-					syllabusVersion.getId());
+			new SqliteImportedSubjectAuthorityRepository(database)
+					.requireLocallyAuthoritativeSyllabusVersion(connection, syllabusVersion.getId());
 			try (PreparedStatement statement = connection.prepareStatement("""
-						UPDATE syllabus_versions
-						SET curriculum_status = 'FINAL',
-						    curriculum_finalised_at = ?
-						WHERE id = ?
-						  AND curriculum_status = 'IN_PROGRESS'
-						""")) {
+					UPDATE syllabus_versions
+					SET curriculum_status = 'FINAL',
+					    curriculum_finalised_at = ?
+					WHERE id = ?
+					  AND curriculum_status = 'IN_PROGRESS'
+					""")) {
 				statement.setString(1, finalisedAt.toString());
 				statement.setLong(2, syllabusVersion.getId());
 				if (SqliteDirectChanges.executeUpdate(statement) != 1) {
@@ -70,15 +70,15 @@ public final class SqliteCurriculumLifecycleRepository implements CurriculumLife
 			throw new NullPointerException("syllabusVersion");
 		}
 		try (Connection connection = database.openConnection()) {
-			new SqliteImportedSubjectAuthorityRepository(database).requireLocallyAuthoritativeSyllabusVersion(connection,
-					syllabusVersion.getId());
+			new SqliteImportedSubjectAuthorityRepository(database)
+					.requireLocallyAuthoritativeSyllabusVersion(connection, syllabusVersion.getId());
 			try (PreparedStatement statement = connection.prepareStatement("""
-						UPDATE syllabus_versions
-						SET curriculum_status = 'IN_PROGRESS',
-						    curriculum_finalised_at = NULL
-						WHERE id = ?
-						  AND curriculum_status = 'FINAL'
-						""")) {
+					UPDATE syllabus_versions
+					SET curriculum_status = 'IN_PROGRESS',
+					    curriculum_finalised_at = NULL
+					WHERE id = ?
+					  AND curriculum_status = 'FINAL'
+					""")) {
 				statement.setLong(1, syllabusVersion.getId());
 				if (SqliteDirectChanges.executeUpdate(statement) != 1) {
 					throw new IllegalStateException(

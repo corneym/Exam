@@ -77,14 +77,14 @@ public final class SqliteContributorBaselineWriteGuard {
 	 *
 	 * <p>
 	 * New Questions, Source Questions and Shared Contexts are allowed within the
-	 * selected active assignment, but not in imported Subjects, inactive contributor
-	 * corpora or another Exam.
+	 * selected active assignment, but not in imported Subjects, inactive
+	 * contributor corpora or another Exam.
 	 *
 	 * @param connection caller-owned database connection
 	 * @param bookletId  positive local ExamBooklet identifier
 	 * @throws SQLException             if ownership validation fails
-	 * @throws IllegalStateException    if creation is prohibited or the booklet does
-	 *                                  not exist
+	 * @throws IllegalStateException    if creation is prohibited or the booklet
+	 *                                  does not exist
 	 * @throws IllegalArgumentException if the booklet ID is invalid
 	 * @throws NullPointerException     if the connection is null
 	 */

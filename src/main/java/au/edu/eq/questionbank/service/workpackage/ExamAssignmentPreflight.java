@@ -61,7 +61,8 @@ public final class ExamAssignmentPreflight {
 	 * @return authoritative Exam, asset and syllabus references
 	 * @throws SQLException          if Exam persistence cannot be read
 	 * @throws IOException           if the Exam is not ready for issuance
-	 * @throws IllegalStateException if the Subject is an imported read-only snapshot
+	 * @throws IllegalStateException if the Subject is an imported read-only
+	 *                               snapshot
 	 */
 	public Result check(Exam requestedExam, boolean legacyCaptureEnabled) throws SQLException, IOException {
 		Objects.requireNonNull(requestedExam, "requestedExam");

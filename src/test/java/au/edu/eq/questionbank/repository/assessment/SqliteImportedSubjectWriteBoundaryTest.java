@@ -58,7 +58,6 @@ class SqliteImportedSubjectWriteBoundaryTest {
 		SqliteDatabase database = fixture.database();
 		SqliteCurriculumWriter curriculum = new SqliteCurriculumWriter(database);
 		SqliteExamWriter exams = new SqliteExamWriter(database);
-
 		assertThrows(IllegalStateException.class,
 				() -> curriculum.insertSyllabusVersion(fixture.subject(), "2027", true));
 		assertThrows(IllegalStateException.class,
@@ -74,7 +73,6 @@ class SqliteImportedSubjectWriteBoundaryTest {
 				importedUnit.getName(), importedUnit.getDisplayOrder());
 		assertThrows(IllegalStateException.class,
 				() -> curriculum.insertTopic(inconsistentParent, "3.1", "Forged local topic", 0));
-
 		var authoringSession = new CurriculumDraftLoader(new SqliteCurriculumAuthoringRepository(database))
 				.load(fixture.currentVersion());
 		assertThrows(IllegalStateException.class,
@@ -87,7 +85,6 @@ class SqliteImportedSubjectWriteBoundaryTest {
 				.insertMapping(fixture.historicalSubtopic(), fixture.currentSubtopic(), MappingStatus.CONFIRMED));
 		assertThrows(IllegalStateException.class, () -> new SqliteCurriculumMappingReviewWriter(database)
 				.confirmNoMatch(fixture.historicalSubtopic(), fixture.currentVersion()));
-
 		assertThrows(IllegalStateException.class, () -> exams.insertExam(fixture.subject(),
 				fixture.booklet().getExam().getProvider(), 2027, "External Assessment"));
 		assertThrows(IllegalStateException.class,
@@ -96,22 +93,23 @@ class SqliteImportedSubjectWriteBoundaryTest {
 				() -> exams.updateExamAssetExpectations(fixture.booklet().getExam(), 2, 1));
 		assertTrue(new LegacyExamImportEligibility(database).rejectionReason(fixture.booklet().getExam())
 				.contains("imported read-only Subject"));
-		assertThrows(IllegalStateException.class, () -> new ExamAssignmentPreflight(database,
-				new ManagedDataLayout(fixture.managedRoot())).check(fixture.booklet().getExam(), false));
+		assertThrows(IllegalStateException.class,
+				() -> new ExamAssignmentPreflight(database, new ManagedDataLayout(fixture.managedRoot()))
+						.check(fixture.booklet().getExam(), false));
 		Path forbiddenSnapshot = directory.resolve("forbidden-subject-snapshot.examwork");
-		assertThrows(IllegalStateException.class, () -> new SubjectSnapshotExporter(database,
-				new ManagedDataLayout(fixture.managedRoot())).export(fixture.subject().getId(), forbiddenSnapshot));
+		assertThrows(IllegalStateException.class,
+				() -> new SubjectSnapshotExporter(database, new ManagedDataLayout(fixture.managedRoot()))
+						.export(fixture.subject().getId(), forbiddenSnapshot));
 		assertTrue(Files.notExists(forbiddenSnapshot));
 		assertThrows(IllegalStateException.class, () -> new AnswerFileReassignmentService(database)
 				.reassign(fixture.booklet(), fixture.replacementAnswerFile()));
-
 		Path replacementPdf = directory.resolve("replacement-questions.pdf");
 		Files.writeString(replacementPdf, "replacement question document");
-		assertThrows(IllegalStateException.class, () -> new QuestionBookletPdfReplacementService(database,
-				fixture.managedRoot()).replace(fixture.booklet(), replacementPdf));
-		assertEquals("original question document",
-				Files.readString(fixture.managedRoot().resolve(fixture.booklet().getSourceDocument().getRelativePath())));
-
+		assertThrows(IllegalStateException.class,
+				() -> new QuestionBookletPdfReplacementService(database, fixture.managedRoot())
+						.replace(fixture.booklet(), replacementPdf));
+		assertEquals("original question document", Files
+				.readString(fixture.managedRoot().resolve(fixture.booklet().getSourceDocument().getRelativePath())));
 		QuestionRegion questionRegion = new QuestionRegion(fixture.booklet(), 1, 0.10, 0.10, 0.50, 0.20);
 		assertThrows(IllegalStateException.class,
 				() -> new SqliteQuestionWriter(database).insertQuestion(fixture.booklet(), "Q1", "", 2,
@@ -121,7 +119,6 @@ class SqliteImportedSubjectWriteBoundaryTest {
 		SharedQuestionContextRegion contextRegion = new SharedQuestionContextRegion(1, 0.10, 0.10, 0.50, 0.20);
 		assertThrows(IllegalStateException.class, () -> new SqliteSharedQuestionContextRepository(database)
 				.save(fixture.booklet(), "Shared stimulus", List.of(contextRegion)));
-
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			assertEquals(3, count(statement, "SELECT COUNT(*) FROM syllabus_versions"));
 			assertEquals(6, count(statement, "SELECT COUNT(*) FROM curriculum_nodes"));
@@ -172,7 +169,6 @@ class SqliteImportedSubjectWriteBoundaryTest {
 				"subjects/Biology/exams/QCAA/2026/EA/answers.pdf");
 		AnswerFile replacementAnswerFile = answers.findOrCreateAnswerFile(booklet.getExam(),
 				"Replacement marking guide", "subjects/Biology/exams/QCAA/2026/EA/replacement-answers.pdf");
-
 		PackageEntry imported = new PackageEntry(UUID.randomUUID(), "a".repeat(64), UUID.randomUUID(),
 				UUID.randomUUID(), "b".repeat(64), "c".repeat(64), PackageOutcome.APPLIED,
 				directory.resolve("verified-backup.zip").toString(), "Approved authoritative Subject import");
@@ -195,7 +191,7 @@ class SqliteImportedSubjectWriteBoundaryTest {
 	}
 
 	private record Fixture(SqliteDatabase database, Subject subject, SyllabusVersion historicalVersion,
-			SyllabusVersion currentVersion, Subtopic historicalSubtopic, Subtopic currentSubtopic,
-			ExamBooklet booklet, AnswerFile originalAnswerFile, AnswerFile replacementAnswerFile, Path managedRoot) {
+			SyllabusVersion currentVersion, Subtopic historicalSubtopic, Subtopic currentSubtopic, ExamBooklet booklet,
+			AnswerFile originalAnswerFile, AnswerFile replacementAnswerFile, Path managedRoot) {
 	}
 }
