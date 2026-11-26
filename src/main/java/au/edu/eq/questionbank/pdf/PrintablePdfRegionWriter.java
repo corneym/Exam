@@ -10,6 +10,7 @@ import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.pdmodel.font.PDFont;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
 import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
 import org.apache.pdfbox.pdmodel.graphics.form.PDFormXObject;
@@ -81,6 +82,87 @@ public final class PrintablePdfRegionWriter {
 		if (!labelPositions.isEmpty()) {
 			replaceLabel(stream, labelPositions, cropBox.getHeight(), translateX, translateY, replacementLabel);
 		}
+	}
+
+	/**
+	 * Reproduces a captured region and optionally replaces a printed identifier
+	 * using the supplied destination font.
+	 *
+	 * <p>
+	 * The search can be restricted to a smaller rectangle within the captured
+	 * region, such as a marking-guide identifier column. Replacement changes
+	 * visible content, not underlying PDF text.
+	 *
+	 * @param source           source PDF document
+	 * @param pageNumber       one-based source page number
+	 * @param output           destination PDF document
+	 * @param stream           destination content stream
+	 * @param region           captured source rectangle
+	 * @param searchRegion     rectangle within which to locate the identifier
+	 * @param destinationX     destination left coordinate
+	 * @param destinationY     destination bottom coordinate
+	 * @param originalLabels   alternative original identifier strings
+	 * @param replacementLabel replacement identifier, or empty to remove
+	 * @param replacementFont  destination font
+	 * @param required         whether a matching identifier must be found
+	 * @throws IOException if reproduction fails or a required identifier cannot be
+	 *                     located
+	 */
+	public static void appendRegionWithLabel(PDDocument source, int pageNumber, PDDocument output,
+			PDPageContentStream stream, PDRectangle region, PDRectangle searchRegion, float destinationX,
+			float destinationY, List<String> originalLabels, String replacementLabel, PDFont replacementFont,
+			boolean required) throws IOException {
+		List<TextPosition> match = List.of();
+		for (String label : originalLabels) {
+			try {
+				List<TextPosition> candidate = locateLabel(source, pageNumber, searchRegion, label);
+				TextPosition first = candidate.getFirst();
+
+				// Prefer the earliest visible identifier when
+				// several supported label formats are present.
+				if (match.isEmpty() || first.getYDirAdj() < match.getFirst().getYDirAdj()
+						|| (Math.abs(first.getYDirAdj() - match.getFirst().getYDirAdj()) < 0.1f
+								&& first.getXDirAdj() < match.getFirst().getXDirAdj())) {
+					match = candidate;
+				}
+			} catch (IOException failure) {
+				if (!("Cannot locate part label: " + label).equals(failure.getMessage())) {
+					throw failure;
+				}
+			}
+		}
+		if (required && match.isEmpty()) {
+			throw new IOException("Cannot locate original identifier: " + originalLabels);
+		}
+		appendRegion(source, pageNumber, output, stream, region, destinationX, destinationY, "", "");
+		if (match.isEmpty()) {
+			return;
+		}
+		TextPosition first = match.getFirst();
+		TextPosition last = match.getLast();
+		float pageHeight = source.getPage(pageNumber - 1).getCropBox().getHeight();
+		float x = destinationX + first.getXDirAdj() - region.getLowerLeftX();
+		float baseline = destinationY + pageHeight - first.getYDirAdj() - region.getLowerLeftY();
+		float width = last.getXDirAdj() + last.getWidthDirAdj() - first.getXDirAdj();
+		float fontSize = first.getFontSizeInPt();
+		stream.saveGraphicsState();
+
+		// Keep masking inside the captured region and minimise
+		// interference with nearby text and table borders.
+		stream.addRect(destinationX, destinationY, region.getWidth(), region.getHeight());
+		stream.clip();
+		stream.setNonStrokingColor(1.0f);
+		stream.addRect(x - 0.75f, baseline - 2, width + 1.5f, first.getHeightDir() + 3);
+		stream.fill();
+		if (!replacementLabel.isEmpty()) {
+			stream.setNonStrokingColor(0.0f);
+			stream.beginText();
+			stream.setFont(replacementFont, fontSize);
+			stream.newLineAtOffset(x, baseline);
+			stream.showText(replacementLabel);
+			stream.endText();
+		}
+		stream.restoreGraphicsState();
 	}
 
 	private static List<TextPosition> locateLabel(PDDocument source, int pageNumber, PDRectangle region,

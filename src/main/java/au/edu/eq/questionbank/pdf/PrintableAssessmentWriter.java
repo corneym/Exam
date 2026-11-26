@@ -6,26 +6,24 @@ import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 
-import au.edu.eq.questionbank.model.Answer;
-import au.edu.eq.questionbank.model.AnswerRegion;
-import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ImageQuestionContentPart;
 import au.edu.eq.questionbank.model.ImageSharedContextContentPart;
 import au.edu.eq.questionbank.model.PdfQuestionContentPart;
 import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionContentPart;
 import au.edu.eq.questionbank.model.QuestionRegion;
-import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedContextContentPart;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
 import au.edu.eq.questionbank.model.SharedQuestionContextRegion;
@@ -65,74 +63,247 @@ public final class PrintableAssessmentWriter {
 	}
 
 	/**
-	 * Generates the populated examination booklets and one marking guide containing
-	 * multiple-choice and written-response sections.
+	 * Appends the marking guide for the numbered examination.
+	 *
+	 * @param document destination PDF document
+	 * @param fonts    Arial marking-guide fonts
+	 * @param subject  assessment subject
+	 * @param year     mock assessment year
+	 * @param plan     numbered assessment selections
+	 * @throws IOException if Answer content cannot be reproduced
+	 */
+	public void appendMarkingGuide(PDDocument document, PrintableExamFonts fonts, String subject, int year,
+			PrintableAssessmentPlan plan) throws IOException {
+		new PrintableMarkingGuide(pdfStore).append(document, fonts, subject, year, plan);
+	}
+
+	/**
+	 * Appends a multiple-choice question book using the assessment plan.
 	 *
 	 * <p>
-	 * Existing output files are not overwritten.
+	 * The cover, instructions and running headers are generated. Question content
+	 * is reproduced from its captured source material. Consecutive Questions using
+	 * the same Shared Context reproduce that context only once.
 	 *
-	 * @param title           assessment title
-	 * @param questions       selected Questions in presentation order
-	 * @param outputDirectory destination directory
-	 * @throws IOException              if generation or file writing fails, or an
-	 *                                  output file already exists
-	 * @throws IllegalArgumentException if no Questions are selected or a selected
-	 *                                  Question has an incomplete Answer
+	 * <p>
+	 * No pages are appended when the selection contains no multiple-choice
+	 * Questions.
+	 *
+	 * @param document destination PDF document
+	 * @param fonts    student examination fonts
+	 * @param subject  assessment subject
+	 * @param year     mock assessment year
+	 * @param plan     numbered assessment selections
+	 * @throws IOException if source or destination PDF processing fails
 	 */
-	public void generate(String title, List<Question> questions, Path outputDirectory) throws IOException {
-		if (questions.isEmpty()) {
-			throw new IllegalArgumentException("Select at least one Question.");
+	public void appendMultipleChoiceBooklet(PDDocument document, PrintableExamFonts fonts, String subject, int year,
+			PrintableAssessmentPlan plan) throws IOException {
+		if (plan.getMultipleChoiceCount() == 0) {
+			return;
 		}
-		for (Question question : questions) {
-			if (!canSelect(question)) {
-				throw new IllegalArgumentException("Question has no complete Answer: " + question.getQuestionCode());
-			}
-		}
-		List<Question> multipleChoice = questions.stream()
-				.filter(question -> question.getResponseType() == QuestionResponseType.MULTIPLE_CHOICE).toList();
-		List<Question> writtenResponse = questions.stream()
-				.filter(question -> question.getResponseType() == QuestionResponseType.WRITTEN_RESPONSE).toList();
-		var numberedMultipleChoice = PrintableQuestionNumbering.number(multipleChoice);
-		var numberedWrittenResponse = PrintableQuestionNumbering.number(writtenResponse);
-		Files.createDirectories(outputDirectory);
-		Path bookletOne = outputDirectory.resolve("Booklet 1.pdf");
-		Path bookletTwo = outputDirectory.resolve("Booklet 2.pdf");
-		Path markingGuide = outputDirectory.resolve("Marking Guide.pdf");
+		PrintableExamCover.appendMultipleChoiceCover(document, fonts, subject, year);
+		PrintablePageWriter writer = new PrintablePageWriter(document, fonts);
+		Long previousContextId = null;
+		for (var numbered : plan.getMultipleChoice()) {
+			Question question = numbered.question();
+			if (question.hasSharedContext()) {
+				SharedQuestionContext context = question.getSharedContext();
 
-		// Check destinations before writing any generated documents.
-		// Existing files, including managed source PDFs, are protected.
-		if (!multipleChoice.isEmpty() && Files.exists(bookletOne)) {
-			throw new FileAlreadyExistsException(bookletOne.toString());
-		}
-		if (!writtenResponse.isEmpty() && Files.exists(bookletTwo)) {
-			throw new FileAlreadyExistsException(bookletTwo.toString());
-		}
-		if (Files.exists(markingGuide)) {
-			throw new FileAlreadyExistsException(markingGuide.toString());
-		}
-		try (PDDocument mcqDocument = new PDDocument();
-				PDDocument writtenDocument = new PDDocument();
-				PDDocument guideDocument = new PDDocument()) {
-			if (!multipleChoice.isEmpty()) {
-				writeBooklet(mcqDocument, title, "Booklet 1 - Multiple choice", numberedMultipleChoice);
+				// Include a common stimulus once for consecutive
+				// Questions, but repeat it when encountered again
+				// after unrelated Questions.
+				if (!Objects.equals(previousContextId, context.getId())) {
+					appendSharedContext(writer, context);
+				}
+				previousContextId = context.getId();
+			} else {
+				previousContextId = null;
 			}
-			if (!writtenResponse.isEmpty()) {
-				writeBooklet(writtenDocument, title, "Booklet 2 - Written response", numberedWrittenResponse);
-			}
-			PrintablePageWriter guideWriter = new PrintablePageWriter(guideDocument);
-			guideWriter.appendText(title);
-			guideWriter.appendText("Marking Guide");
-			writeMarkingSection(guideWriter, "Section 1 - Multiple choice", numberedMultipleChoice);
-			writeMarkingSection(guideWriter, "Section 2 - Written response", numberedWrittenResponse);
+			writer.appendText("QUESTION " + numbered.number());
+			appendQuestionBody(writer, numbered);
+		}
+	}
 
-			// Finish generating all content before saving any document.
-			if (!multipleChoice.isEmpty()) {
-				saveNewDocument(mcqDocument, bookletOne);
+	/**
+	 * Appends the complete Paper 1 question and response book.
+	 *
+	 * @param document       destination PDF document
+	 * @param fonts          student examination fonts
+	 * @param subject        assessment subject
+	 * @param year           mock assessment year
+	 * @param perusalMinutes perusal time in minutes
+	 * @param workingMinutes working time in minutes
+	 * @param plan           numbered assessment selections
+	 * @throws IOException if PDF processing fails
+	 */
+	public void appendPaperOne(PDDocument document, PrintableExamFonts fonts, String subject, int year,
+			int perusalMinutes, int workingMinutes, PrintableAssessmentPlan plan) throws IOException {
+		appendPaperOneOpening(document, fonts, subject, year, perusalMinutes, workingMinutes, plan);
+		appendShortResponse(document, fonts, 1, plan.getPaperOneQuestionCount(), plan.getPaperOneShortResponseMarks(),
+				plan.getPaperOne());
+	}
+
+	/**
+	 * Appends the Paper 1 cover, hatched page and multiple-choice answer grid.
+	 *
+	 * <p>
+	 * Question counts and mark totals are taken from the same assessment plan used
+	 * to generate the question booklet.
+	 *
+	 * @param document       destination Paper 1 PDF document
+	 * @param fonts          student examination fonts
+	 * @param subject        assessment subject
+	 * @param year           mock assessment year
+	 * @param perusalMinutes permitted perusal time
+	 * @param workingMinutes permitted working time
+	 * @param plan           numbered assessment selections
+	 * @throws IOException if page content cannot be written
+	 */
+	public void appendPaperOneOpening(PDDocument document, PrintableExamFonts fonts, String subject, int year,
+			int perusalMinutes, int workingMinutes, PrintableAssessmentPlan plan) throws IOException {
+		PrintableExamCover.appendResponseCover(document, fonts, subject, year, 1, perusalMinutes, workingMinutes,
+				plan.getMultipleChoiceCount(), plan.getPaperOneQuestionCount(), plan.getPaperOneShortResponseMarks());
+		PrintableExamCover.appendHatchedPage(document, fonts);
+		PrintableMultipleChoiceGrid.appendAnswerGrid(document, fonts, plan.getMultipleChoiceCount());
+	}
+
+	/**
+	 * Appends the complete Paper 2 question and response book.
+	 *
+	 * @param document       destination PDF document
+	 * @param fonts          student examination fonts
+	 * @param subject        assessment subject
+	 * @param year           mock assessment year
+	 * @param perusalMinutes perusal time in minutes
+	 * @param workingMinutes working time in minutes
+	 * @param plan           numbered assessment selections
+	 * @throws IOException if PDF processing fails
+	 */
+	public void appendPaperTwo(PDDocument document, PrintableExamFonts fonts, String subject, int year,
+			int perusalMinutes, int workingMinutes, PrintableAssessmentPlan plan) throws IOException {
+		PrintableExamCover.appendResponseCover(document, fonts, subject, year, 2, perusalMinutes, workingMinutes, 0,
+				plan.getPaperTwoQuestionCount(), plan.getPaperTwoTotalMarks());
+		PrintableExamCover.appendHatchedPage(document, fonts);
+		appendShortResponse(document, fonts, 2, plan.getPaperTwoQuestionCount(), plan.getPaperTwoTotalMarks(),
+				plan.getPaperTwo());
+	}
+
+	/**
+	 * Generates the examination documents using installed Times New Roman and Arial
+	 * fonts.
+	 *
+	 * <p>
+	 * Only populated student booklets are generated. The marking guide is always
+	 * generated. Existing output files are not overwritten.
+	 *
+	 * @param settings        assessment metadata
+	 * @param plan            numbered assessment selections
+	 * @param fontDirectory   directory containing installed font files
+	 * @param outputDirectory destination directory
+	 * @throws IOException if fonts, source PDFs or output files cannot be processed
+	 */
+	public void generate(PrintableExamSettings settings, PrintableAssessmentPlan plan, Path fontDirectory,
+			Path outputDirectory) throws IOException {
+		generate(settings, plan, outputDirectory,
+				(document, markingGuide) -> markingGuide ? PrintableExamFonts.loadMarkingGuide(document, fontDirectory)
+						: PrintableExamFonts.loadStudent(document, fontDirectory));
+	}
+
+	void generate(PrintableExamSettings settings, PrintableAssessmentPlan plan, Path outputDirectory,
+			FontLoader fontLoader) throws IOException {
+		Objects.requireNonNull(settings, "settings");
+		Objects.requireNonNull(plan, "plan");
+		Objects.requireNonNull(outputDirectory, "outputDirectory");
+		Objects.requireNonNull(fontLoader, "fontLoader");
+		boolean hasMcq = plan.getMultipleChoiceCount() > 0;
+		boolean hasPaperOne = hasMcq || !plan.getPaperOne().isEmpty();
+		boolean hasPaperTwo = !plan.getPaperTwo().isEmpty();
+		Path mcqPath = outputDirectory.resolve("MCQ.pdf");
+		Path paperOnePath = outputDirectory.resolve("Paper 1.pdf");
+		Path paperTwoPath = outputDirectory.resolve("Paper 2.pdf");
+		Path guidePath = outputDirectory.resolve("Marking Guide.pdf");
+		List<Path> destinations = new ArrayList<>();
+		if (hasMcq) {
+			destinations.add(mcqPath);
+		}
+		if (hasPaperOne) {
+			destinations.add(paperOnePath);
+		}
+		if (hasPaperTwo) {
+			destinations.add(paperTwoPath);
+		}
+		destinations.add(guidePath);
+
+		// Protect existing output before constructing any documents.
+		for (Path destination : destinations) {
+			if (Files.exists(destination)) {
+				throw new FileAlreadyExistsException(destination.toString());
 			}
-			if (!writtenResponse.isEmpty()) {
-				saveNewDocument(writtenDocument, bookletTwo);
+		}
+		try (PDDocument mcq = new PDDocument();
+				PDDocument paperOne = new PDDocument();
+				PDDocument paperTwo = new PDDocument();
+				PDDocument guide = new PDDocument()) {
+			if (hasMcq) {
+				PrintableExamFonts fonts = fontLoader.load(mcq, false);
+				appendMultipleChoiceBooklet(mcq, fonts, settings.subject(), settings.year(), plan);
+				appendPageNumbers(mcq, fonts, 1, false);
+				appendSourceCredit(mcq, fonts, plan.getMultipleChoice());
 			}
-			saveNewDocument(guideDocument, markingGuide);
+			if (hasPaperOne) {
+				PrintableExamFonts fonts = fontLoader.load(paperOne, false);
+				appendPaperOne(paperOne, fonts, settings.subject(), settings.year(), settings.paperOnePerusalMinutes(),
+						settings.paperOneWorkingMinutes(), plan);
+				appendPageNumbers(paperOne, fonts, 2, false);
+				List<PrintableQuestionNumbering.NumberedQuestion> questions = new ArrayList<>(plan.getMultipleChoice());
+				questions.addAll(plan.getPaperOne());
+				appendSourceCredit(paperOne, fonts, questions);
+			}
+			if (hasPaperTwo) {
+				PrintableExamFonts fonts = fontLoader.load(paperTwo, false);
+				appendPaperTwo(paperTwo, fonts, settings.subject(), settings.year(), settings.paperTwoPerusalMinutes(),
+						settings.paperTwoWorkingMinutes(), plan);
+				appendPageNumbers(paperTwo, fonts, 2, false);
+				appendSourceCredit(paperTwo, fonts, plan.getPaperTwo());
+			}
+			PrintableExamFonts guideFonts = fontLoader.load(guide, true);
+			appendMarkingGuide(guide, guideFonts, settings.subject(), settings.year(), plan);
+			appendPageNumbers(guide, guideFonts, 1, true);
+			List<PrintableQuestionNumbering.NumberedQuestion> allQuestions = new ArrayList<>(plan.getMultipleChoice());
+			allQuestions.addAll(plan.getPaperOne());
+			allQuestions.addAll(plan.getPaperTwo());
+			appendSourceCredit(guide, guideFonts, allQuestions);
+
+			// Finish constructing every document before saving
+			// any of the generated examination files.
+			Files.createDirectories(outputDirectory);
+			if (hasMcq) {
+				saveNewDocument(mcq, mcqPath);
+			}
+			if (hasPaperOne) {
+				saveNewDocument(paperOne, paperOnePath);
+			}
+			if (hasPaperTwo) {
+				saveNewDocument(paperTwo, paperTwoPath);
+			}
+			saveNewDocument(guide, guidePath);
+		}
+	}
+
+	private void appendPageNumbers(PDDocument document, PrintableExamFonts fonts, int unnumberedPages,
+			boolean markingGuide) throws IOException {
+		int total = document.getNumberOfPages() - unnumberedPages;
+		for (int index = unnumberedPages; index < document.getNumberOfPages(); index++) {
+			PDPage page = document.getPage(index);
+			int number = index - unnumberedPages + 1;
+			String label = (markingGuide ? "Page " : "") + number + " of " + total;
+			float size = 10;
+			float width = fonts.regular().getStringWidth(label) * size / 1000;
+			try (PDPageContentStream stream = new PDPageContentStream(document, page,
+					PDPageContentStream.AppendMode.APPEND, true, true)) {
+				PrintableExamPage.writeText(stream, page, fonts.regular(), size,
+						(page.getMediaBox().getWidth() - width) / 2, page.getMediaBox().getHeight() - 25, label);
+			}
 		}
 	}
 
@@ -189,6 +360,60 @@ public final class PrintableAssessmentWriter {
 		}
 	}
 
+	private void appendShortResponse(PDDocument document, PrintableExamFonts fonts, int paper, int questionCount,
+			int marks, List<PrintableQuestionNumbering.NumberedQuestion> questions) throws IOException {
+		PrintablePageWriter writer = new PrintablePageWriter(document, fonts, paper, questionCount, marks);
+		int previousNumber = 0;
+		Set<Long> includedContexts = new HashSet<>();
+		for (var numbered : questions) {
+			Question question = numbered.question();
+			if (numbered.number() != previousNumber) {
+				int questionMarks = questions.stream().filter(item -> item.number() == numbered.number())
+						.mapToInt(item -> item.question().getMarks()).sum();
+				writer.appendText("QUESTION " + numbered.number() + " (" + questionMarks
+						+ (questionMarks == 1 ? " mark)" : " marks)"));
+				previousNumber = numbered.number();
+				includedContexts.clear();
+			}
+
+			// Shared stimulus is reproduced once within each
+			// generated top-level Question.
+			if (question.hasSharedContext()) {
+				SharedQuestionContext context = question.getSharedContext();
+				if (includedContexts.add(context.getId())) {
+					appendSharedContext(writer, context);
+				}
+			}
+			appendQuestionBody(writer, numbered);
+		}
+		writer.appendEndOfPaper();
+		PrintableExamPage.appendAdditionalResponsePages(document, fonts);
+	}
+
+	private void appendSourceCredit(PDDocument document, PrintableExamFonts fonts,
+			List<PrintableQuestionNumbering.NumberedQuestion> questions) throws IOException {
+		List<String> sources = questions.stream().map(item -> item.question().getExam())
+				.map(exam -> exam.getProvider().getName() + " " + exam.getYear()).distinct().sorted().toList();
+		document.getDocumentInformation().setCustomMetadataValue("Source examinations", String.join("; ", sources));
+		List<String> qcaaYears = questions.stream().map(item -> item.question().getExam())
+				.filter(exam -> "QCAA".equalsIgnoreCase(exam.getProvider().getName()))
+				.map(exam -> Integer.toString(exam.getYear())).distinct().sorted().toList();
+		if (qcaaYears.isEmpty()) {
+			return;
+		}
+		PDPage cover = document.getPage(0);
+		try (PDPageContentStream stream = new PDPageContentStream(document, cover,
+				PDPageContentStream.AppendMode.APPEND, true, true)) {
+
+			// Attribute adapted source material without reproducing
+			// the original examination provider's logo.
+			PrintableExamPage.writeText(stream, cover, fonts.regular(), 8, 42.5f, 785,
+					"Adapted material: © State of Queensland (QCAA) " + String.join(", ", qcaaYears));
+			PrintableExamPage.writeText(stream, cover, fonts.regular(), 8, 42.5f, 797,
+					"CC BY 4.0 — exceptions apply: " + "www.qcaa.qld.edu.au/copyright");
+		}
+	}
+
 	private void saveNewDocument(PDDocument document, Path destination) throws IOException {
 
 		// CREATE_NEW also prevents accidental source-file overwrite
@@ -198,56 +423,9 @@ public final class PrintableAssessmentWriter {
 		}
 	}
 
-	private void writeBooklet(PDDocument document, String title, String bookletTitle,
-			List<PrintableQuestionNumbering.NumberedQuestion> questions) throws IOException {
-		PrintablePageWriter writer = new PrintablePageWriter(document);
-		int totalMarks = questions.stream().mapToInt(numbered -> numbered.question().getMarks()).sum();
-		writer.appendText(title);
-		writer.appendText(bookletTitle);
-		writer.appendText("Total marks: " + totalMarks);
-		int previousNumber = 0;
-		Set<Long> includedContexts = new HashSet<>();
-		for (var numbered : questions) {
-			Question question = numbered.question();
-			if (numbered.number() != previousNumber) {
-				int questionMarks = questions.stream().filter(item -> item.number() == numbered.number())
-						.mapToInt(item -> item.question().getMarks()).sum();
-				writer.appendText("Question " + numbered.number() + " (" + questionMarks + " marks)");
-				previousNumber = numbered.number();
-				includedContexts.clear();
-			}
+	@FunctionalInterface
+	interface FontLoader {
 
-			// Include shared stimulus once within each generated
-			// top-level Question, before its dependent content.
-			if (question.hasSharedContext()) {
-				SharedQuestionContext context = question.getSharedContext();
-				if (includedContexts.add(context.getId())) {
-					appendSharedContext(writer, context);
-				}
-			}
-			appendQuestionBody(writer, numbered);
-		}
-	}
-
-	private void writeMarkingSection(PrintablePageWriter writer, String sectionTitle,
-			List<PrintableQuestionNumbering.NumberedQuestion> questions) throws IOException {
-		writer.appendText(sectionTitle);
-		int totalMarks = questions.stream().mapToInt(numbered -> numbered.question().getMarks()).sum();
-		writer.appendText("Total marks: " + totalMarks);
-		for (var numbered : questions) {
-			Question question = numbered.question();
-			Answer answer = question.getAnswer();
-			writer.appendText("Question " + numbered.label() + " (" + question.getMarks() + " marks)");
-			if (question.getResponseType() == QuestionResponseType.MULTIPLE_CHOICE) {
-				writer.appendText("Answer: " + answer.getAnswerText().trim().toUpperCase(Locale.ROOT));
-			}
-			for (AnswerRegion region : answer.getRegions()) {
-				appendPdfRegion(writer, region.answerFile().getSourceDocument().getRelativePath(), region.pageNumber(),
-						region.x(), region.y(), region.width(), region.height(), "", "");
-			}
-			Exam exam = question.getExam();
-			writer.appendText("Source: " + exam.getProvider().getName() + " " + exam.getYear() + " - "
-					+ question.getBooklet().getName() + " - Q" + question.getQuestionCode());
-		}
+		PrintableExamFonts load(PDDocument document, boolean markingGuide) throws IOException;
 	}
 }

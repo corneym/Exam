@@ -24,6 +24,42 @@ public final class PrintableExamPage {
 	}
 
 	/**
+	 * Appends four additional response pages: two ruled pages followed by two blank
+	 * pages.
+	 *
+	 * @param document destination question and response book
+	 * @param fonts    student examination fonts
+	 * @throws IOException if page content cannot be written
+	 */
+	public static void appendAdditionalResponsePages(PDDocument document, PrintableExamFonts fonts) throws IOException {
+		for (int index = 0; index < 4; index++) {
+			PDPage page = appendResponsePage(document, fonts);
+			try (PDPageContentStream stream = new PDPageContentStream(document, page,
+					PDPageContentStream.AppendMode.APPEND, true, true)) {
+				PrintableExamPage.writeText(stream, page, fonts.bold(), 13, 48, 85,
+						"ADDITIONAL PAGE FOR STUDENT RESPONSES");
+				PrintableExamPage.writeText(stream, page, fonts.regular(), 11.5f, 48, 105,
+						"Write the question number you are responding to.");
+				if (index < 2) {
+					stream.saveGraphicsState();
+					stream.setStrokingColor(0.65f);
+					stream.setLineWidth(0.5f);
+
+					// Retain regular writing-line spacing without
+					// extending beyond the response outline.
+					for (float top = 140; top <= 710; top += 30) {
+						float y = page.getMediaBox().getHeight() - top;
+						stream.moveTo(48, y);
+						stream.lineTo(page.getMediaBox().getWidth() - 48, y);
+					}
+					stream.stroke();
+					stream.restoreGraphicsState();
+				}
+			}
+		}
+	}
+
+	/**
 	 * Appends an A4 portrait page with the multiple-choice running header.
 	 *
 	 * @param document destination PDF document
