@@ -10,6 +10,7 @@ import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 
 /**
  * Immutable constraint applied to every Question Search result generation.
@@ -111,6 +112,16 @@ public final class QuestionSearchNarrowing {
 	 */
 	public static QuestionSearchNarrowing unrestricted() {
 		return UNRESTRICTED;
+	}
+
+	static QuestionSearchNarrowing forResponseType(QuestionResponseType responseType) {
+		Objects.requireNonNull(responseType, "responseType");
+		if (responseType == QuestionResponseType.UNKNOWN) {
+			throw new IllegalArgumentException("An examination requires a known response type.");
+		}
+		String description = responseType == QuestionResponseType.MULTIPLE_CHOICE ? "Multiple-choice Questions"
+				: "Written-response Questions";
+		return new QuestionSearchNarrowing(description, question -> question.getResponseType() == responseType, false);
 	}
 
 	/**

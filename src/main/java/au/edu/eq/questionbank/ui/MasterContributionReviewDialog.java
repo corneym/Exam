@@ -64,11 +64,12 @@ final class MasterContributionReviewDialog extends Dialog<ButtonType> {
 		TableView<BookletSummary> summaries = new TableView<>(FXCollections.observableArrayList(preview.booklets()));
 		summaries.setId("contribution-review-summary");
 		summaries.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
-		summaries.getColumns().setAll(textColumn("Booklet", BookletSummary::booklet, 175),
-				textColumn("Questions", row -> Long.toString(row.questions()), 85),
-				textColumn("Answers", row -> Long.toString(row.answers()), 75),
-				textColumn("MCQ explanations", row -> Long.toString(row.mcqExplanations()), 135),
-				textColumn("Shared contexts", row -> Long.toString(row.sharedContexts()), 115));
+		summaries.getColumns()
+				.setAll(List.of(textColumn("Booklet", BookletSummary::booklet, 175),
+						textColumn("Questions", row -> Long.toString(row.questions()), 85),
+						textColumn("Answers", row -> Long.toString(row.answers()), 75),
+						textColumn("MCQ explanations", row -> Long.toString(row.mcqExplanations()), 135),
+						textColumn("Shared contexts", row -> Long.toString(row.sharedContexts()), 115)));
 		summaries.setFixedCellSize(28);
 
 		// Reserve room for the column header, table borders and
@@ -86,9 +87,10 @@ final class MasterContributionReviewDialog extends Dialog<ButtonType> {
 		TableView<ReturnedItem> details = new TableView<>(FXCollections.observableArrayList(preview.items()));
 		details.setId("contribution-review-records");
 		details.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
-		details.getColumns().setAll(textColumn("Booklet", ReturnedItem::booklet, 180),
-				textColumn("Question / Item", ReturnedItem::item, 180),
-				textColumn("Returned work", ReturnedItem::description, 310));
+		details.getColumns()
+				.setAll(List.of(textColumn("Booklet", ReturnedItem::booklet, 180),
+						textColumn("Question / Item", ReturnedItem::item, 180),
+						textColumn("Returned work", ReturnedItem::description, 310)));
 
 		// The detailed list must yield available vertical space
 		// without compressing or hiding the summary table.

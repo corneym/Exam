@@ -50,8 +50,10 @@ import javafx.geometry.Insets;
 import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SplitPane;
@@ -175,6 +177,7 @@ public class QuestionSearchPane extends BorderPane {
 	private final ImageView previewImageView = new ImageView();
 	private final Label previewStatusLabel = new Label();
 	private long questionIdToReselect = -1;
+	private QuestionResponseType fixedResponseType;
 
 	// Distinguish "no subjects exist" from "the initial subject load was cancelled
 	// before completion". This lets Current syllabus restart an interrupted load.
@@ -331,6 +334,78 @@ public class QuestionSearchPane extends BorderPane {
 		selectedDescriptorBox.setDisable(true);
 	}
 
+	void configureExamSelection(QuestionResponseType responseType, Predicate<Question> eligible,
+			Map<Long, Question> checkedQuestions, Runnable selectionChanged) {
+		fixedResponseType = Objects.requireNonNull(responseType, "responseType");
+		Objects.requireNonNull(eligible, "eligible");
+		Objects.requireNonNull(checkedQuestions, "checkedQuestions");
+		Objects.requireNonNull(selectionChanged, "selectionChanged");
+		boolean previouslyUpdating = updatingMetadataChoices;
+		updatingMetadataChoices = true;
+		try {
+			String label = responseType == QuestionResponseType.MULTIPLE_CHOICE ? "Multiple Choice"
+					: "Written Response";
+
+			// Clear filters must not be able to broaden
+			// the destination examination's response type.
+			responseTypeFilterBox.getItems().setAll(List.of(new FilterOption<>(responseType, label)));
+			responseTypeFilterBox.getSelectionModel().selectFirst();
+			responseTypeFilterBox.setDisable(true);
+		} finally {
+			updatingMetadataChoices = previouslyUpdating;
+		}
+		resultsList.setCellFactory(_ -> new ListCell<>() {
+
+			private final CheckBox checkBox = new CheckBox();
+			{
+				checkBox.setOnAction(_ -> {
+					QuestionSearchResult item = getItem();
+					if (item == null) {
+						return;
+					}
+					Question question = item.question();
+					if (checkBox.isSelected() && eligible.test(question)) {
+						checkedQuestions.putIfAbsent(question.getId(), question);
+						resultsList.getSelectionModel().select(item);
+					} else {
+						checkedQuestions.remove(question.getId());
+						checkBox.setSelected(false);
+					}
+					selectionChanged.run();
+				});
+			}
+
+			@Override
+			protected void updateItem(QuestionSearchResult item, boolean empty) {
+				super.updateItem(item, empty);
+				if (empty || item == null) {
+					setText(null);
+					setGraphic(null);
+					checkBox.setId(null);
+					return;
+				}
+				Question question = item.question();
+				boolean allowed = eligible.test(question);
+				checkBox.setId("exam-question-check-" + question.getId());
+				checkBox.setDisable(!allowed);
+
+				// ListView cells are recycled when scrolling
+				// and when a different search result is published.
+				// The checked state belongs to persistent identity,
+				// not to the recycled cell.
+				checkBox.setSelected(checkedQuestions.containsKey(question.getId()));
+				String text = questionSearchResultText(item) + " — " + question.getMarks()
+						+ (question.getMarks() == 1 ? " mark" : " marks");
+				if (!allowed) {
+					text += " (Unavailable)";
+				}
+				setText(text);
+				setGraphic(checkBox);
+			}
+		});
+		applyMetadataFilters();
+	}
+
 	/**
 	 * Cancels outstanding loads and clears results and previews. Idempotent; late
 	 * task completions are ignored through generation and task-identity checks.
@@ -422,6 +497,10 @@ public class QuestionSearchPane extends BorderPane {
 		// finishes. A failed refresh must not silently discard the queue.
 		refreshAutomaticSearch();
 		startFilterCatalogueLoad();
+	}
+
+	void refreshExamSelection() {
+		resultsList.refresh();
 	}
 
 	/**
@@ -2957,25 +3036,21 @@ public class QuestionSearchPane extends BorderPane {
 
 	private void updateClassificationEditLock() {
 		boolean dirty = classificationDirty.get();
-
-		// The former More filters TitledPane has been removed.
-		// Lock each metadata control directly while a Descriptor
-		// classification edit is pending.
 		providerFilterBox.setDisable(dirty);
 		yearFromFilterBox.setDisable(dirty);
 		yearToFilterBox.setDisable(dirty);
 		examFilterBox.setDisable(dirty);
 		bookletFilterBox.setDisable(dirty);
-		responseTypeFilterBox.setDisable(dirty);
+		responseTypeFilterBox.setDisable(dirty || fixedResponseType != null);
 		originalSyllabusFilterBox.setDisable(dirty);
 		clearMetadataFiltersButton.setDisable(dirty);
 
-		// Revision-output filtering is available only within the
-		// Current syllabus scope, even after an edit is discarded.
+		// Revision-output filtering remains available only
+		// within the Current syllabus scope.
 		inclusionFilterBox.setDisable(dirty || searchScopeBox.getValue() != QuestionSearchScope.CURRENT_SYLLABUS);
 
-		// Keep result navigation available so the containing Dialog can
-		// resolve a pending classification edit before changing selection.
+		// Preserve result navigation while a pending
+		// classification edit is resolved.
 		resultsList.setDisable(false);
 		if (dirty) {
 			searchScopeBox.setDisable(true);
@@ -2985,8 +3060,6 @@ public class QuestionSearchPane extends BorderPane {
 			descriptorBox.setDisable(true);
 			return;
 		}
-
-		// Descriptor assignment permanently uses All Questions scope.
 		searchScopeBox.setDisable(searchNarrowing.isDescriptorAssignmentQueue());
 		if (searchScopeBox.getValue() == QuestionSearchScope.ALL_QUESTIONS) {
 			unitBox.setDisable(true);

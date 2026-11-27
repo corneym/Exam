@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
+import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -27,7 +28,10 @@ import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 
 import au.edu.eq.questionbank.Constants;
+import au.edu.eq.questionbank.diagnostics.PerformanceRecorder;
 import au.edu.eq.questionbank.model.Answer;
+import au.edu.eq.questionbank.model.AnswerFile;
+import au.edu.eq.questionbank.model.AnswerRegion;
 import au.edu.eq.questionbank.model.CurriculumLevel;
 import au.edu.eq.questionbank.model.CurriculumNode;
 import au.edu.eq.questionbank.model.Descriptor;
@@ -36,6 +40,7 @@ import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ExamCaptureState;
 import au.edu.eq.questionbank.model.ExamProvider;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SourceDocument;
 import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.model.Subject;
@@ -51,6 +56,7 @@ import au.edu.eq.questionbank.repository.curriculum.InMemoryCurriculumRepository
 import au.edu.eq.questionbank.service.retrieval.CurriculumSearchNodeExpansionService;
 import au.edu.eq.questionbank.service.retrieval.QuestionPreviewService;
 import au.edu.eq.questionbank.service.retrieval.QuestionRetrievalService;
+import au.edu.eq.questionbank.ui.model.ExamBuilderDraft;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Rectangle2D;
@@ -59,6 +65,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonBase;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
@@ -580,6 +587,106 @@ class QuestionSearchDialogTest {
 	}
 
 	@Test
+	void examQuestionSelectionRequiresEligibleQuestion(FxRobot robot) throws TimeoutException {
+		Subject chemistry = new Subject(100, "Chemistry");
+		Question first = examSelectionQuestion(chemistry, 1000, true, 2024, QuestionResponseType.MULTIPLE_CHOICE);
+		Question second = examSelectionQuestion(chemistry, 2000, true, 2025, QuestionResponseType.MULTIPLE_CHOICE);
+		Question unanswered = examSelectionQuestion(chemistry, 3000, false, 2025, QuestionResponseType.MULTIPLE_CHOICE);
+		Question alreadySelected = examSelectionQuestion(chemistry, 4000, true, 2025,
+				QuestionResponseType.MULTIPLE_CHOICE);
+		Question written = examSelectionQuestion(chemistry, 5000, true, 2025, QuestionResponseType.WRITTEN_RESPONSE);
+		ExamBuilderDraft draft = new ExamBuilderDraft(chemistry);
+		var section = ExamBuilderDraft.Section.MULTIPLE_CHOICE;
+		assertTrue(draft.add(section, alreadySelected));
+		List<Question> sourceQuestions = List.of(first, second, unanswered, alreadySelected, written);
+		ExamQuestionSelectionDialog dialog = createExamSelectionDialog(robot, draft, section, sourceQuestions);
+		try {
+			robot.interact(dialog::show);
+			ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+			ComboBox<?> responseFilter = robot.lookup("#question-search-response-type-filter").queryComboBox();
+			ComboBox<?> yearFilter = robot.lookup("#question-search-year-from-filter").queryComboBox();
+			Button add = robot.lookup("#exam-question-selection-add").queryButton();
+			Label summary = robot.lookup("#exam-question-selection-summary").queryAs(Label.class);
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+					() -> results.getItems().size() == 4 && yearFilter.getItems().size() == 3);
+			assertTrue(responseFilter.isDisabled());
+			assertEquals(1, responseFilter.getItems().size());
+			assertTrue(results.getItems().stream()
+					.allMatch(result -> result.question().getResponseType() == QuestionResponseType.MULTIPLE_CHOICE));
+			assertTrue(add.isDisabled());
+			assertTrue(examQuestionCheckBox(robot, results, unanswered.getId()).isDisabled());
+			assertTrue(examQuestionCheckBox(robot, results, alreadySelected.getId()).isDisabled());
+			CheckBox firstCheck = examQuestionCheckBox(robot, results, first.getId());
+			robot.interact(firstCheck::fire);
+			assertFalse(add.isDisabled());
+			assertEquals("1 selected — 1 mark", summary.getText());
+
+			// Year choices are descending. Select 2025,
+			// which temporarily hides the checked 2024 Question.
+			robot.interact(() -> yearFilter.getSelectionModel().select(1));
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 3
+					&& results.getItems().stream().noneMatch(result -> result.question().getId() == first.getId()));
+			assertEquals("1 selected — 1 mark", summary.getText());
+			CheckBox secondCheck = examQuestionCheckBox(robot, results, second.getId());
+			robot.interact(secondCheck::fire);
+			assertEquals("2 selected — 2 marks", summary.getText());
+			Button clearFilters = robot.lookup("#question-search-clear-metadata-filters").queryButton();
+			robot.interact(clearFilters::fire);
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 4);
+			assertTrue(examQuestionCheckBox(robot, results, first.getId()).isSelected());
+			assertTrue(responseFilter.isDisabled());
+			assertEquals(1, responseFilter.getItems().size());
+			assertTrue(robot.lookup("#question-search-save-classification").queryButton().isDisabled());
+			assertTrue(robot.lookup("#question-search-output-include").queryButton().isDisabled());
+			assertTrue(robot.lookup("#question-search-output-exclude").queryButton().isDisabled());
+			robot.interact(add::fire);
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> !dialog.isShowing());
+			assertEquals(List.of(first, second), dialog.getResult());
+
+			// Confirming the chooser returns the selected Questions;
+			// only the owning Exam Builder can modify the draft.
+			assertEquals(1, draft.getTotalSelectedCount());
+		} finally {
+			robot.interact(() -> {
+				if (dialog.isShowing()) {
+					dialog.close();
+				}
+			});
+		}
+	}
+
+	@Test
+	void examQuestionSelectionRestrictsBothWrittenPapers(FxRobot robot) throws TimeoutException {
+		Subject chemistry = new Subject(100, "Chemistry");
+		Question multipleChoice = examSelectionQuestion(chemistry, 1000, true, 2025,
+				QuestionResponseType.MULTIPLE_CHOICE);
+		Question written = examSelectionQuestion(chemistry, 2000, true, 2025, QuestionResponseType.WRITTEN_RESPONSE);
+		ExamBuilderDraft draft = new ExamBuilderDraft(chemistry);
+		for (var section : List.of(ExamBuilderDraft.Section.PAPER_ONE_WRITTEN,
+				ExamBuilderDraft.Section.PAPER_TWO_WRITTEN)) {
+			ExamQuestionSelectionDialog dialog = createExamSelectionDialog(robot, draft, section,
+					List.of(multipleChoice, written));
+			try {
+				robot.interact(dialog::show);
+				ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+				ComboBox<?> responseFilter = robot.lookup("#question-search-response-type-filter").queryComboBox();
+				WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1);
+				assertEquals(written.getId(), results.getItems().getFirst().question().getId());
+				assertTrue(responseFilter.isDisabled());
+				CheckBox checkBox = examQuestionCheckBox(robot, results, written.getId());
+				robot.interact(checkBox::fire);
+				Button clearSelection = robot.lookup("#exam-question-selection-clear").queryButton();
+				robot.interact(clearSelection::fire);
+				Button add = robot.lookup("#exam-question-selection-add").queryButton();
+				assertTrue(add.isDisabled());
+				assertTrue(draft.isEmpty());
+			} finally {
+				robot.interact(dialog::close);
+			}
+		}
+	}
+
+	@Test
 	void fullHeightPositionSurvivesHideAndReshow(FxRobot robot) {
 		InMemoryCurriculumRepository curriculumRepository = new InMemoryCurriculumRepository();
 		QuestionRetrievalRepository retrievalRepository = _ -> List.of();
@@ -689,6 +796,21 @@ class QuestionSearchDialogTest {
 		robot.interact(dialog::close);
 	}
 
+	private ExamQuestionSelectionDialog createExamSelectionDialog(FxRobot robot, ExamBuilderDraft draft,
+			ExamBuilderDraft.Section section, List<Question> questions) {
+		InMemoryCurriculumRepository curriculum = new InMemoryCurriculumRepository();
+		QuestionRetrievalRepository retrievalRepository = _ -> List.of();
+		QuestionRetrievalService retrieval = new QuestionRetrievalService(retrievalRepository,
+				new CurriculumSearchNodeExpansionService(curriculum));
+		QuestionPreviewService preview = new QuestionPreviewService(new PdfStore(tempDirectory),
+				new QuestionExtractor());
+		PerformanceRecorder recorder = new PerformanceRecorder(false, tempDirectory.resolve("performance.csv"));
+		AtomicReference<ExamQuestionSelectionDialog> holder = new AtomicReference<>();
+		robot.interact(() -> holder.set(new ExamQuestionSelectionDialog(stage, draft, section, curriculum, retrieval,
+				() -> questions, preview, new InMemoryQuestionOutputApplicabilityRepository(), recorder)));
+		return holder.get();
+	}
+
 	private QuestionSearchDialog createScopeTestDialog(Subject workingSubject, List<Question> questions,
 			QuestionSearchNarrowing narrowing, AtomicInteger allQuestionsLoads) {
 		InMemoryCurriculumRepository curriculumRepository = new InMemoryCurriculumRepository();
@@ -703,6 +825,46 @@ class QuestionSearchDialogTest {
 		}, previewService, new InMemoryQuestionOutputApplicabilityRepository(), (_, _) -> {
 			throw new AssertionError("Classification persistence was not expected");
 		}, narrowing);
+	}
+
+	private CheckBox examQuestionCheckBox(FxRobot robot, ListView<QuestionSearchResult> results, long questionId)
+			throws TimeoutException {
+		int index = IntStream.range(0, results.getItems().size())
+				.filter(position -> results.getItems().get(position).question().getId() == questionId).findFirst()
+				.orElseThrow();
+
+		// Materialise the relevant virtualised cell without
+		// relying on pointer position or hit testing.
+		robot.interact(() -> results.scrollTo(index));
+		String selector = "#exam-question-check-" + questionId;
+		WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+				() -> robot.lookup(selector).tryQuery().isPresent());
+		return robot.lookup(selector).queryAs(CheckBox.class);
+	}
+
+	private Question examSelectionQuestion(Subject subject, long baseId, boolean answered, int year,
+			QuestionResponseType responseType) {
+		SyllabusVersion syllabus = new SyllabusVersion(baseId, subject, "2025", true);
+		Unit unit = new Unit(baseId + 1, syllabus, "3", "Unit 3", 1);
+		Topic topic = new Topic(baseId + 2, syllabus, unit, "3.1", "Equilibrium", 1);
+		Subtopic subtopic = new Subtopic(baseId + 3, syllabus, topic, "3.1.1", "Equilibrium", 1);
+		ExamProvider provider = new ExamProvider(baseId + 4, "QCAA");
+		Exam exam = new Exam(baseId + 5, subject, provider, year, "External");
+		SourceDocument document = new SourceDocument(baseId + 6, "exam-" + baseId + ".pdf");
+		ExamBooklet booklet = new ExamBooklet(baseId + 7, exam, "Paper 1", document);
+		Question question = new Question(baseId + 8, booklet, "7", "Test examination Question", 1, List.of(), subtopic,
+				false, null, null, responseType);
+		if (answered) {
+			if (responseType == QuestionResponseType.MULTIPLE_CHOICE) {
+				question.setAnswer(new Answer(baseId + 9, "C", List.of()));
+			} else {
+				AnswerFile answerFile = new AnswerFile(baseId + 10, exam, "Marking guide",
+						new SourceDocument(baseId + 11, "answers-" + baseId + ".pdf"));
+				question.setAnswer(
+						new Answer(baseId + 9, null, List.of(new AnswerRegion(answerFile, 1, 0.1, 0.1, 0.8, 0.2))));
+			}
+		}
+		return question;
 	}
 
 	private QuestionSearchDialog extracted(InMemoryCurriculumRepository curriculumRepository,
