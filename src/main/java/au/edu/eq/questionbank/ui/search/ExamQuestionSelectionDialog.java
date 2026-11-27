@@ -1,5 +1,6 @@
 package au.edu.eq.questionbank.ui.search;
 
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -49,9 +50,16 @@ public final class ExamQuestionSelectionDialog extends Dialog<List<Question>> {
 	private final QuestionSearchPane searchPane;
 	private final ExamBuilderDraft.Section section;
 	private final Label selectionSummary = new Label();
+	private final Supplier<List<Question>> allQuestionsSupplier;
+	private List<Question> corpus;
+	private final Map<Long, List<Question>> eligibleGroups = new HashMap<>();
 
 	/**
 	 * Creates a read-only multiple-Question selection dialog.
+	 *
+	 * <p>
+	 * Selecting any constituent part selects the entire top-level Question. The
+	 * complete unfiltered corpus is used to resolve multipart membership.
 	 *
 	 * @param owner                         owning window
 	 * @param draft                         current examination draft
@@ -71,9 +79,10 @@ public final class ExamQuestionSelectionDialog extends Dialog<List<Question>> {
 			PerformanceRecorder performanceRecorder) {
 		this.draft = Objects.requireNonNull(draft, "draft");
 		this.section = Objects.requireNonNull(section, "section");
+		this.allQuestionsSupplier = Objects.requireNonNull(allQuestionsSupplier, "allQuestionsSupplier");
 		initOwner(Objects.requireNonNull(owner, "owner"));
-		searchPane = new QuestionSearchPane(draft.getSubject(), curriculumRepository, retrievalService,
-				allQuestionsSupplier, previewService, outputApplicabilityRepository,
+		searchPane = new QuestionSearchPane(draft.getSubject(), curriculumRepository, retrievalService, this::getCorpus,
+				previewService, outputApplicabilityRepository,
 				QuestionSearchNarrowing.forResponseType(section.responseType()), performanceRecorder);
 		searchPane.setId("exam-question-search-pane");
 
@@ -122,32 +131,79 @@ public final class ExamQuestionSelectionDialog extends Dialog<List<Question>> {
 	private void configureSelection() {
 		Button addButton = (Button) getDialogPane().lookupButton(addButtonType);
 		addButton.setId("exam-question-selection-add");
-		addButton.setTooltip(new Tooltip("Add all checked eligible Questions. " + "Checked Questions remain selected "
-				+ "when Search filters change."));
-		searchPane.configureExamSelection(section.responseType(), question -> draft.canAdd(section, question),
-				checkedQuestions, this::updateSelectionSummary);
+		addButton.setTooltip(
+				new Tooltip("Add all checked eligible Questions. " + "Selecting any constituent part selects "
+						+ "the entire multipart Question. " + "Selections remain checked when filters change."));
+		searchPane.configureExamSelection(section.responseType(), this::resolveWholeQuestion,
+				question -> draft.contains(question.getId()), checkedQuestions, this::updateSelectionSummary);
 		setResultConverter(buttonType -> {
 			if (buttonType != addButtonType || checkedQuestions.isEmpty()) {
 				return null;
 			}
 
-			// Revalidate all selections before returning
-			// them to the owning examination builder.
-			if (checkedQuestions.values().stream().anyMatch(question -> !draft.canAdd(section, question))) {
-				return null;
+			// Every selected constituent must belong to a
+			// complete eligible group before returning the selection.
+			for (Question question : checkedQuestions.values()) {
+				List<Question> group = resolveWholeQuestion(question);
+				if (group.isEmpty()
+						|| group.stream().anyMatch(candidate -> !checkedQuestions.containsKey(candidate.getId()))) {
+					return null;
+				}
 			}
 			return List.copyOf(checkedQuestions.values());
 		});
 		updateSelectionSummary();
 	}
 
+	private synchronized List<Question> getCorpus() {
+		if (corpus == null) {
+
+			// Search and filter-catalogue background tasks may
+			// request the corpus concurrently. Retrieve it only
+			// once for the lifetime of this selection dialog.
+			corpus = List.copyOf(allQuestionsSupplier.get());
+		}
+		return corpus;
+	}
+
+	private List<Question> resolveWholeQuestion(Question question) {
+		List<Question> cached = eligibleGroups.get(question.getId());
+		if (cached != null) {
+			return cached;
+		}
+		List<Question> resolved = draft.eligibleWholeQuestion(section, question, getCorpus());
+		eligibleGroups.put(question.getId(), resolved);
+
+		// Every eligible constituent resolves to the same group.
+		// Cache the group against all its constituent identities
+		// to avoid repeatedly scanning the entire corpus.
+		for (Question constituent : resolved) {
+			eligibleGroups.put(constituent.getId(), resolved);
+		}
+		return resolved;
+	}
+
 	private void updateSelectionSummary() {
-		int count = checkedQuestions.size();
+		int count = 0;
+		boolean valid = true;
+		for (Question question : checkedQuestions.values()) {
+			List<Question> group = resolveWholeQuestion(question);
+			if (group.isEmpty()
+					|| group.stream().anyMatch(candidate -> !checkedQuestions.containsKey(candidate.getId()))) {
+				valid = false;
+				continue;
+			}
+
+			// Count each top-level Question once, using its
+			// first constituent as the group representative.
+			if (group.getFirst().getId() == question.getId()) {
+				count++;
+			}
+		}
 		int marks = checkedQuestions.values().stream().mapToInt(Question::getMarks).sum();
 		selectionSummary.setText("%d selected — %d %s".formatted(count, marks, marks == 1 ? "mark" : "marks"));
 		Button addButton = (Button) getDialogPane().lookupButton(addButtonType);
-		addButton.setDisable(count == 0
-				|| checkedQuestions.values().stream().anyMatch(question -> !draft.canAdd(section, question)));
-		clearSelectionButton.setDisable(count == 0);
+		addButton.setDisable(count == 0 || !valid);
+		clearSelectionButton.setDisable(checkedQuestions.isEmpty());
 	}
 }

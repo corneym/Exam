@@ -5,13 +5,12 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Year;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.function.BiFunction;
+import java.util.function.Supplier;
 
 import au.edu.eq.questionbank.model.Exam;
 import au.edu.eq.questionbank.model.Question;
@@ -77,20 +76,42 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 	private ExamBuilderDraftFile draftFileService;
 	private final Button openDraftButton = new Button("Open Draft...");
 	private final Button saveDraftButton = new Button("Save Draft...");
+	private final Supplier<List<Question>> corpusSupplier;
 
 	/**
-	 * Creates an examination builder for the supplied draft.
+	 * Creates an examination builder supporting standalone Question selection.
+	 *
+	 * <p>
+	 * Use the constructor accepting a complete corpus supplier when multipart
+	 * Question selection is required.
 	 *
 	 * @param owner            owning application window
 	 * @param draft            editable examination selections
-	 * @param questionSelector read-only selection operation returning an ordered
-	 *                         list of selected Questions
+	 * @param questionSelector read-only selection operation
 	 * @throws NullPointerException if any argument is null
 	 */
 	public ExamBuilderDialog(Window owner, ExamBuilderDraft draft,
 			BiFunction<Window, ExamBuilderDraft.Section, Optional<List<Question>>> questionSelector) {
+		this(owner, draft, questionSelector, null);
+	}
+
+	/**
+	 * Creates an examination builder supporting complete top-level Question
+	 * selection.
+	 *
+	 * @param owner            owning application window
+	 * @param draft            editable examination selections
+	 * @param questionSelector read-only selection operation
+	 * @param corpusSupplier   complete stored Question retrieval, or null to permit
+	 *                         standalone selections only
+	 * @throws NullPointerException if owner, draft or questionSelector is null
+	 */
+	public ExamBuilderDialog(Window owner, ExamBuilderDraft draft,
+			BiFunction<Window, ExamBuilderDraft.Section, Optional<List<Question>>> questionSelector,
+			Supplier<List<Question>> corpusSupplier) {
 		this.draft = Objects.requireNonNull(draft, "draft");
 		this.questionSelector = Objects.requireNonNull(questionSelector, "questionSelector");
+		this.corpusSupplier = corpusSupplier;
 		initOwner(Objects.requireNonNull(owner, "owner"));
 		configureDialog();
 		configureControls();
@@ -253,18 +274,20 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 		if (selected.isEmpty()) {
 			return;
 		}
-		Set<Long> identifiers = new HashSet<>();
+		try {
 
-		// Validate the complete selection before modifying the draft.
-		// Reject an invalid batch rather than adding only part of it.
-		for (Question question : selected) {
-			if (!draft.canAdd(section, question) || !identifiers.add(question.getId())) {
-				statusLabel.setText("The selection contains an unavailable " + "or duplicate Question.");
+			// Revalidate against the complete authoritative corpus,
+			// not merely the Questions returned by the filtered chooser.
+			List<Question> corpus = corpusSupplier == null
+					? selected.stream().filter(question -> question.getSourceQuestion() == null).toList()
+					: List.copyOf(corpusSupplier.get());
+			if (!draft.addSelections(section, selected, corpus)) {
+				statusLabel.setText("The selection contains an unavailable, " + "incomplete or duplicate Question.");
 				return;
 			}
-		}
-		for (Question question : selected) {
-			draft.add(section, question);
+		} catch (RuntimeException failure) {
+			statusLabel.setText("Cannot add selected Questions: " + failure.getMessage());
+			return;
 		}
 		changed();
 		selectQuestion(selected.getLast().getId());
@@ -442,13 +465,13 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 	}
 
 	private void moveQuestion(int offset) {
-		var selected = questionList.getSelectionModel().getSelectedItem();
-		if (selected == null) {
+		long questionId = selectedQuestionId();
+		if (questionId <= 0) {
 			return;
 		}
-		int destination = questionList.getSelectionModel().getSelectedIndex() + offset;
-		long questionId = selected.question().getId();
-		if (draft.move(sectionBox.getValue(), questionId, destination)) {
+		ExamBuilderDraft.Section section = sectionBox.getValue();
+		int destination = draft.adjacentWholeQuestionIndex(section, questionId, offset);
+		if (destination >= 0 && draft.move(section, questionId, destination)) {
 			changed();
 			selectQuestion(questionId);
 		}
@@ -457,17 +480,10 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 	private void openDraft(Path file) throws IOException {
 		ExamBuilderDraftFile.LoadedDraft loaded = draftFileService.load(file, draft.getSubject());
 
-		// Loading resolves and validates every Question before
-		// publication. Preserve the existing draft object because
-		// the Search selection callback also refers to it.
-		draft.clear();
-		for (ExamBuilderDraft.Section section : ExamBuilderDraft.Section.values()) {
-			for (Question question : loaded.draft().getQuestions(section)) {
-				if (!draft.add(section, question)) {
-					throw new IllegalStateException("Validated draft selection could " + "not be restored.");
-				}
-			}
-		}
+		// The loader validates every Question and multipart group
+		// before publication. Preserve the existing draft object
+		// because the Search selection callback also refers to it.
+		draft.replaceWith(loaded.draft());
 		PrintableExamSettings settings = loaded.settings();
 		yearField.setText(Integer.toString(settings.year()));
 		paperOnePerusalField.setText(Integer.toString(settings.paperOnePerusalMinutes()));
@@ -504,7 +520,7 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 		} else {
 			PrintableAssessmentPlan plan = draft.buildPlan();
 
-			// Use the same numbering plan that will later
+			// Use the same numbering plan that will subsequently
 			// be consumed by the PDF generation service.
 			var numbered = switch (section) {
 			case MULTIPLE_CHOICE -> plan.getMultipleChoice();
@@ -519,7 +535,7 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 		summaryLabel.setText("Paper 1 MCQ: %d marks    |    ".formatted(mcqMarks)
 				+ "Paper 1 written: %d marks    |    ".formatted(paperOneMarks)
 				+ "Paper 2 written: %d marks".formatted(paperTwoMarks));
-		totalLabel.setText("%d selected Question records — Total: %d marks".formatted(draft.getTotalSelectedCount(),
+		totalLabel.setText("%d selected Questions — Total: %d marks".formatted(draft.getTopLevelSelectedCount(),
 				mcqMarks + paperOneMarks + paperTwoMarks));
 		selectQuestion(previousId);
 		updateActionState();
@@ -591,10 +607,14 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 	}
 
 	private void updateActionState() {
-		int index = questionList.getSelectionModel().getSelectedIndex();
-		boolean selected = index >= 0;
-		moveUpButton.setDisable(!selected || index == 0);
-		moveDownButton.setDisable(!selected || index >= questionList.getItems().size() - 1);
+		long questionId = selectedQuestionId();
+		boolean selected = questionId > 0;
+		ExamBuilderDraft.Section section = sectionBox.getValue();
+
+		// Movement availability depends on top-level
+		// Question boundaries rather than individual rows.
+		moveUpButton.setDisable(!selected || draft.adjacentWholeQuestionIndex(section, questionId, -1) < 0);
+		moveDownButton.setDisable(!selected || draft.adjacentWholeQuestionIndex(section, questionId, 1) < 0);
 		removeButton.setDisable(!selected);
 		ExamBuilderDraft.Section target = transferTarget();
 		transferButton.setVisible(target != null);

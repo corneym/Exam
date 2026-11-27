@@ -334,10 +334,12 @@ public class QuestionSearchPane extends BorderPane {
 		selectedDescriptorBox.setDisable(true);
 	}
 
-	void configureExamSelection(QuestionResponseType responseType, Predicate<Question> eligible,
+	void configureExamSelection(QuestionResponseType responseType,
+			Function<Question, List<Question>> resolveWholeQuestion, Predicate<Question> alreadySelected,
 			Map<Long, Question> checkedQuestions, Runnable selectionChanged) {
 		fixedResponseType = Objects.requireNonNull(responseType, "responseType");
-		Objects.requireNonNull(eligible, "eligible");
+		Objects.requireNonNull(resolveWholeQuestion, "resolveWholeQuestion");
+		Objects.requireNonNull(alreadySelected, "alreadySelected");
 		Objects.requireNonNull(checkedQuestions, "checkedQuestions");
 		Objects.requireNonNull(selectionChanged, "selectionChanged");
 		boolean previouslyUpdating = updatingMetadataChoices;
@@ -346,8 +348,8 @@ public class QuestionSearchPane extends BorderPane {
 			String label = responseType == QuestionResponseType.MULTIPLE_CHOICE ? "Multiple Choice"
 					: "Written Response";
 
-			// Clear filters must not be able to broaden
-			// the destination examination's response type.
+			// Clear filters must not broaden the destination
+			// examination's permitted response type.
 			responseTypeFilterBox.getItems().setAll(List.of(new FilterOption<>(responseType, label)));
 			responseTypeFilterBox.getSelectionModel().selectFirst();
 			responseTypeFilterBox.setDisable(true);
@@ -364,14 +366,32 @@ public class QuestionSearchPane extends BorderPane {
 						return;
 					}
 					Question question = item.question();
-					if (checkBox.isSelected() && eligible.test(question)) {
-						checkedQuestions.putIfAbsent(question.getId(), question);
+					List<Question> group = resolveWholeQuestion.apply(question);
+					if (group.isEmpty()) {
+						checkBox.setSelected(false);
+						return;
+					}
+					if (checkBox.isSelected()) {
+
+						// Add every constituent in source order,
+						// including constituents hidden by filters.
+						for (Question constituent : group) {
+							checkedQuestions.putIfAbsent(constituent.getId(), constituent);
+						}
 						resultsList.getSelectionModel().select(item);
 					} else {
-						checkedQuestions.remove(question.getId());
-						checkBox.setSelected(false);
+
+						// Unchecking any constituent releases
+						// the complete pending top-level Question.
+						for (Question constituent : group) {
+							checkedQuestions.remove(constituent.getId());
+						}
 					}
 					selectionChanged.run();
+
+					// Other visible constituent cells must reflect
+					// the same checked state immediately.
+					resultsList.refresh();
 				});
 			}
 
@@ -381,24 +401,38 @@ public class QuestionSearchPane extends BorderPane {
 				if (empty || item == null) {
 					setText(null);
 					setGraphic(null);
+					setOpacity(1.0);
 					checkBox.setId(null);
+					checkBox.setTooltip(null);
 					return;
 				}
 				Question question = item.question();
-				boolean allowed = eligible.test(question);
+				List<Question> group = resolveWholeQuestion.apply(question);
+				boolean allowed = !group.isEmpty();
 				checkBox.setId("exam-question-check-" + question.getId());
 				checkBox.setDisable(!allowed);
 
-				// ListView cells are recycled when scrolling
-				// and when a different search result is published.
-				// The checked state belongs to persistent identity,
-				// not to the recycled cell.
+				// Checked state belongs to persistent Question
+				// identity, not to the recycled ListView cell.
 				checkBox.setSelected(checkedQuestions.containsKey(question.getId()));
 				String text = questionSearchResultText(item) + " — " + question.getMarks()
 						+ (question.getMarks() == 1 ? " mark" : " marks");
 				if (!allowed) {
-					text += " (Unavailable)";
+					String reason = alreadySelected.test(question) ? "Already in this draft"
+							: "Whole question unavailable";
+					text += " (" + reason + ")";
+					checkBox.setTooltip(new Tooltip(reason));
+				} else if (group.size() > 1) {
+					int totalMarks = group.stream().mapToInt(Question::getMarks).sum();
+					checkBox.setTooltip(new Tooltip(
+							"Select entire multipart Question: " + group.size() + " parts, " + totalMarks + " marks"));
+				} else {
+					checkBox.setTooltip(null);
 				}
+
+				// Unavailable Questions remain inspectable in
+				// Search, but cannot be selected for this draft.
+				setOpacity(allowed ? 1.0 : 0.55);
 				setText(text);
 				setGraphic(checkBox);
 			}

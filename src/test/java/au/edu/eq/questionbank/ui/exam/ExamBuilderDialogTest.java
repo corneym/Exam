@@ -34,6 +34,7 @@ import au.edu.eq.questionbank.model.Question;
 import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SourceDocument;
+import au.edu.eq.questionbank.model.SourceQuestion;
 import au.edu.eq.questionbank.model.Subject;
 import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
@@ -126,6 +127,55 @@ class ExamBuilderDialogTest {
 	}
 
 	@Test
+	void addsWholeMultipartSelectionFromChooser(FxRobot robot) {
+		ExamBuilderDraft draft = new ExamBuilderDraft(subject);
+		Question standalone = createQuestion(30, "25", 4, QuestionResponseType.WRITTEN_RESPONSE);
+		SourceQuestion source = new SourceQuestion(1, standalone.getBooklet(), "21");
+		Question partA = createQuestion(10, "21a", 2, QuestionResponseType.WRITTEN_RESPONSE, source);
+		Question partB = createQuestion(20, "21b", 3, QuestionResponseType.WRITTEN_RESPONSE, source);
+		List<Question> corpus = List.of(partB, standalone, partA);
+		Queue<List<Question>> available = new ArrayDeque<>();
+
+		// Simulate a filtered chooser returning only one
+		// visible constituent of the multipart Question.
+		available.add(List.of(partB));
+
+		// Simulate a subsequent attempt to select another
+		// constituent of the already selected Question.
+		available.add(List.of(partA));
+		AtomicReference<ExamBuilderDialog> holder = new AtomicReference<>();
+		robot.interact(() -> holder.set(
+				new ExamBuilderDialog(stage, draft, (_, _) -> Optional.ofNullable(available.poll()), () -> corpus)));
+		ExamBuilderDialog dialog = holder.get();
+		var paperOne = ExamBuilderDraft.Section.PAPER_ONE_WRITTEN;
+		var paperTwo = ExamBuilderDraft.Section.PAPER_TWO_WRITTEN;
+		try {
+			robot.interact(dialog::show);
+			Button add = robot.lookup("#exam-builder-add").queryButton();
+			ComboBox<ExamBuilderDraft.Section> sectionBox = robot.lookup("#exam-builder-section").queryComboBox();
+			ListView<PrintableQuestionNumbering.NumberedQuestion> questions = robot.lookup("#exam-builder-questions")
+					.queryListView();
+			Label total = robot.lookup("#exam-builder-total").queryAs(Label.class);
+			Label status = robot.lookup("#exam-builder-status").queryAs(Label.class);
+			robot.interact(() -> sectionBox.setValue(paperOne));
+			robot.interact(add::fire);
+			assertEquals(List.of(partA, partB), draft.getQuestions(paperOne));
+			assertEquals(2, questions.getItems().size());
+			assertEquals(List.of("1(a)", "1(b)"),
+					questions.getItems().stream().map(PrintableQuestionNumbering.NumberedQuestion::label).toList());
+			assertEquals("1 selected Questions — Total: 5 marks", total.getText());
+			robot.interact(() -> sectionBox.setValue(paperTwo));
+			robot.interact(add::fire);
+			assertTrue(draft.getQuestions(paperTwo).isEmpty());
+			assertTrue(status.getText().contains("unavailable"));
+			assertEquals(List.of(partA, partB), draft.getQuestions(paperOne));
+			assertEquals(1, draft.getTopLevelSelectedCount());
+		} finally {
+			robot.interact(dialog::close);
+		}
+	}
+
+	@Test
 	void defaultsBothPerusalTimesToFiveMinutes(FxRobot robot) {
 		ExamBuilderDraft draft = new ExamBuilderDraft(subject);
 		AtomicReference<ExamBuilderDialog> holder = new AtomicReference<>();
@@ -206,7 +256,75 @@ class ExamBuilderDialogTest {
 		}
 	}
 
+	@Test
+	void movesTransfersAndRemovesEntireMultipartQuestion(FxRobot robot) {
+		ExamBuilderDraft draft = new ExamBuilderDraft(subject);
+		Question standalone = createQuestion(30, "25", 4, QuestionResponseType.WRITTEN_RESPONSE);
+		SourceQuestion source = new SourceQuestion(1, standalone.getBooklet(), "21");
+		Question partA = createQuestion(10, "21a", 2, QuestionResponseType.WRITTEN_RESPONSE, source);
+		Question partB = createQuestion(20, "21b", 3, QuestionResponseType.WRITTEN_RESPONSE, source);
+		List<Question> corpus = List.of(partA, partB, standalone);
+		var paperOne = ExamBuilderDraft.Section.PAPER_ONE_WRITTEN;
+		var paperTwo = ExamBuilderDraft.Section.PAPER_TWO_WRITTEN;
+		assertTrue(draft.addWholeQuestion(paperOne, partA, corpus));
+		assertTrue(draft.addWholeQuestion(paperOne, standalone, corpus));
+		AtomicReference<ExamBuilderDialog> holder = new AtomicReference<>();
+		robot.interact(() -> holder.set(new ExamBuilderDialog(stage, draft, (_, _) -> Optional.empty())));
+		ExamBuilderDialog dialog = holder.get();
+		try {
+			robot.interact(dialog::show);
+			Button up = robot.lookup("#exam-builder-up").queryButton();
+			Button down = robot.lookup("#exam-builder-down").queryButton();
+			Button remove = robot.lookup("#exam-builder-remove").queryButton();
+			Button transfer = robot.lookup("#exam-builder-transfer").queryButton();
+			ComboBox<ExamBuilderDraft.Section> sectionBox = robot.lookup("#exam-builder-section").queryComboBox();
+			ListView<PrintableQuestionNumbering.NumberedQuestion> questions = robot.lookup("#exam-builder-questions")
+					.queryListView();
+			robot.interact(() -> {
+				sectionBox.setValue(paperOne);
+				questions.getSelectionModel().select(1);
+			});
+
+			// The second constituent part is selected,
+			// but the entire Question is at the top.
+			assertTrue(up.isDisabled());
+			assertFalse(down.isDisabled());
+			robot.interact(down::fire);
+			assertEquals(List.of(standalone, partA, partB), draft.getQuestions(paperOne));
+			robot.interact(() -> questions.getSelectionModel().select(1));
+
+			// The first constituent part is selected,
+			// but the entire Question is at the bottom.
+			assertTrue(down.isDisabled());
+			assertFalse(up.isDisabled());
+			robot.interact(up::fire);
+			assertEquals(List.of(partA, partB, standalone), draft.getQuestions(paperOne));
+			robot.interact(() -> questions.getSelectionModel().select(1));
+			robot.interact(transfer::fire);
+			assertEquals(paperTwo, sectionBox.getValue());
+			assertEquals(List.of(standalone), draft.getQuestions(paperOne));
+			assertEquals(List.of(partA, partB), draft.getQuestions(paperTwo));
+			assertTrue(up.isDisabled());
+			assertTrue(down.isDisabled());
+			assertEquals(List.of("1(a)", "1(b)"),
+					questions.getItems().stream().map(PrintableQuestionNumbering.NumberedQuestion::label).toList());
+			robot.interact(remove::fire);
+			assertTrue(draft.getQuestions(paperTwo).isEmpty());
+			assertTrue(questions.getItems().isEmpty());
+			assertTrue(remove.isDisabled());
+			assertTrue(transfer.isDisabled());
+			assertEquals(List.of(partA, partB), draft.eligibleWholeQuestion(paperOne, partA, corpus));
+		} finally {
+			robot.interact(dialog::close);
+		}
+	}
+
 	private Question createQuestion(long id, String code, int marks, QuestionResponseType responseType) {
+		return createQuestion(id, code, marks, responseType, null);
+	}
+
+	private Question createQuestion(long id, String code, int marks, QuestionResponseType responseType,
+			SourceQuestion sourceQuestion) {
 		SyllabusVersion syllabus = new SyllabusVersion(1, subject, "2025", true);
 		Unit unit = new Unit(1, syllabus, "3", "Unit 3", 1);
 		Topic topic = new Topic(2, syllabus, unit, "3.1", "Equilibrium", 1);
@@ -214,7 +332,8 @@ class ExamBuilderDialogTest {
 		Exam exam = new Exam(1, subject, new ExamProvider(1, "QCAA"), 2025, "External");
 		ExamBooklet booklet = new ExamBooklet(1, exam, "Paper 1", new SourceDocument(1, "questions.pdf"));
 		Question question = new Question(id, booklet, code, "", marks,
-				List.of(new QuestionRegion(booklet, 1, 0.1, 0.1, 0.8, 0.2)), subtopic, false, null, null, responseType);
+				List.of(new QuestionRegion(booklet, 1, 0.1, 0.1, 0.8, 0.2)), subtopic, false, sourceQuestion, null,
+				responseType);
 		if (responseType == QuestionResponseType.MULTIPLE_CHOICE) {
 			question.setAnswer(new Answer(id, "C", List.of()));
 		} else {

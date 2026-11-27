@@ -7,11 +7,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.function.LongFunction;
+import java.util.function.Supplier;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -41,6 +44,7 @@ public final class ExamBuilderDraftFile {
 	private final LongFunction<UUID> questionIdentity;
 	private final Function<UUID, Optional<Question>> questionLookup;
 	private final LongFunction<UUID> subjectIdentity;
+	private final Supplier<List<Question>> corpusSupplier;
 
 	/**
 	 * Creates a draft-file service backed by the existing portable identity and
@@ -55,6 +59,7 @@ public final class ExamBuilderDraftFile {
 		Objects.requireNonNull(questions, "questions");
 		this.subjectIdentity = id -> requireIdentity(identities, EntityType.SUBJECT, id);
 		this.questionIdentity = id -> requireIdentity(identities, EntityType.QUESTION, id);
+		this.corpusSupplier = questions::findAll;
 		this.questionLookup = portableId -> {
 			try {
 				return identities.findByPortableId(EntityType.QUESTION, portableId)
@@ -67,9 +72,15 @@ public final class ExamBuilderDraftFile {
 
 	ExamBuilderDraftFile(LongFunction<UUID> subjectIdentity, LongFunction<UUID> questionIdentity,
 			Function<UUID, Optional<Question>> questionLookup) {
+		this(subjectIdentity, questionIdentity, questionLookup, null);
+	}
+
+	ExamBuilderDraftFile(LongFunction<UUID> subjectIdentity, LongFunction<UUID> questionIdentity,
+			Function<UUID, Optional<Question>> questionLookup, Supplier<List<Question>> corpusSupplier) {
 		this.subjectIdentity = Objects.requireNonNull(subjectIdentity, "subjectIdentity");
 		this.questionIdentity = Objects.requireNonNull(questionIdentity, "questionIdentity");
 		this.questionLookup = Objects.requireNonNull(questionLookup, "questionLookup");
+		this.corpusSupplier = corpusSupplier;
 	}
 
 	private static int readInteger(JsonNode object, String field) throws IOException {
@@ -103,15 +114,16 @@ public final class ExamBuilderDraftFile {
 	 * Loads a draft against the current authoritative Subject.
 	 *
 	 * <p>
-	 * All references are resolved and validated before the loaded draft is
-	 * returned. The caller's existing draft and authoritative Question Bank remain
-	 * unchanged.
+	 * All references and complete multipart groups are resolved and validated
+	 * before the loaded draft is returned. Incomplete or incorrectly ordered
+	 * multipart selections are rejected without changing the existing examination.
 	 *
 	 * @param file           examination draft file
 	 * @param workingSubject authoritative Working Subject
 	 * @return loaded examination metadata and selections
-	 * @throws IOException if the file is invalid, references cannot be resolved or
-	 *                     selections are no longer eligible
+	 * @throws IOException          if the file is invalid, references cannot be
+	 *                              resolved or selections are no longer eligible
+	 * @throws NullPointerException if workingSubject is null
 	 */
 	public LoadedDraft load(Path file, Subject workingSubject) throws IOException {
 		Objects.requireNonNull(workingSubject, "workingSubject");
@@ -129,7 +141,7 @@ public final class ExamBuilderDraftFile {
 			UUID savedSubject = readUuid(root.path("subjectId"), "Subject identity");
 			UUID currentSubject = subjectIdentity.apply(workingSubject.getId());
 			if (!savedSubject.equals(currentSubject)) {
-				throw new IOException("This examination belongs to " + "another Subject.");
+				throw new IOException("This examination belongs to another Subject.");
 			}
 			JsonNode metadata = root.path("settings");
 			PrintableExamSettings settings = new PrintableExamSettings(workingSubject.getName(),
@@ -141,23 +153,9 @@ public final class ExamBuilderDraftFile {
 				throw new IOException("Examination sections are missing.");
 			}
 			ExamBuilderDraft loaded = new ExamBuilderDraft(workingSubject);
+			List<Question> corpus = corpusSupplier == null ? null : List.copyOf(corpusSupplier.get());
 			for (ExamBuilderDraft.Section section : ExamBuilderDraft.Section.values()) {
-				JsonNode identifiers = sections.path(section.name());
-				if (!identifiers.isArray()) {
-					throw new IOException("Missing examination section: " + section);
-				}
-
-				// The order of UUIDs in each JSON array
-				// is the generated Question presentation order.
-				for (JsonNode identifier : identifiers) {
-					UUID portableId = readUuid(identifier, "Question identity");
-					Question question = questionLookup.apply(portableId)
-							.orElseThrow(() -> new IOException("Question no longer exists: " + portableId));
-					if (!loaded.add(section, question)) {
-						throw new IOException(
-								"Question is no longer eligible " + "or is duplicated: " + question.getQuestionCode());
-					}
-				}
+				loadSection(loaded, section, sections.path(section.name()), corpus);
 			}
 			return new LoadedDraft(loaded, settings);
 		} catch (IllegalArgumentException | IllegalStateException failure) {
@@ -220,6 +218,42 @@ public final class ExamBuilderDraftFile {
 			}
 		} finally {
 			Files.deleteIfExists(temporary);
+		}
+	}
+
+	private void loadSection(ExamBuilderDraft loaded, ExamBuilderDraft.Section section, JsonNode identifiers,
+			List<Question> corpus) throws IOException {
+		if (!identifiers.isArray()) {
+			throw new IOException("Missing examination section: " + section);
+		}
+		List<Question> savedQuestions = new ArrayList<>();
+		for (JsonNode identifier : identifiers) {
+			UUID portableId = readUuid(identifier, "Question identity");
+			Question question = questionLookup.apply(portableId)
+					.orElseThrow(() -> new IOException("Question no longer exists: " + portableId));
+			savedQuestions.add(question);
+		}
+		if (savedQuestions.isEmpty()) {
+			return;
+		}
+
+		// The package-visible standalone test boundary must
+		// not manufacture a complete multipart corpus from
+		// only the identifiers present in a saved draft.
+		List<Question> authoritativeCorpus = corpus == null
+				? savedQuestions.stream().filter(question -> question.getSourceQuestion() == null).toList()
+				: corpus;
+		if (!loaded.addSelections(section, savedQuestions, authoritativeCorpus)) {
+			throw new IOException("A Question is no longer eligible or is duplicated " + "in section: " + section);
+		}
+		List<Long> savedIds = savedQuestions.stream().map(Question::getId).toList();
+		List<Long> validatedIds = loaded.getQuestions(section).stream().map(Question::getId).toList();
+
+		// Reject older partial or incorrectly ordered selections.
+		// Reopening must never silently change examination content.
+		if (!savedIds.equals(validatedIds)) {
+			throw new IOException("The saved draft contains an incomplete or "
+					+ "incorrectly ordered multipart Question " + "in section: " + section);
 		}
 	}
 

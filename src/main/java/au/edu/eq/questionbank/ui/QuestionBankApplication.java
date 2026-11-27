@@ -6139,7 +6139,7 @@ public class QuestionBankApplication extends Application {
 					curriculumRepository, retrievalService, questionRepository::findAll, previewService,
 					outputApplicabilityRepository, performanceRecorder);
 			return selection.showAndWait();
-		});
+		}, questionRepository::findAll);
 		PrintableAssessmentWriter assessmentWriter = new PrintableAssessmentWriter(pdfStore);
 		dialog.configureGeneration((settings, plan, destination) -> assessmentWriter.generate(settings, plan,
 				PrintableExamFonts.windowsFontDirectory(), destination), config.dataRoot());
