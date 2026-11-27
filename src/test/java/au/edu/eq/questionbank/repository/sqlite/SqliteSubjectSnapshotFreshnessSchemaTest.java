@@ -64,7 +64,7 @@ class SqliteSubjectSnapshotFreshnessSchemaTest {
 			statement.execute("DROP TRIGGER test_reject_v49");
 		}
 		database.initialiseSchema();
-		assertEquals(49, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		assertEquals(entry, ledger.find(entry.packageId()).orElseThrow());
 		assertTrue(ledger.findOriginatingSnapshotEvidence(entry.packageId()).isEmpty());
 		database.verifySchema();
@@ -74,7 +74,7 @@ class SqliteSubjectSnapshotFreshnessSchemaTest {
 	@Test
 	void freshSchemaPersistsEvidenceAtomicallyAndProtectsHistory() throws Exception {
 		SqliteDatabase database = database("fresh.db");
-		assertEquals(49, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		var ledger = new SqliteSubjectImportLedger(database);
 		var entry = appliedEntry();
 		var evidence = new OriginatingSnapshotEvidence(Instant.parse("2026-11-20T01:02:03.123456789Z"), "e".repeat(64));
@@ -121,13 +121,13 @@ class SqliteSubjectSnapshotFreshnessSchemaTest {
 		SqliteDatabase database = database("earlier.db");
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			HistoricalSchemaFixture.removeVersion27Objects(statement);
-			assertEquals(1, statement.executeUpdate("UPDATE schema_version SET version = 26 WHERE version = 49"));
+			assertEquals(1, statement.executeUpdate("UPDATE schema_version SET version = 26 WHERE version = 50"));
 		}
 		assertEquals(26, database.schemaVersion());
 		assertNoV49Objects(database);
 		database.verifySchema();
 		database.initialiseSchema();
-		assertEquals(49, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		database.verifySchema();
 		database.verifyIntegrity();
 	}
@@ -165,7 +165,7 @@ class SqliteSubjectSnapshotFreshnessSchemaTest {
 		assertEquals(48, database.schemaVersion());
 		assertNoV49Objects(database);
 		database.initialiseSchema();
-		assertEquals(49, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		assertEquals(entry, ledger.find(entry.packageId()).orElseThrow());
 		assertEquals(List.of(item), ledger.findItems(entry.packageId()));
 		assertTrue(ledger.findOriginatingSnapshotEvidence(entry.packageId()).isEmpty());
@@ -186,7 +186,7 @@ class SqliteSubjectSnapshotFreshnessSchemaTest {
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			HistoricalSchemaFixture.removeVersion49Objects(statement);
 		}
-		assertEquals(49, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		assertThrows(SQLException.class, database::verifySchema);
 	}
 
@@ -260,7 +260,7 @@ class SqliteSubjectSnapshotFreshnessSchemaTest {
 			connection.setAutoCommit(false);
 			try (Statement statement = connection.createStatement()) {
 				HistoricalSchemaFixture.removeVersion49Objects(statement);
-				assertEquals(1, statement.executeUpdate("UPDATE schema_version SET version = 48 WHERE version = 49"));
+				assertEquals(1, statement.executeUpdate("UPDATE schema_version SET version = 48 WHERE version = 50"));
 				connection.commit();
 			} catch (SQLException | RuntimeException failure) {
 				connection.rollback();
