@@ -86,7 +86,7 @@ class SubjectSnapshotIntakePreviewTest {
 		// intact, but without the subsequently introduced originating evidence.
 		try (Connection connection = destination.openConnection(); Statement statement = connection.createStatement()) {
 			HistoricalSchemaFixture.removeVersion49Objects(statement);
-			assertEquals(1, statement.executeUpdate("UPDATE schema_version SET version = 48 WHERE version = 49"));
+			assertEquals(1, statement.executeUpdate("UPDATE schema_version SET version = 48 WHERE version = 50"));
 		}
 		destination.verifySchema();
 		destination.initialiseSchema();

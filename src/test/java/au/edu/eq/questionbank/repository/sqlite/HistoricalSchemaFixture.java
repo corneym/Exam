@@ -868,6 +868,7 @@ public final class HistoricalSchemaFixture {
 	 */
 	public static void removeVersion49Objects(Statement statement) throws SQLException {
 		Objects.requireNonNull(statement, "statement");
+		removeVersion50Objects(statement);
 		statement.execute("DROP TRIGGER IF EXISTS trg_subject_import_freshness_no_update");
 		statement.execute("DROP TRIGGER IF EXISTS trg_subject_import_freshness_no_delete");
 		List<String> columns = new ArrayList<>();
@@ -882,6 +883,183 @@ public final class HistoricalSchemaFixture {
 		}
 		if (columns.contains("originating_snapshot_created_at")) {
 			statement.execute("ALTER TABLE subject_import_packages DROP COLUMN originating_snapshot_created_at");
+		}
+	}
+
+	/**
+	 * Removes schema v50 publication attempts and reconstructs the original v49
+	 * return and receipt ledgers in a disposable historical fixture.
+	 *
+	 * <p>
+	 * Existing historical rows are copied back without the detached v50 evidence
+	 * columns. Production databases must never use this helper.
+	 *
+	 * @param statement statement for a disposable historical fixture
+	 * @throws SQLException         if cleanup or reconstruction fails
+	 * @throws NullPointerException if statement is null
+	 */
+	public static void removeVersion50Objects(Statement statement) throws SQLException {
+		Objects.requireNonNull(statement, "statement");
+		boolean present;
+		try (PreparedStatement lookup = statement.getConnection().prepareStatement("""
+				SELECT 1
+				FROM sqlite_master
+				WHERE type = 'table'
+				  AND name = 'contribution_publication_attempts'
+				"""); ResultSet rows = lookup.executeQuery()) {
+			present = rows.next();
+		}
+		if (!present) {
+			return;
+		}
+
+		statement.execute("DROP TRIGGER IF EXISTS trg_operating_context_hidden_after_return");
+		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_publication_attempt_insert_validate");
+		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_publication_attempt_evidence_immutable");
+		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_publication_attempt_state_transition");
+		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_publication_attempt_delete_guard");
+		statement.execute("DROP TABLE contribution_publication_attempts");
+		statement.execute("DROP TRIGGER trg_contributor_receipt_ack_validate");
+		statement.execute("DROP TRIGGER trg_contributor_receipt_ack_no_update");
+		statement.execute("DROP TRIGGER trg_contributor_receipt_ack_no_delete");
+		statement.execute("DROP TRIGGER trg_contributor_returns_single_final_insert");
+		statement.execute("DROP TRIGGER trg_contributor_returns_no_delete");
+		statement.execute("DROP TRIGGER trg_contributor_returns_no_update");
+
+		statement.execute("""
+				CREATE TABLE contributor_return_packages_v49 (
+				    package_id TEXT NOT NULL PRIMARY KEY,
+				    assignment_id TEXT NOT NULL,
+				    return_number INTEGER NOT NULL,
+				    previous_package_id TEXT,
+				    baseline_snapshot_id TEXT NOT NULL,
+				    master_installation_id TEXT NOT NULL,
+				    contributor_id TEXT NOT NULL,
+				    origin_installation_id TEXT NOT NULL,
+				    archive_sha256 TEXT NOT NULL,
+				    recorded_at TEXT NOT NULL,
+				    FOREIGN KEY (assignment_id)
+				        REFERENCES contributor_assignment_sessions(assignment_id)
+				        ON DELETE RESTRICT,
+				    FOREIGN KEY (previous_package_id)
+				        REFERENCES contributor_return_packages_v49(package_id)
+				        ON DELETE RESTRICT,
+				    UNIQUE (assignment_id, return_number),
+				    CHECK (length(package_id) = 36),
+				    CHECK (length(assignment_id) = 36),
+				    CHECK (return_number > 0),
+				    CHECK (previous_package_id IS NULL OR length(previous_package_id) = 36),
+				    CHECK (length(baseline_snapshot_id) = 36),
+				    CHECK (length(master_installation_id) = 36),
+				    CHECK (length(contributor_id) = 36),
+				    CHECK (length(origin_installation_id) = 36),
+				    CHECK (
+				        length(archive_sha256) = 64
+				        AND archive_sha256 NOT GLOB '*[^0-9a-f]*'
+				    ),
+				    CHECK (length(recorded_at) > 0)
+				)
+				""");
+		statement.execute("""
+				INSERT INTO contributor_return_packages_v49 (
+				    package_id, assignment_id, return_number, previous_package_id,
+				    baseline_snapshot_id, master_installation_id, contributor_id,
+				    origin_installation_id, archive_sha256, recorded_at
+				)
+				SELECT package_id, assignment_id, return_number, previous_package_id,
+				       baseline_snapshot_id, master_installation_id, contributor_id,
+				       origin_installation_id, archive_sha256, recorded_at
+				FROM contributor_return_packages
+				""");
+		statement.execute("""
+				CREATE TABLE contributor_receipt_acknowledgements_v49 (
+				    receipt_package_id TEXT NOT NULL PRIMARY KEY,
+				    return_package_id TEXT NOT NULL UNIQUE,
+				    assignment_id TEXT NOT NULL,
+				    review_id TEXT NOT NULL,
+				    master_installation_id TEXT NOT NULL,
+				    archive_sha256 TEXT NOT NULL,
+				    outcomes_jsonl BLOB NOT NULL,
+				    master_records_jsonl BLOB NOT NULL,
+				    acknowledged_at TEXT NOT NULL,
+				    FOREIGN KEY (return_package_id)
+				        REFERENCES contributor_return_packages_v49(package_id)
+				        ON DELETE RESTRICT,
+				    FOREIGN KEY (assignment_id)
+				        REFERENCES contributor_assignment_sessions(assignment_id)
+				        ON DELETE RESTRICT,
+				    CHECK (length(receipt_package_id) = 36),
+				    CHECK (length(return_package_id) = 36),
+				    CHECK (length(assignment_id) = 36),
+				    CHECK (length(review_id) = 36),
+				    CHECK (length(master_installation_id) = 36),
+				    CHECK (
+				        length(archive_sha256) = 64
+				        AND archive_sha256 NOT GLOB '*[^0-9a-f]*'
+				    ),
+				    CHECK (length(outcomes_jsonl) > 0),
+				    CHECK (length(acknowledged_at) > 0)
+				)
+				""");
+		statement.execute("""
+				INSERT INTO contributor_receipt_acknowledgements_v49
+				SELECT * FROM contributor_receipt_acknowledgements
+				""");
+		statement.execute("DROP TABLE contributor_receipt_acknowledgements");
+
+		// The reconstructed v49 table already retains the lineage. Clear only the
+		// obsolete v50 source self-references before SQLite implicitly deletes its rows.
+		statement.execute("""
+				UPDATE contributor_return_packages
+				SET previous_package_id = NULL
+				WHERE previous_package_id IS NOT NULL
+				""");
+		statement.execute("DROP TABLE contributor_return_packages");
+		statement.execute("ALTER TABLE contributor_return_packages_v49 RENAME TO contributor_return_packages");
+		statement.execute("""
+				ALTER TABLE contributor_receipt_acknowledgements_v49
+				RENAME TO contributor_receipt_acknowledgements
+				""");
+		statement.execute("""
+				CREATE INDEX idx_contributor_return_packages_assignment
+				ON contributor_return_packages (assignment_id, return_number)
+				""");
+		restoreMigrationTriggers(statement, "/db/migration-v33-to-v34.sql",
+				List.of("trg_contributor_returns_no_delete", "trg_contributor_returns_no_update"));
+		restoreMigrationTriggers(statement, "/db/migration-v42-to-v43.sql",
+				List.of("trg_contributor_receipt_ack_validate", "trg_contributor_receipt_ack_no_update",
+						"trg_contributor_receipt_ack_no_delete"));
+		restoreMigrationTriggers(statement, "/db/migration-v47-to-v48.sql",
+				List.of("trg_operating_context_hidden_after_return"));
+	}
+
+	private static void restoreMigrationTriggers(Statement statement, String resource, List<String> names)
+			throws SQLException {
+		String migration;
+		try {
+			migration = SqlResourceLoader.load(resource);
+		} catch (IOException failure) {
+			throw new SQLException("Cannot load historical trigger migration " + resource, failure);
+		}
+		Map<String, String> definitions = new HashMap<>();
+		for (String fragment : SqlScriptExecutor.splitStatements(migration)) {
+			int start = fragment.lastIndexOf("CREATE TRIGGER ");
+			if (start < 0) {
+				continue;
+			}
+			String sql = fragment.substring(start).strip();
+			String heading = sql.lines().findFirst().orElse("");
+			String name = heading.substring("CREATE TRIGGER ".length()).strip();
+			if (names.contains(name) && definitions.put(name, sql) != null) {
+				throw new SQLException("Duplicate historical trigger definition: " + name);
+			}
+		}
+		for (String name : names) {
+			String sql = definitions.get(name);
+			if (sql == null) {
+				throw new SQLException("Missing historical trigger definition: " + name);
+			}
+			statement.execute(sql);
 		}
 	}
 

@@ -18,6 +18,11 @@ final class SqliteContributorReturnLedgerTriggers {
 
 	static void verify(Connection connection) throws SQLException {
 		SqliteMigrationTriggerVerifier.verify(connection, "trg_contributor_returns_", "contributor return",
+				"/db/migration-v33-to-v34.sql", "/db/migration-v49-to-v50.sql");
+	}
+
+	static void verifyLegacy(Connection connection) throws SQLException {
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_contributor_returns_", "contributor return",
 				"/db/migration-v33-to-v34.sql");
 	}
 }

@@ -155,12 +155,12 @@ class DefaultRestoreExecutorTest {
 		ApplicationConfig target = createDataSet("freshness-backup-target", "Original Chemistry", "old-pdf",
 				"old-curriculum");
 		try (RestorePreparation preparation = new DefaultRestoreService(target).prepareRestore(backup.backupPath())) {
-			assertEquals(49, preparation.manifest().databaseSchemaVersion());
+			assertEquals(SqliteDatabase.latestSchemaVersion(), preparation.manifest().databaseSchemaVersion());
 			new DefaultRestoreExecutor(target, "Test").applyRestore(preparation, new CountingCloseable());
 		}
 		SqliteDatabase restored = new SqliteDatabase(target.databasePath());
 		restored.initialiseSchema();
-		assertEquals(49, restored.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), restored.schemaVersion());
 		var restoredLedger = new SqliteSubjectImportLedger(restored);
 		assertEquals(legacy, restoredLedger.find(legacy.packageId()).orElseThrow());
 		assertEquals(current, restoredLedger.find(current.packageId()).orElseThrow());
@@ -324,7 +324,7 @@ class DefaultRestoreExecutorTest {
 			authorities.recordImported(connection, subjectId, entry.packageId());
 			try (Statement statement = connection.createStatement()) {
 				HistoricalSchemaFixture.removeVersion49Objects(statement);
-				assertEquals(1, statement.executeUpdate("UPDATE schema_version SET version = 48 WHERE version = 49"));
+				assertEquals(1, statement.executeUpdate("UPDATE schema_version SET version = 48 WHERE version = 50"));
 			}
 			connection.commit();
 		}
@@ -346,7 +346,7 @@ class DefaultRestoreExecutorTest {
 		SqliteDatabase restored = new SqliteDatabase(target.databasePath());
 		assertEquals(48, restored.schemaVersion());
 		restored.initialiseSchema();
-		assertEquals(49, restored.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), restored.schemaVersion());
 		var restoredLedger = new SqliteSubjectImportLedger(restored);
 		assertEquals(entry, restoredLedger.find(entry.packageId()).orElseThrow());
 		assertTrue(restoredLedger.findOriginatingSnapshotEvidence(entry.packageId()).isEmpty());

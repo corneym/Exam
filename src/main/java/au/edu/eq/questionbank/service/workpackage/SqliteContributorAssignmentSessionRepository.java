@@ -76,6 +76,11 @@ public final class SqliteContributorAssignmentSessionRepository {
 						      FROM contributor_assignment_hidden hidden
 						      WHERE hidden.assignment_id = session.assignment_id
 						  )
+						  AND NOT EXISTS (
+						      SELECT 1
+						      FROM contribution_publication_attempts attempt
+						      WHERE attempt.assignment_id = session.assignment_id
+						  )
 						""");
 				ResultSet result = statement.executeQuery()) {
 			if (!result.next()) {
@@ -250,12 +255,18 @@ public final class SqliteContributorAssignmentSessionRepository {
 						        FROM contributor_assignment_hidden hidden
 						        WHERE hidden.assignment_id = ?
 						    )
+						    OR EXISTS (
+						        SELECT 1
+						        FROM contribution_publication_attempts attempt
+						        WHERE attempt.assignment_id = ?
+						    )
 						    THEN 1
 						    ELSE 0
 						END
 						""")) {
 					check.setString(1, assignmentId.toString());
 					check.setString(2, assignmentId.toString());
+					check.setString(3, assignmentId.toString());
 					try (ResultSet result = check.executeQuery()) {
 						if (!result.next() || result.getInt(1) != 0) {
 							throw new IllegalStateException("This contributor assignment is submitted or removed "
@@ -437,7 +448,7 @@ public final class SqliteContributorAssignmentSessionRepository {
 				.orElseThrow(() -> new SQLException("Registered assignment was not retained"));
 	}
 
-	private Optional<Session> find(Connection connection, UUID assignmentId) throws SQLException {
+	Optional<Session> find(Connection connection, UUID assignmentId) throws SQLException {
 		try (PreparedStatement statement = connection.prepareStatement("""
 				SELECT *
 				FROM contributor_assignment_sessions
