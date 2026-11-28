@@ -6,6 +6,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.Year;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.HashSet;
@@ -66,6 +67,15 @@ public final class SqliteMockExamStore {
 		authority = new SqliteImportedSubjectAuthorityRepository(database);
 		identities = new SqlitePortableIdentityRepository(database);
 		questions = new SqliteQuestionRepository(database);
+	}
+
+	/**
+	 * Returns the current calendar year using the configured clock.
+	 *
+	 * @return current cohort calendar year
+	 */
+	public int currentYear() {
+		return Year.now(clock).getValue();
 	}
 
 	/**
@@ -179,6 +189,57 @@ public final class SqliteMockExamStore {
 	}
 
 	/**
+	 * Lists saved examination summaries without reconstructing their Question
+	 * content.
+	 *
+	 * @param subject Working Subject
+	 * @return immutable list of examination summaries, newest cohort first
+	 * @throws SQLException         if retrieval fails
+	 * @throws NullPointerException if subject is null
+	 */
+	public List<ExamSummary> findExaminationSummaries(Subject subject) throws SQLException {
+		Objects.requireNonNull(subject, "subject");
+		return transaction(connection -> {
+			UUID subjectId = requireIdentity(connection, EntityType.SUBJECT, subject.getId());
+			List<ExamSummary> result = new ArrayList<>();
+			try (PreparedStatement statement = connection.prepareStatement("""
+					SELECT e.exam_id,
+					       e.cohort_year,
+					       e.finalised_at,
+					       COUNT(DISTINCT
+					           CASE
+					               WHEN s.question_portable_id IS NULL
+					                   THEN NULL
+					               WHEN s.source_question_portable_id IS NULL
+					                   THEN 'Q:' || s.question_portable_id
+					               ELSE 'S:' || s.source_question_portable_id
+					           END
+					       ) AS question_count,
+					       COALESCE(SUM(s.marks), 0) AS total_marks
+					FROM mock_examinations e
+					LEFT JOIN mock_exam_selections s
+					  ON s.exam_id = e.exam_id
+					WHERE e.subject_portable_id = ?
+					GROUP BY e.exam_id, e.cohort_year, e.finalised_at
+					ORDER BY e.cohort_year DESC,
+					         e.finalised_at DESC,
+					         e.exam_id
+					""")) {
+				statement.setString(1, subjectId.toString());
+				try (ResultSet rows = statement.executeQuery()) {
+					while (rows.next()) {
+						String timestamp = rows.getString("finalised_at");
+						result.add(new ExamSummary(UUID.fromString(rows.getString("exam_id")),
+								rows.getInt("cohort_year"), timestamp == null ? null : Instant.parse(timestamp),
+								rows.getInt("question_count"), rows.getInt("total_marks")));
+					}
+				}
+			}
+			return List.copyOf(result);
+		});
+	}
+
+	/**
 	 * Resolves the authoritative finalised examination for an identity.
 	 *
 	 * @param examinationId persistent examination UUID
@@ -262,21 +323,44 @@ public final class SqliteMockExamStore {
 
 	/**
 	 * Releases the current calendar year's reservations for one locally
-	 * authoritative Subject, retaining all examination and usage history.
+	 * authoritative Subject without deleting examination history.
 	 *
 	 * @param subject authoritative Working Subject
 	 * @return number of released reservation records
 	 * @throws SQLException          if persistence fails
-	 * @throws IllegalStateException if the Subject is not locally authoritative
+	 * @throws IllegalStateException if the Subject is not locally authoritative or
+	 *                               the calendar year changes before the reset
 	 * @throws NullPointerException  if subject is null
 	 */
 	public int resetCurrentYear(Subject subject) throws SQLException {
+		return resetCurrentYear(subject, currentYear());
+	}
+
+	/**
+	 * Releases current-year reservations after verifying that the year still
+	 * matches the year confirmed by the coordinator.
+	 *
+	 * @param subject       authoritative Working Subject
+	 * @param confirmedYear calendar year confirmed by the coordinator
+	 * @return number of released reservation records
+	 * @throws SQLException          if persistence fails
+	 * @throws IllegalStateException if the confirmed year is no longer current or
+	 *                               the Subject is not locally authoritative
+	 * @throws NullPointerException  if subject is null
+	 */
+	public int resetCurrentYear(Subject subject, int confirmedYear) throws SQLException {
 		Objects.requireNonNull(subject, "subject");
-		Instant now = clock.instant();
-		int year = now.atZone(clock.getZone()).getYear();
 		return transaction(connection -> {
 			authority.requireLocallyAuthoritative(connection, subject.getId());
 			UUID subjectId = requireIdentity(connection, EntityType.SUBJECT, subject.getId());
+			Instant now = clock.instant();
+			int year = now.atZone(clock.getZone()).getYear();
+
+			// Do not release a different cohort's reservations if
+			// midnight passes while a confirmation dialog is open.
+			if (confirmedYear != year) {
+				throw new IllegalStateException("The calendar year has changed. Confirm the reset again.");
+			}
 			try (PreparedStatement statement = connection.prepareStatement("""
 					UPDATE mock_exam_reservations
 					SET released_at = ?
@@ -697,6 +781,57 @@ public final class SqliteMockExamStore {
 				statement.addBatch();
 			}
 			statement.executeBatch();
+		}
+	}
+
+	/**
+	 * Lightweight summary of a saved examination.
+	 *
+	 * @param examinationId persistent examination UUID
+	 * @param cohortYear    examination cohort calendar year
+	 * @param finalisedAt   finalisation timestamp, or null for a draft
+	 * @param questionCount number of selected top-level Questions
+	 * @param totalMarks    total recorded examination marks
+	 */
+	public record ExamSummary(UUID examinationId, int cohortYear, Instant finalisedAt, int questionCount,
+			int totalMarks) {
+
+		/**
+		 * Creates a saved examination summary.
+		 *
+		 * @param examinationId persistent examination UUID
+		 * @param cohortYear    examination cohort calendar year
+		 * @param finalisedAt   finalisation timestamp, or null for a draft
+		 * @param questionCount number of selected top-level Questions
+		 * @param totalMarks    total recorded examination marks
+		 * @throws NullPointerException     if examinationId is null
+		 * @throws IllegalArgumentException if the year or counts are invalid
+		 */
+		public ExamSummary {
+			Objects.requireNonNull(examinationId, "examinationId");
+			if (cohortYear < 1 || questionCount < 0 || totalMarks < 0) {
+				throw new IllegalArgumentException("Invalid saved examination summary.");
+			}
+		}
+
+		/**
+		 * Determines whether the examination is finalised.
+		 *
+		 * @return true for a finalised examination
+		 */
+		public boolean isFinalised() {
+			return finalisedAt != null;
+		}
+
+		/**
+		 * Returns a concise saved-examination display label.
+		 *
+		 * @return cohort, lifecycle, Question count, marks and short identity
+		 */
+		@Override
+		public String toString() {
+			return "%d — %s — %d Questions — %d marks — %s".formatted(cohortYear, isFinalised() ? "FINALISED" : "DRAFT",
+					questionCount, totalMarks, examinationId.toString().substring(0, 8));
 		}
 	}
 

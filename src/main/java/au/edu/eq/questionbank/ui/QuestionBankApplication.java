@@ -6126,6 +6126,14 @@ public class QuestionBankApplication extends Application {
 			return;
 		}
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
+		boolean locallyAuthoritative;
+		try {
+			locallyAuthoritative = !new SqliteImportedSubjectAuthorityRepository(database).isImported(subject.getId());
+		} catch (SQLException failure) {
+			showAlert(Alert.AlertType.ERROR, "Exam Builder", "Cannot establish Subject authority.",
+					failure.getMessage());
+			return;
+		}
 		CurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
 		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database, performanceRecorder);
 		QuestionRetrievalService retrievalService = new QuestionRetrievalService(questionRepository,
@@ -6136,17 +6144,21 @@ public class QuestionBankApplication extends Application {
 				database);
 		ExamBuilderDraft draft = new ExamBuilderDraft(subject);
 		SqliteMockExamStore mockExamStore = new SqliteMockExamStore(database);
-		ExamBuilderDialog dialog = new ExamBuilderDialog(primaryStage, draft, (owner, section) -> {
+		ExamBuilderDialog.AnnualQuestionSelector annualSelector = (owner, section, cohortYear, lockedQuestionIds) -> {
 			ExamQuestionSelectionDialog selection = new ExamQuestionSelectionDialog(owner, draft, section,
 					curriculumRepository, retrievalService, questionRepository::findAll, previewService,
-					outputApplicabilityRepository, performanceRecorder);
+					outputApplicabilityRepository, performanceRecorder, cohortYear, lockedQuestionIds);
 			return selection.showAndWait();
-		}, questionRepository::findAll);
+		};
+		ExamBuilderDialog dialog = new ExamBuilderDialog(primaryStage, draft,
+				(owner, section) -> annualSelector.select(owner, section, mockExamStore.currentYear(), Set.of()),
+				questionRepository::findAll);
 		PrintableAssessmentWriter assessmentWriter = new PrintableAssessmentWriter(pdfStore);
 		dialog.configureGeneration((settings, plan, destination) -> assessmentWriter.generate(settings, plan,
 				PrintableExamFonts.windowsFontDirectory(), destination), config.dataRoot());
 		SqlitePortableIdentityRepository identities = new SqlitePortableIdentityRepository(database);
 		dialog.configureDraftFiles(new ExamBuilderDraftFile(identities, questionRepository, mockExamStore));
+		dialog.configureManagedExams(mockExamStore, locallyAuthoritative, annualSelector);
 		dialog.showAndWait();
 	}
 

@@ -3,6 +3,7 @@ package au.edu.eq.questionbank.repository.sqlite;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -75,6 +76,39 @@ class SqliteMockExamStoreTest {
 		assertTrue(store.find(draft.getExaminationId(), fixture.subject()).isEmpty());
 		assertTrue(store.findExaminationIds(fixture.subject()).isEmpty());
 		assertEquals(0, countReservations(fixture.database(), false));
+	}
+
+	@Test
+	void examinationSummariesCountMultipartQuestionsOnce() throws Exception {
+		Fixture fixture = createFixture();
+		SqliteMockExamStore store = new SqliteMockExamStore(fixture.database(), CLOCK_2026);
+		var section = ExamBuilderDraft.Section.PAPER_ONE_WRITTEN;
+		ExamBuilderDraft draft = new ExamBuilderDraft(fixture.subject());
+		assertTrue(draft.addWholeQuestion(section, fixture.partB(), fixture.corpus()));
+		assertTrue(draft.addWholeQuestion(section, fixture.standalone(), fixture.corpus()));
+		store.saveDraft(draft, settings(2026), true);
+		var summary = store.findExaminationSummaries(fixture.subject()).getFirst();
+		assertEquals(draft.getExaminationId(), summary.examinationId());
+		assertEquals(2026, summary.cohortYear());
+		assertEquals(2, summary.questionCount());
+		assertEquals(9, summary.totalMarks());
+		assertFalse(summary.isFinalised());
+		assertNull(summary.finalisedAt());
+		store.finalise(draft, settings(2026), true);
+		summary = store.findExaminationSummaries(fixture.subject()).getFirst();
+		assertTrue(summary.isFinalised());
+		assertEquals(CLOCK_2026.instant(), summary.finalisedAt());
+		assertEquals(2, summary.questionCount());
+		assertEquals(9, summary.totalMarks());
+		ExamBuilderDraft empty = new ExamBuilderDraft(fixture.subject());
+		store.saveDraft(empty, settings(2027), true);
+		var summaries = store.findExaminationSummaries(fixture.subject());
+		assertEquals(2, summaries.size());
+		assertEquals(empty.getExaminationId(), summaries.getFirst().examinationId());
+		assertEquals(0, summaries.getFirst().questionCount());
+		assertEquals(0, summaries.getFirst().totalMarks());
+		assertEquals(draft.getExaminationId(), summaries.getLast().examinationId());
+		assertTrue(summaries.getLast().isFinalised());
 	}
 
 	@Test
@@ -372,6 +406,26 @@ class SqliteMockExamStoreTest {
 		assertEquals(3, countReservations(fixture.database(), true));
 		assertTrue(store2027.find(second.getExaminationId(), fixture.subject()).orElseThrow().draft().isFinalised());
 		fixture.database().verifyIntegrity();
+	}
+
+	@Test
+	void resetRejectsConfirmationForAnEarlierCalendarYear() throws Exception {
+		Fixture fixture = createFixture();
+		SqliteMockExamStore store = new SqliteMockExamStore(fixture.database(), CLOCK_2027);
+		ExamBuilderDraft draft = new ExamBuilderDraft(fixture.subject());
+		assertTrue(
+				draft.addWholeQuestion(ExamBuilderDraft.Section.PAPER_ONE_WRITTEN, fixture.partA(), fixture.corpus()));
+		store.finalise(draft, settings(2027), true);
+		assertEquals(2027, store.currentYear());
+		IllegalStateException failure = assertThrows(IllegalStateException.class,
+				() -> store.resetCurrentYear(fixture.subject(), 2026));
+		assertTrue(failure.getMessage().contains("calendar year has changed"));
+		assertEquals(Set.of(fixture.partA().getId(), fixture.partB().getId()),
+				store.lockedQuestionIds(fixture.subject(), 2027));
+		assertEquals(0, countReservations(fixture.database(), true));
+		assertEquals(3, store.resetCurrentYear(fixture.subject(), 2027));
+		assertTrue(store.lockedQuestionIds(fixture.subject(), 2027).isEmpty());
+		assertEquals(3, countReservations(fixture.database(), true));
 	}
 
 	@Test

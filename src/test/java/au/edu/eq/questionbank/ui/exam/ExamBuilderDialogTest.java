@@ -2,17 +2,26 @@ package au.edu.eq.questionbank.ui.exam;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.SQLException;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Optional;
 import java.util.Queue;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Tag;
@@ -48,13 +57,19 @@ import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
 import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
+import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.ui.model.ExamBuilderDraft;
+import au.edu.eq.questionbank.ui.model.ExamBuilderDraftFile;
 import au.edu.eq.questionbank.ui.model.SqliteMockExamStore;
 import javafx.application.Platform;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBar;
+import javafx.scene.control.ButtonBase;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.TextField;
@@ -340,6 +355,235 @@ class ExamBuilderDialogTest {
 	}
 
 	@Test
+	void managedChooserRevalidatesReservationsCreatedWhileOpen(FxRobot robot) throws Exception {
+		ManagedExamFixture fixture = createManagedExamFixture();
+		ExamBuilderDraft draft = new ExamBuilderDraft(fixture.subject());
+		var section = ExamBuilderDraft.Section.MULTIPLE_CHOICE;
+		List<Question> corpus = List.of(fixture.first(), fixture.second());
+		ExamBuilderDialog dialog = createManagedExamDialog(robot, fixture, draft, true,
+				(_, destination, year, locked) -> {
+					assertTrue(locked.isEmpty());
+
+					// Simulate a reservation committed by another
+					// examination after the selection snapshot was taken.
+					ExamBuilderDraft competing = new ExamBuilderDraft(fixture.subject());
+					assertTrue(competing.addWholeQuestion(destination, fixture.first(), corpus));
+					try {
+						fixture.store().finalise(competing,
+								new PrintableExamSettings(fixture.subject().getName(), year, 5, 90, 5, 90), true);
+					} catch (SQLException failure) {
+						throw new IllegalStateException(failure);
+					}
+
+					// Deliberately return one eligible Question and one
+					// newly reserved Question. Neither should be added.
+					return Optional.of(List.of(fixture.second(), fixture.first()));
+				});
+		try {
+			robot.interact(dialog::show);
+			Button add = robot.lookup("#exam-builder-add").queryButton();
+			Label status = robot.lookup("#exam-builder-status").queryAs(Label.class);
+			robot.interact(add::fire);
+			assertTrue(status.getText().contains("already reserved"));
+			assertTrue(draft.getQuestions(section).isEmpty());
+			assertEquals(Set.of(fixture.first().getId()), fixture.store().lockedQuestionIds(fixture.subject(), 2026));
+		} finally {
+			robot.interact(dialog::close);
+		}
+	}
+
+	@Test
+	void managedExaminationLifecycleAndAnnualReset(FxRobot robot) throws Exception {
+		ManagedExamFixture fixture = createManagedExamFixture();
+		SqliteMockExamStore store = fixture.store();
+		ExamBuilderDraft draft = new ExamBuilderDraft(fixture.subject());
+		List<Question> _ = List.of(fixture.first(), fixture.second());
+		var section = ExamBuilderDraft.Section.MULTIPLE_CHOICE;
+		AtomicReference<Question> candidate = new AtomicReference<>(fixture.first());
+		AtomicReference<Set<Long>> observedLocks = new AtomicReference<>(Set.of());
+		AtomicInteger observedYear = new AtomicInteger();
+		ExamBuilderDialog dialog = createManagedExamDialog(robot, fixture, draft, true, (_, _, year, locked) -> {
+			observedYear.set(year);
+			observedLocks.set(locked);
+			return Optional.of(List.of(candidate.get()));
+		});
+		try {
+			robot.interact(dialog::show);
+			Button add = robot.lookup("#exam-builder-add").queryButton();
+			Button save = robot.lookup("#exam-builder-save-managed").queryButton();
+			Button open = robot.lookup("#exam-builder-open-managed").queryButton();
+			Button newExam = robot.lookup("#exam-builder-new").queryButton();
+			Button finalise = robot.lookup("#exam-builder-finalise").queryButton();
+			Button reset = robot.lookup("#exam-builder-reset-year").queryButton();
+			Button delete = robot.lookup("#exam-builder-delete-managed").queryButton();
+			TextField year = robot.lookup("#exam-builder-year").queryAs(TextField.class);
+			Label status = robot.lookup("#exam-builder-status").queryAs(Label.class);
+			assertEquals("2026", year.getText());
+			assertTrue(finalise.isDisabled());
+			robot.interact(add::fire);
+			assertEquals(2026, observedYear.get());
+			assertTrue(observedLocks.get().isEmpty());
+			assertEquals(List.of(fixture.first().getId()),
+					draft.getQuestions(section).stream().map(Question::getId).toList());
+			UUID firstExamId = draft.getExaminationId();
+			robot.interact(save::fire);
+			assertTrue(store.find(firstExamId, fixture.subject()).isPresent());
+			assertTrue(store.lockedQuestionIds(fixture.subject(), 2026).isEmpty());
+			assertFalse(finalise.isDisabled());
+
+			// Cancelling finalisation must not create reservations.
+			Platform.runLater(finalise::fire);
+			answerManagedDialog(robot, "exam-builder-managed-confirmation", ButtonBar.ButtonData.CANCEL_CLOSE);
+			WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+					() -> robot.lookup("#exam-builder-managed-confirmation").tryQuery().isEmpty());
+			assertFalse(draft.isFinalised());
+			assertTrue(store.lockedQuestionIds(fixture.subject(), 2026).isEmpty());
+
+			// Explicit finalisation creates the annual reservation.
+			Platform.runLater(finalise::fire);
+			answerManagedDialog(robot, "exam-builder-managed-confirmation", ButtonBar.ButtonData.OK_DONE);
+			WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> status.getText().startsWith("Examination finalised"));
+			assertTrue(draft.isFinalised());
+			assertTrue(add.isDisabled());
+			assertTrue(save.isDisabled());
+			assertTrue(finalise.isDisabled());
+			assertFalse(year.isEditable());
+			assertEquals(Set.of(fixture.first().getId()), store.lockedQuestionIds(fixture.subject(), 2026));
+
+			// A new examination must have a different persistent identity.
+			robot.interact(newExam::fire);
+			UUID secondExamId = draft.getExaminationId();
+			assertNotEquals(firstExamId, secondExamId);
+			assertFalse(draft.isFinalised());
+			assertTrue(draft.isEmpty());
+			assertEquals("2026", year.getText());
+			assertTrue(year.isEditable());
+
+			// The deliberately bypassed chooser returns a locked
+			// Question. The owning dialog must independently reject it.
+			robot.interact(add::fire);
+			assertEquals(Set.of(fixture.first().getId()), observedLocks.get());
+			assertTrue(draft.isEmpty());
+			assertTrue(status.getText().contains("already reserved"));
+
+			// Selecting an unrelated eligible Question is allowed.
+			candidate.set(fixture.second());
+			robot.interact(add::fire);
+			robot.interact(save::fire);
+			assertTrue(store.find(secondExamId, fixture.subject()).isPresent());
+			assertEquals(Set.of(fixture.first().getId()), store.lockedQuestionIds(fixture.subject(), 2026));
+
+			// Open the first, finalised examination from managed storage.
+			robot.interact(newExam::fire);
+			Platform.runLater(open::fire);
+			WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+					() -> robot.lookup("#exam-builder-managed-choice").tryQuery().isPresent());
+			DialogPane chooser = robot.lookup("#exam-builder-managed-choice").queryAs(DialogPane.class);
+
+			// Both examinations have the same year. The summary order
+			// presents the finalised examination before the editable draft.
+			answerManagedDialog(robot, chooser.getId(), ButtonBar.ButtonData.OK_DONE);
+			WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+					() -> status.getText().startsWith("Finalised examination opened"));
+			assertEquals(firstExamId, draft.getExaminationId());
+			assertTrue(draft.isFinalised());
+			assertTrue(add.isDisabled());
+
+			// Cancelling an annual reset must retain the reservations.
+			Platform.runLater(reset::fire);
+			answerManagedDialog(robot, "exam-builder-managed-confirmation", ButtonBar.ButtonData.CANCEL_CLOSE);
+			WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+					() -> robot.lookup("#exam-builder-managed-confirmation").tryQuery().isEmpty());
+			assertEquals(Set.of(fixture.first().getId()), store.lockedQuestionIds(fixture.subject(), 2026));
+			Platform.runLater(reset::fire);
+			answerManagedDialog(robot, "exam-builder-managed-confirmation", ButtonBar.ButtonData.OK_DONE);
+			WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+					() -> status.getText().startsWith("Annual reservations released"));
+			assertTrue(store.lockedQuestionIds(fixture.subject(), 2026).isEmpty());
+
+			// Reset releases usage, not the committed examination.
+			assertTrue(draft.isFinalised());
+			assertTrue(store.find(firstExamId, fixture.subject()).orElseThrow().draft().isFinalised());
+			assertTrue(add.isDisabled());
+			robot.interact(newExam::fire);
+			candidate.set(fixture.first());
+			robot.interact(add::fire);
+			assertTrue(observedLocks.get().isEmpty());
+			assertEquals(1, draft.getTotalSelectedCount());
+
+			// Save the newly reusable Question as a third draft.
+			robot.interact(save::fire);
+			UUID thirdExamId = draft.getExaminationId();
+
+			// The deletion chooser defaults to the current saved draft.
+			Platform.runLater(delete::fire);
+			answerManagedDialog(robot, "exam-builder-managed-choice", ButtonBar.ButtonData.OK_DONE);
+			answerManagedDialog(robot, "exam-builder-managed-confirmation", ButtonBar.ButtonData.OK_DONE);
+			WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> status.getText().startsWith("Saved draft deleted"));
+			assertTrue(store.find(thirdExamId, fixture.subject()).isEmpty());
+			assertTrue(draft.isEmpty());
+			assertNotEquals(thirdExamId, draft.getExaminationId());
+			assertTrue(store.find(firstExamId, fixture.subject()).isPresent());
+			assertTrue(store.find(secondExamId, fixture.subject()).isPresent());
+			assertTrue(store.lockedQuestionIds(fixture.subject(), 2026).isEmpty());
+			fixture.database().verifyIntegrity();
+		} finally {
+			robot.interact(dialog::close);
+		}
+	}
+
+	@Test
+	void managedFinalisationRejectsConflictingOlderDraft(FxRobot robot) throws Exception {
+		ManagedExamFixture fixture = createManagedExamFixture();
+		SqliteMockExamStore store = fixture.store();
+		var section = ExamBuilderDraft.Section.MULTIPLE_CHOICE;
+		List<Question> corpus = List.of(fixture.first(), fixture.second());
+		PrintableExamSettings settings = new PrintableExamSettings(fixture.subject().getName(), 2026, 5, 90, 5, 90);
+		ExamBuilderDraft older = new ExamBuilderDraft(fixture.subject());
+		assertTrue(older.addSelections(section, corpus, corpus));
+		store.saveDraft(older, settings, true);
+		ExamBuilderDraft committed = new ExamBuilderDraft(fixture.subject());
+		assertTrue(committed.addWholeQuestion(section, fixture.first(), corpus));
+		store.finalise(committed, settings, true);
+		ExamBuilderDialog dialog = createManagedExamDialog(robot, fixture, older, true,
+				(_, _, _, _) -> Optional.empty());
+		try {
+			robot.interact(dialog::show);
+			Button finalise = robot.lookup("#exam-builder-finalise").queryButton();
+			Button remove = robot.lookup("#exam-builder-remove").queryButton();
+			Label status = robot.lookup("#exam-builder-status").queryAs(Label.class);
+			ListView<PrintableQuestionNumbering.NumberedQuestion> questions = robot.lookup("#exam-builder-questions")
+					.queryListView();
+			Platform.runLater(finalise::fire);
+			answerManagedDialog(robot, "exam-builder-managed-confirmation", ButtonBar.ButtonData.OK_DONE);
+			WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+					() -> status.getText().startsWith("Cannot finalise examination:"));
+			assertTrue(status.getText().contains("already reserved"));
+			assertFalse(older.isFinalised());
+			assertEquals(2, older.getTotalSelectedCount());
+			assertFalse(finalise.isDisabled());
+			assertEquals(Set.of(fixture.first().getId()), store.lockedQuestionIds(fixture.subject(), 2026));
+
+			// Remove the conflicting Question through the actual
+			// examination editing controls.
+			robot.interact(() -> questions.getSelectionModel().selectFirst());
+			assertFalse(remove.isDisabled());
+			robot.interact(remove::fire);
+			assertEquals(List.of(fixture.second().getId()),
+					older.getQuestions(section).stream().map(Question::getId).toList());
+			Platform.runLater(finalise::fire);
+			answerManagedDialog(robot, "exam-builder-managed-confirmation", ButtonBar.ButtonData.OK_DONE);
+			WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> status.getText().startsWith("Examination finalised"));
+			assertTrue(older.isFinalised());
+			assertEquals(Set.of(fixture.first().getId(), fixture.second().getId()),
+					store.lockedQuestionIds(fixture.subject(), 2026));
+			assertTrue(remove.isDisabled());
+		} finally {
+			robot.interact(dialog::close);
+		}
+	}
+
+	@Test
 	void movesTransfersAndRemovesEntireMultipartQuestion(FxRobot robot) {
 		ExamBuilderDraft draft = new ExamBuilderDraft(subject);
 		Question standalone = createQuestion(30, "25", 4, QuestionResponseType.WRITTEN_RESPONSE);
@@ -402,6 +646,97 @@ class ExamBuilderDialogTest {
 		}
 	}
 
+	@Test
+	void nonAuthoritativeSubjectDisablesManagedWrites(FxRobot robot) throws Exception {
+		ManagedExamFixture fixture = createManagedExamFixture();
+		ExamBuilderDraft draft = new ExamBuilderDraft(fixture.subject());
+		ExamBuilderDialog dialog = createManagedExamDialog(robot, fixture, draft, false,
+				(_, _, _, _) -> Optional.empty());
+		try {
+			robot.interact(dialog::show);
+			for (String id : List.of("#exam-builder-save-managed", "#exam-builder-delete-managed",
+					"#exam-builder-finalise", "#exam-builder-reset-year")) {
+				assertTrue(robot.lookup(id).queryButton().isDisabled(), id);
+			}
+
+			// Independent portable drafting and managed inspection
+			// remain available for imported Subject snapshots.
+			assertFalse(robot.lookup("#exam-builder-add").queryButton().isDisabled());
+			assertFalse(robot.lookup("#exam-builder-new").queryButton().isDisabled());
+			assertFalse(robot.lookup("#exam-builder-open-managed").queryButton().isDisabled());
+			assertFalse(robot.lookup("#exam-builder-save-draft").queryButton().isDisabled());
+		} finally {
+			robot.interact(dialog::close);
+		}
+	}
+
+	private void answerManagedDialog(FxRobot robot, String dialogId, ButtonBar.ButtonData buttonData)
+			throws TimeoutException {
+		String selector = "#" + dialogId;
+		WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> robot.lookup(selector).tryQuery().isPresent());
+		DialogPane pane = robot.lookup(selector).queryAs(DialogPane.class);
+		ButtonType buttonType = pane.getButtonTypes().stream().filter(type -> type.getButtonData() == buttonData)
+				.findFirst().orElseThrow();
+		ButtonBase button = (ButtonBase) pane.lookupButton(buttonType);
+		assertFalse(button.isDisabled());
+
+		// The choice or confirmation may resume an outer modal workflow.
+		// Schedule semantic activation rather than blocking the test thread.
+		Platform.runLater(button::fire);
+	}
+
+	private ExamBuilderDialog createManagedExamDialog(FxRobot robot, ManagedExamFixture fixture, ExamBuilderDraft draft,
+			boolean locallyAuthoritative, ExamBuilderDialog.AnnualQuestionSelector selector) {
+		SqliteQuestionRepository questions = new SqliteQuestionRepository(fixture.database());
+		SqlitePortableIdentityRepository identities = new SqlitePortableIdentityRepository(fixture.database());
+		AtomicReference<ExamBuilderDialog> holder = new AtomicReference<>();
+		robot.interact(() -> {
+			ExamBuilderDialog dialog = new ExamBuilderDialog(stage, draft, (_, _) -> Optional.empty(),
+					questions::findAll);
+			dialog.configureGeneration((_, _, _) -> {
+				throw new AssertionError("PDF generation is not expected.");
+			}, tempDirectory);
+
+			// Align the fixture metadata with the controlled clock
+			// before the portable draft dirty listeners are installed.
+			TextField year = (TextField) dialog.getDialogPane().getContent().lookup("#exam-builder-year");
+			year.setText(Integer.toString(fixture.store().currentYear()));
+			dialog.configureDraftFiles(new ExamBuilderDraftFile(identities, questions, fixture.store()));
+			dialog.configureManagedExams(fixture.store(), locallyAuthoritative, selector);
+			holder.set(dialog);
+		});
+		return holder.get();
+	}
+
+	private ManagedExamFixture createManagedExamFixture() throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("managed-exam.db"));
+		database.initialiseSchema();
+		SqliteCurriculumWriter curriculum = new SqliteCurriculumWriter(database);
+		Subject chemistry = curriculum.insertSubject("Chemistry");
+		SyllabusVersion syllabus = curriculum.insertSyllabusVersion(chemistry, "2025", true);
+		Unit unit = curriculum.insertUnit(syllabus, "3", "Unit 3", 1);
+		Topic topic = curriculum.insertTopic(unit, "3.1", "Equilibrium", 1);
+		Subtopic subtopic = curriculum.insertSubtopic(topic, "3.1.1", "Equilibrium", 1);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2025,
+				"External Assessment", "Paper 1", "questions.pdf");
+		SqliteQuestionRepository questions = new SqliteQuestionRepository(database);
+		Question first = questions.save(booklet, "1", "", 1,
+				List.of(new QuestionRegion(booklet, 1, 0.1, 0.1, 0.8, 0.2)), subtopic, false, null, null,
+				QuestionResponseType.MULTIPLE_CHOICE);
+		Question second = questions.save(booklet, "2", "", 1,
+				List.of(new QuestionRegion(booklet, 1, 0.1, 0.4, 0.8, 0.2)), subtopic, false, null, null,
+				QuestionResponseType.MULTIPLE_CHOICE);
+		SqliteAnswerWriter answers = new SqliteAnswerWriter(database, examWriter);
+		answers.insertAnswer(first, "A", List.of());
+		answers.insertAnswer(second, "B", List.of());
+		Question firstQuestion = questions.findById(first.getId()).orElseThrow();
+		Question secondQuestion = questions.findById(second.getId()).orElseThrow();
+		Clock clock = Clock.fixed(Instant.parse("2026-11-28T01:00:00Z"), ZoneId.of("Australia/Brisbane"));
+		return new ManagedExamFixture(database, chemistry, new SqliteMockExamStore(database, clock), firstQuestion,
+				secondQuestion);
+	}
+
 	private Question createQuestion(long id, String code, int marks, QuestionResponseType responseType) {
 		return createQuestion(id, code, marks, responseType, null);
 	}
@@ -424,5 +759,9 @@ class ExamBuilderDialogTest {
 			question.setAnswer(new Answer(id, null, List.of(new AnswerRegion(answerFile, 1, 0.1, 0.1, 0.8, 0.2))));
 		}
 		return question;
+	}
+
+	private record ManagedExamFixture(SqliteDatabase database, Subject subject, SqliteMockExamStore store,
+			Question first, Question second) {
 	}
 }

@@ -212,6 +212,8 @@ public class QuestionSearchPane extends BorderPane {
 	private Runnable classificationSaveHandler = () -> {
 		throw new IllegalStateException("Classification save handler is not configured");
 	};
+	private boolean examAvailableOnly;
+	private Function<Question, List<Question>> examWholeQuestionResolver;
 
 	/**
 	 * Creates an unrestricted question-search pane.
@@ -335,11 +337,11 @@ public class QuestionSearchPane extends BorderPane {
 	}
 
 	void configureExamSelection(QuestionResponseType responseType,
-			Function<Question, List<Question>> resolveWholeQuestion, Predicate<Question> alreadySelected,
+			Function<Question, List<Question>> resolveWholeQuestion, Function<Question, String> unavailableReason,
 			Map<Long, Question> checkedQuestions, Runnable selectionChanged) {
 		fixedResponseType = Objects.requireNonNull(responseType, "responseType");
-		Objects.requireNonNull(resolveWholeQuestion, "resolveWholeQuestion");
-		Objects.requireNonNull(alreadySelected, "alreadySelected");
+		examWholeQuestionResolver = Objects.requireNonNull(resolveWholeQuestion, "resolveWholeQuestion");
+		Objects.requireNonNull(unavailableReason, "unavailableReason");
 		Objects.requireNonNull(checkedQuestions, "checkedQuestions");
 		Objects.requireNonNull(selectionChanged, "selectionChanged");
 		boolean previouslyUpdating = updatingMetadataChoices;
@@ -348,8 +350,8 @@ public class QuestionSearchPane extends BorderPane {
 			String label = responseType == QuestionResponseType.MULTIPLE_CHOICE ? "Multiple Choice"
 					: "Written Response";
 
-			// Clear filters must not broaden the destination
-			// examination's permitted response type.
+			// Ordinary metadata filtering cannot broaden the
+			// destination section's permitted response type.
 			responseTypeFilterBox.getItems().setAll(List.of(new FilterOption<>(responseType, label)));
 			responseTypeFilterBox.getSelectionModel().selectFirst();
 			responseTypeFilterBox.setDisable(true);
@@ -373,24 +375,18 @@ public class QuestionSearchPane extends BorderPane {
 					}
 					if (checkBox.isSelected()) {
 
-						// Add every constituent in source order,
-						// including constituents hidden by filters.
+						// Include every constituent, even if Search
+						// currently hides some of its rows.
 						for (Question constituent : group) {
 							checkedQuestions.putIfAbsent(constituent.getId(), constituent);
 						}
 						resultsList.getSelectionModel().select(item);
 					} else {
-
-						// Unchecking any constituent releases
-						// the complete pending top-level Question.
 						for (Question constituent : group) {
 							checkedQuestions.remove(constituent.getId());
 						}
 					}
 					selectionChanged.run();
-
-					// Other visible constituent cells must reflect
-					// the same checked state immediately.
 					resultsList.refresh();
 				});
 			}
@@ -411,15 +407,11 @@ public class QuestionSearchPane extends BorderPane {
 				boolean allowed = !group.isEmpty();
 				checkBox.setId("exam-question-check-" + question.getId());
 				checkBox.setDisable(!allowed);
-
-				// Checked state belongs to persistent Question
-				// identity, not to the recycled ListView cell.
 				checkBox.setSelected(checkedQuestions.containsKey(question.getId()));
 				String text = questionSearchResultText(item) + " — " + question.getMarks()
 						+ (question.getMarks() == 1 ? " mark" : " marks");
 				if (!allowed) {
-					String reason = alreadySelected.test(question) ? "Already in this draft"
-							: "Whole question unavailable";
+					String reason = unavailableReason.apply(question);
 					text += " (" + reason + ")";
 					checkBox.setTooltip(new Tooltip(reason));
 				} else if (group.size() > 1) {
@@ -430,8 +422,8 @@ public class QuestionSearchPane extends BorderPane {
 					checkBox.setTooltip(null);
 				}
 
-				// Unavailable Questions remain inspectable in
-				// Search, but cannot be selected for this draft.
+				// The row remains inspectable when unavailable,
+				// but its selection control cannot be activated.
 				setOpacity(allowed ? 1.0 : 0.55);
 				setText(text);
 				setGraphic(checkBox);
@@ -599,6 +591,17 @@ public class QuestionSearchPane extends BorderPane {
 		// Retain only the persistence action; classification state remains owned by
 		// this Pane.
 		this.classificationSaveHandler = classificationSaveHandler;
+	}
+
+	void setExamAvailableOnly(boolean availableOnly) {
+		if (disposed || examWholeQuestionResolver == null || examAvailableOnly == availableOnly) {
+			return;
+		}
+		examAvailableOnly = availableOnly;
+
+		// Use the existing asynchronous Search generation mechanism.
+		// Pending checked Questions are not part of the displayed result list.
+		refreshAutomaticSearch();
 	}
 
 	/**
@@ -1002,16 +1005,23 @@ public class QuestionSearchPane extends BorderPane {
 		try {
 			activeSearchTask = null;
 			List<QuestionSearchResult> results = task.getValue();
+
+			// Apply examination availability only in Exam Builder mode.
+			// Eligibility uses the complete corpus and the current draft.
+			// Resolve it on the JavaFX thread rather than allowing background
+			// retrieval to access mutable draft or pending-selection state.
+			if (examAvailableOnly && examWholeQuestionResolver != null) {
+				results = results.stream()
+						.filter(result -> !examWholeQuestionResolver.apply(result.question()).isEmpty()).toList();
+			}
 			if (searchNarrowing.isDescriptorAssignmentQueue()) {
 
-				// Queue membership is authoritative. A successful
-				// classification removes the Question from these results.
+				// Preserve authoritative Descriptor queue membership.
 				resultsList.getItems().setAll(results);
 				reselectEditedQuestion(results);
 			} else if (!publishEditedResultInPlace(results)) {
 
-				// Ordinary inspection continues to preserve matching
-				// edited rows and use its existing selection contract.
+				// Preserve the ordinary inspection selection contract.
 				resultsList.getItems().setAll(results);
 				reselectEditedQuestion(results);
 			}
