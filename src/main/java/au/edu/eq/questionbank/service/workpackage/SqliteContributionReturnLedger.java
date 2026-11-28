@@ -10,7 +10,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 
-import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest.ScopeLevel;
 
@@ -95,79 +94,10 @@ public final class SqliteContributionReturnLedger {
 	 */
 	PublishedReturn recordPublished(ExamWorkManifest manifest, UUID previousPackageId, String archiveSha256)
 			throws SQLException {
-		Objects.requireNonNull(manifest, "manifest");
-		Objects.requireNonNull(archiveSha256, "archiveSha256");
-		if (!archiveSha256.matches("[0-9a-f]{64}")) {
-			throw new IllegalArgumentException("Invalid contribution archive SHA-256");
-		}
-		if (manifest.packageType() != ExamWorkPackageType.CONTRIBUTION) {
-			throw new SQLException("Only contribution packages may be recorded");
-		}
-		SqliteContributorAssignmentSessionRepository sessions = new SqliteContributorAssignmentSessionRepository(
-				database);
-		var session = sessions.find(manifest.assignmentId()).orElseThrow(
-				() -> new SQLException("Contribution assignment is not installed: " + manifest.assignmentId()));
-		UUID installationId = new SqlitePortableIdentityRepository(database).installationId();
-		requireAssignment(manifest, session, installationId);
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
-
-				// Check for a genuine replay before checking the
-				// current end of the lineage chain.
-				Optional<PublishedReturn> existing = find(connection, manifest.packageId());
-				if (existing.isPresent()) {
-					PublishedReturn stored = existing.orElseThrow();
-					if (!stored.assignmentId().equals(manifest.assignmentId())
-							|| !Objects.equals(stored.previousPackageId(), previousPackageId)
-							|| !stored.archiveSha256().equals(archiveSha256)) {
-						throw new SQLException("Contribution package UUID was reused " + "with different evidence");
-					}
-					connection.commit();
-					return stored;
-				}
-				Optional<PublishedReturn> latest = findLatest(connection, manifest.assignmentId());
-				if (latest.isPresent()) {
-					throw new SQLException("A contribution has already been published for this assignment. "
-							+ "A second contribution is not permitted.");
-				}
-				if (previousPackageId != null) {
-					throw new SQLException(
-							"The first and only assignment contribution cannot have a previous package.");
-				}
-				int returnNumber = 1;
-				Instant recordedAt = Instant.now();
-				try (PreparedStatement statement = connection.prepareStatement("""
-						INSERT INTO contributor_return_packages (
-						    package_id,
-						    assignment_id,
-						    return_number,
-						    previous_package_id,
-						    baseline_snapshot_id,
-						    master_installation_id,
-						    contributor_id,
-						    origin_installation_id,
-						    archive_sha256,
-						    recorded_at
-						)
-						VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-						""")) {
-					statement.setString(1, manifest.packageId().toString());
-					statement.setString(2, manifest.assignmentId().toString());
-					statement.setInt(3, returnNumber);
-					statement.setString(4, previousPackageId == null ? null : previousPackageId.toString());
-					statement.setString(5, session.baselineSnapshotId().toString());
-					statement.setString(6, session.masterInstallationId().toString());
-					statement.setString(7, session.contributorId().toString());
-					statement.setString(8, installationId.toString());
-					statement.setString(9, archiveSha256);
-					statement.setString(10, recordedAt.toString());
-					if (statement.executeUpdate() != 1) {
-						throw new SQLException("Contribution publication was not recorded");
-					}
-				}
-				PublishedReturn stored = find(connection, manifest.packageId())
-						.orElseThrow(() -> new SQLException("Recorded contribution was not retained"));
+				PublishedReturn stored = recordPublished(connection, manifest, previousPackageId, archiveSha256);
 				connection.commit();
 				return stored;
 			} catch (SQLException | RuntimeException failure) {
@@ -179,6 +109,81 @@ public final class SqliteContributionReturnLedger {
 				throw failure;
 			}
 		}
+	}
+
+	PublishedReturn recordPublished(Connection connection, ExamWorkManifest manifest, UUID previousPackageId,
+			String archiveSha256) throws SQLException {
+		Objects.requireNonNull(connection, "connection");
+		Objects.requireNonNull(manifest, "manifest");
+		Objects.requireNonNull(archiveSha256, "archiveSha256");
+		if (connection.getAutoCommit()) {
+			throw new IllegalStateException("Published return recording requires a caller-owned transaction");
+		}
+		if (!archiveSha256.matches("[0-9a-f]{64}")) {
+			throw new IllegalArgumentException("Invalid contribution archive SHA-256");
+		}
+		if (manifest.packageType() != ExamWorkPackageType.CONTRIBUTION) {
+			throw new SQLException("Only contribution packages may be recorded");
+		}
+		var sessions = new SqliteContributorAssignmentSessionRepository(database);
+		var session = sessions.find(connection, manifest.assignmentId()).orElseThrow(
+				() -> new SQLException("Contribution assignment is not installed: " + manifest.assignmentId()));
+		requireAssignment(manifest, session, installationId(connection));
+
+		// Check for a genuine replay before checking the current end of the lineage
+		// chain. This also makes recovery idempotent if terminal evidence already
+		// exists.
+		Optional<PublishedReturn> existing = find(connection, manifest.packageId());
+		if (existing.isPresent()) {
+			PublishedReturn stored = existing.orElseThrow();
+			if (!stored.assignmentId().equals(manifest.assignmentId())
+					|| !Objects.equals(stored.previousPackageId(), previousPackageId)
+					|| !stored.archiveSha256().equals(archiveSha256)) {
+				throw new SQLException("Contribution package UUID was reused with different evidence");
+			}
+			return stored;
+		}
+		if (findLatest(connection, manifest.assignmentId()).isPresent()) {
+			throw new SQLException("A contribution has already been published for this assignment. "
+					+ "A second contribution is not permitted.");
+		}
+		if (previousPackageId != null) {
+			throw new SQLException("The first and only assignment contribution cannot have a previous package.");
+		}
+		Instant recordedAt = Instant.now();
+		try (PreparedStatement statement = connection.prepareStatement("""
+				INSERT INTO contributor_return_packages (
+				    package_id, assignment_id, return_number, previous_package_id,
+				    baseline_snapshot_id, master_installation_id, contributor_id,
+				    origin_installation_id, archive_sha256, recorded_at,
+				    assignment_package_id, assignment_archive_sha256,
+				    subject_portable_id, exam_portable_id, issued_at, installed_at,
+				    contribution_created_at
+				)
+				VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				""")) {
+			statement.setString(1, manifest.packageId().toString());
+			statement.setString(2, manifest.assignmentId().toString());
+			statement.setString(3, previousPackageId == null ? null : previousPackageId.toString());
+			statement.setString(4, session.baselineSnapshotId().toString());
+			statement.setString(5, session.masterInstallationId().toString());
+			statement.setString(6, session.contributorId().toString());
+			statement.setString(7, installationId(connection).toString());
+			statement.setString(8, archiveSha256);
+			statement.setString(9, recordedAt.toString());
+			statement.setString(10, session.packageId().toString());
+			statement.setString(11, session.archiveSha256());
+			statement.setString(12, session.subjectPortableId().toString());
+			statement.setString(13, session.examPortableId().toString());
+			statement.setString(14, session.issuedAt().toString());
+			statement.setString(15, session.installedAt().toString());
+			statement.setString(16, manifest.createdAt().toString());
+			if (statement.executeUpdate() != 1) {
+				throw new SQLException("Contribution publication was not recorded");
+			}
+		}
+		return find(connection, manifest.packageId())
+				.orElseThrow(() -> new SQLException("Recorded contribution was not retained"));
 	}
 
 	private Optional<PublishedReturn> find(Connection connection, UUID packageId) throws SQLException {
@@ -215,6 +220,27 @@ public final class SqliteContributionReturnLedger {
 					return Optional.empty();
 				}
 				return Optional.of(readReturn(result));
+			}
+		}
+	}
+
+	private UUID installationId(Connection connection) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT installation_id
+				FROM installation_identity
+				WHERE singleton_id = 1
+				"""); ResultSet result = statement.executeQuery()) {
+			if (!result.next()) {
+				throw new SQLException("Database has no installation identity");
+			}
+			try {
+				UUID identifier = UUID.fromString(result.getString("installation_id"));
+				if (result.next()) {
+					throw new SQLException("Database contains multiple installation identities");
+				}
+				return identifier;
+			} catch (IllegalArgumentException | NullPointerException failure) {
+				throw new SQLException("Invalid persisted installation identity", failure);
 			}
 		}
 	}

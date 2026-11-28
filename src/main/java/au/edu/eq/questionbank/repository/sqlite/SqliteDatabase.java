@@ -25,7 +25,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 49;
+	private static final int LATEST_SCHEMA_VERSION = 50;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -931,6 +931,13 @@ public final class SqliteDatabase {
 			executeMigration(connection, "/db/migration-v48-to-v49.sql", 49);
 			return 49;
 		}
+		if (version == 49) {
+
+			// Detach permanent terminal submission evidence from the live
+			// assignment cache and add restart-safe publication attempts.
+			executeMigration(connection, "/db/migration-v49-to-v50.sql", 50);
+			return 50;
+		}
 		throw new SQLException("No migration available from schema version " + version);
 	}
 
@@ -1331,6 +1338,9 @@ public final class SqliteDatabase {
 		}
 		if (version >= 49) {
 			verifyVersion49SubjectSnapshotFreshness(connection);
+		}
+		if (version >= 50) {
+			verifyVersion50ContributorTerminalSchema(connection);
 		}
 	}
 
@@ -2039,6 +2049,22 @@ public final class SqliteDatabase {
 	}
 
 	private void verifyVersion34ContributorReturnSchema(Connection connection) throws SQLException {
+		if (readSchemaVersion(connection) >= 50) {
+			verifyTableSchema(connection, "contributor_return_packages",
+					List.of(column("package_id", true, 1), column("assignment_id", true, 0),
+							column("return_number", true, 0), column("previous_package_id", false, 0),
+							column("baseline_snapshot_id", true, 0), column("master_installation_id", true, 0),
+							column("contributor_id", true, 0), column("origin_installation_id", true, 0),
+							column("archive_sha256", true, 0), column("recorded_at", true, 0),
+							column("assignment_package_id", true, 0), column("assignment_archive_sha256", true, 0),
+							column("subject_portable_id", true, 0), column("exam_portable_id", true, 0),
+							column("issued_at", true, 0), column("installed_at", true, 0),
+							column("contribution_created_at", false, 0)),
+					List.of(foreignKey("previous_package_id", "contributor_return_packages", "package_id")),
+					List.of(List.of("assignment_id", "return_number")));
+			SqliteContributorReturnLedgerTriggers.verify(connection);
+			return;
+		}
 		verifyTableSchema(connection, "contributor_return_packages",
 				List.of(column("package_id", true, 1), column("assignment_id", true, 0),
 						column("return_number", true, 0), column("previous_package_id", false, 0),
@@ -2048,7 +2074,7 @@ public final class SqliteDatabase {
 				List.of(foreignKey("assignment_id", "contributor_assignment_sessions", "assignment_id"),
 						foreignKey("previous_package_id", "contributor_return_packages", "package_id")),
 				List.of(List.of("assignment_id", "return_number")));
-		SqliteContributorReturnLedgerTriggers.verify(connection);
+		SqliteContributorReturnLedgerTriggers.verifyLegacy(connection);
 	}
 
 	private void verifyVersion35ContributionIntakeSchema(Connection connection) throws SQLException {
@@ -2281,17 +2307,34 @@ public final class SqliteDatabase {
 	}
 
 	private void verifyVersion43ContributorReceiptSchema(Connection connection) throws SQLException {
+		boolean detached = readSchemaVersion(connection) >= 50;
 		verifyTableSchema(connection, "contributor_receipt_acknowledgements",
 				List.of(column("receipt_package_id", true, 1), column("return_package_id", true, 0),
 						column("assignment_id", true, 0), column("review_id", true, 0),
 						column("master_installation_id", true, 0), column("archive_sha256", true, 0),
 						column("outcomes_jsonl", true, 0), column("master_records_jsonl", true, 0),
 						column("acknowledged_at", true, 0)),
-				List.of(foreignKey("return_package_id", "contributor_return_packages", "package_id"),
-						foreignKey("assignment_id", "contributor_assignment_sessions", "assignment_id")),
+				detached ? List.of(foreignKey("return_package_id", "contributor_return_packages", "package_id"))
+						: List.of(foreignKey("return_package_id", "contributor_return_packages", "package_id"),
+								foreignKey("assignment_id", "contributor_assignment_sessions", "assignment_id")),
 				List.of(List.of("return_package_id")));
 		SqliteMigrationTriggerVerifier.verify(connection, "trg_contributor_receipt_ack_",
-				"contributor receipt acknowledgement", "/db/migration-v42-to-v43.sql");
+				"contributor receipt acknowledgement",
+				detached ? new String[] { "/db/migration-v42-to-v43.sql", "/db/migration-v49-to-v50.sql" }
+						: new String[] { "/db/migration-v42-to-v43.sql" });
+	}
+
+	private void verifyVersion50ContributorTerminalSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "contribution_publication_attempts",
+				List.of(column("assignment_id", true, 1), column("package_id", true, 0),
+						column("archive_sha256", true, 0), column("contribution_created_at", true, 0),
+						column("destination_path", true, 0), column("staging_path", true, 0), column("state", true, 0),
+						column("selection_was_active", true, 0), column("prepared_at", true, 0),
+						column("updated_at", true, 0)),
+				List.of(foreignKey("assignment_id", "contributor_assignment_sessions", "assignment_id")),
+				List.of(List.of("package_id")));
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_contribution_publication_",
+				"Contribution publication attempt", "/db/migration-v49-to-v50.sql");
 	}
 
 	private void verifyVersion46MasterGraphSchema(Connection connection) throws SQLException {
@@ -2330,8 +2373,13 @@ public final class SqliteDatabase {
 		verifyTableSchema(connection, "contributor_assignment_hidden",
 				List.of(column("assignment_id", true, 1), column("removed_at", true, 0)),
 				List.of(foreignKey("assignment_id", "contributor_assignment_sessions", "assignment_id")), List.of());
-		SqliteMigrationTriggerVerifier.verify(connection, "trg_operating_context_", "operating-context authority",
-				"/db/migration-v47-to-v48.sql");
+		if (readSchemaVersion(connection) >= 50) {
+			SqliteMigrationTriggerVerifier.verify(connection, "trg_operating_context_", "operating-context authority",
+					"/db/migration-v47-to-v48.sql", "/db/migration-v49-to-v50.sql");
+		} else {
+			SqliteMigrationTriggerVerifier.verify(connection, "trg_operating_context_", "operating-context authority",
+					"/db/migration-v47-to-v48.sql");
+		}
 	}
 
 	private void verifyVersion49SubjectSnapshotFreshness(Connection connection) throws SQLException {

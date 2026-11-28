@@ -5,11 +5,10 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -29,6 +28,7 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import au.edu.eq.questionbank.ApplicationVersion;
+import au.edu.eq.questionbank.ManagedAssetPublicationLock;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.repository.identity.SqliteExamAssignmentGraphReader;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
@@ -51,9 +51,11 @@ import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest.ScopeLevel;
  * Coordinator-owned baseline records cannot be modified by the return.
  *
  * <p>
- * Binary dependencies are collected, the complete archive is validated, and the
- * contribution is published atomically before durable return evidence is
- * recorded. Published files are retained if ledger recording fails.
+ * Binary dependencies are collected and the complete archive is validated
+ * before a durable publication attempt is recorded. Final bytes are created
+ * without replacement and forced on the destination filesystem. Interruption
+ * after publication may have started remains fail-closed until the exact
+ * archive is authenticated and detached return evidence is recorded.
  *
  * <p>
  * A successfully recorded contribution makes the assignment locally submitted.
@@ -99,83 +101,105 @@ public final class ContributionExporter {
 	 */
 	public ExamWorkManifest export(UUID assignmentId, Path destination) throws SQLException, IOException {
 		Objects.requireNonNull(assignmentId, "assignmentId");
-		Path target = requireDestination(destination);
-		SqliteContributionReturnLedger ledger = new SqliteContributionReturnLedger(database);
-		var latest = ledger.findLatest(assignmentId);
-		if (latest.isPresent()) {
-			throw new IllegalStateException("This assignment has already been submitted. "
-					+ "Resend the original contribution package if necessary. "
-					+ "Further work requires a new assignment.");
-		}
-		UUID previousPackageId = null;
-		int returnNumber = 1;
-		Path stagingDirectory = Files.createTempDirectory(target.getParent(), ".examwork-contribution-");
-		try {
-			Path snapshotPath = stagingDirectory.resolve("contributor-snapshot.db");
-			database.createConsistentSnapshot(snapshotPath);
-			SqliteDatabase snapshotDatabase = SqliteDatabase.readOnly(snapshotPath);
-			ContributionSnapshotReader.Snapshot snapshot = new ContributionSnapshotReader(snapshotPath)
-					.read(assignmentId);
-			List<ExchangeRecord> changes = snapshot.delta().candidates();
-			if (changes.isEmpty()) {
-				throw new PackageFormatException("No contributor changes to export");
+		try (ManagedAssetPublicationLock lock = ManagedAssetPublicationLock.acquire(layout.dataRoot())) {
+			ContributionPublicationJournal journal = new ContributionPublicationJournal(database, layout);
+			journal.recoverPending(lock);
+			Path target = requireDestination(destination);
+			SqliteContributionReturnLedger ledger = new SqliteContributionReturnLedger(database);
+			if (ledger.findLatest(assignmentId).isPresent()) {
+				throw new IllegalStateException("This assignment has already been submitted. "
+						+ "Resend the original contribution package if necessary. "
+						+ "Further work requires a new assignment.");
 			}
-			var session = snapshot.session();
-			SubjectGraph graph = new SqliteExamAssignmentGraphReader(snapshotPath).read(session.subjectLocalId(),
-					session.examLocalId());
-			SubjectAssetCollector.CollectedAssets assets = new SubjectAssetCollector(snapshotDatabase, layout,
-					stagingDirectory).collectAssignment(graph);
-			Map<String, EntrySource> sources = new LinkedHashMap<>();
-			Map<String, Entry> entries = new LinkedHashMap<>();
-			addStructuredEntry(sources, entries, CHANGES_PATH, EntryRole.RECORDS, encodeRecords(changes));
-			addStructuredEntry(sources, entries, BASELINE_PATH, EntryRole.BASELINE,
-					encodeRecords(snapshot.baselineRecords()));
-			UUID packageId = UUID.randomUUID();
-			UUID installationId = new SqlitePortableIdentityRepository(snapshotDatabase).installationId();
-			Instant createdAt = Instant.now();
-			ExchangeRecord context = contributionContext(session, installationId, packageId, previousPackageId,
-					returnNumber, changes.size(), createdAt);
-			addStructuredEntry(sources, entries, CONTEXT_PATH, EntryRole.RECORDS, encodeRecords(List.of(context)));
-			addStructuredEntry(sources, entries, ExamWorkAssetIndex.INDEX_PATH, EntryRole.INDEX,
-					encodeAssetIndex(assets.index()));
-			addBinaryEntries(sources, entries, assets);
-			String applicationVersion = ApplicationVersion.current();
-			int schemaVersion = snapshotDatabase.schemaVersion();
-			ExamWorkManifest manifest = new ExamWorkManifest(ExamWorkManifest.CURRENT_FORMAT_VERSION, packageId,
-					ExamWorkPackageType.CONTRIBUTION, createdAt, installationId, session.masterInstallationId(),
-					session.subjectPortableId(), graph.subjectName(), session.assignmentId(),
-					session.baselineSnapshotId(), applicationVersion, applicationVersion, schemaVersion, schemaVersion,
-					new Scope(ScopeLevel.EXAMS, List.of(session.examPortableId()), List.of()),
-					new ArrayList<>(entries.values()));
-			Path stagedArchive = stagingDirectory.resolve("package.examwork");
-			try (OutputStream output = Files.newOutputStream(stagedArchive, StandardOpenOption.CREATE_NEW,
-					StandardOpenOption.WRITE)) {
-				new ExamWorkArchiveWriter().write(manifest, sources, output);
-			}
-			ExamWorkManifest verified = new ExamWorkArchiveValidator().validate(stagedArchive, applicationVersion,
-					schemaVersion);
-			if (!manifest.equals(verified)) {
-				throw new PackageFormatException("Validated contribution manifest differs " + "from exported manifest");
-			}
-
-			// The archive is fully written and verified before
-			// it becomes visible at the requested destination.
-			if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
-				throw new IOException("Contribution destination already exists: " + target);
-			}
+			UUID previousPackageId = null;
+			int returnNumber = 1;
+			Path buildDirectory = Files.createTempDirectory("examwork-contribution-build-");
+			ContributionPublicationJournal.Attempt attempt = null;
+			Path destinationStaging = null;
+			boolean publicationMayHaveStarted = false;
 			try {
-				Files.move(stagedArchive, target, StandardCopyOption.ATOMIC_MOVE);
-			} catch (AtomicMoveNotSupportedException failure) {
-				throw new IOException("Atomic contribution publication is unavailable", failure);
+				Path snapshotPath = buildDirectory.resolve("contributor-snapshot.db");
+				database.createConsistentSnapshot(snapshotPath);
+				SqliteDatabase snapshotDatabase = SqliteDatabase.readOnly(snapshotPath);
+				ContributionSnapshotReader.Snapshot snapshot = new ContributionSnapshotReader(snapshotPath)
+						.read(assignmentId);
+				List<ExchangeRecord> changes = snapshot.delta().candidates();
+				if (changes.isEmpty()) {
+					throw new PackageFormatException("No contributor changes to export");
+				}
+				var session = snapshot.session();
+				SubjectGraph graph = new SqliteExamAssignmentGraphReader(snapshotPath).read(session.subjectLocalId(),
+						session.examLocalId());
+				SubjectAssetCollector.CollectedAssets assets = new SubjectAssetCollector(snapshotDatabase, layout,
+						buildDirectory).collectAssignment(graph);
+				Map<String, EntrySource> sources = new LinkedHashMap<>();
+				Map<String, Entry> entries = new LinkedHashMap<>();
+				addStructuredEntry(sources, entries, CHANGES_PATH, EntryRole.RECORDS, encodeRecords(changes));
+				addStructuredEntry(sources, entries, BASELINE_PATH, EntryRole.BASELINE,
+						encodeRecords(snapshot.baselineRecords()));
+				UUID packageId = UUID.randomUUID();
+				UUID installationId = new SqlitePortableIdentityRepository(snapshotDatabase).installationId();
+				Instant createdAt = Instant.now();
+				ExchangeRecord context = contributionContext(session, installationId, packageId, previousPackageId,
+						returnNumber, changes.size(), createdAt);
+				addStructuredEntry(sources, entries, CONTEXT_PATH, EntryRole.RECORDS, encodeRecords(List.of(context)));
+				addStructuredEntry(sources, entries, ExamWorkAssetIndex.INDEX_PATH, EntryRole.INDEX,
+						encodeAssetIndex(assets.index()));
+				addBinaryEntries(sources, entries, assets);
+				String applicationVersion = ApplicationVersion.current();
+				int schemaVersion = snapshotDatabase.schemaVersion();
+				ExamWorkManifest manifest = new ExamWorkManifest(ExamWorkManifest.CURRENT_FORMAT_VERSION, packageId,
+						ExamWorkPackageType.CONTRIBUTION, createdAt, installationId, session.masterInstallationId(),
+						session.subjectPortableId(), graph.subjectName(), session.assignmentId(),
+						session.baselineSnapshotId(), applicationVersion, applicationVersion, schemaVersion,
+						schemaVersion, new Scope(ScopeLevel.EXAMS, List.of(session.examPortableId()), List.of()),
+						new ArrayList<>(entries.values()));
+				Path builtArchive = buildDirectory.resolve("package.examwork");
+				try (OutputStream output = Files.newOutputStream(builtArchive, StandardOpenOption.CREATE_NEW,
+						StandardOpenOption.WRITE)) {
+					new ExamWorkArchiveWriter().write(manifest, sources, output);
+				}
+				ExamWorkManifest verified = new ExamWorkArchiveValidator().validate(builtArchive, applicationVersion,
+						schemaVersion);
+				if (!manifest.equals(verified)) {
+					throw new PackageFormatException("Validated contribution manifest differs from exported manifest");
+				}
+				String digest = sha256(builtArchive);
+				destinationStaging = target.resolveSibling(".examwork-contribution-" + packageId + ".tmp");
+				Files.copy(builtArchive, destinationStaging);
+				forceFile(destinationStaging);
+				if (!digest.equals(sha256(destinationStaging))) {
+					throw new IOException("Contribution destination staging verification failed");
+				}
+				attempt = journal.prepare(verified, digest, target, destinationStaging, lock);
+				attempt = journal.markPublishing(attempt, lock);
+				publicationMayHaveStarted = true;
+				publishCreateNew(destinationStaging, target);
+				if (!digest.equals(sha256(target))) {
+					throw new IOException("Published Contribution archive verification failed");
+				}
+				Files.delete(destinationStaging);
+				attempt = journal.markPublished(attempt, lock);
+				journal.finalisePublished(attempt, verified, lock);
+				return verified;
+			} catch (IOException | SQLException | RuntimeException failure) {
+				if (attempt != null && !publicationMayHaveStarted) {
+					try {
+						journal.cancelPrepared(attempt, lock);
+					} catch (IOException | SQLException cleanupFailure) {
+						failure.addSuppressed(cleanupFailure);
+					}
+				} else if (attempt == null && destinationStaging != null) {
+					try {
+						Files.deleteIfExists(destinationStaging);
+					} catch (IOException cleanupFailure) {
+						failure.addSuppressed(cleanupFailure);
+					}
+				}
+				throw failure;
+			} finally {
+				deleteTemporaryTree(buildDirectory);
 			}
-
-			// Record only a genuinely published archive.
-			// On ledger failure, retain the archive as recovery
-			// evidence; never discard potentially returned work.
-			ledger.recordPublished(verified, previousPackageId, sha256(target));
-			return verified;
-		} finally {
-			deleteTemporaryTree(stagingDirectory);
 		}
 	}
 
@@ -205,32 +229,35 @@ public final class ContributionExporter {
 	 */
 	public void preflight(UUID assignmentId) throws SQLException, IOException {
 		Objects.requireNonNull(assignmentId, "assignmentId");
-		Path stagingDirectory = Files.createTempDirectory("examwork-contribution-preflight-");
-		try {
-			Path snapshotPath = stagingDirectory.resolve("contributor-snapshot.db");
-			database.createConsistentSnapshot(snapshotPath);
-			SqliteDatabase snapshotDatabase = SqliteDatabase.readOnly(snapshotPath);
-			var visibility = new SqliteContributorAssignmentVisibilityRepository(snapshotDatabase);
-			var state = visibility.find(assignmentId)
-					.orElseThrow(() -> new IllegalArgumentException("Unknown contributor assignment: " + assignmentId));
-			if (state == SqliteContributorAssignmentVisibilityRepository.State.SUBMITTED) {
-				throw new IllegalStateException(
-						"This assignment has already been submitted. " + "Resend the original contribution package "
-								+ "if necessary. Further work requires a new assignment.");
-			}
-			if (state != SqliteContributorAssignmentVisibilityRepository.State.ACTIVE) {
-				throw new IllegalStateException("This assignment is no longer available " + "for contribution export.");
-			}
-			var snapshot = new ContributionSnapshotReader(snapshotPath).read(assignmentId);
+		try (ManagedAssetPublicationLock lock = ManagedAssetPublicationLock.acquire(layout.dataRoot())) {
+			new ContributionPublicationJournal(database, layout).recoverPending(lock);
+			Path stagingDirectory = Files.createTempDirectory("examwork-contribution-preflight-");
+			try {
+				Path snapshotPath = stagingDirectory.resolve("contributor-snapshot.db");
+				database.createConsistentSnapshot(snapshotPath);
+				SqliteDatabase snapshotDatabase = SqliteDatabase.readOnly(snapshotPath);
+				var visibility = new SqliteContributorAssignmentVisibilityRepository(snapshotDatabase);
+				var state = visibility.find(assignmentId).orElseThrow(
+						() -> new IllegalArgumentException("Unknown contributor assignment: " + assignmentId));
+				if (state == SqliteContributorAssignmentVisibilityRepository.State.SUBMITTED) {
+					throw new IllegalStateException("This assignment has already been submitted. "
+							+ "Resend the original contribution package if necessary. "
+							+ "Further work requires a new assignment.");
+				}
+				if (state != SqliteContributorAssignmentVisibilityRepository.State.ACTIVE) {
+					throw new IllegalStateException("This assignment is no longer available for contribution export.");
+				}
+				var snapshot = new ContributionSnapshotReader(snapshotPath).read(assignmentId);
 
-			// An unchanged assignment must be rejected without
-			// requiring a destination or producing any return evidence.
-			if (snapshot.delta().candidates().isEmpty()) {
-				throw new PackageFormatException("No contributor changes to export. "
-						+ "Capture and save new work before " + "exporting a contribution.");
+				// An unchanged assignment must be rejected without
+				// requiring a destination or producing any return evidence.
+				if (snapshot.delta().candidates().isEmpty()) {
+					throw new PackageFormatException("No contributor changes to export. "
+							+ "Capture and save new work before exporting a contribution.");
+				}
+			} finally {
+				deleteTemporaryTree(stagingDirectory);
 			}
-		} finally {
-			deleteTemporaryTree(stagingDirectory);
 		}
 	}
 
@@ -299,11 +326,33 @@ public final class ContributionExporter {
 		return output.toByteArray();
 	}
 
+	private void forceFile(Path file) throws IOException {
+		try (FileChannel channel = FileChannel.open(file, StandardOpenOption.WRITE)) {
+			channel.force(true);
+		}
+	}
+
 	private MessageDigest newDigest() {
 		try {
 			return MessageDigest.getInstance("SHA-256");
 		} catch (NoSuchAlgorithmException failure) {
 			throw new IllegalStateException("SHA-256 is unavailable", failure);
+		}
+	}
+
+	private void publishCreateNew(Path staging, Path target) throws IOException {
+		try (FileChannel input = FileChannel.open(staging, StandardOpenOption.READ);
+				FileChannel output = FileChannel.open(target, StandardOpenOption.CREATE_NEW,
+						StandardOpenOption.WRITE)) {
+			long position = 0;
+			while (position < input.size()) {
+				long transferred = input.transferTo(position, input.size() - position, output);
+				if (transferred <= 0) {
+					throw new IOException("Contribution publication made no progress");
+				}
+				position += transferred;
+			}
+			output.force(true);
 		}
 	}
 

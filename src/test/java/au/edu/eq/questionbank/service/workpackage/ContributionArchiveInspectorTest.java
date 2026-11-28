@@ -41,6 +41,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ApplicationVersion;
+import au.edu.eq.questionbank.ManagedAssetPublicationLock;
 import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.TestPdf;
 import au.edu.eq.questionbank.model.Answer;
@@ -3689,6 +3690,155 @@ class ContributionArchiveInspectorTest {
 	}
 
 	@Test
+	void confirmedPrePublicationAttemptIsCancelledAndAssignmentReopens() throws Exception {
+		Fixture fixture = fixture();
+		PendingPublication pending = pendingPublication(fixture, ContributionPublicationJournal.State.PREPARED,
+				"prepared-recovery.examwork");
+		try (ManagedAssetPublicationLock lock = ManagedAssetPublicationLock.acquire(fixture.contributorRoot())) {
+			pending.journal().recoverPending(lock);
+		}
+		assertTrue(pending.journal().find(fixture.assignmentId()).isEmpty());
+		assertFalse(Files.exists(pending.staging()));
+		assertFalse(Files.exists(pending.destination()));
+		assertEquals(SqliteContributorAssignmentVisibilityRepository.State.ACTIVE,
+				new SqliteContributorAssignmentVisibilityRepository(fixture.contributor()).find(fixture.assignmentId())
+						.orElseThrow());
+		assertTrue(new SqliteContributorAssignmentSessionRepository(fixture.contributor()).active().isPresent());
+		fixture.contributor().verifySchema();
+		fixture.contributor().verifyIntegrity();
+	}
+
+	@Test
+	void exactArchiveRecoversUncertainPublicationAndPreventsDuplicateReturn() throws Exception {
+		Fixture fixture = fixture();
+		PendingPublication pending = pendingPublication(fixture, ContributionPublicationJournal.State.PUBLISHING,
+				"exact-recovery.examwork");
+		Files.copy(pending.staging(), pending.destination());
+		try (ManagedAssetPublicationLock lock = ManagedAssetPublicationLock.acquire(fixture.contributorRoot())) {
+			pending.journal().recoverPending(lock);
+		}
+		assertTrue(pending.journal().find(fixture.assignmentId()).isEmpty());
+		assertFalse(Files.exists(pending.staging()));
+		assertTrue(Files.exists(pending.destination()));
+		assertEquals(pending.manifest().packageId(), new SqliteContributionReturnLedger(fixture.contributor())
+				.findLatest(fixture.assignmentId()).orElseThrow().packageId());
+		assertThrows(IllegalStateException.class,
+				() -> new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
+						.export(fixture.assignmentId(), directory.resolve("duplicate-after-recovery.examwork")));
+		fixture.contributor().verifySchema();
+		fixture.contributor().verifyIntegrity();
+	}
+
+	@Test
+	void publishedJournalStateCompletesDetachedTerminalEvidence() throws Exception {
+		Fixture fixture = fixture();
+		PendingPublication pending = pendingPublication(fixture, ContributionPublicationJournal.State.PUBLISHED,
+				"published-state-recovery.examwork");
+		Files.copy(pending.staging(), pending.destination());
+		try (ManagedAssetPublicationLock lock = ManagedAssetPublicationLock.acquire(fixture.contributorRoot())) {
+			pending.journal().recoverPending(lock);
+		}
+		assertTrue(pending.journal().find(fixture.assignmentId()).isEmpty());
+		assertFalse(Files.exists(pending.staging()));
+		assertEquals(pending.manifest().packageId(), new SqliteContributionReturnLedger(fixture.contributor())
+				.findLatest(fixture.assignmentId()).orElseThrow().packageId());
+		assertEquals(SqliteContributorAssignmentVisibilityRepository.State.SUBMITTED,
+				new SqliteContributorAssignmentVisibilityRepository(fixture.contributor()).find(fixture.assignmentId())
+						.orElseThrow());
+		fixture.contributor().verifySchema();
+		fixture.contributor().verifyIntegrity();
+	}
+
+	@Test
+	void missingOrRelocatedUncertainArchiveRemainsFailClosed() throws Exception {
+		Fixture fixture = fixture();
+		PendingPublication pending = pendingPublication(fixture, ContributionPublicationJournal.State.PUBLISHING,
+				"relocated-recovery.examwork");
+		Path relocated = directory.resolve("user-relocated-contribution.examwork");
+		Files.copy(pending.staging(), pending.destination());
+		Files.move(pending.destination(), relocated);
+		try (ManagedAssetPublicationLock lock = ManagedAssetPublicationLock.acquire(fixture.contributorRoot())) {
+			ApplicationConfig config = ApplicationConfig.fromDataRoot(fixture.contributorRoot());
+			IOException failure = assertThrows(IOException.class,
+					() -> ManagedAssetPublicationRecovery.recoverPending(config, lock));
+			assertTrue(failure.getMessage().contains("remains unresolved"), failure.getMessage());
+		}
+		assertTrue(pending.journal().find(fixture.assignmentId()).isPresent());
+		assertTrue(Files.exists(relocated));
+		assertTrue(Files.exists(pending.staging()));
+		assertEquals(SqliteContributorAssignmentVisibilityRepository.State.SUBMITTED,
+				new SqliteContributorAssignmentVisibilityRepository(fixture.contributor()).find(fixture.assignmentId())
+						.orElseThrow());
+		assertTrue(new SqliteContributorAssignmentSessionRepository(fixture.contributor()).active().isEmpty());
+		assertTrue(
+				new SqliteContributionReturnLedger(fixture.contributor()).findLatest(fixture.assignmentId()).isEmpty());
+		assertEquals("Uncertain publication work", questionTextForCode(fixture.contributor(), "2"));
+	}
+
+	@Test
+	void transferredDatabaseDoesNotTrustOriginalAbsolutePublicationDestination() throws Exception {
+		Fixture fixture = fixture();
+		PendingPublication pending = pendingPublication(fixture, ContributionPublicationJournal.State.PUBLISHING,
+				"transferred-recovery.examwork");
+		Path transferredRoot = directory.resolve("transferred-contributor");
+		Files.createDirectories(transferredRoot);
+		Path transferredDatabasePath = transferredRoot.resolve("question-bank.db");
+		fixture.contributor().createConsistentSnapshot(transferredDatabasePath);
+		SqliteDatabase transferred = new SqliteDatabase(transferredDatabasePath);
+		ContributionPublicationJournal transferredJournal = new ContributionPublicationJournal(transferred,
+				new ManagedDataLayout(transferredRoot));
+		try (ManagedAssetPublicationLock lock = ManagedAssetPublicationLock.acquire(transferredRoot)) {
+			IOException failure = assertThrows(IOException.class, () -> transferredJournal.recoverPending(lock));
+			assertTrue(failure.getMessage().contains("remains unresolved"), failure.getMessage());
+		}
+		assertTrue(transferredJournal.find(fixture.assignmentId()).isPresent());
+		assertEquals(SqliteContributorAssignmentVisibilityRepository.State.SUBMITTED,
+				new SqliteContributorAssignmentVisibilityRepository(transferred).find(fixture.assignmentId())
+						.orElseThrow());
+		assertTrue(new SqliteContributionReturnLedger(transferred).findLatest(fixture.assignmentId()).isEmpty());
+		assertEquals("Uncertain publication work", questionTextForCode(transferred, "2"));
+		assertTrue(Files.exists(pending.staging()));
+		transferred.verifySchema();
+		transferred.verifyIntegrity();
+	}
+
+	@Test
+	void modifiedDestinationRemainsFailClosedAndIsNeverOverwrittenOrDeleted() throws Exception {
+		Fixture fixture = fixture();
+		PendingPublication pending = pendingPublication(fixture, ContributionPublicationJournal.State.PUBLISHING,
+				"modified-recovery.examwork");
+		byte[] unrelated = "unrelated existing archive".getBytes(StandardCharsets.UTF_8);
+		Files.write(pending.destination(), unrelated);
+		try (ManagedAssetPublicationLock lock = ManagedAssetPublicationLock.acquire(fixture.contributorRoot())) {
+			IOException failure = assertThrows(IOException.class, () -> pending.journal().recoverPending(lock));
+			assertTrue(failure.getMessage().contains("remains unresolved"), failure.getMessage());
+		}
+		assertArrayEquals(unrelated, Files.readAllBytes(pending.destination()));
+		assertTrue(pending.journal().find(fixture.assignmentId()).isPresent());
+		assertTrue(Files.exists(pending.staging()));
+		assertTrue(
+				new SqliteContributionReturnLedger(fixture.contributor()).findLatest(fixture.assignmentId()).isEmpty());
+		assertEquals("Uncertain publication work", questionTextForCode(fixture.contributor(), "2"));
+	}
+
+	@Test
+	void unrelatedExistingDestinationIsNeverOverwritten() throws Exception {
+		Fixture fixture = fixture();
+		Path destination = directory.resolve("existing-destination.examwork");
+		byte[] unrelated = "existing unrelated archive".getBytes(StandardCharsets.UTF_8);
+		Files.write(destination, unrelated);
+		IOException failure = assertThrows(IOException.class,
+				() -> publish(fixture, "Unsent changed work", destination.getFileName().toString()));
+		assertTrue(failure.getMessage().contains("already exists"), failure.getMessage());
+		assertArrayEquals(unrelated, Files.readAllBytes(destination));
+		assertTrue(
+				new SqliteContributionReturnLedger(fixture.contributor()).findLatest(fixture.assignmentId()).isEmpty());
+		assertTrue(new ContributionPublicationJournal(fixture.contributor(),
+				new ManagedDataLayout(fixture.contributorRoot())).find(fixture.assignmentId()).isEmpty());
+		assertEquals("Unsent changed work", questionTextForCode(fixture.contributor(), "2"));
+	}
+
+	@Test
 	void submittedContributionCannotBeExportedAgain() throws Exception {
 		Fixture fixture = fixture();
 		Path original = publish(fixture, "First submitted revision", "original-final-return.examwork");
@@ -4432,6 +4582,59 @@ class ContributionArchiveInspectorTest {
 		return target;
 	}
 
+	private PendingPublication pendingPublication(Fixture fixture, ContributionPublicationJournal.State state,
+			String filename) throws Exception {
+		Path destination = publish(fixture, "Uncertain publication work", filename);
+		ExamWorkManifest manifest = new ExamWorkArchiveValidator().validate(destination, ApplicationVersion.current(),
+				SqliteDatabase.latestSchemaVersion());
+		String archiveSha256 = HexFormat.of().formatHex(digest(Files.readAllBytes(destination)));
+		Path staging = destination.resolveSibling(".examwork-contribution-" + manifest.packageId() + ".tmp");
+		Files.move(destination, staging);
+		try (Connection connection = fixture.contributor().openConnection();
+				Statement statement = connection.createStatement()) {
+			connection.setAutoCommit(false);
+			try {
+				statement.execute("DROP TRIGGER trg_contributor_returns_no_delete");
+				assertEquals(1, statement.executeUpdate("""
+						DELETE FROM contributor_return_packages
+						WHERE assignment_id = '%s'
+						""".formatted(fixture.assignmentId())));
+				statement.execute("""
+						CREATE TRIGGER trg_contributor_returns_no_delete
+						BEFORE DELETE ON contributor_return_packages
+						BEGIN
+						    SELECT RAISE(
+						        ABORT,
+						        'Contributor return evidence cannot be deleted'
+						    );
+						END
+						""");
+				assertEquals(1, statement.executeUpdate("""
+						UPDATE contributor_assignment_selection
+						SET assignment_id = '%s',
+						    updated_at = '2026-11-26T00:00:00Z'
+						WHERE singleton_id = 1
+						""".formatted(fixture.assignmentId())));
+				connection.commit();
+			} catch (SQLException | RuntimeException failure) {
+				connection.rollback();
+				throw failure;
+			}
+		}
+		ManagedDataLayout layout = new ManagedDataLayout(fixture.contributorRoot());
+		ContributionPublicationJournal journal = new ContributionPublicationJournal(fixture.contributor(), layout);
+		ContributionPublicationJournal.Attempt attempt;
+		try (ManagedAssetPublicationLock lock = ManagedAssetPublicationLock.acquire(fixture.contributorRoot())) {
+			attempt = journal.prepare(manifest, archiveSha256, destination, staging, lock);
+			if (state == ContributionPublicationJournal.State.PUBLISHING) {
+				attempt = journal.markPublishing(attempt, lock);
+			} else if (state == ContributionPublicationJournal.State.PUBLISHED) {
+				attempt = journal.markPublished(journal.markPublishing(attempt, lock), lock);
+			}
+		}
+		return new PendingPublication(journal, attempt, manifest, destination, staging);
+	}
+
 	private Path publishNewContributorContext(Fixture fixture, String filename) throws Exception {
 		byte[] png = Base64.getDecoder().decode(
 				"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC" + "AAAAC0lEQVR42mP8/x8AAwMCAO3Ry8UAAAAASUVORK5CYII=");
@@ -4697,5 +4900,9 @@ class ContributionArchiveInspectorTest {
 	}
 
 	private record Fixture(SqliteDatabase master, SqliteDatabase contributor, Path contributorRoot, UUID assignmentId) {
+	}
+
+	private record PendingPublication(ContributionPublicationJournal journal,
+			ContributionPublicationJournal.Attempt attempt, ExamWorkManifest manifest, Path destination, Path staging) {
 	}
 }

@@ -164,26 +164,34 @@ class SqliteOperatingContextRepositoriesTest {
 		try (Connection connection = database.openConnection();
 				PreparedStatement statement = connection.prepareStatement("""
 						INSERT INTO contributor_return_packages (
-						    package_id,
-						    assignment_id,
-						    return_number,
-						    baseline_snapshot_id,
-						    master_installation_id,
-						    contributor_id,
-						    origin_installation_id,
-						    archive_sha256,
-						    recorded_at
+						    package_id, assignment_id, return_number, previous_package_id,
+						    baseline_snapshot_id, master_installation_id, contributor_id,
+						    origin_installation_id, archive_sha256, recorded_at,
+						    assignment_package_id, assignment_archive_sha256,
+						    subject_portable_id, exam_portable_id, issued_at, installed_at,
+						    contribution_created_at
 						)
-						VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)
+						SELECT ?, session.assignment_id, 1, NULL,
+						       session.baseline_snapshot_id,
+						       session.master_installation_id,
+						       session.contributor_id,
+						       ?, ?, ?,
+						       session.package_id,
+						       session.archive_sha256,
+						       session.subject_portable_id,
+						       session.exam_portable_id,
+						       session.issued_at,
+						       session.installed_at,
+						       ?
+						FROM contributor_assignment_sessions session
+						WHERE session.assignment_id = ?
 						""")) {
 			statement.setString(1, UUID.randomUUID().toString());
-			statement.setString(2, evidence.assignmentId().toString());
-			statement.setString(3, evidence.baselineId().toString());
-			statement.setString(4, evidence.masterId().toString());
-			statement.setString(5, evidence.contributorId().toString());
-			statement.setString(6, UUID.randomUUID().toString());
-			statement.setString(7, "d".repeat(64));
-			statement.setString(8, Instant.now().toString());
+			statement.setString(2, UUID.randomUUID().toString());
+			statement.setString(3, "d".repeat(64));
+			statement.setString(4, Instant.now().toString());
+			statement.setString(5, Instant.now().toString());
+			statement.setString(6, evidence.assignmentId().toString());
 			assertEquals(1, statement.executeUpdate());
 		}
 	}
