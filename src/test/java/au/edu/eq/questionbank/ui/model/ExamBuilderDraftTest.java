@@ -3,6 +3,7 @@ package au.edu.eq.questionbank.ui.model;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -20,6 +21,7 @@ import org.junit.jupiter.api.io.TempDir;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import au.edu.eq.questionbank.model.Answer;
 import au.edu.eq.questionbank.model.AnswerFile;
@@ -46,6 +48,36 @@ class ExamBuilderDraftTest {
 	private final Subject chemistry = new Subject(1, "Chemistry");
 	@TempDir
 	Path tempDirectory;
+
+	@Test
+	void draftFilePreservesExaminationUuidAndSupportsLegacyFiles() throws Exception {
+		ExamBuilderDraft draft = new ExamBuilderDraft(chemistry);
+		ExamBooklet booklet = createBooklet(chemistry, 1);
+		Question question = createQuestion(10, booklet, "7", 1, QuestionResponseType.MULTIPLE_CHOICE, null, true);
+		assertTrue(draft.add(ExamBuilderDraft.Section.MULTIPLE_CHOICE, question));
+		UUID subjectUuid = UUID.randomUUID();
+		UUID questionUuid = UUID.randomUUID();
+		ExamBuilderDraftFile service = new ExamBuilderDraftFile(_ -> subjectUuid, _ -> questionUuid,
+				_ -> Optional.of(question));
+		PrintableExamSettings settings = new PrintableExamSettings("Chemistry", 2026, 5, 60, 5, 75);
+		Path file = tempDirectory.resolve("identity.exam.json");
+		service.save(file, draft, settings);
+		var loaded = service.load(file, chemistry);
+		assertEquals(draft.getExaminationId(), loaded.draft().getExaminationId());
+		assertFalse(loaded.draft().isFinalised());
+		ObjectMapper mapper = new ObjectMapper();
+		ObjectNode legacy = (ObjectNode) mapper.readTree(file.toFile());
+		legacy.put("version", 1);
+		legacy.remove("examinationId");
+		legacy.remove("finalised");
+		mapper.writeValue(file.toFile(), legacy);
+		var oldFile = service.load(file, chemistry);
+		assertNotEquals(draft.getExaminationId(), oldFile.draft().getExaminationId());
+		assertFalse(oldFile.draft().isFinalised());
+		assertEquals(List.of(question), oldFile.draft().getQuestions(ExamBuilderDraft.Section.MULTIPLE_CHOICE));
+		service.save(file, oldFile.draft(), settings);
+		assertEquals(oldFile.draft().getExaminationId(), service.load(file, chemistry).draft().getExaminationId());
+	}
 
 	@Test
 	void draftFileRejectsWrongSubjectAndMissingOrIncompleteQuestions() throws Exception {
@@ -526,6 +558,20 @@ class ExamBuilderDraftTest {
 		assertEquals(List.of(first), draft.getQuestions(section));
 		assertEquals(3, draft.getTotalMarks(section));
 		assertEquals(List.of(second), draft.eligibleWholeQuestion(section, second, corpus));
+	}
+
+	@Test
+	void stagedSelectionsPreservePersistentExaminationIdentity() {
+		ExamBuilderDraft draft = new ExamBuilderDraft(chemistry);
+		UUID originalIdentity = draft.getExaminationId();
+		ExamBooklet booklet = createBooklet(chemistry, 1);
+		Question question = createQuestion(10, booklet, "7", 1, QuestionResponseType.MULTIPLE_CHOICE, null, true);
+		assertTrue(draft.addSelections(ExamBuilderDraft.Section.MULTIPLE_CHOICE, List.of(question), List.of(question)));
+		assertEquals(originalIdentity, draft.getExaminationId());
+		assertFalse(draft.isFinalised());
+		draft.clear();
+		assertEquals(originalIdentity, draft.getExaminationId());
+		assertTrue(draft.isEmpty());
 	}
 
 	@Test

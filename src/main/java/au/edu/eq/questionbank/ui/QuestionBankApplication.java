@@ -227,6 +227,7 @@ import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModelFactory;
 import au.edu.eq.questionbank.ui.model.ExamBuilderDraft;
 import au.edu.eq.questionbank.ui.model.ExamBuilderDraftFile;
+import au.edu.eq.questionbank.ui.model.SqliteMockExamStore;
 import au.edu.eq.questionbank.ui.pdf.PdfFilePicker;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import au.edu.eq.questionbank.ui.pdf.SelectedPdf;
@@ -6114,14 +6115,14 @@ public class QuestionBankApplication extends Application {
 		Subject subject = workingSubject;
 		if (subject == null) {
 			showAlert(Alert.AlertType.WARNING, "Exam Builder", "No Working Subject is selected.",
-					"Select a Working Subject before " + "building an examination.");
+					"Select a Working Subject before building an examination.");
 			return;
 		}
 		if (activeAssignmentContext != null || packageImportInProgress || contributionExportRunning
 				|| applicationBusyOverlay.isBusy()) {
 			showAlert(Alert.AlertType.WARNING, "Exam Builder", "Exam Builder is currently unavailable.",
-					"Return to the ordinary Question Bank " + "workspace and complete any active "
-							+ "collection or import operation.");
+					"Return to the ordinary Question Bank workspace "
+							+ "and complete any active collection or import operation.");
 			return;
 		}
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
@@ -6134,6 +6135,7 @@ public class QuestionBankApplication extends Application {
 		SqliteQuestionOutputApplicabilityRepository outputApplicabilityRepository = new SqliteQuestionOutputApplicabilityRepository(
 				database);
 		ExamBuilderDraft draft = new ExamBuilderDraft(subject);
+		SqliteMockExamStore mockExamStore = new SqliteMockExamStore(database);
 		ExamBuilderDialog dialog = new ExamBuilderDialog(primaryStage, draft, (owner, section) -> {
 			ExamQuestionSelectionDialog selection = new ExamQuestionSelectionDialog(owner, draft, section,
 					curriculumRepository, retrievalService, questionRepository::findAll, previewService,
@@ -6144,7 +6146,7 @@ public class QuestionBankApplication extends Application {
 		dialog.configureGeneration((settings, plan, destination) -> assessmentWriter.generate(settings, plan,
 				PrintableExamFonts.windowsFontDirectory(), destination), config.dataRoot());
 		SqlitePortableIdentityRepository identities = new SqlitePortableIdentityRepository(database);
-		dialog.configureDraftFiles(new ExamBuilderDraftFile(identities, questionRepository));
+		dialog.configureDraftFiles(new ExamBuilderDraftFile(identities, questionRepository, mockExamStore));
 		dialog.showAndWait();
 	}
 

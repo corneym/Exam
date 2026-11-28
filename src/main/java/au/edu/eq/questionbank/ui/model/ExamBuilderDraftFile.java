@@ -39,27 +39,42 @@ import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityReposito
  */
 public final class ExamBuilderDraftFile {
 
-	private static final int FORMAT_VERSION = 1;
+	private static final int FORMAT_VERSION = 2;
 	private final ObjectMapper mapper = new ObjectMapper();
 	private final LongFunction<UUID> questionIdentity;
 	private final Function<UUID, Optional<Question>> questionLookup;
 	private final LongFunction<UUID> subjectIdentity;
 	private final Supplier<List<Question>> corpusSupplier;
+	private final SqliteMockExamStore mockExamStore;
 
 	/**
-	 * Creates a draft-file service backed by the existing portable identity and
-	 * Question repositories.
+	 * Creates a portable file service supporting editable examination drafts.
 	 *
 	 * @param identities portable identity repository
 	 * @param questions  Question repository
 	 * @throws NullPointerException if either repository is null
 	 */
 	public ExamBuilderDraftFile(SqlitePortableIdentityRepository identities, SqliteQuestionRepository questions) {
+		this(identities, questions, null);
+	}
+
+	/**
+	 * Creates a portable file service with authoritative lifecycle resolution.
+	 *
+	 * @param identities    portable identity repository
+	 * @param questions     Question repository
+	 * @param mockExamStore managed examination store, or null for draft-only
+	 *                      operation
+	 * @throws NullPointerException if identities or questions is null
+	 */
+	public ExamBuilderDraftFile(SqlitePortableIdentityRepository identities, SqliteQuestionRepository questions,
+			SqliteMockExamStore mockExamStore) {
 		Objects.requireNonNull(identities, "identities");
 		Objects.requireNonNull(questions, "questions");
 		this.subjectIdentity = id -> requireIdentity(identities, EntityType.SUBJECT, id);
 		this.questionIdentity = id -> requireIdentity(identities, EntityType.QUESTION, id);
 		this.corpusSupplier = questions::findAll;
+		this.mockExamStore = mockExamStore;
 		this.questionLookup = portableId -> {
 			try {
 				return identities.findByPortableId(EntityType.QUESTION, portableId)
@@ -81,6 +96,7 @@ public final class ExamBuilderDraftFile {
 		this.questionIdentity = Objects.requireNonNull(questionIdentity, "questionIdentity");
 		this.questionLookup = Objects.requireNonNull(questionLookup, "questionLookup");
 		this.corpusSupplier = corpusSupplier;
+		this.mockExamStore = null;
 	}
 
 	private static int readInteger(JsonNode object, String field) throws IOException {
@@ -111,18 +127,17 @@ public final class ExamBuilderDraftFile {
 	}
 
 	/**
-	 * Loads a draft against the current authoritative Subject.
+	 * Loads an examination file against the current Working Subject.
 	 *
 	 * <p>
-	 * All references and complete multipart groups are resolved and validated
-	 * before the loaded draft is returned. Incomplete or incorrectly ordered
-	 * multipart selections are rejected without changing the existing examination.
+	 * Version-one files receive a new examination UUID. Version-two files preserve
+	 * their identity. An authoritative finalised definition supersedes any stale
+	 * editable file with the same UUID.
 	 *
-	 * @param file           examination draft file
+	 * @param file           examination file
 	 * @param workingSubject authoritative Working Subject
-	 * @return loaded examination metadata and selections
-	 * @throws IOException          if the file is invalid, references cannot be
-	 *                              resolved or selections are no longer eligible
+	 * @return validated examination metadata and selections
+	 * @throws IOException          if the file, references or lifecycle are invalid
 	 * @throws NullPointerException if workingSubject is null
 	 */
 	public LoadedDraft load(Path file, Subject workingSubject) throws IOException {
@@ -135,13 +150,37 @@ public final class ExamBuilderDraftFile {
 			if (root == null || !root.isObject()) {
 				throw new IOException("Not a valid examination draft.");
 			}
-			if (readInteger(root, "version") != FORMAT_VERSION) {
+			int version = readInteger(root, "version");
+			if (version != 1 && version != FORMAT_VERSION) {
 				throw new IOException("Unsupported examination draft version.");
 			}
 			UUID savedSubject = readUuid(root.path("subjectId"), "Subject identity");
 			UUID currentSubject = subjectIdentity.apply(workingSubject.getId());
 			if (!savedSubject.equals(currentSubject)) {
 				throw new IOException("This examination belongs to another Subject.");
+			}
+			UUID examinationId = version == 1 ? UUID.randomUUID()
+					: readUuid(root.path("examinationId"), "Examination identity");
+			if (version >= 2) {
+				JsonNode lifecycle = root.path("finalised");
+				if (!lifecycle.isBoolean()) {
+					throw new IOException("Invalid examination lifecycle status.");
+				}
+				if (mockExamStore != null) {
+					Optional<SqliteMockExamStore.StoredExam> committed = mockExamStore.findFinalised(examinationId,
+							workingSubject);
+					if (committed.isPresent()) {
+
+						// The managed database, not the external file,
+						// determines the committed examination definition.
+						SqliteMockExamStore.StoredExam stored = committed.orElseThrow();
+						return new LoadedDraft(stored.draft(), stored.settings());
+					}
+				}
+				if (lifecycle.booleanValue()) {
+					throw new IOException(
+							"The authoritative finalised examination " + "is not available in this database.");
+				}
 			}
 			JsonNode metadata = root.path("settings");
 			PrintableExamSettings settings = new PrintableExamSettings(workingSubject.getName(),
@@ -152,30 +191,32 @@ public final class ExamBuilderDraftFile {
 			if (!sections.isObject()) {
 				throw new IOException("Examination sections are missing.");
 			}
-			ExamBuilderDraft loaded = new ExamBuilderDraft(workingSubject);
+			ExamBuilderDraft loaded = new ExamBuilderDraft(workingSubject, examinationId);
 			List<Question> corpus = corpusSupplier == null ? null : List.copyOf(corpusSupplier.get());
 			for (ExamBuilderDraft.Section section : ExamBuilderDraft.Section.values()) {
 				loadSection(loaded, section, sections.path(section.name()), corpus);
 			}
 			return new LoadedDraft(loaded, settings);
-		} catch (IllegalArgumentException | IllegalStateException failure) {
+		} catch (SQLException | IllegalArgumentException | IllegalStateException failure) {
 			throw new IOException("Cannot reopen examination draft: " + failure.getMessage(), failure);
 		}
 	}
 
 	/**
-	 * Saves the current examination draft.
+	 * Saves an examination to a portable JSON file.
 	 *
 	 * <p>
-	 * Existing destination files are replaced only after the new draft has been
-	 * successfully encoded and written to a temporary file in the same directory.
+	 * Preserves the examination UUID and lifecycle status. File publication does
+	 * not independently create or release managed reservations. Existing files are
+	 * replaced only after successful encoding.
 	 *
-	 * @param file     destination draft file
+	 * @param file     destination examination file
 	 * @param draft    ordered examination selections
 	 * @param settings examination metadata
-	 * @throws IOException              if the draft cannot be encoded or saved
-	 * @throws IllegalArgumentException if the settings Subject differs from the
-	 *                                  draft
+	 * @throws IOException              if the examination cannot be encoded or
+	 *                                  saved
+	 * @throws IllegalArgumentException if the settings Subject differs
+	 * @throws NullPointerException     if draft or settings is null
 	 */
 	public void save(Path file, ExamBuilderDraft draft, PrintableExamSettings settings) throws IOException {
 		Objects.requireNonNull(draft, "draft");
@@ -187,7 +228,9 @@ public final class ExamBuilderDraftFile {
 		try {
 			UUID portableSubject = subjectIdentity.apply(draft.getSubject().getId());
 			root.put("version", FORMAT_VERSION);
+			root.put("examinationId", draft.getExaminationId().toString());
 			root.put("subjectId", portableSubject.toString());
+			root.put("finalised", draft.isFinalised());
 			ObjectNode metadata = root.putObject("settings");
 			metadata.put("year", settings.year());
 			metadata.put("paperOnePerusalMinutes", settings.paperOnePerusalMinutes());
@@ -210,7 +253,7 @@ public final class ExamBuilderDraftFile {
 		try {
 			mapper.writerWithDefaultPrettyPrinter().writeValue(temporary.toFile(), root);
 
-			// Publish only a complete, successfully encoded file.
+			// Publish only a successfully encoded file.
 			try {
 				Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
 			} catch (AtomicMoveNotSupportedException failure) {
@@ -258,17 +301,17 @@ public final class ExamBuilderDraftFile {
 	}
 
 	/**
-	 * Successfully resolved examination draft and metadata.
+	 * Successfully reconstructed examination and its metadata.
 	 *
-	 * @param draft    loaded editable examination selections
+	 * @param draft    examination selections and lifecycle state
 	 * @param settings loaded examination metadata
 	 */
 	public record LoadedDraft(ExamBuilderDraft draft, PrintableExamSettings settings) {
 
 		/**
-		 * Creates a loaded draft result.
+		 * Creates a reconstructed examination result.
 		 *
-		 * @param draft    loaded examination selections
+		 * @param draft    reconstructed examination
 		 * @param settings loaded examination metadata
 		 * @throws NullPointerException if either argument is null
 		 */

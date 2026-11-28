@@ -43,7 +43,14 @@ import au.edu.eq.questionbank.model.Unit;
 import au.edu.eq.questionbank.pdf.PrintableAssessmentPlan;
 import au.edu.eq.questionbank.pdf.PrintableExamSettings;
 import au.edu.eq.questionbank.pdf.PrintableQuestionNumbering;
+import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
+import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
+import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
+import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
+import au.edu.eq.questionbank.repository.curriculum.SqliteCurriculumWriter;
+import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
 import au.edu.eq.questionbank.ui.model.ExamBuilderDraft;
+import au.edu.eq.questionbank.ui.model.SqliteMockExamStore;
 import javafx.application.Platform;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
@@ -201,6 +208,73 @@ class ExamBuilderDialogTest {
 			TextField paperTwo = robot.lookup("#exam-builder-paper-two-perusal").queryAs(TextField.class);
 			assertEquals("5", paperOne.getText());
 			assertEquals("5", paperTwo.getText());
+		} finally {
+			robot.interact(dialog::close);
+		}
+	}
+
+	@Test
+	void finalisedExaminationDisablesEditingControls(FxRobot robot) throws Exception {
+		SqliteDatabase database = new SqliteDatabase(tempDirectory.resolve("finalised-ui.db"));
+		database.initialiseSchema();
+		SqliteCurriculumWriter curriculum = new SqliteCurriculumWriter(database);
+		Subject chemistry = curriculum.insertSubject("Chemistry");
+		SyllabusVersion syllabus = curriculum.insertSyllabusVersion(chemistry, "2025", true);
+		Unit unit = curriculum.insertUnit(syllabus, "3", "Unit 3", 1);
+		Topic topic = curriculum.insertTopic(unit, "3.1", "Equilibrium", 1);
+		Subtopic subtopic = curriculum.insertSubtopic(topic, "3.1.1", "Equilibrium", 1);
+		SqliteExamWriter examWriter = new SqliteExamWriter(database);
+		ExamBooklet booklet = new SqliteExamImporter(database, examWriter).importExam(chemistry, "QCAA", 2025,
+				"External Assessment", "Paper 1", "questions.pdf");
+		SqliteQuestionRepository questions = new SqliteQuestionRepository(database);
+		Question saved = questions.save(booklet, "21", "", 4,
+				List.of(new QuestionRegion(booklet, 1, 0.1, 0.1, 0.8, 0.2)), subtopic, false, null, null,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		SqliteAnswerWriter answers = new SqliteAnswerWriter(database, examWriter);
+		AnswerFile answerFile = answers.findOrCreateAnswerFile(booklet, "Marking guide", "answers.pdf");
+		answers.insertAnswer(saved, null, List.of(new AnswerRegion(answerFile, 1, 0.1, 0.1, 0.8, 0.2)));
+		Question question = questions.findById(saved.getId()).orElseThrow();
+		ExamBuilderDraft draft = new ExamBuilderDraft(chemistry);
+		var section = ExamBuilderDraft.Section.PAPER_ONE_WRITTEN;
+		assertTrue(draft.addWholeQuestion(section, question, List.of(question)));
+		PrintableExamSettings settings = new PrintableExamSettings("Chemistry", 2026, 5, 60, 5, 75);
+		new SqliteMockExamStore(database).finalise(draft, settings, true);
+		AtomicReference<ExamBuilderDialog> holder = new AtomicReference<>();
+		robot.interact(() -> {
+			ExamBuilderDialog dialog = new ExamBuilderDialog(stage, draft, (_, _) -> Optional.empty());
+
+			// The metadata fields and generation controls must
+			// actually be attached to the dialog under test.
+			dialog.configureGeneration((_, _, _) -> {
+				throw new AssertionError("PDF generation is not expected in this test.");
+			}, tempDirectory);
+			holder.set(dialog);
+		});
+		ExamBuilderDialog dialog = holder.get();
+		try {
+			robot.interact(dialog::show);
+			ComboBox<ExamBuilderDraft.Section> sectionBox = robot.lookup("#exam-builder-section").queryComboBox();
+			ListView<PrintableQuestionNumbering.NumberedQuestion> questionList = robot.lookup("#exam-builder-questions")
+					.queryListView();
+			robot.interact(() -> {
+				sectionBox.setValue(section);
+				questionList.getSelectionModel().selectFirst();
+			});
+			assertEquals(1, questionList.getItems().size());
+			assertTrue(dialog.getHeaderText().contains("FINALISED"));
+			for (String id : List.of("#exam-builder-add", "#exam-builder-up", "#exam-builder-down",
+					"#exam-builder-remove", "#exam-builder-transfer")) {
+				assertTrue(robot.lookup(id).queryButton().isDisabled(), id);
+			}
+			for (String id : List.of("#exam-builder-year", "#exam-builder-paper-one-perusal",
+					"#exam-builder-paper-one-working", "#exam-builder-paper-two-perusal",
+					"#exam-builder-paper-two-working")) {
+				TextField field = robot.lookup(id).queryAs(TextField.class);
+				assertFalse(field.isEditable(), id);
+			}
+			assertFalse(sectionBox.isDisabled());
+			assertFalse(robot.lookup("#exam-builder-generate").queryButton().isDisabled());
+			assertEquals(List.of(question.getId()), draft.getQuestions(section).stream().map(Question::getId).toList());
 		} finally {
 			robot.interact(dialog::close);
 		}

@@ -891,8 +891,9 @@ public final class HistoricalSchemaFixture {
 	 * return and receipt ledgers in a disposable historical fixture.
 	 *
 	 * <p>
-	 * Existing historical rows are copied back without the detached v50 evidence
-	 * columns. Production databases must never use this helper.
+	 * Newer mock examination persistence objects are removed first. Existing
+	 * historical rows are copied back without the detached v50 evidence columns.
+	 * Production databases must never use this helper.
 	 *
 	 * @param statement statement for a disposable historical fixture
 	 * @throws SQLException         if cleanup or reconstruction fails
@@ -900,6 +901,7 @@ public final class HistoricalSchemaFixture {
 	 */
 	public static void removeVersion50Objects(Statement statement) throws SQLException {
 		Objects.requireNonNull(statement, "statement");
+		removeVersion51Objects(statement);
 		boolean present;
 		try (PreparedStatement lookup = statement.getConnection().prepareStatement("""
 				SELECT 1
@@ -1005,9 +1007,8 @@ public final class HistoricalSchemaFixture {
 				""");
 		statement.execute("DROP TABLE contributor_receipt_acknowledgements");
 
-		// The reconstructed v49 table already retains the lineage. Clear only the
-		// obsolete v50 source self-references before SQLite implicitly deletes its
-		// rows.
+		// Preserve reconstructed lineage while clearing the obsolete
+		// source table's self-references before its removal.
 		statement.execute("""
 				UPDATE contributor_return_packages
 				SET previous_package_id = NULL
@@ -1030,6 +1031,70 @@ public final class HistoricalSchemaFixture {
 						"trg_contributor_receipt_ack_no_delete"));
 		restoreMigrationTriggers(statement, "/db/migration-v47-to-v48.sql",
 				List.of("trg_operating_context_hidden_after_return"));
+	}
+
+	/**
+	 * Removes schema v51 mock examination persistence objects from a disposable
+	 * historical fixture.
+	 *
+	 * <p>
+	 * Lifecycle triggers are removed before the dependent tables. This method must
+	 * never be used on production data.
+	 *
+	 * @param statement statement for a disposable historical fixture
+	 * @throws SQLException         if cleanup fails
+	 * @throws NullPointerException if statement is null
+	 */
+	public static void removeVersion51Objects(Statement statement) throws SQLException {
+		Objects.requireNonNull(statement, "statement");
+		List<String> names = new ArrayList<>();
+		try (PreparedStatement lookup = statement.getConnection().prepareStatement("""
+				SELECT name
+				FROM sqlite_master
+				WHERE type = 'trigger'
+				  AND name GLOB 'trg_mock_exam_*'
+				ORDER BY name
+				"""); ResultSet rows = lookup.executeQuery()) {
+			while (rows.next()) {
+				String name = rows.getString(1);
+				if (!name.matches("trg_mock_exam_[a-z_]+")) {
+					throw new SQLException("Unexpected mock examination trigger: " + name);
+				}
+				names.add(name);
+			}
+		}
+		for (String name : names) {
+			statement.execute("DROP TRIGGER \"" + name + "\"");
+		}
+		statement.execute("DROP INDEX IF EXISTS ux_mock_exam_active_reservation");
+		statement.execute("DROP TABLE IF EXISTS mock_exam_reservations");
+		statement.execute("DROP TABLE IF EXISTS mock_exam_selections");
+		statement.execute("DROP TABLE IF EXISTS mock_examinations");
+	}
+
+	private static void dropAssignmentTriggers(Statement statement, String pattern) throws SQLException {
+		List<String> names = new ArrayList<>();
+		try (PreparedStatement lookup = statement.getConnection().prepareStatement("""
+				SELECT name
+				FROM sqlite_master
+				WHERE type = 'trigger'
+				  AND name GLOB ?
+				ORDER BY name
+				""")) {
+			lookup.setString(1, pattern);
+			try (ResultSet result = lookup.executeQuery()) {
+				while (result.next()) {
+					String name = result.getString(1);
+					if (!name.matches("trg_contributor_(structure|scope)_[a-z_]+")) {
+						throw new SQLException("Unexpected contributor trigger: " + name);
+					}
+					names.add(name);
+				}
+			}
+		}
+		for (String name : names) {
+			statement.execute("DROP TRIGGER \"" + name + "\"");
+		}
 	}
 
 	private static void restoreMigrationTriggers(Statement statement, String resource, List<String> names)
@@ -1059,31 +1124,6 @@ public final class HistoricalSchemaFixture {
 				throw new SQLException("Missing historical trigger definition: " + name);
 			}
 			statement.execute(sql);
-		}
-	}
-
-	private static void dropAssignmentTriggers(Statement statement, String pattern) throws SQLException {
-		List<String> names = new ArrayList<>();
-		try (PreparedStatement lookup = statement.getConnection().prepareStatement("""
-				SELECT name
-				FROM sqlite_master
-				WHERE type = 'trigger'
-				  AND name GLOB ?
-				ORDER BY name
-				""")) {
-			lookup.setString(1, pattern);
-			try (ResultSet result = lookup.executeQuery()) {
-				while (result.next()) {
-					String name = result.getString(1);
-					if (!name.matches("trg_contributor_(structure|scope)_[a-z_]+")) {
-						throw new SQLException("Unexpected contributor trigger: " + name);
-					}
-					names.add(name);
-				}
-			}
-		}
-		for (String name : names) {
-			statement.execute("DROP TRIGGER \"" + name + "\"");
 		}
 	}
 }

@@ -14,8 +14,11 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
@@ -31,6 +34,7 @@ import au.edu.eq.questionbank.model.ExamBooklet;
 import au.edu.eq.questionbank.model.ImageQuestionContentPart;
 import au.edu.eq.questionbank.model.ImageSharedContextContentPart;
 import au.edu.eq.questionbank.model.Question;
+import au.edu.eq.questionbank.model.QuestionRegion;
 import au.edu.eq.questionbank.model.QuestionResponseType;
 import au.edu.eq.questionbank.model.SharedContextContentPart;
 import au.edu.eq.questionbank.model.SharedQuestionContext;
@@ -40,6 +44,8 @@ import au.edu.eq.questionbank.model.Subtopic;
 import au.edu.eq.questionbank.model.SyllabusVersion;
 import au.edu.eq.questionbank.model.Topic;
 import au.edu.eq.questionbank.model.Unit;
+import au.edu.eq.questionbank.pdf.PrintableExamSettings;
+import au.edu.eq.questionbank.repository.assessment.SqliteAnswerWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamImporter;
 import au.edu.eq.questionbank.repository.assessment.SqliteExamWriter;
 import au.edu.eq.questionbank.repository.assessment.SqliteQuestionRepository;
@@ -54,6 +60,8 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteSubjectImportLedger;
 import au.edu.eq.questionbank.repository.sqlite.SqliteSubjectImportLedger.OriginatingSnapshotEvidence;
 import au.edu.eq.questionbank.repository.sqlite.SqliteSubjectImportLedger.PackageEntry;
 import au.edu.eq.questionbank.repository.sqlite.SqliteSubjectImportLedger.PackageOutcome;
+import au.edu.eq.questionbank.ui.model.ExamBuilderDraft;
+import au.edu.eq.questionbank.ui.model.SqliteMockExamStore;
 
 class DefaultRestoreExecutorTest {
 
@@ -112,6 +120,102 @@ class DefaultRestoreExecutorTest {
 	@Test
 	void fullBackupRestoresImageOnlyAndMixedSharedContext() throws Exception {
 		assertSharedContextBackupRoundTrip(BackupKind.FULL);
+	}
+
+	@Test
+	void fullBackupRestoresMockExamDraftsAndReservations() throws Exception {
+		ApplicationConfig source = createDataSet("mock-exam-backup-source", "Chemistry", "source-pdf",
+				"source-curriculum");
+		SqliteDatabase sourceDatabase = new SqliteDatabase(source.databasePath());
+		long subjectId;
+		try (Connection connection = sourceDatabase.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet rows = statement.executeQuery("SELECT id FROM subjects")) {
+			assertTrue(rows.next());
+			subjectId = rows.getLong(1);
+			assertFalse(rows.next());
+		}
+		Subject chemistry = new Subject(subjectId, "Chemistry");
+		SqliteCurriculumWriter curriculum = new SqliteCurriculumWriter(sourceDatabase);
+		SyllabusVersion syllabus = curriculum.insertSyllabusVersion(chemistry, "2025", true);
+		Unit unit = curriculum.insertUnit(syllabus, "3", "Unit 3", 1);
+		Topic topic = curriculum.insertTopic(unit, "3.1", "Equilibrium", 1);
+		Subtopic subtopic = curriculum.insertSubtopic(topic, "3.1.1", "Equilibrium", 1);
+		SqliteExamWriter examWriter = new SqliteExamWriter(sourceDatabase);
+		ExamBooklet booklet = new SqliteExamImporter(sourceDatabase, examWriter).importExam(chemistry, "QCAA", 2025,
+				"External Assessment", "Paper 1",
+				"subjects/Chemistry/exams/QCAA/2025/" + "External Assessment/exam.pdf");
+		SqliteQuestionRepository questions = new SqliteQuestionRepository(sourceDatabase);
+		Question first = questions.save(booklet, "1", "", 1,
+				List.of(new QuestionRegion(booklet, 1, 0.1, 0.1, 0.8, 0.2)), subtopic, false, null, null,
+				QuestionResponseType.MULTIPLE_CHOICE);
+		Question second = questions.save(booklet, "2", "", 1,
+				List.of(new QuestionRegion(booklet, 1, 0.1, 0.4, 0.8, 0.2)), subtopic, false, null, null,
+				QuestionResponseType.MULTIPLE_CHOICE);
+		SqliteAnswerWriter answers = new SqliteAnswerWriter(sourceDatabase, examWriter);
+		answers.insertAnswer(first, "A", List.of());
+		answers.insertAnswer(second, "B", List.of());
+		Question firstQuestion = questions.findById(first.getId()).orElseThrow();
+		Question secondQuestion = questions.findById(second.getId()).orElseThrow();
+		Clock clock = Clock.fixed(Instant.parse("2026-11-27T02:00:00Z"), ZoneOffset.UTC);
+		SqliteMockExamStore store = new SqliteMockExamStore(sourceDatabase, clock);
+		PrintableExamSettings settings = new PrintableExamSettings("Chemistry", 2026, 5, 60, 5, 75);
+		var section = ExamBuilderDraft.Section.MULTIPLE_CHOICE;
+		ExamBuilderDraft historical = new ExamBuilderDraft(chemistry);
+		assertTrue(historical.addWholeQuestion(section, firstQuestion, List.of(firstQuestion, secondQuestion)));
+		store.finalise(historical, settings, false);
+		assertEquals(1, store.resetCurrentYear(chemistry));
+		ExamBuilderDraft committed = new ExamBuilderDraft(chemistry);
+		assertTrue(committed.addWholeQuestion(section, firstQuestion, List.of(firstQuestion, secondQuestion)));
+		store.finalise(committed, settings, false);
+		ExamBuilderDraft editable = new ExamBuilderDraft(chemistry);
+		assertTrue(editable.addWholeQuestion(section, secondQuestion, List.of(firstQuestion, secondQuestion)));
+		store.saveDraft(editable, settings, false);
+		assertEquals(Set.of(firstQuestion.getId()), store.lockedQuestionIds(chemistry, 2026));
+		BackupResult backup = new DefaultBackupService(source, "Test")
+				.createBackup(BackupRequest.full(tempDir.resolve("mock-exam-backups")));
+		ApplicationConfig target = createDataSet("mock-exam-backup-target", "Original Chemistry", "old-pdf",
+				"old-curriculum");
+		try (RestorePreparation preparation = new DefaultRestoreService(target).prepareRestore(backup.backupPath())) {
+			assertEquals(SqliteDatabase.latestSchemaVersion(), preparation.manifest().databaseSchemaVersion());
+			new DefaultRestoreExecutor(target, "Test").applyRestore(preparation, new CountingCloseable());
+		}
+		SqliteDatabase restored = new SqliteDatabase(target.databasePath());
+		restored.initialiseSchema();
+		SqliteMockExamStore restoredStore = new SqliteMockExamStore(restored, clock);
+		var restoredHistorical = restoredStore.find(historical.getExaminationId(), chemistry).orElseThrow();
+		var restoredCommitted = restoredStore.find(committed.getExaminationId(), chemistry).orElseThrow();
+		var restoredEditable = restoredStore.find(editable.getExaminationId(), chemistry).orElseThrow();
+		assertTrue(restoredHistorical.draft().isFinalised());
+		assertTrue(restoredCommitted.draft().isFinalised());
+		assertFalse(restoredEditable.draft().isFinalised());
+		assertEquals(settings, restoredCommitted.settings());
+		assertFalse(restoredCommitted.includePaperTwo());
+		assertEquals(historical.getExaminationId(), restoredHistorical.draft().getExaminationId());
+		assertEquals(committed.getExaminationId(), restoredCommitted.draft().getExaminationId());
+		assertEquals(editable.getExaminationId(), restoredEditable.draft().getExaminationId());
+		assertEquals(Set.of(firstQuestion.getId()), restoredStore.lockedQuestionIds(chemistry, 2026));
+		assertEquals(List.of(secondQuestion.getId()),
+				restoredEditable.draft().getQuestions(section).stream().map(Question::getId).toList());
+
+		// Both the active reservation and released history
+		// must survive the full backup and restore workflow.
+		try (Connection connection = restored.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet rows = statement.executeQuery("""
+						SELECT COUNT(*),
+						       SUM(
+						           CASE WHEN released_at IS NOT NULL
+						           THEN 1 ELSE 0 END
+						       )
+						FROM mock_exam_reservations
+						""")) {
+			assertTrue(rows.next());
+			assertEquals(2, rows.getInt(1));
+			assertEquals(1, rows.getInt(2));
+		}
+		restored.verifySchema();
+		restored.verifyIntegrity();
 	}
 
 	@Test
@@ -324,7 +428,8 @@ class DefaultRestoreExecutorTest {
 			authorities.recordImported(connection, subjectId, entry.packageId());
 			try (Statement statement = connection.createStatement()) {
 				HistoricalSchemaFixture.removeVersion49Objects(statement);
-				assertEquals(1, statement.executeUpdate("UPDATE schema_version SET version = 48 WHERE version = 50"));
+				assertEquals(1, statement.executeUpdate("UPDATE schema_version SET version = 48 " + "WHERE version = "
+						+ SqliteDatabase.latestSchemaVersion()));
 			}
 			connection.commit();
 		}
@@ -354,7 +459,7 @@ class DefaultRestoreExecutorTest {
 		assertEquals(identity,
 				new SqlitePortableIdentityRepository(restored).requireByLocalId(EntityType.SUBJECT, subjectId));
 		assertEquals("legacy-pdf", Files.readString(
-				target.dataRoot().resolve("subjects/Chemistry/exams/QCAA/2025/External Assessment/exam.pdf")));
+				target.dataRoot().resolve("subjects/Chemistry/exams/QCAA/2025/" + "External Assessment/exam.pdf")));
 		restored.initialiseSchema();
 		restored.verifySchema();
 		restored.verifyIntegrity();

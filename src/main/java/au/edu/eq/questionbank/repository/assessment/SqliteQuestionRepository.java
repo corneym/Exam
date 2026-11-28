@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 import au.edu.eq.questionbank.diagnostics.PerformanceOperation;
@@ -206,6 +207,30 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 		return retrieveApplicabilityMatches(currentNodes, questionId, parentOperationId);
 	}
 
+	/**
+	 * Retrieves a complete Question using the caller's database transaction.
+	 *
+	 * @param connection open database connection
+	 * @param id         persistent Question identifier
+	 * @return reconstructed Question, or an empty optional
+	 * @throws SQLException         if retrieval fails
+	 * @throws NullPointerException if connection is null
+	 */
+	public Optional<Question> findById(Connection connection, long id) throws SQLException {
+		Objects.requireNonNull(connection, "connection");
+
+		// The caller retains ownership of the connection.
+		try (PreparedStatement statement = connection.prepareStatement(SqliteQuestionSelectSql.byId())) {
+			statement.setLong(1, id);
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					return Optional.empty();
+				}
+				return Optional.of(readQuestion(connection, result, id));
+			}
+		}
+	}
+
 	@Override
 	public Optional<Question> findById(long id) {
 		try (Connection connection = database.openConnection()) {
@@ -213,6 +238,43 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 		} catch (SQLException failure) {
 			throw new IllegalStateException("Could not read question " + id + " from database", failure);
 		}
+	}
+
+	/**
+	 * Retrieves all persisted constituents of a SourceQuestion using the caller's
+	 * database transaction.
+	 *
+	 * @param connection       open database connection
+	 * @param sourceQuestionId persistent SourceQuestion identifier
+	 * @return immutable list of constituent Questions
+	 * @throws SQLException         if retrieval fails
+	 * @throws NullPointerException if connection is null
+	 */
+	public List<Question> findBySourceQuestion(Connection connection, long sourceQuestionId) throws SQLException {
+		Objects.requireNonNull(connection, "connection");
+		List<Long> identifiers = new ArrayList<>();
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT id
+				FROM questions
+				WHERE source_question_id = ?
+				ORDER BY id
+				""")) {
+			statement.setLong(1, sourceQuestionId);
+			try (ResultSet rows = statement.executeQuery()) {
+				while (rows.next()) {
+					identifiers.add(rows.getLong(1));
+				}
+			}
+		}
+		List<Question> result = new ArrayList<>();
+
+		// Close the identifier cursor before reconstructing
+		// the complete constituent Questions.
+		for (long id : identifiers) {
+			result.add(findById(connection, id)
+					.orElseThrow(() -> new SQLException("Question disappeared during multipart retrieval: " + id)));
+		}
+		return List.copyOf(result);
 	}
 
 	@Override
@@ -395,22 +457,6 @@ public final class SqliteQuestionRepository implements QuestionRepository, Quest
 			}
 		}
 		return regions;
-	}
-
-	private Optional<Question> findById(Connection connection, long id) throws SQLException {
-
-		// The caller owns the connection. This method closes only its
-		// statement and result set, allowing subsequent Question reads
-		// to reuse the same connection.
-		try (PreparedStatement statement = connection.prepareStatement(SqliteQuestionSelectSql.byId())) {
-			statement.setLong(1, id);
-			try (ResultSet result = statement.executeQuery()) {
-				if (!result.next()) {
-					return Optional.empty();
-				}
-				return Optional.of(readQuestion(connection, result, id));
-			}
-		}
 	}
 
 	private List<QuestionContentPart> findContentParts(Connection connection, long questionId,

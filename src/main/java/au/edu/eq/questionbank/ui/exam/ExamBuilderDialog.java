@@ -480,9 +480,8 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 	private void openDraft(Path file) throws IOException {
 		ExamBuilderDraftFile.LoadedDraft loaded = draftFileService.load(file, draft.getSubject());
 
-		// The loader validates every Question and multipart group
-		// before publication. Preserve the existing draft object
-		// because the Search selection callback also refers to it.
+		// Preserve the draft object referenced by the chooser,
+		// while adopting the loaded examination's persistent identity.
 		draft.replaceWith(loaded.draft());
 		PrintableExamSettings settings = loaded.settings();
 		yearField.setText(Integer.toString(settings.year()));
@@ -493,7 +492,8 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 		sectionBox.getSelectionModel().selectFirst();
 		refresh();
 		dirty = false;
-		statusLabel.setText("Examination draft opened: " + file);
+		statusLabel.setText(draft.isFinalised() ? "Finalised examination opened (read-only): " + file
+				: "Examination draft opened: " + file);
 	}
 
 	private int readInteger(TextField field, String description) {
@@ -607,21 +607,28 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 	}
 
 	private void updateActionState() {
+		boolean readOnly = draft.isFinalised();
 		long questionId = selectedQuestionId();
 		boolean selected = questionId > 0;
 		ExamBuilderDraft.Section section = sectionBox.getValue();
-
-		// Movement availability depends on top-level
-		// Question boundaries rather than individual rows.
-		moveUpButton.setDisable(!selected || draft.adjacentWholeQuestionIndex(section, questionId, -1) < 0);
-		moveDownButton.setDisable(!selected || draft.adjacentWholeQuestionIndex(section, questionId, 1) < 0);
-		removeButton.setDisable(!selected);
+		setHeaderText("Mock examination — " + draft.getSubject().getName() + (readOnly ? " — FINALISED" : " — DRAFT"));
+		addButton.setDisable(readOnly);
+		moveUpButton.setDisable(readOnly || !selected || draft.adjacentWholeQuestionIndex(section, questionId, -1) < 0);
+		moveDownButton
+				.setDisable(readOnly || !selected || draft.adjacentWholeQuestionIndex(section, questionId, 1) < 0);
+		removeButton.setDisable(readOnly || !selected);
 		ExamBuilderDraft.Section target = transferTarget();
 		transferButton.setVisible(target != null);
 		transferButton.setManaged(target != null);
-		transferButton.setDisable(!selected || target == null);
+		transferButton.setDisable(readOnly || !selected || target == null);
 		transferButton.setText(
 				target == ExamBuilderDraft.Section.PAPER_TWO_WRITTEN ? "Transfer to Paper 2" : "Transfer to Paper 1");
+
+		// Committed examination timing and year metadata are read-only.
+		for (TextField field : List.of(yearField, paperOnePerusalField, paperOneWorkingField, paperTwoPerusalField,
+				paperTwoWorkingField)) {
+			field.setEditable(!readOnly);
+		}
 		generateButton.setDisable(generationAction == null || draft.isEmpty() || generating);
 	}
 

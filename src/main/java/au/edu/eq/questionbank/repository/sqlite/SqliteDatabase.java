@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
@@ -25,7 +26,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 50;
+	private static final int LATEST_SCHEMA_VERSION = 51;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -612,333 +613,27 @@ public final class SqliteDatabase {
 	}
 
 	private int migrate(Connection connection, int version) throws SQLException {
-		if (version == 1) {
-			executeMigration(connection, "/db/migration-v01-to-v02.sql", 2);
-			return 2;
-		}
-		if (version == 2) {
-			executeMigration(connection, "/db/migration-v02-to-v03.sql", 3);
-			return 3;
+		if (version < 1 || version >= LATEST_SCHEMA_VERSION) {
+			throw new SQLException("No migration available from schema version " + version);
 		}
 
-		// The v4 question redesign has no lossless migration for populated development
-		// databases.
+		// The v4 redesign cannot safely migrate populated
+		// version-three development Question records.
 		if (version == 3) {
 			verifyVersion03CanBeMigrated(connection);
-			executeMigration(connection, "/db/migration-v03-to-v04.sql", 4);
-			return 4;
 		}
-		if (version == 4) {
-			executeMigration(connection, "/db/migration-v04-to-v05.sql", 5);
-			return 5;
-		}
-		if (version == 5) {
-			executeMigration(connection, "/db/migration-v05-to-v06.sql", 6);
-			return 6;
-		}
-		if (version == 6) {
-			executeMigration(connection, "/db/migration-v06-to-v07.sql", 7);
-			return 7;
-		}
-		if (version == 7) {
-			executeMigration(connection, "/db/migration-v07-to-v08.sql", 8);
-			return 8;
-		}
-		if (version == 8) {
 
-			// Version nine records the expected Question format at booklet level.
-			executeMigration(connection, "/db/migration-v08-to-v09.sql", 9);
-			return 9;
-		}
-		if (version == 9) {
-
-			// Version ten records which AnswerFile supplies answers for each ExamBooklet.
-			executeMigration(connection, "/db/migration-v09-to-v10.sql", 10);
-			return 10;
-		}
-		if (version == 10) {
-
-			// Version eleven records a restart-safe independent-MCQ shared-context
-			// continuation for each booklet.
-			executeMigration(connection, "/db/migration-v10-to-v11.sql", 11);
-			return 11;
-		}
-		if (version == 11) {
-
-			// Version twelve stores only explicit Question-specific exclusions from
-			// otherwise-derived current-curriculum output applicability.
-			executeMigration(connection, "/db/migration-v11-to-v12.sql", 12);
-			return 12;
-		}
-		if (version == 12) {
-
-			// Version thirteen removes the final legacy physical "preamble" names
-			// from the live schema without changing any stored semantics.
-			executeMigration(connection, "/db/migration-v12-to-v13.sql", 13);
-			return 13;
-		}
-		if (version == 13) {
-
-			// Version fourteen introduces one authoritative mixed Question-content order
-			// while retaining PDF regions as their established source representation.
-			executeMigration(connection, "/db/migration-v13-to-v14.sql", 14);
-			return 14;
-		}
-		if (version == 14) {
-
-			// Version fifteen records the user-declared Exam capture lifecycle and
-			// the expected top-level Question count for established booklets.
-			executeMigration(connection, "/db/migration-v14-to-v15.sql", 15);
-			return 15;
-		}
-		if (version == 15) {
-
-			// Version sixteen records an optional SHA-256 content identity for each
-			// managed source document without making duplicate content illegal.
-			executeMigration(connection, "/db/migration-v15-to-v16.sql", 16);
-			return 16;
-		}
-		if (version == 16) {
-
-			// Version seventeen records whether Question PDF source capture was
-			// explicitly invalidated and must be recaptured.
-			executeMigration(connection, "/db/migration-v16-to-v17.sql", 17);
-			return 17;
-		}
-		if (version == 17) {
-
-			// Version eighteen adds Exam-level expected asset counts without creating
-			// placeholder Question booklets or Answer files.
-			executeMigration(connection, "/db/migration-v17-to-v18.sql", 18);
-			return 18;
-		}
-		if (version == 18) {
-
-			// Version nineteen records explicit AnswerFile explanation metadata. Existing
-			// assets migrate conservatively to false until reviewed by the user.
-			executeMigration(connection, "/db/migration-v18-to-v19.sql", 19);
-			return 19;
-		}
-		if (version == 19) {
-
-			// Booklet applicability reviews are explicit human attestations.
-			// Migration deliberately creates no confirmations for existing data.
-			executeMigration(connection, "/db/migration-v19-to-v20.sql", 20);
-			return 20;
-		}
-		if (version == 20) {
-
-			// Version 21 installs the complete applicability-review
-			// invalidation trigger set from its SQL migration.
-			executeMigration(connection, "/db/migration-v20-to-v21.sql", 21);
-			return 21;
-		}
-		if (version == 21) {
-
-			// Legacy Paper identity is independent of the mutable booklet name.
-			// Existing booklets remain unlinked until deliberately classified.
-			executeMigration(connection, "/db/migration-v21-to-v22.sql", 22);
-			return 22;
-		}
-		if (version == 22) {
-
-			// Version 23 replaces only the broad booklet UPDATE
-			// invalidation trigger. Existing review records are preserved.
-			executeMigration(connection, "/db/migration-v22-to-v23.sql", 23);
-			return 23;
-		}
-		if (version == 23) {
-
-			// Version 24 introduces ordered Shared Context content without
-			// changing existing PDF-region coordinates or context identities.
-			executeMigration(connection, "/db/migration-v23-to-v24.sql", 24);
-			return 24;
-		}
+		// Portable identity creation remains the existing
+		// Java-based migration rather than a SQL resource.
 		if (version == 24) {
-
-			// Create permanent portable identities without changing the
-			// existing local primary keys or their relationships.
 			SqlitePortableIdentitySchema.migrate(connection);
 			verifySchema(connection, 25);
 			return 25;
 		}
-		if (version == 25) {
-
-			// Schema v26 installs all 44 material-change revision triggers
-			// from the frozen SQL definitions. Trigger installation and the
-			// version update share the existing migration transaction.
-			executeMigration(connection, "/db/migration-v25-to-v26.sql", 26);
-			return 26;
-		}
-		if (version == 26) {
-
-			// Install the import ledger without modifying existing Subject data.
-			// The migration runs within the schema initialisation transaction.
-			executeMigration(connection, "/db/migration-v26-to-v27.sql", 27);
-			return 27;
-		}
-		if (version == 27) {
-
-			// Schema v28 installs the coordinator assignment ledger and
-			// its five protection triggers in the same SQL transaction.
-			executeMigration(connection, "/db/migration-v27-to-v28.sql", 28);
-			return 28;
-		}
-		if (version == 28) {
-
-			// Schema v29 installs contributor assignment-session structures
-			// and their four protection triggers in one migration transaction.
-			executeMigration(connection, "/db/migration-v28-to-v29.sql", 29);
-			return 29;
-		}
-		if (version == 29) {
-
-			// Version 30 installs the original contributor structural
-			// restrictions directly from its versioned SQL migration.
-			executeMigration(connection, "/db/migration-v29-to-v30.sql", 30);
-			return 30;
-		}
-		if (version == 30) {
-
-			// Version 31 installs contributor capture and classification
-			// scope guards directly from the versioned SQL migration.
-			executeMigration(connection, "/db/migration-v30-to-v31.sql", 31);
-			return 31;
-		}
-		if (version == 31) {
-
-			// Version 32 permits pending MCQ Shared Context updates within
-			// assigned Booklets. SQL installs the complete trigger changes.
-			executeMigration(connection, "/db/migration-v31-to-v32.sql", 32);
-			return 32;
-		}
-		if (version == 32) {
-
-			// Version 33 restricts contributor Question classifications
-			// to Subtopics and Descriptors. The migration resource
-			// installs the updated triggers transactionally.
-			executeMigration(connection, "/db/migration-v32-to-v33.sql", 33);
-			return 33;
-		}
-		if (version == 33) {
-
-			// Version 34 creates the append-only contributor return
-			// ledger and installs its protection triggers from SQL.
-			executeMigration(connection, "/db/migration-v33-to-v34.sql", 34);
-			return 34;
-		}
-		if (version == 34) {
-
-			// Version 35 installs append-only master intake and proposal evidence.
-			executeMigration(connection, "/db/migration-v34-to-v35.sql", 35);
-			return 35;
-		}
-		if (version == 35) {
-
-			// Version 36 introduces immutable coordinator review decisions.
-			// Receipt and master-domain records remain unchanged.
-			executeMigration(connection, "/db/migration-v35-to-v36.sql", 36);
-			return 36;
-		}
-		if (version == 36) {
-
-			// Version 37 records final coordinator application outcomes
-			// independently of immutable preliminary review decisions.
-			executeMigration(connection, "/db/migration-v36-to-v37.sql", 37);
-			return 37;
-		}
-		if (version == 37) {
-
-			// Version 38 enforces one active assignment per Exam and
-			// introduces immutable, audited closure evidence.
-			executeMigration(connection, "/db/migration-v37-to-v38.sql", 38);
-			return 38;
-		}
-		if (version == 38) {
-
-			// Version 39 protects master Exam structure and source
-			// document relationships during active assignments.
-			executeMigration(connection, "/db/migration-v38-to-v39.sql", 39);
-			return 39;
-		}
-		if (version == 39) {
-
-			// Version 40 protects the master capture graph and verifies
-			// reconciled-return closure evidence.
-			executeMigration(connection, "/db/migration-v39-to-v40.sql", 40);
-			return 40;
-		}
-		if (version == 40) {
-
-			// Version 41 provides reviewed Question/Answer scalar permits.
-			executeMigration(connection, "/db/migration-v40-to-v41.sql", 41);
-			return 41;
-		}
-		if (version == 41) {
-
-			// Version 42 adds transaction-scoped, owner-specific PDF-region
-			// permits without changing managed PDF bytes.
-			executeMigration(connection, "/db/migration-v41-to-v42.sql", 42);
-			return 42;
-		}
-		if (version == 42) {
-
-			// Version 43 retains authenticated contributor receipt
-			// acknowledgements and accepted master state separately
-			// from the immutable assignment baseline and local work.
-			executeMigration(connection, "/db/migration-v42-to-v43.sql", 43);
-			return 43;
-		}
-		if (version == 43) {
-
-			// Version 44 permits reviewed Question content-part changes
-			// under the same transaction-scoped authority as PDF regions.
-			executeMigration(connection, "/db/migration-v43-to-v44.sql", 44);
-			return 44;
-		}
-		if (version == 44) {
-
-			// Version 45 permits new embedded Question image rows only
-			// while the exact reviewed parent Question region permit
-			// is active. Existing image replacement remains forbidden.
-			executeMigration(connection, "/db/migration-v44-to-v45.sql", 45);
-			return 45;
-		}
-		if (version == 45) {
-
-			// Version 46 permits transaction-scoped Source Question and
-			// Shared Context application, and reviewed Question PNG replacement.
-			executeMigration(connection, "/db/migration-v45-to-v46.sql", 46);
-			return 46;
-		}
-		if (version == 46) {
-
-			// Preserve automatic applicability-review invalidation while
-			// reviewed capture writes are authorised on the locked master.
-			executeMigration(connection, "/db/migration-v46-to-v47.sql", 47);
-			return 47;
-		}
-		if (version == 47) {
-
-			// Schema v48 introduces Subject import authority and contributor
-			// assignment visibility without changing existing domain records.
-			executeMigration(connection, "/db/migration-v47-to-v48.sql", 48);
-			return 48;
-		}
-		if (version == 48) {
-
-			// Retain originating freshness evidence separately from local import time.
-			executeMigration(connection, "/db/migration-v48-to-v49.sql", 49);
-			return 49;
-		}
-		if (version == 49) {
-
-			// Detach permanent terminal submission evidence from the live
-			// assignment cache and add restart-safe publication attempts.
-			executeMigration(connection, "/db/migration-v49-to-v50.sql", 50);
-			return 50;
-		}
-		throw new SQLException("No migration available from schema version " + version);
+		int nextVersion = version + 1;
+		String resource = String.format(Locale.ROOT, "/db/migration-v%02d-to-v%02d.sql", version, nextVersion);
+		executeMigration(connection, resource, nextVersion);
+		return nextVersion;
 	}
 
 	private int readSchemaVersion(Connection connection) throws SQLException {
@@ -1099,10 +794,6 @@ public final class SqliteDatabase {
 						"Database schema version " + version + " is missing required table " + tableName);
 			}
 		}
-
-		// Apply the checks introduced by each version while allowing the version-13
-		// migration to rename two legacy physical columns without weakening the
-		// structural checks that originally introduced them.
 		verifyVersion01RelationalSchema(connection, version);
 		if (version >= 2) {
 			if (!tableExists(connection, "curriculum_mappings")) {
@@ -1134,31 +825,18 @@ public final class SqliteDatabase {
 			verifyVersion07CurriculumAuthoringSchema(connection);
 		}
 		if (version >= 8) {
-
-			// Schema version 8 introduced the persisted Question response type.
 			verifyVersion08QuestionResponseTypeSchema(connection);
 		}
 		if (version >= 9) {
-
-			// Schema version 9 introduced the persisted booklet-level Question format.
 			verifyVersion09BookletQuestionFormatSchema(connection);
 		}
 		if (version >= 10) {
-
-			// Schema version 10 introduced the nullable booklet-to-answer-file
-			// relationship used to select the correct answer document.
 			verifyVersion10BookletAnswerFileSchema(connection);
 		}
 		if (version >= 11) {
-
-			// Schema version 11 introduced restart-safe continuation of shared context
-			// between otherwise independent MCQs.
 			verifyVersion11PendingMcqSharedContextSchema(connection);
 		}
 		if (version >= 12) {
-
-			// Schema version 12 introduced reversible per-Question exclusions from
-			// derived current-curriculum output applicability.
 			if (!tableExists(connection, "question_output_exclusions")) {
 				throw new SQLException(
 						"Database schema version " + version + " is missing required table question_output_exclusions");
@@ -1166,8 +844,6 @@ public final class SqliteDatabase {
 			verifyVersion12QuestionOutputExclusionSchema(connection);
 		}
 		if (version >= 14) {
-
-			// Mixed Question content was introduced in version 14.
 			if (!tableExists(connection, "question_images")) {
 				throw new SQLException(
 						"Database schema version " + version + " is missing required table question_images");
@@ -1179,45 +855,26 @@ public final class SqliteDatabase {
 			verifyVersion14QuestionContentSchema(connection);
 		}
 		if (version >= 15) {
-
-			// Exam capture state and expected booklet Question counts were introduced
-			// together in schema version 15.
 			verifyVersion15ExamCaptureSchema(connection);
 		}
 		if (version >= 16) {
-
-			// Source-document content hashes were introduced in schema version 16.
 			verifyVersion16SourceDocumentHashSchema(connection);
 		}
 		if (version >= 17) {
-
-			// Source-recapture state distinguishes replacement-invalidated Questions
-			// from valid image-only Questions.
 			verifyVersion17QuestionSourceRecaptureSchema(connection);
 		}
 		if (version >= 18) {
-
-			// Asset expectations record planning without manufacturing authoritative
-			// ExamBooklet or AnswerFile rows.
 			verifyVersion18ExamAssetExpectationSchema(connection);
 		}
 		if (version >= 19) {
-
-			// AnswerFile explanation metadata is an explicit persisted yes/no value rather
-			// than an inference from the asset name or captured Answers.
 			verifyVersion19AnswerFileExplanationSchema(connection);
 		}
 		if (version >= 20) {
-
-			// The review table must exist with its unique booklet identity
-			// and cascading foreign-key relationship.
 			verifyVersion20BookletApplicabilityReviewSchema(connection);
 		}
 		if (version >= 21) {
 
-			// Historical v21/v22 databases retain the original trigger
-			// definitions. From v23, the selective booklet UPDATE rule
-			// replaces the earlier broad invalidation rule.
+			// Preserve the historically correct trigger definitions.
 			if (version >= 23) {
 				BookletApplicabilityReviewInvalidationTriggers.verify(connection);
 			} else {
@@ -1225,45 +882,24 @@ public final class SqliteDatabase {
 			}
 		}
 		if (version >= 22) {
-
-			// Legacy Paper identity is optional but must be structurally
-			// unique within each authoritative Exam.
 			verifyVersion22LegacyPaperSchema(connection);
 		}
 		if (version >= 24) {
-
-			// Both storage tables and their foreign keys are required before
-			// mixed Shared Context content may be persisted.
 			verifyVersion24SharedContextContentSchema(connection);
 		}
 		if (version >= 25) {
-
-			// Portable identity structures must be present and structurally
-			// valid before any Subject package operation can depend on them.
 			verifyVersion25PortableIdentitySchema(connection);
 		}
 		if (version >= 26) {
-
-			// Structural verification includes the exact material-change
-			// triggers, rather than merely checking their names.
 			SqlitePortableRevisionTriggers.verify(connection);
 		}
 		if (version >= 27) {
-
-			// An import ledger must retain its identity keys and
-			// parent-to-decision foreign-key relationship.
 			verifyVersion27SubjectImportSchema(connection);
 		}
 		if (version >= 28) {
-
-			// Every assignment baseline is durable and protected.
-			// The lifecycle must remain separately mutable.
 			verifyVersion28ExamAssignmentSchema(connection);
 		}
 		if (version >= 29) {
-
-			// Contributor installation records and durable active selection
-			// must be present independently of the coordinator ledger.
 			verifyVersion29ContributorAssignmentSchema(connection);
 		}
 		if (version >= 30) {
@@ -1281,9 +917,6 @@ public final class SqliteDatabase {
 			}
 		}
 		if (version >= 34) {
-
-			// Verify the return-history table and its immutable
-			// database-level protection triggers.
 			verifyVersion34ContributorReturnSchema(connection);
 		}
 		if (version >= 35) {
@@ -1313,6 +946,9 @@ public final class SqliteDatabase {
 		if (version >= 43) {
 			verifyVersion43ContributorReceiptSchema(connection);
 		}
+
+		// Reconstruct the master capture trigger definitions
+		// appropriate to each historical schema version.
 		if (version >= 46) {
 			verifyVersion46MasterGraphSchema(connection);
 			SqliteMigrationTriggerVerifier.verify(connection, "trg_master_capture_", "master capture lock",
@@ -1339,8 +975,13 @@ public final class SqliteDatabase {
 		if (version >= 49) {
 			verifyVersion49SubjectSnapshotFreshness(connection);
 		}
+
+		// Preserve the merged Issue #301 contributor protections.
 		if (version >= 50) {
 			verifyVersion50ContributorTerminalSchema(connection);
+		}
+		if (version >= 51) {
+			verifyVersion51MockExaminationSchema(connection);
 		}
 	}
 
@@ -2324,19 +1965,6 @@ public final class SqliteDatabase {
 						: new String[] { "/db/migration-v42-to-v43.sql" });
 	}
 
-	private void verifyVersion50ContributorTerminalSchema(Connection connection) throws SQLException {
-		verifyTableSchema(connection, "contribution_publication_attempts",
-				List.of(column("assignment_id", true, 1), column("package_id", true, 0),
-						column("archive_sha256", true, 0), column("contribution_created_at", true, 0),
-						column("destination_path", true, 0), column("staging_path", true, 0), column("state", true, 0),
-						column("selection_was_active", true, 0), column("prepared_at", true, 0),
-						column("updated_at", true, 0)),
-				List.of(foreignKey("assignment_id", "contributor_assignment_sessions", "assignment_id")),
-				List.of(List.of("package_id")));
-		SqliteMigrationTriggerVerifier.verify(connection, "trg_contribution_publication_",
-				"Contribution publication attempt", "/db/migration-v49-to-v50.sql");
-	}
-
 	private void verifyVersion46MasterGraphSchema(Connection connection) throws SQLException {
 		verifyTableSchema(connection, "master_contribution_graph_permits",
 				List.of(column("singleton_id", false, 1), column("review_id", true, 0), column("record_type", true, 0),
@@ -2408,6 +2036,91 @@ public final class SqliteDatabase {
 				}
 			}
 		}
+	}
+
+	private void verifyVersion50ContributorTerminalSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "contribution_publication_attempts",
+				List.of(column("assignment_id", true, 1), column("package_id", true, 0),
+						column("archive_sha256", true, 0), column("contribution_created_at", true, 0),
+						column("destination_path", true, 0), column("staging_path", true, 0), column("state", true, 0),
+						column("selection_was_active", true, 0), column("prepared_at", true, 0),
+						column("updated_at", true, 0)),
+				List.of(foreignKey("assignment_id", "contributor_assignment_sessions", "assignment_id")),
+				List.of(List.of("package_id")));
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_contribution_publication_",
+				"Contribution publication attempt", "/db/migration-v49-to-v50.sql");
+	}
+
+	private void verifyVersion51MockExaminationSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "mock_examinations",
+				List.of(column("exam_id", true, 1), column("subject_portable_id", true, 0),
+						column("subject_name", true, 0), column("cohort_year", true, 0),
+						column("paper_one_perusal_minutes", true, 0), column("paper_one_working_minutes", true, 0),
+						column("paper_two_perusal_minutes", true, 0), column("paper_two_working_minutes", true, 0),
+						column("include_paper_two", true, 0), column("finalised_at", false, 0)),
+				List.of(), List.of(List.of("exam_id", "subject_portable_id", "cohort_year")));
+		verifyTableSchema(connection, "mock_exam_selections",
+				List.of(column("exam_id", true, 1), column("section", true, 2), column("position", true, 3),
+						column("question_portable_id", true, 0), column("source_question_portable_id", false, 0),
+						column("question_code", true, 0), column("marks", true, 0)),
+				List.of(foreignKey("exam_id", "mock_examinations", "exam_id")),
+				List.of(List.of("exam_id", "question_portable_id")));
+		verifyTableSchema(connection, "mock_exam_reservations",
+				List.of(column("exam_id", true, 1), column("subject_portable_id", true, 0),
+						column("cohort_year", true, 0), column("entity_type", true, 2),
+						column("entity_portable_id", true, 3), column("released_at", false, 0)),
+				List.of(), List.of(List.of("subject_portable_id", "cohort_year", "entity_type", "entity_portable_id")));
+		List<String> reservationKey = List.of("exam_id", "subject_portable_id", "cohort_year");
+		if (!hasExactCompositeForeignKey(connection, "mock_exam_reservations", reservationKey, "mock_examinations",
+				reservationKey)) {
+			throw new SQLException("Mock examination reservation foreign key is missing");
+		}
+		String resource = "/db/migration-v50-to-v51.sql";
+		List<String> statements;
+		try {
+			statements = SqlScriptExecutor.splitStatements(SqlResourceLoader.load(resource));
+		} catch (IOException failure) {
+			throw new SQLException("Unable to load mock examination migration", failure);
+		}
+
+		// Verify the CHECK constraints, cascade behaviour and
+		// partial index predicate against the frozen migration.
+		for (String name : List.of("mock_examinations", "mock_exam_selections", "mock_exam_reservations",
+				"ux_mock_exam_active_reservation")) {
+			boolean index = name.equals("ux_mock_exam_active_reservation");
+			String prefix = (index ? "CREATE UNIQUE INDEX " : "CREATE TABLE ") + name;
+			String expected = null;
+			for (String sql : statements) {
+				int start = sql.indexOf(prefix);
+				if (start >= 0) {
+					expected = sql.substring(start).replaceFirst(";\\s*$", "").replaceAll("\\s+", " ").strip();
+					break;
+				}
+			}
+			if (expected == null) {
+				throw new SQLException("Missing schema definition in migration: " + name);
+			}
+			try (PreparedStatement statement = connection.prepareStatement("""
+					SELECT sql
+					FROM sqlite_master
+					WHERE type = ?
+					  AND name = ?
+					""")) {
+				statement.setString(1, index ? "index" : "table");
+				statement.setString(2, name);
+				try (ResultSet rows = statement.executeQuery()) {
+					if (!rows.next()) {
+						throw new SQLException("Missing mock examination schema object: " + name);
+					}
+					String actual = rows.getString(1);
+					if (actual == null
+							|| !expected.equals(actual.replaceFirst(";\\s*$", "").replaceAll("\\s+", " ").strip())) {
+						throw new SQLException("Altered mock examination schema object: " + name);
+					}
+				}
+			}
+		}
+		SqliteMigrationTriggerVerifier.verify(connection, "trg_mock_exam_", "mock examination lifecycle", resource);
 	}
 
 	private record ForeignKeyColumn(int sequence, String fromColumn, String targetColumn) {
