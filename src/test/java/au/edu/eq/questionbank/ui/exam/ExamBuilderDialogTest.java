@@ -144,8 +144,17 @@ class ExamBuilderDialogTest {
 		// constituent of the already selected Question.
 		available.add(List.of(partA));
 		AtomicReference<ExamBuilderDialog> holder = new AtomicReference<>();
-		robot.interact(() -> holder.set(
-				new ExamBuilderDialog(stage, draft, (_, _) -> Optional.ofNullable(available.poll()), () -> corpus)));
+		robot.interact(() -> {
+			ExamBuilderDialog dialog = new ExamBuilderDialog(stage, draft,
+					(_, _) -> Optional.ofNullable(available.poll()), () -> corpus);
+
+			// Configure generation as the production application
+			// does, ensuring the status label is in the scene graph.
+			dialog.configureGeneration((_, _, _) -> {
+				throw new AssertionError("PDF generation is not expected in this test.");
+			}, tempDirectory);
+			holder.set(dialog);
+		});
 		ExamBuilderDialog dialog = holder.get();
 		var paperOne = ExamBuilderDraft.Section.PAPER_ONE_WRITTEN;
 		var paperTwo = ExamBuilderDraft.Section.PAPER_TWO_WRITTEN;
