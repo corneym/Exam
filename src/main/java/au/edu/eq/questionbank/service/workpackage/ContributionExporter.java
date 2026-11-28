@@ -51,11 +51,11 @@ import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest.ScopeLevel;
  * Coordinator-owned baseline records cannot be modified by the return.
  *
  * <p>
- * Binary dependencies are collected and the complete archive is validated before
- * a durable publication attempt is recorded. Final bytes are created without
- * replacement and forced on the destination filesystem. Interruption after
- * publication may have started remains fail-closed until the exact archive is
- * authenticated and detached return evidence is recorded.
+ * Binary dependencies are collected and the complete archive is validated
+ * before a durable publication attempt is recorded. Final bytes are created
+ * without replacement and forced on the destination filesystem. Interruption
+ * after publication may have started remains fail-closed until the exact
+ * archive is authenticated and detached return evidence is recorded.
  *
  * <p>
  * A successfully recorded contribution makes the assignment locally submitted.
@@ -151,8 +151,8 @@ public final class ContributionExporter {
 				ExamWorkManifest manifest = new ExamWorkManifest(ExamWorkManifest.CURRENT_FORMAT_VERSION, packageId,
 						ExamWorkPackageType.CONTRIBUTION, createdAt, installationId, session.masterInstallationId(),
 						session.subjectPortableId(), graph.subjectName(), session.assignmentId(),
-						session.baselineSnapshotId(), applicationVersion, applicationVersion, schemaVersion, schemaVersion,
-						new Scope(ScopeLevel.EXAMS, List.of(session.examPortableId()), List.of()),
+						session.baselineSnapshotId(), applicationVersion, applicationVersion, schemaVersion,
+						schemaVersion, new Scope(ScopeLevel.EXAMS, List.of(session.examPortableId()), List.of()),
 						new ArrayList<>(entries.values()));
 				Path builtArchive = buildDirectory.resolve("package.examwork");
 				try (OutputStream output = Files.newOutputStream(builtArchive, StandardOpenOption.CREATE_NEW,
@@ -162,8 +162,7 @@ public final class ContributionExporter {
 				ExamWorkManifest verified = new ExamWorkArchiveValidator().validate(builtArchive, applicationVersion,
 						schemaVersion);
 				if (!manifest.equals(verified)) {
-					throw new PackageFormatException(
-							"Validated contribution manifest differs from exported manifest");
+					throw new PackageFormatException("Validated contribution manifest differs from exported manifest");
 				}
 				String digest = sha256(builtArchive);
 				destinationStaging = target.resolveSibling(".examwork-contribution-" + packageId + ".tmp");
@@ -343,7 +342,8 @@ public final class ContributionExporter {
 
 	private void publishCreateNew(Path staging, Path target) throws IOException {
 		try (FileChannel input = FileChannel.open(staging, StandardOpenOption.READ);
-				FileChannel output = FileChannel.open(target, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+				FileChannel output = FileChannel.open(target, StandardOpenOption.CREATE_NEW,
+						StandardOpenOption.WRITE)) {
 			long position = 0;
 			while (position < input.size()) {
 				long transferred = input.transferTo(position, input.size() - position, output);

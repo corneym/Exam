@@ -96,8 +96,8 @@ class SqliteContributionReturnLedgerTest {
 		assertEquals(SqliteContributorAssignmentVisibilityRepository.State.REMOVED,
 				new SqliteContributorAssignmentVisibilityRepository(database).find(fixture.session().assignmentId())
 						.orElseThrow());
-		assertTrue(new SqliteContributorAssignmentSessionRepository(database)
-				.find(fixture.session().assignmentId()).isPresent());
+		assertTrue(new SqliteContributorAssignmentSessionRepository(database).find(fixture.session().assignmentId())
+				.isPresent());
 		database.verifySchema();
 		database.verifyIntegrity();
 	}
@@ -139,7 +139,6 @@ class SqliteContributionReturnLedgerTest {
 			}
 			connection.commit();
 		}
-
 		database.initialiseSchema();
 		var ledger = new SqliteContributionReturnLedger(database);
 		assertEquals(1, ledger.find(firstId).orElseThrow().returnNumber());
@@ -169,8 +168,8 @@ class SqliteContributionReturnLedgerTest {
 				assertFalse(result.next());
 			}
 		}
-		assertFalse(foreignKeyTargets(database, "contributor_return_packages")
-				.contains("contributor_assignment_sessions"));
+		assertFalse(
+				foreignKeyTargets(database, "contributor_return_packages").contains("contributor_assignment_sessions"));
 		assertFalse(foreignKeyTargets(database, "contributor_receipt_acknowledgements")
 				.contains("contributor_assignment_sessions"));
 		assertTrue(foreignKeyTargets(database, "contributor_receipt_acknowledgements")
@@ -271,7 +270,8 @@ class SqliteContributionReturnLedgerTest {
 
 	private List<String> foreignKeyTargets(SqliteDatabase database, String table) throws SQLException {
 		List<String> targets = new ArrayList<>();
-		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement();
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("PRAGMA foreign_key_list(" + table + ")")) {
 			while (result.next()) {
 				targets.add(result.getString("table"));
@@ -306,7 +306,8 @@ class SqliteContributionReturnLedgerTest {
 	}
 
 	private int rowCount(SqliteDatabase database, String table) throws SQLException {
-		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement();
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
 				ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM " + table)) {
 			assertTrue(result.next());
 			return result.getInt(1);

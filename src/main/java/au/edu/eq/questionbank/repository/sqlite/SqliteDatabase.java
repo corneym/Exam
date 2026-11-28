@@ -2328,9 +2328,9 @@ public final class SqliteDatabase {
 		verifyTableSchema(connection, "contribution_publication_attempts",
 				List.of(column("assignment_id", true, 1), column("package_id", true, 0),
 						column("archive_sha256", true, 0), column("contribution_created_at", true, 0),
-						column("destination_path", true, 0), column("staging_path", true, 0),
-						column("state", true, 0), column("selection_was_active", true, 0),
-						column("prepared_at", true, 0), column("updated_at", true, 0)),
+						column("destination_path", true, 0), column("staging_path", true, 0), column("state", true, 0),
+						column("selection_was_active", true, 0), column("prepared_at", true, 0),
+						column("updated_at", true, 0)),
 				List.of(foreignKey("assignment_id", "contributor_assignment_sessions", "assignment_id")),
 				List.of(List.of("package_id")));
 		SqliteMigrationTriggerVerifier.verify(connection, "trg_contribution_publication_",

@@ -912,7 +912,6 @@ public final class HistoricalSchemaFixture {
 		if (!present) {
 			return;
 		}
-
 		statement.execute("DROP TRIGGER IF EXISTS trg_operating_context_hidden_after_return");
 		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_publication_attempt_insert_validate");
 		statement.execute("DROP TRIGGER IF EXISTS trg_contribution_publication_attempt_evidence_immutable");
@@ -925,7 +924,6 @@ public final class HistoricalSchemaFixture {
 		statement.execute("DROP TRIGGER trg_contributor_returns_single_final_insert");
 		statement.execute("DROP TRIGGER trg_contributor_returns_no_delete");
 		statement.execute("DROP TRIGGER trg_contributor_returns_no_update");
-
 		statement.execute("""
 				CREATE TABLE contributor_return_packages_v49 (
 				    package_id TEXT NOT NULL PRIMARY KEY,
@@ -1008,7 +1006,8 @@ public final class HistoricalSchemaFixture {
 		statement.execute("DROP TABLE contributor_receipt_acknowledgements");
 
 		// The reconstructed v49 table already retains the lineage. Clear only the
-		// obsolete v50 source self-references before SQLite implicitly deletes its rows.
+		// obsolete v50 source self-references before SQLite implicitly deletes its
+		// rows.
 		statement.execute("""
 				UPDATE contributor_return_packages
 				SET previous_package_id = NULL

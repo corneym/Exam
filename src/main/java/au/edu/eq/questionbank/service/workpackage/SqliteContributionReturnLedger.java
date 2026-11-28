@@ -131,7 +131,8 @@ public final class SqliteContributionReturnLedger {
 		requireAssignment(manifest, session, installationId(connection));
 
 		// Check for a genuine replay before checking the current end of the lineage
-		// chain. This also makes recovery idempotent if terminal evidence already exists.
+		// chain. This also makes recovery idempotent if terminal evidence already
+		// exists.
 		Optional<PublishedReturn> existing = find(connection, manifest.packageId());
 		if (existing.isPresent()) {
 			PublishedReturn stored = existing.orElseThrow();
