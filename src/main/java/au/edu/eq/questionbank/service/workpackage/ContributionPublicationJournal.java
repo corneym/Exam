@@ -31,9 +31,9 @@ import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
  *
  * <p>
  * A {@code PREPARED} attempt proves that final publication has not started. A
- * {@code PUBLISHING} or {@code PUBLISHED} attempt is fail-closed until the exact
- * archive can be authenticated and terminal evidence is recorded. Missing or
- * inaccessible destinations never reopen an uncertain assignment.
+ * {@code PUBLISHING} or {@code PUBLISHED} attempt is fail-closed until the
+ * exact archive can be authenticated and terminal evidence is recorded. Missing
+ * or inaccessible destinations never reopen an uncertain assignment.
  */
 final class ContributionPublicationJournal {
 
@@ -53,11 +53,11 @@ final class ContributionPublicationJournal {
 			connection.setAutoCommit(false);
 			try {
 				try (PreparedStatement statement = connection.prepareStatement("""
-							DELETE FROM contribution_publication_attempts
-							WHERE assignment_id = ?
-							  AND package_id = ?
-							  AND state = 'PREPARED'
-							""")) {
+						DELETE FROM contribution_publication_attempts
+						WHERE assignment_id = ?
+						  AND package_id = ?
+						  AND state = 'PREPARED'
+						""")) {
 					statement.setString(1, attempt.assignmentId().toString());
 					statement.setString(2, attempt.packageId().toString());
 					if (statement.executeUpdate() != 1) {
@@ -165,9 +165,9 @@ final class ContributionPublicationJournal {
 			throw new IllegalArgumentException("Invalid Contribution publication evidence");
 		}
 		Instant now = Instant.now();
-		Attempt attempt = new Attempt(manifest.assignmentId(), manifest.packageId(), archiveSha256, manifest.createdAt(),
-				destination.toAbsolutePath().normalize().toString(), staging.toAbsolutePath().normalize().toString(),
-				State.PREPARED, false, now, now);
+		Attempt attempt = new Attempt(manifest.assignmentId(), manifest.packageId(), archiveSha256,
+				manifest.createdAt(), destination.toAbsolutePath().normalize().toString(),
+				staging.toAbsolutePath().normalize().toString(), State.PREPARED, false, now, now);
 		StoredPaths paths = requireStoredPaths(attempt);
 		if (Files.exists(paths.destination(), LinkOption.NOFOLLOW_LINKS)) {
 			throw new IOException("Contribution destination already exists: " + paths.destination());
@@ -194,8 +194,8 @@ final class ContributionPublicationJournal {
 					}
 				}
 				attempt = new Attempt(attempt.assignmentId(), attempt.packageId(), attempt.archiveSha256(),
-						attempt.contributionCreatedAt(), attempt.destinationPath(), attempt.stagingPath(), attempt.state(),
-						selected, attempt.preparedAt(), attempt.updatedAt());
+						attempt.contributionCreatedAt(), attempt.destinationPath(), attempt.stagingPath(),
+						attempt.state(), selected, attempt.preparedAt(), attempt.updatedAt());
 				try (PreparedStatement statement = connection.prepareStatement("""
 						INSERT INTO contribution_publication_attempts (
 						    assignment_id, package_id, archive_sha256,
@@ -219,10 +219,10 @@ final class ContributionPublicationJournal {
 				}
 				if (selected) {
 					try (PreparedStatement clear = connection.prepareStatement("""
-						UPDATE contributor_assignment_selection
-						SET assignment_id = NULL, updated_at = ?
-						WHERE singleton_id = 1 AND assignment_id = ?
-						""")) {
+							UPDATE contributor_assignment_selection
+							SET assignment_id = NULL, updated_at = ?
+							WHERE singleton_id = 1 AND assignment_id = ?
+							""")) {
 						clear.setString(1, now.toString());
 						clear.setString(2, attempt.assignmentId().toString());
 						if (clear.executeUpdate() != 1) {
@@ -302,13 +302,15 @@ final class ContributionPublicationJournal {
 
 	private List<Attempt> findAll() throws SQLException {
 		List<Attempt> attempts = new ArrayList<>();
-		try (Connection connection = database.openConnection(); PreparedStatement statement = connection.prepareStatement("""
-				SELECT assignment_id, package_id, archive_sha256,
-				       contribution_created_at, destination_path, staging_path,
-				       state, selection_was_active, prepared_at, updated_at
-				FROM contribution_publication_attempts
-				ORDER BY prepared_at, assignment_id
-				"""); ResultSet result = statement.executeQuery()) {
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT assignment_id, package_id, archive_sha256,
+						       contribution_created_at, destination_path, staging_path,
+						       state, selection_was_active, prepared_at, updated_at
+						FROM contribution_publication_attempts
+						ORDER BY prepared_at, assignment_id
+						""");
+				ResultSet result = statement.executeQuery()) {
 			while (result.next()) {
 				attempts.add(read(result));
 			}
@@ -345,8 +347,8 @@ final class ContributionPublicationJournal {
 			if (!destination.isAbsolute() || !staging.isAbsolute() || !destination.equals(destination.normalize())
 					|| !staging.equals(staging.normalize()) || destination.getParent() == null
 					|| !destination.getParent().equals(staging.getParent()) || destination.equals(staging)
-					|| destination.getFileName() == null
-					|| !destination.getFileName().toString().endsWith(".examwork") || staging.getFileName() == null
+					|| destination.getFileName() == null || !destination.getFileName().toString().endsWith(".examwork")
+					|| staging.getFileName() == null
 					|| !staging.getFileName().toString().startsWith(".examwork-contribution-")
 					|| !staging.getFileName().toString().endsWith(".tmp")) {
 				throw unresolved(attempt, "stored publication paths are unsafe");
@@ -389,13 +391,14 @@ final class ContributionPublicationJournal {
 		Objects.requireNonNull(attempt, "attempt");
 		lock.requireHeld(layout.dataRoot());
 		Instant updatedAt = Instant.now();
-		try (Connection connection = database.openConnection(); PreparedStatement statement = connection.prepareStatement("""
-				UPDATE contribution_publication_attempts
-				SET state = ?, updated_at = ?
-				WHERE assignment_id = ?
-				  AND package_id = ?
-				  AND state = ?
-				""")) {
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						UPDATE contribution_publication_attempts
+						SET state = ?, updated_at = ?
+						WHERE assignment_id = ?
+						  AND package_id = ?
+						  AND state = ?
+						""")) {
 			statement.setString(1, next.name());
 			statement.setString(2, updatedAt.toString());
 			statement.setString(3, attempt.assignmentId().toString());
@@ -441,9 +444,7 @@ final class ContributionPublicationJournal {
 	}
 
 	enum State {
-		PREPARED,
-		PUBLISHING,
-		PUBLISHED
+		PREPARED, PUBLISHING, PUBLISHED
 	}
 
 	private record StoredPaths(Path destination, Path staging) {

@@ -15,10 +15,10 @@ import java.util.UUID;
  *
  * <p>
  * Published return evidence and unresolved publication attempts take precedence
- * over local visibility. Such an assignment is SUBMITTED and remains fail-closed
- * until publication is finalised or confirmed not to have started. An unchanged
- * assignment deliberately hidden by its contributor is REMOVED. Otherwise, an
- * installed assignment is ACTIVE.
+ * over local visibility. Such an assignment is SUBMITTED and remains
+ * fail-closed until publication is finalised or confirmed not to have started.
+ * An unchanged assignment deliberately hidden by its contributor is REMOVED.
+ * Otherwise, an installed assignment is ACTIVE.
  *
  * <p>
  * This repository reads the lifecycle only. Removal and reactivation must be

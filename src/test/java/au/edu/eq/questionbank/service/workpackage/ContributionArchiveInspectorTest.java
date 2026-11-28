@@ -3720,9 +3720,8 @@ class ContributionArchiveInspectorTest {
 		assertTrue(pending.journal().find(fixture.assignmentId()).isEmpty());
 		assertFalse(Files.exists(pending.staging()));
 		assertTrue(Files.exists(pending.destination()));
-		assertEquals(pending.manifest().packageId(),
-				new SqliteContributionReturnLedger(fixture.contributor()).findLatest(fixture.assignmentId()).orElseThrow()
-						.packageId());
+		assertEquals(pending.manifest().packageId(), new SqliteContributionReturnLedger(fixture.contributor())
+				.findLatest(fixture.assignmentId()).orElseThrow().packageId());
 		assertThrows(IllegalStateException.class,
 				() -> new ContributionExporter(fixture.contributor(), new ManagedDataLayout(fixture.contributorRoot()))
 						.export(fixture.assignmentId(), directory.resolve("duplicate-after-recovery.examwork")));
@@ -3741,9 +3740,8 @@ class ContributionArchiveInspectorTest {
 		}
 		assertTrue(pending.journal().find(fixture.assignmentId()).isEmpty());
 		assertFalse(Files.exists(pending.staging()));
-		assertEquals(pending.manifest().packageId(),
-				new SqliteContributionReturnLedger(fixture.contributor()).findLatest(fixture.assignmentId()).orElseThrow()
-						.packageId());
+		assertEquals(pending.manifest().packageId(), new SqliteContributionReturnLedger(fixture.contributor())
+				.findLatest(fixture.assignmentId()).orElseThrow().packageId());
 		assertEquals(SqliteContributorAssignmentVisibilityRepository.State.SUBMITTED,
 				new SqliteContributorAssignmentVisibilityRepository(fixture.contributor()).find(fixture.assignmentId())
 						.orElseThrow());
@@ -3772,7 +3770,8 @@ class ContributionArchiveInspectorTest {
 				new SqliteContributorAssignmentVisibilityRepository(fixture.contributor()).find(fixture.assignmentId())
 						.orElseThrow());
 		assertTrue(new SqliteContributorAssignmentSessionRepository(fixture.contributor()).active().isEmpty());
-		assertTrue(new SqliteContributionReturnLedger(fixture.contributor()).findLatest(fixture.assignmentId()).isEmpty());
+		assertTrue(
+				new SqliteContributionReturnLedger(fixture.contributor()).findLatest(fixture.assignmentId()).isEmpty());
 		assertEquals("Uncertain publication work", questionTextForCode(fixture.contributor(), "2"));
 	}
 
@@ -3794,7 +3793,8 @@ class ContributionArchiveInspectorTest {
 		}
 		assertTrue(transferredJournal.find(fixture.assignmentId()).isPresent());
 		assertEquals(SqliteContributorAssignmentVisibilityRepository.State.SUBMITTED,
-				new SqliteContributorAssignmentVisibilityRepository(transferred).find(fixture.assignmentId()).orElseThrow());
+				new SqliteContributorAssignmentVisibilityRepository(transferred).find(fixture.assignmentId())
+						.orElseThrow());
 		assertTrue(new SqliteContributionReturnLedger(transferred).findLatest(fixture.assignmentId()).isEmpty());
 		assertEquals("Uncertain publication work", questionTextForCode(transferred, "2"));
 		assertTrue(Files.exists(pending.staging()));
@@ -3816,7 +3816,8 @@ class ContributionArchiveInspectorTest {
 		assertArrayEquals(unrelated, Files.readAllBytes(pending.destination()));
 		assertTrue(pending.journal().find(fixture.assignmentId()).isPresent());
 		assertTrue(Files.exists(pending.staging()));
-		assertTrue(new SqliteContributionReturnLedger(fixture.contributor()).findLatest(fixture.assignmentId()).isEmpty());
+		assertTrue(
+				new SqliteContributionReturnLedger(fixture.contributor()).findLatest(fixture.assignmentId()).isEmpty());
 		assertEquals("Uncertain publication work", questionTextForCode(fixture.contributor(), "2"));
 	}
 
@@ -3830,7 +3831,8 @@ class ContributionArchiveInspectorTest {
 				() -> publish(fixture, "Unsent changed work", destination.getFileName().toString()));
 		assertTrue(failure.getMessage().contains("already exists"), failure.getMessage());
 		assertArrayEquals(unrelated, Files.readAllBytes(destination));
-		assertTrue(new SqliteContributionReturnLedger(fixture.contributor()).findLatest(fixture.assignmentId()).isEmpty());
+		assertTrue(
+				new SqliteContributionReturnLedger(fixture.contributor()).findLatest(fixture.assignmentId()).isEmpty());
 		assertTrue(new ContributionPublicationJournal(fixture.contributor(),
 				new ManagedDataLayout(fixture.contributorRoot())).find(fixture.assignmentId()).isEmpty());
 		assertEquals("Unsent changed work", questionTextForCode(fixture.contributor(), "2"));
@@ -4588,7 +4590,8 @@ class ContributionArchiveInspectorTest {
 		String archiveSha256 = HexFormat.of().formatHex(digest(Files.readAllBytes(destination)));
 		Path staging = destination.resolveSibling(".examwork-contribution-" + manifest.packageId() + ".tmp");
 		Files.move(destination, staging);
-		try (Connection connection = fixture.contributor().openConnection(); Statement statement = connection.createStatement()) {
+		try (Connection connection = fixture.contributor().openConnection();
+				Statement statement = connection.createStatement()) {
 			connection.setAutoCommit(false);
 			try {
 				statement.execute("DROP TRIGGER trg_contributor_returns_no_delete");
