@@ -39,7 +39,7 @@ import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityReposito
  */
 public final class ExamBuilderDraftFile {
 
-	private static final int FORMAT_VERSION = 2;
+	private static final int FORMAT_VERSION = 3;
 	private final ObjectMapper mapper = new ObjectMapper();
 	private final LongFunction<UUID> questionIdentity;
 	private final Function<UUID, Optional<Question>> questionLookup;
@@ -130,13 +130,14 @@ public final class ExamBuilderDraftFile {
 	 * Loads an examination file against the current Working Subject.
 	 *
 	 * <p>
-	 * Version-one files receive a new examination UUID. Version-two files preserve
-	 * their identity. An authoritative finalised definition supersedes any stale
-	 * editable file with the same UUID.
+	 * Version-one files receive a new examination UUID. Versions one and two
+	 * default to Paper 2 included. Version-three files preserve the explicit Paper
+	 * 2 setting. An authoritative finalised definition supersedes a stale external
+	 * file with the same examination UUID.
 	 *
 	 * @param file           examination file
-	 * @param workingSubject authoritative Working Subject
-	 * @return validated examination metadata and selections
+	 * @param workingSubject Working Subject
+	 * @return validated examination metadata, selections and paper inclusion
 	 * @throws IOException          if the file, references or lifecycle are invalid
 	 * @throws NullPointerException if workingSubject is null
 	 */
@@ -151,7 +152,7 @@ public final class ExamBuilderDraftFile {
 				throw new IOException("Not a valid examination draft.");
 			}
 			int version = readInteger(root, "version");
-			if (version != 1 && version != FORMAT_VERSION) {
+			if (version < 1 || version > FORMAT_VERSION) {
 				throw new IOException("Unsupported examination draft version.");
 			}
 			UUID savedSubject = readUuid(root.path("subjectId"), "Subject identity");
@@ -171,16 +172,24 @@ public final class ExamBuilderDraftFile {
 							workingSubject);
 					if (committed.isPresent()) {
 
-						// The managed database, not the external file,
-						// determines the committed examination definition.
+						// The managed definition is authoritative,
+						// including its Paper 2 inclusion setting.
 						SqliteMockExamStore.StoredExam stored = committed.orElseThrow();
-						return new LoadedDraft(stored.draft(), stored.settings());
+						return new LoadedDraft(stored.draft(), stored.settings(), stored.includePaperTwo());
 					}
 				}
 				if (lifecycle.booleanValue()) {
 					throw new IOException(
 							"The authoritative finalised examination " + "is not available in this database.");
 				}
+			}
+			boolean includePaperTwo = true;
+			if (version >= 3) {
+				JsonNode inclusion = root.path("includePaperTwo");
+				if (!inclusion.isBoolean()) {
+					throw new IOException("Invalid Paper 2 inclusion setting.");
+				}
+				includePaperTwo = inclusion.booleanValue();
 			}
 			JsonNode metadata = root.path("settings");
 			PrintableExamSettings settings = new PrintableExamSettings(workingSubject.getName(),
@@ -196,33 +205,59 @@ public final class ExamBuilderDraftFile {
 			for (ExamBuilderDraft.Section section : ExamBuilderDraft.Section.values()) {
 				loadSection(loaded, section, sections.path(section.name()), corpus);
 			}
-			return new LoadedDraft(loaded, settings);
+			if (!includePaperTwo && !loaded.getQuestions(ExamBuilderDraft.Section.PAPER_TWO_WRITTEN).isEmpty()) {
+				throw new IOException("Paper 2 is excluded but contains Questions.");
+			}
+			return new LoadedDraft(loaded, settings, includePaperTwo);
 		} catch (SQLException | IllegalArgumentException | IllegalStateException failure) {
 			throw new IOException("Cannot reopen examination draft: " + failure.getMessage(), failure);
 		}
 	}
 
 	/**
-	 * Saves an examination to a portable JSON file.
+	 * Saves a portable examination file with Paper 2 included.
 	 *
 	 * <p>
-	 * Preserves the examination UUID and lifecycle status. File publication does
-	 * not independently create or release managed reservations. Existing files are
-	 * replaced only after successful encoding.
+	 * Retained for compatibility with callers using the original examination
+	 * structure.
 	 *
 	 * @param file     destination examination file
 	 * @param draft    ordered examination selections
 	 * @param settings examination metadata
-	 * @throws IOException              if the examination cannot be encoded or
-	 *                                  saved
+	 * @throws IOException              if encoding or publication fails
 	 * @throws IllegalArgumentException if the settings Subject differs
-	 * @throws NullPointerException     if draft or settings is null
+	 * @throws NullPointerException     if a required argument is null
 	 */
 	public void save(Path file, ExamBuilderDraft draft, PrintableExamSettings settings) throws IOException {
+		save(file, draft, settings, true);
+	}
+
+	/**
+	 * Saves a portable examination file with explicit paper inclusion.
+	 *
+	 * <p>
+	 * Preserves the examination UUID, lifecycle and Paper 2 setting. File
+	 * publication does not create or release annual reservations.
+	 *
+	 * @param file            destination examination file
+	 * @param draft           ordered examination selections
+	 * @param settings        examination metadata
+	 * @param includePaperTwo whether Paper 2 is included
+	 * @throws IOException              if encoding or publication fails
+	 * @throws IllegalArgumentException if the settings Subject differs or Paper 2
+	 *                                  is excluded but contains Questions
+	 * @throws NullPointerException     if a required argument is null
+	 */
+	public void save(Path file, ExamBuilderDraft draft, PrintableExamSettings settings, boolean includePaperTwo)
+			throws IOException {
+		Objects.requireNonNull(file, "file");
 		Objects.requireNonNull(draft, "draft");
 		Objects.requireNonNull(settings, "settings");
 		if (!draft.getSubject().getName().equals(settings.subject())) {
 			throw new IllegalArgumentException("Draft and settings Subjects differ.");
+		}
+		if (!includePaperTwo && !draft.getQuestions(ExamBuilderDraft.Section.PAPER_TWO_WRITTEN).isEmpty()) {
+			throw new IllegalArgumentException("Paper 2 is excluded but contains Questions.");
 		}
 		ObjectNode root = mapper.createObjectNode();
 		try {
@@ -231,6 +266,7 @@ public final class ExamBuilderDraftFile {
 			root.put("examinationId", draft.getExaminationId().toString());
 			root.put("subjectId", portableSubject.toString());
 			root.put("finalised", draft.isFinalised());
+			root.put("includePaperTwo", includePaperTwo);
 			ObjectNode metadata = root.putObject("settings");
 			metadata.put("year", settings.year());
 			metadata.put("paperOnePerusalMinutes", settings.paperOnePerusalMinutes());
@@ -253,7 +289,7 @@ public final class ExamBuilderDraftFile {
 		try {
 			mapper.writerWithDefaultPrettyPrinter().writeValue(temporary.toFile(), root);
 
-			// Publish only a successfully encoded file.
+			// Publish only a successfully encoded draft.
 			try {
 				Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
 			} catch (AtomicMoveNotSupportedException failure) {
@@ -303,21 +339,39 @@ public final class ExamBuilderDraftFile {
 	/**
 	 * Successfully reconstructed examination and its metadata.
 	 *
-	 * @param draft    examination selections and lifecycle state
-	 * @param settings loaded examination metadata
+	 * @param draft           examination selections and lifecycle state
+	 * @param settings        loaded examination metadata
+	 * @param includePaperTwo whether Paper 2 is included
 	 */
-	public record LoadedDraft(ExamBuilderDraft draft, PrintableExamSettings settings) {
+	public record LoadedDraft(ExamBuilderDraft draft, PrintableExamSettings settings, boolean includePaperTwo) {
 
 		/**
 		 * Creates a reconstructed examination result.
+		 *
+		 * @param draft           reconstructed examination
+		 * @param settings        loaded examination metadata
+		 * @param includePaperTwo whether Paper 2 is included
+		 * @throws NullPointerException     if draft or settings is null
+		 * @throws IllegalArgumentException if Paper 2 is excluded but contains
+		 *                                  Questions
+		 */
+		public LoadedDraft {
+			Objects.requireNonNull(draft, "draft");
+			Objects.requireNonNull(settings, "settings");
+			if (!includePaperTwo && !draft.getQuestions(ExamBuilderDraft.Section.PAPER_TWO_WRITTEN).isEmpty()) {
+				throw new IllegalArgumentException("Paper 2 is excluded but contains Questions.");
+			}
+		}
+
+		/**
+		 * Creates a reconstructed examination with Paper 2 included.
 		 *
 		 * @param draft    reconstructed examination
 		 * @param settings loaded examination metadata
 		 * @throws NullPointerException if either argument is null
 		 */
-		public LoadedDraft {
-			Objects.requireNonNull(draft, "draft");
-			Objects.requireNonNull(settings, "settings");
+		public LoadedDraft(ExamBuilderDraft draft, PrintableExamSettings settings) {
+			this(draft, settings, true);
 		}
 	}
 }

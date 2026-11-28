@@ -31,6 +31,7 @@ import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.ChoiceDialog;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Dialog;
@@ -93,6 +94,8 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 	private final Button openManagedExamButton = new Button("Open saved...");
 	private final Button resetYearButton = new Button("Reset current year...");
 	private final Button saveManagedExamButton = new Button("Save to Question Bank");
+	private final CheckBox includePaperTwoCheckBox = new CheckBox("Include Paper 2");
+	private final Label paperTwoLabel = new Label("Paper 2");
 
 	/**
 	 * Creates an examination builder supporting standalone Question selection.
@@ -178,7 +181,7 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 	}
 
 	/**
-	 * Enables examination metadata entry and PDF generation.
+	 * Enables examination metadata entry, optional Paper 2 and PDF generation.
 	 *
 	 * <p>
 	 * Call once before displaying the dialog. Generated files must be placed
@@ -200,6 +203,12 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 		paperOneWorkingField.setId("exam-builder-paper-one-working");
 		paperTwoPerusalField.setId("exam-builder-paper-two-perusal");
 		paperTwoWorkingField.setId("exam-builder-paper-two-working");
+		paperTwoLabel.setId("exam-builder-paper-two-label");
+		includePaperTwoCheckBox.setId("exam-builder-include-paper-two");
+		includePaperTwoCheckBox.setSelected(managedIncludePaperTwo);
+		includePaperTwoCheckBox.setTooltip(new Tooltip(
+				"Include a second written-response paper. " + "Transfer or remove its Questions before excluding it."));
+		includePaperTwoCheckBox.setOnAction(_ -> changePaperTwoInclusion());
 		generateButton.setId("exam-builder-generate");
 		statusLabel.setId("exam-builder-status");
 		statusLabel.setWrapText(true);
@@ -213,12 +222,13 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 		}
 		metadata.add(new Label("Assessment year"), 0, 0);
 		metadata.add(yearField, 1, 0);
+		metadata.add(includePaperTwoCheckBox, 2, 0);
 		metadata.add(new Label("Perusal (minutes)"), 1, 1);
 		metadata.add(new Label("Working (minutes)"), 2, 1);
 		metadata.add(new Label("Paper 1"), 0, 2);
 		metadata.add(paperOnePerusalField, 1, 2);
 		metadata.add(paperOneWorkingField, 2, 2);
-		metadata.add(new Label("Paper 2"), 0, 3);
+		metadata.add(paperTwoLabel, 0, 3);
 		metadata.add(paperTwoPerusalField, 1, 3);
 		metadata.add(paperTwoWorkingField, 2, 3);
 		workspace.getChildren().addAll(0, List.of(metadata, new Separator()));
@@ -229,6 +239,7 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 				event.consume();
 			}
 		});
+		updatePaperTwoControls();
 		updateActionState();
 	}
 
@@ -308,6 +319,12 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 		try {
 			settings = readSettings();
 			plan = draft.buildPlan();
+
+			// Do not permit an inconsistent examination model
+			// to bypass the ordinary Paper 2 controls.
+			if (!managedIncludePaperTwo && !plan.getPaperTwo().isEmpty()) {
+				throw new IllegalStateException("Paper 2 is excluded but contains Questions.");
+			}
 			outputDirectory = destination.toRealPath();
 			requireOutsideManagedData(outputDirectory);
 			if (!Files.isDirectory(outputDirectory)) {
@@ -324,8 +341,8 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 		statusLabel.setText("Generating examination PDFs...");
 
 		// Capture the validated settings and ordered plan before
-		// starting background work. Never read JavaFX controls
-		// from the generation thread.
+		// starting background work. The existing writer derives
+		// populated booklet availability directly from this plan.
 		Task<Void> task = new Task<>() {
 
 			@Override
@@ -343,17 +360,27 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 		task.setOnCancelled(_ -> finishGeneration("Generation cancelled."));
 		Thread worker = new Thread(task, "mock-examination-generation");
 
-		// Do not abandon a PDF write solely because the JavaFX
-		// application thread is terminating.
+		// Do not abandon a PDF write solely because the
+		// JavaFX application thread is terminating.
 		worker.setDaemon(false);
 		worker.start();
 	}
 
 	private void addQuestion() {
-		if (draft.isFinalised()) {
+		if (draft.isFinalised() || generating) {
 			return;
 		}
 		ExamBuilderDraft.Section section = sectionBox.getValue();
+		if (section == null) {
+			return;
+		}
+
+		// A programmatic section selection must not bypass
+		// the explicit Paper 2 exclusion.
+		if (!managedIncludePaperTwo && section == ExamBuilderDraft.Section.PAPER_TWO_WRITTEN) {
+			statusLabel.setText("Paper 2 is excluded.");
+			return;
+		}
 		try {
 			int cohortYear = managedStore == null ? 0 : readInteger(yearField, "Assessment year");
 			if (managedStore != null && cohortYear < 1) {
@@ -372,15 +399,15 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 				return;
 			}
 
-			// Retrieve the full authoritative corpus rather than relying
-			// on the filtered results returned by the chooser.
+			// Retrieve the full authoritative corpus rather
+			// than relying on the filtered chooser results.
 			List<Question> corpus = corpusSupplier == null
 					? selected.stream().filter(question -> question.getSourceQuestion() == null).toList()
 					: List.copyOf(corpusSupplier.get());
 			if (managedStore != null) {
 
-				// Reservations may have changed while the chooser was open.
-				// Recheck them before publishing any selection to the draft.
+				// Revalidate reservations that may have
+				// changed while the chooser was open.
 				Set<Long> currentLocks = managedStore.lockedQuestionIds(draft.getSubject(), cohortYear);
 				for (Question candidate : selected) {
 					List<Question> group = draft.eligibleWholeQuestion(section, candidate, corpus);
@@ -405,6 +432,29 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 	private void changed() {
 		dirty = true;
 		refresh();
+	}
+
+	private void changePaperTwoInclusion() {
+		if (draft.isFinalised() || generating) {
+			includePaperTwoCheckBox.setSelected(managedIncludePaperTwo);
+			return;
+		}
+		boolean requested = includePaperTwoCheckBox.isSelected();
+		if (!requested && !draft.getQuestions(ExamBuilderDraft.Section.PAPER_TWO_WRITTEN).isEmpty()) {
+
+			// Never silently discard or relocate selected Questions.
+			includePaperTwoCheckBox.setSelected(true);
+			statusLabel.setText("Cannot exclude Paper 2 while it contains Questions. "
+					+ "Transfer its Questions to Paper 1 " + "or remove them first.");
+			return;
+		}
+		if (requested == managedIncludePaperTwo) {
+			return;
+		}
+		managedIncludePaperTwo = requested;
+		updatePaperTwoControls();
+		changed();
+		statusLabel.setText(requested ? "Paper 2 included." : "Paper 2 excluded. No Paper 2 PDF will be generated.");
 	}
 
 	private void chooseGenerationDirectory() {
@@ -694,24 +744,10 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 
 	private void openDraft(Path file) throws IOException {
 		ExamBuilderDraftFile.LoadedDraft loaded = draftFileService.load(file, draft.getSubject());
-		boolean includePaperTwo = true;
 
-		// Portable files with a finalised identity resolve to the
-		// authoritative managed definition. Preserve its Paper 2 setting
-		// rather than guessing from the presence of selected Questions.
-		if (loaded.draft().isFinalised() && managedStore != null) {
-			try {
-				SqliteMockExamStore.StoredExam stored = managedStore
-						.findFinalised(loaded.draft().getExaminationId(), draft.getSubject())
-						.orElseThrow(() -> new IllegalStateException("The finalised examination is unavailable."));
-				publishExamination(stored.draft(), stored.settings(), stored.includePaperTwo(),
-						"Finalised examination opened (read-only): " + file);
-				return;
-			} catch (SQLException | IllegalStateException failure) {
-				throw new IOException("Cannot reopen finalised examination: " + failure.getMessage(), failure);
-			}
-		}
-		publishExamination(loaded.draft(), loaded.settings(), includePaperTwo,
+		// The file service already resolves finalised identities
+		// against the authoritative managed examination store.
+		publishExamination(loaded.draft(), loaded.settings(), loaded.includePaperTwo(),
 				loaded.draft().isFinalised() ? "Finalised examination opened (read-only): " + file
 						: "Examination draft opened: " + file);
 	}
@@ -741,9 +777,12 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 
 	private void publishExamination(ExamBuilderDraft replacement, PrintableExamSettings settings,
 			boolean includePaperTwo, String message) {
+		if (!includePaperTwo && !replacement.getQuestions(ExamBuilderDraft.Section.PAPER_TWO_WRITTEN).isEmpty()) {
+			throw new IllegalArgumentException("Paper 2 is excluded but contains Questions.");
+		}
 
-		// Preserve the original model instance referenced by the
-		// application and its Question selection callbacks.
+		// Preserve the original draft object referenced by
+		// the application and Question selection callbacks.
 		draft.replaceWith(replacement);
 		committedSettings = draft.isFinalised() ? settings : null;
 		managedIncludePaperTwo = includePaperTwo;
@@ -752,11 +791,12 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 		paperOneWorkingField.setText(Integer.toString(settings.paperOneWorkingMinutes()));
 		paperTwoPerusalField.setText(Integer.toString(settings.paperTwoPerusalMinutes()));
 		paperTwoWorkingField.setText(Integer.toString(settings.paperTwoWorkingMinutes()));
+		updatePaperTwoControls();
 		sectionBox.getSelectionModel().selectFirst();
 		refresh();
 
-		// Updating the timing fields fires their ordinary dirty listeners.
-		// Clear dirty only after the complete definition has been published.
+		// Metadata changes may fire the normal dirty listeners.
+		// Clear dirty after publishing the complete definition.
 		dirty = false;
 		statusLabel.setText(message);
 	}
@@ -772,15 +812,30 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 	private PrintableExamSettings readSettings() {
 		if (draft.isFinalised() && committedSettings != null) {
 
-			// Preserve the authoritative committed metadata,
-			// including the recorded Subject name.
+			// Preserve the authoritative committed metadata.
 			return committedSettings;
 		}
+		int paperTwoPerusal = managedIncludePaperTwo ? readInteger(paperTwoPerusalField, "Paper 2 perusal time")
+				: readUnusedPaperTwoTime(paperTwoPerusalField, 0, 5);
+		int paperTwoWorking = managedIncludePaperTwo ? readInteger(paperTwoWorkingField, "Paper 2 working time")
+				: readUnusedPaperTwoTime(paperTwoWorkingField, 1, 90);
 		return new PrintableExamSettings(draft.getSubject().getName(), readInteger(yearField, "Assessment year"),
 				readInteger(paperOnePerusalField, "Paper 1 perusal time"),
-				readInteger(paperOneWorkingField, "Paper 1 working time"),
-				readInteger(paperTwoPerusalField, "Paper 2 perusal time"),
-				readInteger(paperTwoWorkingField, "Paper 2 working time"));
+				readInteger(paperOneWorkingField, "Paper 1 working time"), paperTwoPerusal, paperTwoWorking);
+	}
+
+	private int readUnusedPaperTwoTime(TextField field, int minimum, int defaultValue) {
+		try {
+			int value = Integer.parseInt(field.getText().trim());
+
+			// Retain valid times for possible re-enablement.
+			return value >= minimum ? value : defaultValue;
+		} catch (NumberFormatException failure) {
+
+			// Invalid hidden metadata must not prevent a
+			// Paper 1-only examination from being saved or generated.
+			return defaultValue;
+		}
 	}
 
 	private void refresh() {
@@ -791,8 +846,7 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 		} else {
 			PrintableAssessmentPlan plan = draft.buildPlan();
 
-			// Use the same numbering plan that will subsequently
-			// be consumed by the PDF generation service.
+			// Retain the same numbering plan used for PDF generation.
 			var numbered = switch (section) {
 			case MULTIPLE_CHOICE -> plan.getMultipleChoice();
 			case PAPER_ONE_WRITTEN -> plan.getPaperOne();
@@ -803,9 +857,12 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 		int mcqMarks = draft.getTotalMarks(ExamBuilderDraft.Section.MULTIPLE_CHOICE);
 		int paperOneMarks = draft.getTotalMarks(ExamBuilderDraft.Section.PAPER_ONE_WRITTEN);
 		int paperTwoMarks = draft.getTotalMarks(ExamBuilderDraft.Section.PAPER_TWO_WRITTEN);
-		summaryLabel.setText("Paper 1 MCQ: %d marks    |    ".formatted(mcqMarks)
-				+ "Paper 1 written: %d marks    |    ".formatted(paperOneMarks)
-				+ "Paper 2 written: %d marks".formatted(paperTwoMarks));
+		String summary = "Paper 1 MCQ: %d marks    |    ".formatted(mcqMarks)
+				+ "Paper 1 written: %d marks".formatted(paperOneMarks);
+		if (managedIncludePaperTwo) {
+			summary += "    |    Paper 2 written: %d marks".formatted(paperTwoMarks);
+		}
+		summaryLabel.setText(summary);
 		totalLabel.setText("%d selected Questions — Total: %d marks".formatted(draft.getTopLevelSelectedCount(),
 				mcqMarks + paperOneMarks + paperTwoMarks));
 		selectQuestion(previousId);
@@ -862,7 +919,7 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 	private void saveDraft(Path file) throws IOException {
 		Path destination = file.toAbsolutePath().normalize();
 		requireOutsideManagedData(destination.getParent());
-		draftFileService.save(destination, draft, readSettings());
+		draftFileService.save(destination, draft, readSettings(), managedIncludePaperTwo);
 		dirty = false;
 		statusLabel.setText("Examination draft saved: " + destination);
 	}
@@ -916,6 +973,9 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 	}
 
 	private ExamBuilderDraft.Section transferTarget() {
+		if (!managedIncludePaperTwo) {
+			return null;
+		}
 		ExamBuilderDraft.Section section = sectionBox.getValue();
 		if (section == null) {
 			return null;
@@ -932,8 +992,10 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 		long questionId = selectedQuestionId();
 		boolean selected = questionId > 0;
 		ExamBuilderDraft.Section section = sectionBox.getValue();
+		boolean sectionAvailable = section != null
+				&& (managedIncludePaperTwo || section != ExamBuilderDraft.Section.PAPER_TWO_WRITTEN);
 		setHeaderText("Mock examination — " + draft.getSubject().getName() + (readOnly ? " — FINALISED" : " — DRAFT"));
-		addButton.setDisable(readOnly || generating);
+		addButton.setDisable(readOnly || generating || !sectionAvailable);
 		moveUpButton.setDisable(
 				readOnly || generating || !selected || draft.adjacentWholeQuestionIndex(section, questionId, -1) < 0);
 		moveDownButton.setDisable(
@@ -945,9 +1007,12 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 		transferButton.setDisable(readOnly || generating || !selected || target == null);
 		transferButton.setText(
 				target == ExamBuilderDraft.Section.PAPER_TWO_WRITTEN ? "Transfer to Paper 2" : "Transfer to Paper 1");
-		for (TextField field : List.of(yearField, paperOnePerusalField, paperOneWorkingField, paperTwoPerusalField,
-				paperTwoWorkingField)) {
+		includePaperTwoCheckBox.setDisable(readOnly || generating);
+		for (TextField field : List.of(yearField, paperOnePerusalField, paperOneWorkingField)) {
 			field.setEditable(!readOnly && !generating);
+		}
+		for (TextField field : List.of(paperTwoPerusalField, paperTwoWorkingField)) {
+			field.setEditable(managedIncludePaperTwo && !readOnly && !generating);
 		}
 		generateButton.setDisable(generationAction == null || draft.isEmpty() || generating);
 		boolean managed = managedStore != null;
@@ -957,9 +1022,30 @@ public final class ExamBuilderDialog extends Dialog<Void> {
 		deleteManagedDraftButton.setDisable(!managed || !managedWritable || generating);
 		finaliseButton.setDisable(!managed || !managedWritable || readOnly || draft.isEmpty() || generating);
 
-		// Reset is a Subject-level operation, not an edit to
-		// the examination currently displayed.
+		// Annual reset remains independent of the displayed
+		// examination's lifecycle and paper structure.
 		resetYearButton.setDisable(!managed || !managedWritable || generating);
+	}
+
+	private void updatePaperTwoControls() {
+		includePaperTwoCheckBox.setSelected(managedIncludePaperTwo);
+		paperTwoLabel.setVisible(managedIncludePaperTwo);
+		paperTwoLabel.setManaged(managedIncludePaperTwo);
+		for (TextField field : List.of(paperTwoPerusalField, paperTwoWorkingField)) {
+			field.setVisible(managedIncludePaperTwo);
+			field.setManaged(managedIncludePaperTwo);
+		}
+		ExamBuilderDraft.Section previousSection = sectionBox.getValue();
+		List<ExamBuilderDraft.Section> sections = managedIncludePaperTwo ? List.of(ExamBuilderDraft.Section.values())
+				: List.of(ExamBuilderDraft.Section.MULTIPLE_CHOICE, ExamBuilderDraft.Section.PAPER_ONE_WRITTEN);
+		if (!sectionBox.getItems().equals(sections)) {
+			sectionBox.getItems().setAll(sections);
+
+			// Preserve the current section where possible.
+			// Excluding the selected Paper 2 returns to Paper 1.
+			sectionBox.setValue(previousSection != null && sections.contains(previousSection) ? previousSection
+					: ExamBuilderDraft.Section.PAPER_ONE_WRITTEN);
+		}
 	}
 
 	/**

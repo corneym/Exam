@@ -68,6 +68,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonBase;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
@@ -584,6 +585,101 @@ class ExamBuilderDialogTest {
 	}
 
 	@Test
+	void managedPaperTwoInclusionSurvivesSaveOpenAndFinalisation(FxRobot robot) throws Exception {
+		ManagedExamFixture fixture = createManagedExamFixture();
+		ExamBuilderDraft draft = new ExamBuilderDraft(fixture.subject());
+		var section = ExamBuilderDraft.Section.MULTIPLE_CHOICE;
+		var paperTwo = ExamBuilderDraft.Section.PAPER_TWO_WRITTEN;
+		assertTrue(draft.add(section, fixture.first()));
+		UUID examinationId = draft.getExaminationId();
+		ExamBuilderDraftFile files = new ExamBuilderDraftFile(new SqlitePortableIdentityRepository(fixture.database()),
+				new SqliteQuestionRepository(fixture.database()), fixture.store());
+		PrintableExamSettings settings = new PrintableExamSettings(fixture.subject().getName(), 2026, 5, 90, 5, 90);
+
+		// Simulate an external file saved before Paper 2 was excluded.
+		Path staleFile = tempDirectory.resolve("before-exclusion.exam.json");
+		files.save(staleFile, draft, settings, true);
+		ExamBuilderDialog dialog = createManagedExamDialog(robot, fixture, draft, true,
+				(_, _, _, _) -> Optional.empty());
+		try {
+			robot.interact(dialog::show);
+			CheckBox includePaperTwo = robot.lookup("#exam-builder-include-paper-two").queryAs(CheckBox.class);
+			ComboBox<ExamBuilderDraft.Section> sections = robot.lookup("#exam-builder-section").queryComboBox();
+			Button save = robot.lookup("#exam-builder-save-managed").queryButton();
+			Button open = robot.lookup("#exam-builder-open-managed").queryButton();
+			Button newExam = robot.lookup("#exam-builder-new").queryButton();
+			Button finalise = robot.lookup("#exam-builder-finalise").queryButton();
+			Label status = robot.lookup("#exam-builder-status").queryAs(Label.class);
+			assertTrue(includePaperTwo.isSelected());
+			assertTrue(sections.getItems().contains(paperTwo));
+			robot.interact(includePaperTwo::fire);
+			assertFalse(includePaperTwo.isSelected());
+			assertFalse(sections.getItems().contains(paperTwo));
+			robot.interact(save::fire);
+			var saved = fixture.store().find(examinationId, fixture.subject()).orElseThrow();
+			assertFalse(saved.includePaperTwo());
+			assertFalse(saved.draft().isFinalised());
+			assertTrue(fixture.store().lockedQuestionIds(fixture.subject(), 2026).isEmpty());
+
+			// A new examination defaults to Paper 2 included.
+			robot.interact(newExam::fire);
+			assertNotEquals(examinationId, draft.getExaminationId());
+			assertTrue(includePaperTwo.isSelected());
+			assertTrue(sections.getItems().contains(paperTwo));
+
+			// Reopen the saved Paper 1-only draft.
+			Platform.runLater(open::fire);
+			answerManagedDialog(robot, "exam-builder-managed-choice", ButtonBar.ButtonData.OK_DONE);
+			WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+					() -> status.getText().startsWith("Saved examination draft opened"));
+			assertEquals(examinationId, draft.getExaminationId());
+			assertFalse(includePaperTwo.isSelected());
+			assertFalse(sections.getItems().contains(paperTwo));
+			assertFalse(includePaperTwo.isDisabled());
+			Platform.runLater(finalise::fire);
+			answerManagedDialog(robot, "exam-builder-managed-confirmation", ButtonBar.ButtonData.OK_DONE);
+			WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS, () -> status.getText().startsWith("Examination finalised"));
+			assertTrue(draft.isFinalised());
+			assertFalse(includePaperTwo.isSelected());
+			assertTrue(includePaperTwo.isDisabled());
+			assertFalse(sections.getItems().contains(paperTwo));
+			var committed = fixture.store().find(examinationId, fixture.subject()).orElseThrow();
+			assertFalse(committed.includePaperTwo());
+			assertTrue(committed.draft().isFinalised());
+			assertEquals(Set.of(fixture.first().getId()), fixture.store().lockedQuestionIds(fixture.subject(), 2026));
+
+			// The managed finalised definition must override
+			// the older external file's Paper 2 setting.
+			var reopenedStaleFile = files.load(staleFile, fixture.subject());
+			assertTrue(reopenedStaleFile.draft().isFinalised());
+			assertFalse(reopenedStaleFile.includePaperTwo());
+			assertEquals(examinationId, reopenedStaleFile.draft().getExaminationId());
+
+			// Reopen the committed Paper 1-only examination.
+			robot.interact(newExam::fire);
+			assertTrue(includePaperTwo.isSelected());
+			Platform.runLater(open::fire);
+			answerManagedDialog(robot, "exam-builder-managed-choice", ButtonBar.ButtonData.OK_DONE);
+			WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+					() -> status.getText().startsWith("Finalised examination opened"));
+			assertEquals(examinationId, draft.getExaminationId());
+			assertTrue(draft.isFinalised());
+			assertFalse(includePaperTwo.isSelected());
+			assertTrue(includePaperTwo.isDisabled());
+			assertFalse(sections.getItems().contains(paperTwo));
+			fixture.database().verifyIntegrity();
+		} finally {
+			robot.interact(() -> {
+
+				// Do not open an unrelated discard confirmation
+				// during cleanup after a failed assertion.
+				dialog.setOnCloseRequest(null);
+				dialog.close();
+			});
+		}
+	}
+
+	@Test
 	void movesTransfersAndRemovesEntireMultipartQuestion(FxRobot robot) {
 		ExamBuilderDraft draft = new ExamBuilderDraft(subject);
 		Question standalone = createQuestion(30, "25", 4, QuestionResponseType.WRITTEN_RESPONSE);
@@ -665,6 +761,117 @@ class ExamBuilderDialogTest {
 			assertFalse(robot.lookup("#exam-builder-new").queryButton().isDisabled());
 			assertFalse(robot.lookup("#exam-builder-open-managed").queryButton().isDisabled());
 			assertFalse(robot.lookup("#exam-builder-save-draft").queryButton().isDisabled());
+		} finally {
+			robot.interact(dialog::close);
+		}
+	}
+
+	@Test
+	void optionalPaperTwoProtectsSelectionsAndControlsGeneration(FxRobot robot) throws Exception {
+		ExamBuilderDraft draft = new ExamBuilderDraft(subject);
+		var paperOne = ExamBuilderDraft.Section.PAPER_ONE_WRITTEN;
+		var paperTwo = ExamBuilderDraft.Section.PAPER_TWO_WRITTEN;
+		Question first = createQuestion(1, "21", 4, QuestionResponseType.WRITTEN_RESPONSE);
+		Question second = createQuestion(2, "22", 3, QuestionResponseType.WRITTEN_RESPONSE);
+		assertTrue(draft.add(paperOne, first));
+		assertTrue(draft.add(paperTwo, second));
+		Path dataRoot = Files.createDirectory(tempDirectory.resolve("data"));
+		Path destination = Files.createDirectory(tempDirectory.resolve("generated"));
+		AtomicReference<PrintableExamSettings> settingsUsed = new AtomicReference<>();
+		AtomicReference<PrintableAssessmentPlan> planUsed = new AtomicReference<>();
+		AtomicReference<ExamBuilderDialog> holder = new AtomicReference<>();
+		robot.interact(() -> {
+			ExamBuilderDialog dialog = new ExamBuilderDialog(stage, draft, (_, _) -> Optional.empty());
+			dialog.configureGeneration((settings, plan, output) -> {
+				settingsUsed.set(settings);
+				planUsed.set(plan);
+				Files.writeString(output.resolve("generated.marker"), "Generation completed.");
+			}, dataRoot);
+			holder.set(dialog);
+		});
+		ExamBuilderDialog dialog = holder.get();
+		try {
+			robot.interact(dialog::show);
+			CheckBox includePaperTwo = robot.lookup("#exam-builder-include-paper-two").queryAs(CheckBox.class);
+			ComboBox<ExamBuilderDraft.Section> sections = robot.lookup("#exam-builder-section").queryComboBox();
+			ListView<PrintableQuestionNumbering.NumberedQuestion> questions = robot.lookup("#exam-builder-questions")
+					.queryListView();
+			Button transfer = robot.lookup("#exam-builder-transfer").queryButton();
+			TextField perusal = robot.lookup("#exam-builder-paper-two-perusal").queryAs(TextField.class);
+			TextField working = robot.lookup("#exam-builder-paper-two-working").queryAs(TextField.class);
+			Label paperTwoLabel = robot.lookup("#exam-builder-paper-two-label").queryAs(Label.class);
+			Label summary = robot.lookup("#exam-builder-summary").queryAs(Label.class);
+			Label total = robot.lookup("#exam-builder-total").queryAs(Label.class);
+			Label status = robot.lookup("#exam-builder-status").queryAs(Label.class);
+			assertTrue(includePaperTwo.isSelected());
+			assertTrue(sections.getItems().contains(paperTwo));
+			assertTrue(perusal.isVisible());
+			assertTrue(working.isVisible());
+
+			// Attempt to exclude a populated Paper 2.
+			robot.interact(includePaperTwo::fire);
+			assertTrue(includePaperTwo.isSelected());
+			assertTrue(status.getText().contains("Cannot exclude Paper 2"));
+			assertEquals(List.of(first), draft.getQuestions(paperOne));
+			assertEquals(List.of(second), draft.getQuestions(paperTwo));
+			assertEquals(2, draft.getTopLevelSelectedCount());
+
+			// Transfer the Question using the actual UI action.
+			robot.interact(() -> {
+				sections.setValue(paperTwo);
+				questions.getSelectionModel().selectFirst();
+			});
+			assertFalse(transfer.isDisabled());
+			robot.interact(transfer::fire);
+			assertEquals(List.of(first, second), draft.getQuestions(paperOne));
+			assertTrue(draft.getQuestions(paperTwo).isEmpty());
+
+			// Select the now-empty Paper 2 and enter invalid times.
+			// Once excluded, those hidden values must not prevent
+			// Paper 1-only generation.
+			robot.interact(() -> {
+				sections.setValue(paperTwo);
+				perusal.setText("-5");
+				working.setText("invalid");
+			});
+			robot.interact(includePaperTwo::fire);
+			assertFalse(includePaperTwo.isSelected());
+			assertEquals(List.of(ExamBuilderDraft.Section.MULTIPLE_CHOICE, paperOne), List.copyOf(sections.getItems()));
+			assertEquals(paperOne, sections.getValue());
+			assertFalse(paperTwoLabel.isVisible());
+			assertFalse(paperTwoLabel.isManaged());
+			assertFalse(perusal.isVisible());
+			assertFalse(perusal.isManaged());
+			assertFalse(working.isVisible());
+			assertFalse(working.isManaged());
+			assertFalse(transfer.isVisible());
+			assertFalse(transfer.isManaged());
+			assertFalse(summary.getText().contains("Paper 2"));
+			assertEquals("2 selected Questions — Total: 7 marks", total.getText());
+
+			// The existing generation callback must receive
+			// all Paper 1 Questions and no Paper 2 Questions.
+			robot.interact(() -> dialog.startGeneration(destination));
+			WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+					() -> Files.exists(destination.resolve("generated.marker")));
+			WaitForAsyncUtils.waitFor(10, TimeUnit.SECONDS,
+					() -> status.getText().startsWith("Examination generated:"));
+			assertEquals(2, planUsed.get().getPaperOneQuestionCount());
+			assertEquals(7, planUsed.get().getPaperOneTotalMarks());
+			assertTrue(planUsed.get().getPaperTwo().isEmpty());
+			assertEquals(5, settingsUsed.get().paperTwoPerusalMinutes());
+			assertEquals(90, settingsUsed.get().paperTwoWorkingMinutes());
+
+			// Re-enabling restores Paper 2 controls without
+			// moving any Questions back into the empty paper.
+			robot.interact(includePaperTwo::fire);
+			assertTrue(includePaperTwo.isSelected());
+			assertTrue(sections.getItems().contains(paperTwo));
+			assertTrue(perusal.isVisible());
+			assertTrue(working.isVisible());
+			assertTrue(draft.getQuestions(paperTwo).isEmpty());
+			assertEquals(List.of(first, second), draft.getQuestions(paperOne));
+			assertEquals(2, draft.getTopLevelSelectedCount());
 		} finally {
 			robot.interact(dialog::close);
 		}
