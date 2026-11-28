@@ -26,7 +26,7 @@ import java.util.stream.Stream;
  */
 public final class SqliteDatabase {
 
-	private static final int LATEST_SCHEMA_VERSION = 51;
+	private static final int LATEST_SCHEMA_VERSION = 52;
 	private static final List<String> VERSION_ONE_TABLES = List.of("schema_version", "subjects", "syllabus_versions",
 			"curriculum_nodes", "exam_providers", "source_documents", "exams", "exam_booklets", "questions",
 			"question_regions", "answer_files", "answers", "answer_regions");
@@ -630,6 +630,15 @@ public final class SqliteDatabase {
 			verifySchema(connection, 25);
 			return 25;
 		}
+		if (version == 51) {
+
+			// Version 52 installs corpus-disposal state and then performs the
+			// assignment-baseline backfill and portable delete-trigger replacement
+			// that cannot be expressed by the frozen SQL migration alone.
+			SqliteCorpusDisposalSchema.migrate(connection);
+			verifySchema(connection, 52);
+			return 52;
+		}
 		int nextVersion = version + 1;
 		String resource = String.format(Locale.ROOT, "/db/migration-v%02d-to-v%02d.sql", version, nextVersion);
 		executeMigration(connection, resource, nextVersion);
@@ -982,6 +991,9 @@ public final class SqliteDatabase {
 		}
 		if (version >= 51) {
 			verifyVersion51MockExaminationSchema(connection);
+		}
+		if (version >= 52) {
+			verifyVersion52CorpusDisposalSchema(connection);
 		}
 	}
 
@@ -1963,6 +1975,91 @@ public final class SqliteDatabase {
 				"contributor receipt acknowledgement",
 				detached ? new String[] { "/db/migration-v42-to-v43.sql", "/db/migration-v49-to-v50.sql" }
 						: new String[] { "/db/migration-v42-to-v43.sql" });
+	}
+
+	private void verifyVersion52CorpusDisposalSchema(Connection connection) throws SQLException {
+		verifyTableSchema(connection, "corpus_disposal_durable_states", List.of(column("state", true, 1)), List.of(),
+				List.of());
+		verifyTableSchema(connection, "corpus_disposal_operations",
+				List.of(column("operation_id", true, 1), column("policy", true, 0), column("policy_version", true, 0),
+						column("scope_id", true, 0), column("reason", true, 0),
+						column("terminal_return_package_id", false, 0), column("assignment_package_id", true, 0),
+						column("assignment_archive_sha256", true, 0), column("plan_sha256", true, 0),
+						column("state", true, 0), column("planned_at", true, 0), column("updated_at", true, 0),
+						column("database_released_at", false, 0), column("verified_at", false, 0)),
+				List.of(foreignKey("terminal_return_package_id", "contributor_return_packages", "package_id"),
+						foreignKey("state", "corpus_disposal_durable_states", "state")),
+				List.of(List.of("terminal_return_package_id"), List.of("policy", "scope_id")));
+		verifyTableSchema(connection, "portable_revision_history", List.of(column("revision_id", true, 1),
+				column("portable_id", true, 0), column("entity_type", true, 0), column("first_observed_at", true, 0)),
+				List.of(), List.of());
+		verifyTableSchema(connection, "corpus_disposal_entities",
+				List.of(column("operation_id", true, 1), column("entity_type", true, 2), column("local_id", true, 3),
+						column("portable_id", true, 0), column("revision_id", true, 0),
+						column("authority_installation_id", true, 0), column("reattachable", true, 0)),
+				List.of(foreignKey("operation_id", "corpus_disposal_operations", "operation_id"),
+						foreignKey("revision_id", "portable_revision_history", "revision_id")),
+				List.of(List.of("operation_id", "portable_id")));
+		verifyTableSchema(connection, "corpus_disposal_retired_entities",
+				List.of(column("operation_id", true, 1), column("portable_id", true, 2), column("entity_type", true, 0),
+						column("former_local_id", true, 0), column("latest_revision_id", true, 0),
+						column("authority_installation_id", true, 0)),
+				List.of(foreignKey("operation_id", "corpus_disposal_operations", "operation_id"),
+						foreignKey("latest_revision_id", "portable_revision_history", "revision_id")),
+				List.of());
+		verifyTableSchema(connection, "corpus_disposal_assets",
+				List.of(column("operation_id", true, 1), column("relative_path", true, 2),
+						column("content_sha256", true, 0), column("asset_kind", true, 0)),
+				List.of(foreignKey("operation_id", "corpus_disposal_operations", "operation_id")), List.of());
+		verifyTableSchema(connection, "portable_entity_cache_evictions",
+				List.of(column("operation_id", true, 1), column("portable_id", true, 2), column("entity_type", true, 0),
+						column("former_local_id", true, 0), column("latest_revision_id", true, 0),
+						column("authority_installation_id", true, 0), column("reattachable", true, 0),
+						column("evicted_at", true, 0)),
+				List.of(foreignKey("operation_id", "corpus_disposal_operations", "operation_id"),
+						foreignKey("latest_revision_id", "portable_revision_history", "revision_id")),
+				List.of());
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT sql
+				FROM sqlite_master
+				WHERE type = 'table' AND name = 'corpus_disposal_operations'
+				"""); ResultSet row = statement.executeQuery()) {
+			if (!row.next()) {
+				throw new SQLException("Missing corpus disposal operation table definition");
+			}
+			String sql = row.getString(1).replaceAll("\\s+", " ").toUpperCase(Locale.ROOT);
+			if (!sql.contains("FOREIGN KEY (STATE) REFERENCES CORPUS_DISPOSAL_DURABLE_STATES(STATE) "
+					+ "DEFERRABLE INITIALLY DEFERRED")) {
+				throw new SQLException("Corpus disposal release authority is not transaction-scoped");
+			}
+			if (row.next()) {
+				throw new SQLException("Duplicate corpus disposal operation table definition");
+			}
+		}
+		SqliteCorpusDisposalSchema.verifyTriggers(connection);
+		try (Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery("""
+				SELECT state
+				FROM corpus_disposal_durable_states
+				ORDER BY state
+				""")) {
+			List<String> states = new ArrayList<>();
+			while (rows.next()) {
+				states.add(rows.getString(1));
+			}
+			if (!states.equals(List.of("DATABASE_RELEASED", "PLANNED", "VERIFIED"))) {
+				throw new SQLException("Invalid corpus disposal durable-state registry");
+			}
+		}
+		try (Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery("""
+				SELECT 1
+				FROM corpus_disposal_operations
+				WHERE state = 'DATABASE_RELEASING'
+				LIMIT 1
+				""")) {
+			if (rows.next()) {
+				throw new SQLException("Corpus disposal deletion authority escaped its transaction");
+			}
+		}
 	}
 
 	private void verifyVersion46MasterGraphSchema(Connection connection) throws SQLException {

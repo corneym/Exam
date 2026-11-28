@@ -59,30 +59,40 @@ final class WorkAssignmentArchiveFixture {
 		ObjectNode current = fields("subject_id", id(1).toString(), "syllabus_name", "Biology 2025");
 		current.put("is_current", 1);
 		current.put("curriculum_status", "IN_PROGRESS");
+		current.putNull("curriculum_finalised_at");
 		ObjectNode unit = fields("syllabus_version_id", id(2).toString(), "curriculum_level", "UNIT", "curriculum_code",
 				"U1", "curriculum_name", "Biology Unit");
+		unit.putNull("parent_id");
 		unit.put("display_order", 0);
+		unit.putNull("source_page_number");
+		ObjectNode topic = curriculumNode(13, "TOPIC", "U1.T1", "Biology Topic");
+		ObjectNode subtopic = curriculumNode(14, "SUBTOPIC", "U1.T1.S1", "Biology Subtopic");
 		ObjectNode exam = fields("subject_id", id(1).toString(), "provider_id", id(4).toString(), "exam_name",
 				"External Assessment");
 		exam.put("exam_year", 2025);
+		exam.put("capture_state", "ACTIVE");
 		exam.put("expected_question_booklet_count", 2);
 		exam.put("expected_answer_file_count", 1);
+		ObjectNode paper1 = bookletValues("Paper 1");
+		ObjectNode paper2 = bookletValues("Paper 2");
+		ObjectNode answers = fields("exam_id", id(3).toString(), "source_document_id", id(9).toString(),
+				"answer_file_name", "Marking guide");
+		answers.put("contains_answer_explanations", 0);
+		ObjectNode question = fields("booklet_id", id(5).toString(), "classification_node_id", id(15).toString(),
+				"question_code", "1", "question_text", "Assigned question", "response_type", "WRITTEN_RESPONSE");
+		question.put("marks", 1);
+		question.put("shared_context_capture_required", 0);
+		question.putNull("source_question_id");
+		question.putNull("shared_context_id");
+		question.put("source_capture_required", 0);
 		List<ExchangeRecord> records = List.of(record("SUBJECT", 1, fields("subject_name", "Biology")),
 				record("SYLLABUS_VERSION", 2, current), record("CURRICULUM_NODE", 13, unit),
+				record("CURRICULUM_NODE", 14, topic), record("CURRICULUM_NODE", 15, subtopic),
 				record("EXAM_PROVIDER", 4, fields("provider_name", "QCAA")), record("EXAM", 3, exam),
-				record("EXAM_BOOKLET", 5,
-						fields("exam_id", id(3).toString(), "source_document_id", id(8).toString(), "answer_file_id",
-								id(7).toString(), "booklet_name", "Paper 1")),
-				record("EXAM_BOOKLET", 6,
-						fields("exam_id", id(3).toString(), "source_document_id", id(8).toString(), "answer_file_id",
-								id(7).toString(), "booklet_name", "Paper 2")),
-				record("ANSWER_FILE", 7,
-						fields("exam_id", id(3).toString(), "source_document_id", id(9).toString(), "answer_file_name",
-								"Marking guide")),
-				record("SOURCE_DOCUMENT", 8,
-						fields("relative_path", QUESTION_PATH, "content_sha256", hash(QUESTION_BYTES))),
-				record("SOURCE_DOCUMENT", 9,
-						fields("relative_path", ANSWER_PATH, "content_sha256", hash(ANSWER_BYTES))));
+				record("EXAM_BOOKLET", 5, paper1), record("EXAM_BOOKLET", 6, paper2), record("ANSWER_FILE", 7, answers),
+				record("QUESTION", 10, question),
+				record("SOURCE_DOCUMENT", 8, fields("content_sha256", hash(QUESTION_BYTES))),
+				record("SOURCE_DOCUMENT", 9, fields("content_sha256", hash(ANSWER_BYTES))));
 		ObjectNode contextValues = fields("assignment_id", id(102).toString(), "baseline_snapshot_id",
 				id(103).toString(), "master_installation_id", id(101).toString(), "contributor_id", id(104).toString(),
 				"contributor_name", "Test Contributor", "subject_id", id(1).toString(), "exam_id", id(3).toString(),
@@ -149,6 +159,23 @@ final class WorkAssignmentArchiveFixture {
 		return "assets/sha256/" + digest.substring(0, 2) + "/" + digest + ".pdf";
 	}
 
+	private static ObjectNode bookletValues(String name) {
+		ObjectNode values = fields("exam_id", id(3).toString(), "source_document_id", id(8).toString(),
+				"answer_file_id", id(7).toString(), "booklet_name", name, "question_format", "UNSPECIFIED");
+		values.putNull("pending_mcq_shared_context_id");
+		values.putNull("expected_question_count");
+		values.putNull("legacy_paper_code");
+		return values;
+	}
+
+	private static ObjectNode curriculumNode(int parentId, String level, String code, String name) {
+		ObjectNode values = fields("syllabus_version_id", id(2).toString(), "parent_id", id(parentId).toString(),
+				"curriculum_level", level, "curriculum_code", code, "curriculum_name", name);
+		values.put("display_order", 0);
+		values.putNull("source_page_number");
+		return values;
+	}
+
 	private static String hash(byte[] bytes) throws Exception {
 		return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
 	}
@@ -158,6 +185,26 @@ final class WorkAssignmentArchiveFixture {
 	}
 
 	private static ExchangeRecord record(String type, int id, ObjectNode values) {
+		switch (type) {
+		case "CURRICULUM_NODE" -> values.putArray("curriculum_mapping_reviews");
+		case "EXAM_BOOKLET" -> values.putArray("booklet_applicability_reviews");
+		case "QUESTION" -> {
+			values.putArray("question_regions");
+			values.putArray("question_images");
+			values.putArray("question_content_parts");
+			values.putArray("question_output_exclusions");
+		}
+		case "ANSWER" -> values.putArray("answer_regions");
+		case "SHARED_QUESTION_CONTEXT" -> {
+			values.putArray("shared_question_context_regions");
+			values.putArray("shared_question_context_images");
+			values.putArray("shared_question_context_content_parts");
+		}
+		default -> {
+
+			// Entity types without owned child collections need no fixture fields.
+		}
+		}
 		return new ExchangeRecord(1, type, id(id), id(id + 200), null, values);
 	}
 

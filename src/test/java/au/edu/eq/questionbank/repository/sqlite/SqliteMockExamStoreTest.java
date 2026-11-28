@@ -472,8 +472,8 @@ class SqliteMockExamStoreTest {
 			assertEquals(1, statement.executeUpdate("""
 					UPDATE schema_version
 					SET version = 50
-					WHERE version = 51
-					"""));
+					WHERE version = %d
+					""".formatted(SqliteDatabase.latestSchemaVersion())));
 		}
 		database.verifySchema();
 		database.verifyMigrationCompatibility();
@@ -481,7 +481,7 @@ class SqliteMockExamStoreTest {
 		// Compatibility checking must not modify the live database.
 		assertEquals(50, database.schemaVersion());
 		database.initialiseSchema();
-		assertEquals(51, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		assertEquals(subjectIdentity, identities.requireByLocalId(EntityType.SUBJECT, fixture.subject().getId()));
 		assertEquals(sourceIdentity, identities.requireByLocalId(EntityType.SOURCE_QUESTION, fixture.source().getId()));
 		assertEquals(firstIdentity, identities.requireByLocalId(EntityType.QUESTION, fixture.partA().getId()));

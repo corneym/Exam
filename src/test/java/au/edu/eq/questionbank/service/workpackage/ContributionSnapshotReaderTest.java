@@ -90,7 +90,7 @@ public class ContributionSnapshotReaderTest {
 	}
 
 	@Test
-	void exportsOneFinalNewQuestionContributionAndRetainsBaseline() throws Exception {
+	void exportsOneFinalNewQuestionContributionAndDisposesLocalCorpus() throws Exception {
 		Fixture fixture = fixture();
 		SqliteDatabase database = fixture.contributorDatabase();
 		var sessions = new SqliteContributorAssignmentSessionRepository(database);
@@ -133,7 +133,9 @@ public class ContributionSnapshotReaderTest {
 		assertTrue(context.values().path("previous_return_package_id").isNull());
 		assertEquals(1, ledger.findLatest(fixture.assignmentId()).orElseThrow().returnNumber());
 		assertTrue(sessions.active().isEmpty());
-		assertArrayEquals(issuedBaseline, sessions.readBaseline(fixture.assignmentId()).records());
+		assertTrue(sessions.find(fixture.assignmentId()).isEmpty());
+		assertTrue(new SqliteQuestionRepository(database).findAll().isEmpty());
+		assertEquals("VERIFIED", scalar(database, "SELECT state FROM corpus_disposal_operations"));
 		assertThrows(IllegalStateException.class,
 				() -> exporter.export(fixture.assignmentId(), directory.resolve("another-contribution.examwork")));
 	}
@@ -296,7 +298,7 @@ public class ContributionSnapshotReaderTest {
 		IllegalStateException submittedFailure = assertThrows(IllegalStateException.class,
 				() -> exporter.preflight(fixture.assignmentId()));
 		assertTrue(submittedFailure.getMessage().contains("already been submitted"));
-		assertThrows(IOException.class, () -> exporter.export(fixture.assignmentId(), destination));
+		assertThrows(IllegalStateException.class, () -> exporter.export(fixture.assignmentId(), destination));
 		assertThrows(IllegalStateException.class,
 				() -> exporter.export(fixture.assignmentId(), directory.resolve("second-submission.examwork")));
 		var recorded = ledger.findLatest(fixture.assignmentId()).orElseThrow();
@@ -568,6 +570,17 @@ public class ContributionSnapshotReaderTest {
 				.orElseThrow(
 						() -> new SQLException("Missing contributor-local identity: " + recordType + ":" + portableId))
 				.localId();
+	}
+
+	private String scalar(SqliteDatabase database, String sql) throws SQLException {
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				var row = statement.executeQuery(sql)) {
+			assertTrue(row.next());
+			String value = row.getString(1);
+			assertFalse(row.next());
+			return value;
+		}
 	}
 
 	private ContributionSnapshotReader.Snapshot snapshot(Fixture fixture, String filename) throws Exception {

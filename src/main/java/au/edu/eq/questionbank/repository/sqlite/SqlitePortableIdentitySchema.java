@@ -110,13 +110,36 @@ final class SqlitePortableIdentitySchema {
 	}
 
 	static void verifyTriggers(Connection connection) throws SQLException {
+		boolean cacheEvictionEnabled = tableExists(connection, "corpus_disposal_operations");
 		for (EntityTable entity : ENTITY_TABLES) {
 			verifyTrigger(connection, insertTriggerName(entity), entity.tableName(), insertTriggerSql(entity));
-			verifyTrigger(connection, deleteTriggerName(entity), entity.tableName(), deleteTriggerSql(entity));
+			String expectedDelete = cacheEvictionEnabled ? cacheEvictionDeleteTriggerSql(entity)
+					: deleteTriggerSql(entity);
+			verifyTrigger(connection, deleteTriggerName(entity), entity.tableName(), expectedDelete);
 			verifyTrigger(connection, idUpdateTriggerName(entity), entity.tableName(), idUpdateTriggerSql(entity));
 		}
 		verifyTrigger(connection, "app_portable_identity_immutable", "portable_entity_identities",
 				identityImmutableTriggerSql());
+	}
+
+	static void installCacheEvictionDeleteTriggers(Connection connection) throws SQLException {
+		Objects.requireNonNull(connection, "connection");
+		try (Statement statement = connection.createStatement()) {
+			for (EntityTable entity : ENTITY_TABLES) {
+				statement.executeUpdate("DROP TRIGGER " + deleteTriggerName(entity));
+				statement.executeUpdate(cacheEvictionDeleteTriggerSql(entity));
+			}
+		}
+	}
+
+	static void installLegacyDeleteTriggers(Connection connection) throws SQLException {
+		Objects.requireNonNull(connection, "connection");
+		try (Statement statement = connection.createStatement()) {
+			for (EntityTable entity : ENTITY_TABLES) {
+				statement.executeUpdate("DROP TRIGGER " + deleteTriggerName(entity));
+				statement.executeUpdate(deleteTriggerSql(entity));
+			}
+		}
 	}
 
 	private static void backfillIdentities(Connection connection) throws SQLException {
@@ -174,6 +197,92 @@ final class SqlitePortableIdentitySchema {
 
 	private static String deleteTriggerName(EntityTable entity) {
 		return "app_portable_" + entity.tableName() + "_delete";
+	}
+
+	private static String cacheEvictionDeleteTriggerSql(EntityTable entity) {
+		return """
+				CREATE TRIGGER %s
+				AFTER DELETE ON %s
+				BEGIN
+				    SELECT CASE
+				        WHEN EXISTS (
+				            SELECT 1
+				            FROM corpus_disposal_operations operation
+				            WHERE operation.state = 'DATABASE_RELEASING'
+				        )
+				        AND NOT EXISTS (
+				            SELECT 1
+				            FROM corpus_disposal_operations operation
+				            JOIN corpus_disposal_entities entity
+				              ON entity.operation_id = operation.operation_id
+				            JOIN portable_entity_identities identity_row
+				              ON identity_row.entity_type = entity.entity_type
+				             AND identity_row.local_id = entity.local_id
+				             AND identity_row.portable_id = entity.portable_id
+				            WHERE operation.state = 'DATABASE_RELEASING'
+				              AND entity.entity_type = '%s'
+				              AND entity.local_id = OLD.id
+				        )
+				        THEN RAISE(
+				            ABORT,
+				            'Corpus disposal attempted an uninventoried entity deletion'
+				        )
+				    END;
+
+				    INSERT INTO portable_entity_cache_evictions (
+				        operation_id,
+				        portable_id,
+				        entity_type,
+				        former_local_id,
+				        latest_revision_id,
+				        authority_installation_id,
+				        reattachable,
+				        evicted_at
+				    )
+				    SELECT operation.operation_id,
+				           identity_row.portable_id,
+				           identity_row.entity_type,
+				           identity_row.local_id,
+				           identity_row.revision_id,
+				           entity.authority_installation_id,
+				           entity.reattachable,
+				           strftime('%%Y-%%m-%%dT%%H:%%M:%%fZ', 'now')
+				    FROM corpus_disposal_operations operation
+				    JOIN corpus_disposal_entities entity
+				      ON entity.operation_id = operation.operation_id
+				    JOIN portable_entity_identities identity_row
+				      ON identity_row.entity_type = entity.entity_type
+				     AND identity_row.local_id = entity.local_id
+				     AND identity_row.portable_id = entity.portable_id
+				    WHERE operation.state = 'DATABASE_RELEASING'
+				      AND entity.entity_type = '%s'
+				      AND entity.local_id = OLD.id;
+
+				    INSERT INTO portable_entity_retirements (
+				        portable_id,
+				        entity_type,
+				        local_id,
+				        revision_id
+				    )
+				    SELECT portable_id,
+				           entity_type,
+				           local_id,
+				           revision_id
+				    FROM portable_entity_identities
+				    WHERE entity_type = '%s'
+				      AND local_id = OLD.id
+				      AND NOT EXISTS (
+				          SELECT 1
+				          FROM corpus_disposal_operations operation
+				          WHERE operation.state = 'DATABASE_RELEASING'
+				      );
+
+				    DELETE FROM portable_entity_identities
+				    WHERE entity_type = '%s'
+				      AND local_id = OLD.id;
+				END
+				""".formatted(deleteTriggerName(entity), entity.tableName(), entity.entityType(), entity.entityType(),
+				entity.entityType(), entity.entityType());
 	}
 
 	private static String deleteTriggerSql(EntityTable entity) {
@@ -264,6 +373,20 @@ final class SqlitePortableIdentitySchema {
 				statement.executeUpdate(idUpdateTriggerSql(entity));
 			}
 			statement.executeUpdate(identityImmutableTriggerSql());
+		}
+	}
+
+	private static boolean tableExists(Connection connection, String tableName) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				SELECT 1
+				FROM sqlite_master
+				WHERE type = 'table'
+				  AND name = ?
+				""")) {
+			statement.setString(1, tableName);
+			try (ResultSet result = statement.executeQuery()) {
+				return result.next();
+			}
 		}
 	}
 

@@ -64,6 +64,14 @@ final class ManagedAssetRecoveryReferences implements AutoCloseable {
 		return references.contains(destination.toAbsolutePath().normalize());
 	}
 
+	void commit() throws SQLException {
+		connection.commit();
+	}
+
+	Connection connection() {
+		return connection;
+	}
+
 	private void readReferences(ApplicationConfig config) throws IOException, SQLException {
 		ManagedDataLayout layout = new ManagedDataLayout(config.dataRoot());
 		try (var statement = connection.createStatement()) {

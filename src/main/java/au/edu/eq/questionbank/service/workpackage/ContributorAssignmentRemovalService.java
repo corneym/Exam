@@ -75,13 +75,23 @@ public final class ContributorAssignmentRemovalService {
 	 * the installed assignment's immutable identity and archive digest.
 	 *
 	 * @param assignmentId original installed assignment UUID
-	 * @throws SQLException if persistence fails
-	 * @throws IOException  if the installed work cannot be validated
+	 * @throws SQLException             if persistence fails
+	 * @throws IOException              if the installed work cannot be validated
+	 * @throws IllegalArgumentException if the assignment was never installed
+	 * @throws IllegalStateException    if the assignment is not removed, has been
+	 *                                  superseded or its corpus has been disposed
+	 * @throws NullPointerException     if the assignment identity is null
 	 */
 	public void reactivate(UUID assignmentId) throws SQLException, IOException {
 		Objects.requireNonNull(assignmentId, "assignmentId");
-		if (visibility.find(assignmentId).orElseThrow(() -> new IllegalArgumentException(
-				"Unknown contributor assignment: " + assignmentId)) != State.REMOVED) {
+		var state = visibility.find(assignmentId);
+		if (state.isEmpty()) {
+			if (isDisposed(assignmentId)) {
+				throw new IllegalStateException("This assignment corpus has been disposed and cannot be reactivated.");
+			}
+			throw new IllegalArgumentException("Unknown contributor assignment: " + assignmentId);
+		}
+		if (state.orElseThrow() != State.REMOVED) {
 			throw new IllegalStateException("Only a previously removed assignment can be reactivated.");
 		}
 		var sessions = new SqliteContributorAssignmentSessionRepository(database);
@@ -109,6 +119,22 @@ public final class ContributorAssignmentRemovalService {
 			statement.setString(1, assignmentId.toString());
 			if (statement.executeUpdate() != 1) {
 				throw new SQLException("The removed assignment could not be reactivated.");
+			}
+		}
+	}
+
+	private boolean isDisposed(UUID assignmentId) throws SQLException {
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT 1
+						FROM corpus_disposal_operations
+						WHERE policy = 'CONTRIBUTOR_ASSIGNMENT'
+						  AND scope_id = ?
+						LIMIT 1
+						""")) {
+			statement.setString(1, assignmentId.toString());
+			try (var result = statement.executeQuery()) {
+				return result.next();
 			}
 		}
 	}

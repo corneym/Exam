@@ -22,11 +22,11 @@ class SqliteMockExamSchemaTest {
 	@Test
 	void freshSchemaContainsVerifiedExaminationStructures() throws Exception {
 		SqliteDatabase database = createDatabase("fresh.db");
-		assertEquals(51, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		database.verifySchema();
 		database.verifyIntegrity();
 		database.initialiseSchema();
-		assertEquals(51, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		database.verifySchema();
 		database.verifyIntegrity();
 	}
@@ -39,14 +39,14 @@ class SqliteMockExamSchemaTest {
 			assertEquals(1, statement.executeUpdate("""
 					UPDATE schema_version
 					SET version = 26
-					WHERE version = 51
-					"""));
+					WHERE version = %d
+					""".formatted(SqliteDatabase.latestSchemaVersion())));
 		}
 		assertEquals(26, database.schemaVersion());
 		assertNoV51Objects(database);
 		database.verifySchema();
 		database.initialiseSchema();
-		assertEquals(51, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		database.verifySchema();
 		database.verifyIntegrity();
 	}
@@ -59,8 +59,8 @@ class SqliteMockExamSchemaTest {
 			assertEquals(1, statement.executeUpdate("""
 					UPDATE schema_version
 					SET version = 50
-					WHERE version = 51
-					"""));
+					WHERE version = %d
+					""".formatted(SqliteDatabase.latestSchemaVersion())));
 			statement.execute("""
 					CREATE TRIGGER test_reject_v51
 					BEFORE UPDATE OF version ON schema_version
@@ -80,7 +80,7 @@ class SqliteMockExamSchemaTest {
 			statement.execute("DROP TRIGGER test_reject_v51");
 		}
 		database.initialiseSchema();
-		assertEquals(51, database.schemaVersion());
+		assertEquals(SqliteDatabase.latestSchemaVersion(), database.schemaVersion());
 		database.verifySchema();
 		database.verifyIntegrity();
 	}

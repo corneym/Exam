@@ -1,6 +1,7 @@
 package au.edu.eq.questionbank.repository.sqlite;
 
 import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
@@ -121,11 +122,17 @@ final class SqliteAssignmentGuardFixture {
 					""");
 		}
 		var identities = new SqlitePortableIdentityRepository(database);
-		UUID subjectId = identities.requireByLocalId(EntityType.SUBJECT, 1).portableId();
+		var subjectIdentity = identities.requireByLocalId(EntityType.SUBJECT, 1);
+		UUID subjectId = subjectIdentity.portableId();
 		UUID examId = identities.requireByLocalId(EntityType.EXAM, 31).portableId();
 		UUID syllabusId = identities.requireByLocalId(EntityType.SYLLABUS_VERSION, 11).portableId();
 		UUID legacyId = identities.requireByLocalId(EntityType.SYLLABUS_VERSION, 12).portableId();
 		UUID assignmentId = UUID.randomUUID();
+		byte[] baselineRecords = ("""
+				{"recordVersion":1,"recordType":"SUBJECT","recordId":"%s","revisionId":"%s","baselineRevisionId":null,"values":{}}
+				"""
+				.formatted(subjectIdentity.portableId(), subjectIdentity.revisionId()))
+				.getBytes(StandardCharsets.UTF_8);
 		try (Connection connection = database.openConnection();
 				PreparedStatement statement = connection.prepareStatement("""
 						INSERT INTO contributor_assignment_sessions (
@@ -175,7 +182,7 @@ final class SqliteAssignmentGuardFixture {
 			statement.setString(17, "a".repeat(64));
 			statement.setString(18, "b".repeat(64));
 			statement.setString(19, "c".repeat(64));
-			statement.setBytes(20, new byte[] { 1 });
+			statement.setBytes(20, baselineRecords);
 			statement.setBytes(21, new byte[] { 2 });
 			statement.executeUpdate();
 		}

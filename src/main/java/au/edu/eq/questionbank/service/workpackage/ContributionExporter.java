@@ -27,6 +27,7 @@ import java.util.stream.Stream;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ApplicationVersion;
 import au.edu.eq.questionbank.ManagedAssetPublicationLock;
 import au.edu.eq.questionbank.ManagedDataLayout;
@@ -58,8 +59,10 @@ import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest.ScopeLevel;
  * archive is authenticated and detached return evidence is recorded.
  *
  * <p>
- * A successfully recorded contribution makes the assignment locally submitted.
- * Further exports require a newly issued assignment.
+ * A successfully recorded contribution disposes the assignment's live working
+ * graph and unreferenced managed assets while retaining detached terminal and
+ * portable identity evidence. Further exports require a newly issued
+ * assignment.
  */
 public final class ContributionExporter {
 
@@ -87,7 +90,9 @@ public final class ContributionExporter {
 	 * <p>
 	 * Empty returns and modifications to issued baseline records are refused. A
 	 * successfully recorded return prevents another contribution for that
-	 * assignment. The original published archive remains available for resending.
+	 * assignment. The original published archive remains available for resending;
+	 * the submitted live corpus is then removed under the recoverable disposal
+	 * journal.
 	 *
 	 * @param assignmentId installed contributor assignment UUID
 	 * @param destination  new .examwork archive destination
@@ -102,15 +107,17 @@ public final class ContributionExporter {
 	public ExamWorkManifest export(UUID assignmentId, Path destination) throws SQLException, IOException {
 		Objects.requireNonNull(assignmentId, "assignmentId");
 		try (ManagedAssetPublicationLock lock = ManagedAssetPublicationLock.acquire(layout.dataRoot())) {
+			ApplicationConfig config = ApplicationConfig.fromDataRoot(layout.dataRoot());
+			ManagedAssetPublicationRecovery.recoverPendingForDisposal(config, lock, assignmentId);
 			ContributionPublicationJournal journal = new ContributionPublicationJournal(database, layout);
-			journal.recoverPending(lock);
-			Path target = requireDestination(destination);
 			SqliteContributionReturnLedger ledger = new SqliteContributionReturnLedger(database);
 			if (ledger.findLatest(assignmentId).isPresent()) {
+				new ContributorAssignmentCorpusDisposalService(database, layout).releaseSubmitted(assignmentId, lock);
 				throw new IllegalStateException("This assignment has already been submitted. "
 						+ "Resend the original contribution package if necessary. "
 						+ "Further work requires a new assignment.");
 			}
+			Path target = requireDestination(destination);
 			UUID previousPackageId = null;
 			int returnNumber = 1;
 			Path buildDirectory = Files.createTempDirectory("examwork-contribution-build-");
@@ -181,6 +188,7 @@ public final class ContributionExporter {
 				Files.delete(destinationStaging);
 				attempt = journal.markPublished(attempt, lock);
 				journal.finalisePublished(attempt, verified, lock);
+				new ContributorAssignmentCorpusDisposalService(database, layout).releaseSubmitted(assignmentId, lock);
 				return verified;
 			} catch (IOException | SQLException | RuntimeException failure) {
 				if (attempt != null && !publicationMayHaveStarted) {
@@ -230,7 +238,14 @@ public final class ContributionExporter {
 	public void preflight(UUID assignmentId) throws SQLException, IOException {
 		Objects.requireNonNull(assignmentId, "assignmentId");
 		try (ManagedAssetPublicationLock lock = ManagedAssetPublicationLock.acquire(layout.dataRoot())) {
-			new ContributionPublicationJournal(database, layout).recoverPending(lock);
+			ApplicationConfig config = ApplicationConfig.fromDataRoot(layout.dataRoot());
+			ManagedAssetPublicationRecovery.recoverPendingForDisposal(config, lock, assignmentId);
+			if (new SqliteContributionReturnLedger(database).findLatest(assignmentId).isPresent()) {
+				new ContributorAssignmentCorpusDisposalService(database, layout).releaseSubmitted(assignmentId, lock);
+				throw new IllegalStateException("This assignment has already been submitted. "
+						+ "Resend the original contribution package if necessary. "
+						+ "Further work requires a new assignment.");
+			}
 			Path stagingDirectory = Files.createTempDirectory("examwork-contribution-preflight-");
 			try {
 				Path snapshotPath = stagingDirectory.resolve("contributor-snapshot.db");

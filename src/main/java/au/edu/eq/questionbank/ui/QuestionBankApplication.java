@@ -184,6 +184,7 @@ import au.edu.eq.questionbank.service.workpackage.ExamWorkJsonlCodec;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkManifest;
 import au.edu.eq.questionbank.service.workpackage.ExamWorkPackageType;
 import au.edu.eq.questionbank.service.workpackage.ExchangeRecord;
+import au.edu.eq.questionbank.service.workpackage.ManagedAssetPublicationRecovery;
 import au.edu.eq.questionbank.service.workpackage.MasterContributionApplicationCoordinator;
 import au.edu.eq.questionbank.service.workpackage.MasterContributionDecisionLedger;
 import au.edu.eq.questionbank.service.workpackage.MasterContributionIntake;
@@ -474,6 +475,7 @@ public class QuestionBankApplication extends Application {
 			// Subject-first guard is satisfied.
 			database.initialiseSchema();
 			new DataLayoutMigrationStartupGuard(config, database).requireCurrentLayout();
+			ManagedAssetPublicationRecovery.recoverPending(config);
 			startApplication(stage, config);
 		} catch (DataLayoutMigrationRequiredException e) {
 			showStartupError("Data Migration Required", """
@@ -7072,8 +7074,8 @@ public class QuestionBankApplication extends Application {
 		task.setOnSucceeded(_ -> {
 			progress.close();
 
-			// The return ledger has already made this assignment
-			// SUBMITTED. Select the next eligible assignment and refresh
+			// Publication has recorded detached terminal evidence and disposed the
+			// submitted live corpus. Select the next eligible assignment and refresh
 			// the complete application context before releasing controls.
 			refreshAfterContributorAssignmentClosed(failure -> {
 				contributionExportRunning = false;

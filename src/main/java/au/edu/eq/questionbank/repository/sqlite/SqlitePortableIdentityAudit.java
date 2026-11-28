@@ -38,6 +38,9 @@ final class SqlitePortableIdentityAudit {
 		}
 		verifyAliasTargets(connection);
 		verifyCrossTableUniqueness(connection);
+		if (tableExists(connection, "portable_revision_history")) {
+			verifyRevisionHistory(connection);
+		}
 	}
 
 	private static boolean exists(Connection connection, String sql) throws SQLException {
@@ -57,17 +60,40 @@ final class SqlitePortableIdentityAudit {
 		}
 	}
 
+	private static boolean tableExists(Connection connection, String tableName) throws SQLException {
+		try (var statement = connection.prepareStatement("""
+				SELECT 1
+				FROM sqlite_master
+				WHERE type = 'table'
+				  AND name = ?
+				""")) {
+			statement.setString(1, tableName);
+			try (ResultSet result = statement.executeQuery()) {
+				return result.next();
+			}
+		}
+	}
+
 	private static void verifyAliasTargets(Connection connection) throws SQLException {
-		if (exists(connection, """
+		String cacheEvictionJoin = tableExists(connection, "portable_entity_cache_evictions") ? """
+				LEFT JOIN portable_entity_cache_evictions evicted
+				    ON evicted.portable_id = a.canonical_portable_id
+				""" : """
+				LEFT JOIN portable_entity_retirements evicted
+				    ON 1 = 0
+				""";
+		if (exists(connection, ("""
 				SELECT 1
 				FROM portable_identity_aliases a
 				LEFT JOIN portable_entity_identities live
 				    ON live.portable_id = a.canonical_portable_id
 				LEFT JOIN portable_entity_retirements retired
 				    ON retired.portable_id = a.canonical_portable_id
+				%s
 				WHERE (
 				    live.portable_id IS NULL
 				    AND retired.portable_id IS NULL
+				    AND evicted.portable_id IS NULL
 				)
 				   OR (
 				    live.portable_id IS NOT NULL
@@ -77,8 +103,12 @@ final class SqlitePortableIdentityAudit {
 				    retired.portable_id IS NOT NULL
 				    AND retired.entity_type <> a.entity_type
 				)
+				   OR (
+				    evicted.portable_id IS NOT NULL
+				    AND evicted.entity_type <> a.entity_type
+				)
 				LIMIT 1
-				""")) {
+				""").formatted(cacheEvictionJoin))) {
 			throw new SQLException("Alias targets a missing or incorrect canonical entity");
 		}
 		if (exists(connection, """
@@ -115,6 +145,63 @@ final class SqlitePortableIdentityAudit {
 				LIMIT 1
 				""")) {
 			throw new SQLException("Active identity conflicts with retired identity history");
+		}
+	}
+
+	private static void verifyRevisionHistory(Connection connection) throws SQLException {
+		if (exists(connection, """
+				SELECT 1
+				FROM portable_entity_identities live
+				LEFT JOIN portable_revision_history history
+				  ON history.revision_id = live.revision_id
+				 AND history.portable_id = live.portable_id
+				 AND history.entity_type = live.entity_type
+				WHERE history.revision_id IS NULL
+				LIMIT 1
+				""")) {
+			throw new SQLException("Live portable identity is missing revision history");
+		}
+		if (exists(connection, """
+				SELECT 1
+				FROM portable_entity_retirements retired
+				LEFT JOIN portable_revision_history history
+				  ON history.revision_id = retired.revision_id
+				 AND history.portable_id = retired.portable_id
+				 AND history.entity_type = retired.entity_type
+				WHERE history.revision_id IS NULL
+				LIMIT 1
+				""")) {
+			throw new SQLException("Retired portable identity is missing revision history");
+		}
+		if (exists(connection, """
+				SELECT 1
+				FROM portable_entity_cache_evictions eviction
+				LEFT JOIN portable_revision_history history
+				  ON history.revision_id = eviction.latest_revision_id
+				 AND history.portable_id = eviction.portable_id
+				 AND history.entity_type = eviction.entity_type
+				WHERE history.revision_id IS NULL
+				LIMIT 1
+				""")) {
+			throw new SQLException("Cache-evicted portable identity has invalid revision history");
+		}
+		if (exists(connection, """
+				SELECT portable_id
+				FROM portable_revision_history
+				GROUP BY portable_id
+				HAVING COUNT(DISTINCT entity_type) > 1
+				LIMIT 1
+				""")) {
+			throw new SQLException("Portable identity history crosses entity types");
+		}
+		try (Statement statement = connection.createStatement(); ResultSet result = statement.executeQuery("""
+				SELECT revision_id, portable_id
+				FROM portable_revision_history
+				""")) {
+			while (result.next()) {
+				requireUuid(result.getString("revision_id"), "historical revision UUID");
+				requireUuid(result.getString("portable_id"), "historical portable UUID");
+			}
 		}
 	}
 

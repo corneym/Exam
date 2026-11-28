@@ -79,8 +79,9 @@ public final class ContributorKnownMasterRebaseService {
 	}
 
 	/**
-	 * Reassesses an already acknowledged receipt against current local revisions
-	 * without requiring the original archive.
+	 * Reassesses an already acknowledged receipt against detached assignment
+	 * evidence and any current local revisions, without requiring the original
+	 * archive.
 	 *
 	 * <p>
 	 * The accepted master record is retained separately even when the contributor
@@ -98,9 +99,10 @@ public final class ContributorKnownMasterRebaseService {
 		Objects.requireNonNull(receiptPackageId, "receiptPackageId");
 		Acknowledgement acknowledgement = new ContributorReceiptAcknowledgementLedger(database).find(receiptPackageId)
 				.orElseThrow(() -> new SQLException("Receipt has not been acknowledged"));
-		var session = new SqliteContributorAssignmentSessionRepository(database).find(acknowledgement.assignmentId())
-				.orElseThrow(() -> new SQLException("Acknowledged assignment is missing"));
-		if (!session.masterInstallationId().equals(acknowledgement.masterInstallationId())) {
+		var assignment = new SqliteContributionReturnLedger(database)
+				.findAssignmentEvidence(acknowledgement.assignmentId())
+				.orElseThrow(() -> new SQLException("Acknowledged assignment return evidence is missing"));
+		if (!assignment.masterInstallationId().equals(acknowledgement.masterInstallationId())) {
 			throw new SQLException("Acknowledged master does not match assignment");
 		}
 		Map<String, ExchangeRecord> remainingMaster = new HashMap<>();
@@ -116,8 +118,8 @@ public final class ContributorKnownMasterRebaseService {
 		try (Connection connection = database.openConnection()) {
 			connection.setAutoCommit(false);
 			try {
-				boolean superseded = newerAssignmentInstalled(connection, session.examPortableId(),
-						session.assignmentId(), session.issuedAt());
+				boolean superseded = newerAssignmentInstalled(connection, assignment.examPortableId(),
+						assignment.assignmentId(), assignment.issuedAt());
 				for (ExchangeRecord outcome : acknowledgement.outcomes()) {
 					String typeName = outcome.values().path("record_type").asText();
 					String contributorKey = key(typeName, outcome.recordId());
@@ -195,9 +197,16 @@ public final class ContributorKnownMasterRebaseService {
 				FROM contributor_assignment_sessions
 				WHERE exam_portable_id = ?
 				  AND assignment_id <> ?
+				UNION
+				SELECT issued_at
+				FROM contributor_return_packages
+				WHERE exam_portable_id = ?
+				  AND assignment_id <> ?
 				""")) {
 			statement.setString(1, examPortableId.toString());
 			statement.setString(2, assignmentId.toString());
+			statement.setString(3, examPortableId.toString());
+			statement.setString(4, assignmentId.toString());
 			try (ResultSet result = statement.executeQuery()) {
 				while (result.next()) {
 					Instant otherIssueTime;
@@ -239,7 +248,7 @@ public final class ContributorKnownMasterRebaseService {
 	 * working state.
 	 */
 	public enum Status {
-		/** The master rejected the proposal; local work remains intact. */
+		/** The master rejected the proposal; its non-canonical outcome is retained. */
 		PRESERVE_REJECTED,
 		/** Accepted record type is not supported for local comparison. */
 		HOLD_UNSUPPORTED_TYPE,
@@ -279,12 +288,14 @@ public final class ContributorKnownMasterRebaseService {
 	 * Rebase view of a durable receipt against current contributor state.
 	 *
 	 * <p>
-	 * If a newer assignment is installed, this receipt remains historical evidence
-	 * and must not be treated as the new assignment baseline.
+	 * If a newer assignment is installed or has already been submitted, this
+	 * receipt remains historical evidence and must not be treated as the newer
+	 * assignment baseline.
 	 *
 	 * @param acknowledgement             durable authenticated receipt evidence
 	 * @param supersededByNewerAssignment whether another later-issued assignment
 	 *                                    for this Exam has been installed locally
+	 *                                    or submitted and disposed
 	 * @param entries                     immutable per-record known-master
 	 *                                    assessments
 	 */

@@ -17,7 +17,23 @@ final class SqliteContributorAssignmentSessionTriggers {
 	}
 
 	static void verify(Connection connection) throws SQLException {
-		SqliteMigrationTriggerVerifier.verify(connection, "trg_contributor_assignment_", "contributor assignment",
-				"/db/migration-v28-to-v29.sql");
+		if (hasCorpusDisposalSchema(connection)) {
+			SqliteMigrationTriggerVerifier.verify(connection, "trg_contributor_assignment_", "contributor assignment",
+					"/db/migration-v28-to-v29.sql", "/db/migration-v51-to-v52.sql");
+		} else {
+			SqliteMigrationTriggerVerifier.verify(connection, "trg_contributor_assignment_", "contributor assignment",
+					"/db/migration-v28-to-v29.sql");
+		}
+	}
+
+	private static boolean hasCorpusDisposalSchema(Connection connection) throws SQLException {
+		try (var statement = connection.prepareStatement("""
+				SELECT 1
+				FROM sqlite_master
+				WHERE type = 'table'
+				  AND name = 'corpus_disposal_operations'
+				"""); var result = statement.executeQuery()) {
+			return result.next();
+		}
 	}
 }

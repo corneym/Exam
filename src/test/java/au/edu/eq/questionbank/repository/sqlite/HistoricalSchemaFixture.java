@@ -1038,7 +1038,8 @@ public final class HistoricalSchemaFixture {
 	 * historical fixture.
 	 *
 	 * <p>
-	 * Lifecycle triggers are removed before the dependent tables. This method must
+	 * Newer corpus-disposal objects are removed first. Mock examination lifecycle
+	 * triggers are then removed before their dependent tables. This method must
 	 * never be used on production data.
 	 *
 	 * @param statement statement for a disposable historical fixture
@@ -1047,6 +1048,7 @@ public final class HistoricalSchemaFixture {
 	 */
 	public static void removeVersion51Objects(Statement statement) throws SQLException {
 		Objects.requireNonNull(statement, "statement");
+		removeVersion52Objects(statement);
 		List<String> names = new ArrayList<>();
 		try (PreparedStatement lookup = statement.getConnection().prepareStatement("""
 				SELECT name
@@ -1070,6 +1072,65 @@ public final class HistoricalSchemaFixture {
 		statement.execute("DROP TABLE IF EXISTS mock_exam_reservations");
 		statement.execute("DROP TABLE IF EXISTS mock_exam_selections");
 		statement.execute("DROP TABLE IF EXISTS mock_examinations");
+	}
+
+	/**
+	 * Removes schema-v52 disposal and revision-history structures from a disposable
+	 * historical fixture, restoring the v51 portable-identity and contributor
+	 * session deletion triggers.
+	 *
+	 * <p>
+	 * This method must never be applied to production data.
+	 *
+	 * @param statement statement for a disposable historical fixture
+	 * @throws SQLException         if cleanup or trigger restoration fails
+	 * @throws NullPointerException if statement is null
+	 */
+	public static void removeVersion52Objects(Statement statement) throws SQLException {
+		Objects.requireNonNull(statement, "statement");
+		boolean present;
+		try (PreparedStatement lookup = statement.getConnection().prepareStatement("""
+				SELECT 1
+				FROM sqlite_master
+				WHERE type = 'table'
+				  AND name = 'corpus_disposal_operations'
+				"""); ResultSet rows = lookup.executeQuery()) {
+			present = rows.next();
+		}
+		if (!present) {
+			return;
+		}
+		statement.execute("DROP TRIGGER IF EXISTS app_portable_revision_history_insert");
+		statement.execute("DROP TRIGGER IF EXISTS app_portable_revision_history_update");
+		SqlitePortableIdentitySchema.installLegacyDeleteTriggers(statement.getConnection());
+		statement.execute("DROP TRIGGER IF EXISTS trg_contributor_assignment_session_no_delete");
+		restoreMigrationTriggers(statement, "/db/migration-v28-to-v29.sql",
+				List.of("trg_contributor_assignment_session_no_delete"));
+		statement.execute("DROP TRIGGER IF EXISTS trg_portable_cache_eviction_insert");
+		statement.execute("DROP TRIGGER IF EXISTS trg_portable_cache_eviction_no_update");
+		statement.execute("DROP TRIGGER IF EXISTS trg_portable_cache_eviction_no_delete");
+		statement.execute("DROP TRIGGER IF EXISTS trg_corpus_disposal_asset_insert");
+		statement.execute("DROP TRIGGER IF EXISTS trg_corpus_disposal_asset_no_update");
+		statement.execute("DROP TRIGGER IF EXISTS trg_corpus_disposal_asset_no_delete");
+		statement.execute("DROP TRIGGER IF EXISTS trg_corpus_disposal_entity_insert");
+		statement.execute("DROP TRIGGER IF EXISTS trg_corpus_disposal_entity_no_update");
+		statement.execute("DROP TRIGGER IF EXISTS trg_corpus_disposal_entity_no_delete");
+		statement.execute("DROP TRIGGER IF EXISTS trg_corpus_disposal_retired_entity_insert");
+		statement.execute("DROP TRIGGER IF EXISTS trg_corpus_disposal_retired_entity_no_update");
+		statement.execute("DROP TRIGGER IF EXISTS trg_corpus_disposal_retired_entity_no_delete");
+		statement.execute("DROP TRIGGER IF EXISTS trg_corpus_disposal_operation_insert");
+		statement.execute("DROP TRIGGER IF EXISTS trg_corpus_disposal_operation_update");
+		statement.execute("DROP TRIGGER IF EXISTS trg_corpus_disposal_operation_no_delete");
+		statement.execute("DROP TRIGGER IF EXISTS trg_corpus_disposal_durable_states_no_insert");
+		statement.execute("DROP TRIGGER IF EXISTS trg_corpus_disposal_durable_states_no_update");
+		statement.execute("DROP TRIGGER IF EXISTS trg_corpus_disposal_durable_states_no_delete");
+		statement.execute("DROP TABLE portable_entity_cache_evictions");
+		statement.execute("DROP TABLE corpus_disposal_assets");
+		statement.execute("DROP TABLE corpus_disposal_retired_entities");
+		statement.execute("DROP TABLE corpus_disposal_entities");
+		statement.execute("DROP TABLE corpus_disposal_operations");
+		statement.execute("DROP TABLE corpus_disposal_durable_states");
+		statement.execute("DROP TABLE portable_revision_history");
 	}
 
 	private static void dropAssignmentTriggers(Statement statement, String pattern) throws SQLException {

@@ -61,7 +61,7 @@ public final class ContributorReceiptInspector {
 	}
 
 	/**
-	 * Validates a receipt against the installed assignment and return history.
+	 * Validates a receipt against detached assignment and return history.
 	 *
 	 * <p>
 	 * This operation does not authenticate the sender. It preserves the historical
@@ -83,17 +83,18 @@ public final class ContributorReceiptInspector {
 			throw new PackageFormatException("Contributor receipt requires IMPORT_RECEIPT");
 		}
 		boolean containsMasterState = requireStructure(manifest);
-		var session = new SqliteContributorAssignmentSessionRepository(database).find(manifest.assignmentId())
-				.orElseThrow(() -> new SQLException("Receipt assignment is not installed"));
+		var returns = new SqliteContributionReturnLedger(database);
+		var assignment = returns.findAssignmentEvidence(manifest.assignmentId())
+				.orElseThrow(() -> new SQLException("Receipt assignment has no detached return evidence"));
 		UUID installationId = new SqlitePortableIdentityRepository(database).installationId();
-		if (!manifest.originInstallationId().equals(session.masterInstallationId())
-				|| !manifest.intendedMasterInstallationId().equals(session.masterInstallationId())
-				|| !manifest.baselineSnapshotId().equals(session.baselineSnapshotId())
-				|| !manifest.subjectId().equals(session.subjectPortableId())
+		if (!manifest.originInstallationId().equals(assignment.masterInstallationId())
+				|| !manifest.intendedMasterInstallationId().equals(assignment.masterInstallationId())
+				|| !manifest.baselineSnapshotId().equals(assignment.baselineSnapshotId())
+				|| !manifest.subjectId().equals(assignment.subjectPortableId())
 				|| manifest.scope().level() != ScopeLevel.EXAMS
-				|| !manifest.scope().examIds().equals(List.of(session.examPortableId()))
+				|| !manifest.scope().examIds().equals(List.of(assignment.examPortableId()))
 				|| !manifest.scope().bookletIds().isEmpty()) {
-			throw new PackageFormatException("Receipt does not match installed assignment");
+			throw new PackageFormatException("Receipt does not match detached assignment evidence");
 		}
 		List<ExchangeRecord> records;
 		List<ExchangeRecord> acceptedMasterRecords = List.of();
@@ -135,10 +136,10 @@ public final class ContributorReceiptInspector {
 			throw new PackageFormatException("Receipt identity does not match review");
 		}
 		requireUuid(values, "receipt_package_id", manifest.packageId());
-		requireUuid(values, "assignment_id", session.assignmentId());
-		requireUuid(values, "baseline_snapshot_id", session.baselineSnapshotId());
-		requireUuid(values, "master_installation_id", session.masterInstallationId());
-		requireUuid(values, "contributor_id", session.contributorId());
+		requireUuid(values, "assignment_id", assignment.assignmentId());
+		requireUuid(values, "baseline_snapshot_id", assignment.baselineSnapshotId());
+		requireUuid(values, "master_installation_id", assignment.masterInstallationId());
+		requireUuid(values, "contributor_id", assignment.contributorId());
 		requireUuid(values, "contributor_installation_id", installationId);
 		String completedAt = requiredText(values, "completed_at");
 		try {
@@ -148,12 +149,12 @@ public final class ContributorReceiptInspector {
 		} catch (java.time.format.DateTimeParseException failure) {
 			throw new PackageFormatException("Invalid receipt completion time", failure);
 		}
-		var published = new SqliteContributionReturnLedger(database).find(returnId)
+		var published = returns.find(returnId)
 				.orElseThrow(() -> new SQLException("Receipt refers to an unpublished local return"));
-		if (!published.assignmentId().equals(session.assignmentId())
-				|| !published.baselineSnapshotId().equals(session.baselineSnapshotId())
-				|| !published.masterInstallationId().equals(session.masterInstallationId())
-				|| !published.contributorId().equals(session.contributorId())
+		if (!published.assignmentId().equals(assignment.assignmentId())
+				|| !published.baselineSnapshotId().equals(assignment.baselineSnapshotId())
+				|| !published.masterInstallationId().equals(assignment.masterInstallationId())
+				|| !published.contributorId().equals(assignment.contributorId())
 				|| !published.originInstallationId().equals(installationId)) {
 			throw new PackageFormatException("Receipt references foreign return history");
 		}

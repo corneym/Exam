@@ -41,7 +41,6 @@ import au.edu.eq.questionbank.repository.identity.SqlitePortableAliasRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableContentRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
-import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.Identity;
 import au.edu.eq.questionbank.repository.identity.SqliteSubjectGraphReader;
 import au.edu.eq.questionbank.repository.sqlite.SqliteContributorIdentityBinder;
 import au.edu.eq.questionbank.repository.sqlite.SqliteDatabase;
@@ -442,13 +441,13 @@ public final class SubjectImportGraphWriter {
 	}
 
 	/**
-	 * Installs or refreshes a validated whole-Exam assignment graph in the caller's
-	 * uncommitted SQLite transaction.
+	 * Installs a validated whole-Exam assignment graph in the caller's uncommitted
+	 * SQLite transaction.
 	 *
 	 * <p>
-	 * Ordinary installation reuses only matching existing records. A subsequent
-	 * assignment may refresh validated Exam-owned records and reconcile previously
-	 * submitted contributor identities. Shared dependencies must remain compatible.
+	 * Installation reuses only exactly matching shared dependencies. Exam-owned
+	 * records are installed from the complete authoritative baseline; previously
+	 * submitted assignment caches are disposed before this method is called.
 	 *
 	 * <p>
 	 * The complete installed graph must match the issued baseline. Managed file
@@ -458,7 +457,7 @@ public final class SubjectImportGraphWriter {
 	 * @param connection caller-owned installation transaction
 	 * @param extraction verified private archive and extracted assets
 	 * @return immutable mapping from issued portable records to local IDs
-	 * @throws SQLException          if reconciliation or persistence fails
+	 * @throws SQLException          if identity binding or persistence fails
 	 * @throws IOException           if package validation or asset verification
 	 *                               fails
 	 * @throws IllegalStateException if the connection uses autocommit
@@ -494,18 +493,11 @@ public final class SubjectImportGraphWriter {
 		try {
 			Map<Key, Long> localIds = new LinkedHashMap<>();
 			Set<Key> inserted = new HashSet<>();
-			Set<Key> refreshed = new HashSet<>();
-			Set<Key> baseUpdated = new HashSet<>();
 			SqlitePortableContentRepository content = new SqlitePortableContentRepository(database);
-
-			// Establish refresh authority before modifying any
-			// previously installed domain records or identities.
-			AssignmentRefreshPlan refresh = AssignmentRefreshPlan.prepare(connection, database, verified);
 			SqliteContributorIdentityBinder binder = new SqliteContributorIdentityBinder(connection);
-			reconcileAssignmentIdentities(binder, refresh, verified.records());
 
-			// Resolve both unchanged authoritative identities and
-			// the newly reconciled canonical contributor identities.
+			// Existing shared dependencies are reusable only when their complete
+			// authoritative record is byte-for-byte equivalent to the new baseline.
 			for (EntityType type : ORDER) {
 				for (ExchangeRecord record : ordered.getOrDefault(type, List.of())) {
 					var existing = identities.findByPortableId(connection, type, record.recordId());
@@ -514,11 +506,7 @@ public final class SubjectImportGraphWriter {
 					}
 					long localId = existing.orElseThrow().localId();
 					Key key = SubjectReconciliationReview.recordKey(type.name(), record.recordId());
-					if (refresh.canRefresh(key, localId)) {
-						refreshed.add(key);
-					} else {
-						requireExistingAssignmentRecord(connection, content, type, localId, record, verified.assets());
-					}
+					requireExistingAssignmentRecord(connection, content, type, localId, record, verified.assets());
 					localIds.put(key, localId);
 				}
 			}
@@ -536,29 +524,12 @@ public final class SubjectImportGraphWriter {
 				}
 			}
 
-			// Refresh existing scalar content without replacing
-			// SQLite-local primary keys or breaking relationships.
-			for (EntityType type : ORDER) {
-				for (ExchangeRecord record : ordered.getOrDefault(type, List.of())) {
-					Key key = SubjectReconciliationReview.recordKey(type.name(), record.recordId());
-					if (!refreshed.contains(key)) {
-						continue;
-					}
-					long localId = localIds.get(key);
-					ExchangeRecord actual = content.snapshot(connection, type, localId).record();
-					if (!scalarValues(type, actual).equals(scalarValues(type, record))) {
-						updateAssignmentBase(connection, type, localId, record, decoded, staged, localIds);
-						baseUpdated.add(key);
-					}
-				}
-			}
-
 			// Repair deferred references after every required
 			// entity has an established local primary key.
 			for (EntityType type : ORDER) {
 				for (ExchangeRecord record : ordered.getOrDefault(type, List.of())) {
 					Key key = SubjectReconciliationReview.recordKey(type.name(), record.recordId());
-					if (inserted.contains(key) || baseUpdated.contains(key)) {
+					if (inserted.contains(key)) {
 						repairDeferredReferences(connection, type, localIds.get(key), record.values(), localIds);
 					}
 				}
@@ -574,9 +545,6 @@ public final class SubjectImportGraphWriter {
 					Key key = SubjectReconciliationReview.recordKey(type.name(), record.recordId());
 					if (inserted.contains(key)) {
 						insertChildren(connection, type, localIds.get(key), record, decoded, staged, localIds);
-					} else if (refreshed.contains(key)) {
-						replaceChangedAssignmentChildren(connection, content, type, localIds.get(key), record, decoded,
-								staged, localIds);
 					}
 				}
 			}
@@ -589,9 +557,6 @@ public final class SubjectImportGraphWriter {
 				if (inserted.contains(key)) {
 					insertChildren(connection, EntityType.EXAM_BOOKLET, localIds.get(key), record, decoded, staged,
 							localIds);
-				} else if (refreshed.contains(key)) {
-					replaceChangedAssignmentChildren(connection, content, EntityType.EXAM_BOOKLET, localIds.get(key),
-							record, decoded, staged, localIds);
 				}
 			}
 			List<SqliteContributorIdentityBinder.Binding> bindings = new ArrayList<>();
@@ -605,20 +570,10 @@ public final class SubjectImportGraphWriter {
 				}
 			}
 
-			// Finish ordinary insertion identity binding only
-			// after all domain writes and invalidation triggers.
-			binder.bindNew(bindings);
-
-			// Restore authoritative revisions for refreshed
-			// records after all child and scalar mutations.
-			for (EntityType type : ORDER) {
-				for (ExchangeRecord record : ordered.getOrDefault(type, List.of())) {
-					Key key = SubjectReconciliationReview.recordKey(type.name(), record.recordId());
-					if (refreshed.contains(key)) {
-						restoreAssignmentRevision(connection, type, localIds.get(key), record);
-					}
-				}
-			}
+			// Bind new rows to either new authoritative identities or exact
+			// authority-matched cache-eviction history.
+			binder.bindAssignment(bindings, verified.manifest().originInstallationId(), verified.manifest().subjectId(),
+					verified.manifest().scope().examIds().getFirst());
 
 			// Verify each supplied record independently.
 			for (EntityType type : ORDER) {
@@ -638,7 +593,7 @@ public final class SubjectImportGraphWriter {
 			// Verify the complete local graph, not merely the
 			// presence of every incoming record. Unexpected
 			// leftover records must also cause rollback.
-			AssignmentRefreshPlan.requireComplete(connection, database, subjectId, examId, verified.baseline());
+			AssignmentBaselineVerifier.requireComplete(connection, database, subjectId, examId, verified.baseline());
 			connection.releaseSavepoint(checkpoint);
 			return Map.copyOf(localIds);
 		} catch (SQLException | IOException | RuntimeException failure) {
@@ -1350,27 +1305,6 @@ public final class SubjectImportGraphWriter {
 			throw new SQLException("Invalid SQLite schema identifier");
 		}
 		return "\"" + identifier.replace("\"", "\"\"") + "\"";
-	}
-
-	private void reconcileAssignmentIdentities(SqliteContributorIdentityBinder binder, AssignmentRefreshPlan refresh,
-			List<ExchangeRecord> records) throws SQLException {
-		List<Identity> originals = new ArrayList<>();
-		List<SqliteContributorIdentityBinder.Binding> bindings = new ArrayList<>();
-		for (ExchangeRecord record : records) {
-			EntityType type = EntityType.valueOf(record.recordType());
-			Key key = SubjectReconciliationReview.recordKey(type.name(), record.recordId());
-			Identity original = refresh.replacements().get(key);
-			if (original == null) {
-				continue;
-			}
-			originals.add(original);
-			bindings.add(new SqliteContributorIdentityBinder.Binding(type, original.localId(), record.recordId(),
-					record.revisionId()));
-		}
-		if (bindings.size() != refresh.replacements().size()) {
-			throw new SQLException("Incomplete authoritative identity reconciliation");
-		}
-		binder.bindReconciled(originals, bindings);
 	}
 
 	/**

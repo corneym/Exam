@@ -16,6 +16,7 @@ import java.util.UUID;
 import au.edu.eq.questionbank.ApplicationConfig;
 import au.edu.eq.questionbank.ApplicationVersion;
 import au.edu.eq.questionbank.ManagedAssetPublicationLock;
+import au.edu.eq.questionbank.ManagedDataLayout;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository;
 import au.edu.eq.questionbank.repository.identity.SqlitePortableIdentityRepository.EntityType;
 import au.edu.eq.questionbank.repository.sqlite.SqliteContributorAssignmentVisibilityRepository;
@@ -80,7 +81,10 @@ public final class WorkAssignmentInstallationCoordinator {
 	 *
 	 * <p>
 	 * Submitted assignments cannot be reopened for capture. Reimporting a
-	 * previously installed package never overwrites locally captured work.
+	 * previously installed package never overwrites locally captured work. A new
+	 * assignment installs its complete authoritative baseline after any submitted
+	 * or explicitly removed unchanged predecessor has been disposed; historical
+	 * reconciliation is not consulted.
 	 *
 	 * @param incomingArchive coordinator-issued .examwork archive
 	 * @return installation result, including replay and recovery information
@@ -99,7 +103,7 @@ public final class WorkAssignmentInstallationCoordinator {
 		}
 		try (var lock = ManagedAssetPublicationLock.acquire(config.dataRoot())) {
 			stagingRoot();
-			ManagedAssetPublicationRecovery.recoverPending(config, lock);
+			ManagedAssetPublicationRecovery.recoverPendingForDisposal(config, lock);
 			var inspection = new WorkAssignmentPackageInspector().inspect(source, ApplicationVersion.current(),
 					SqliteDatabase.latestSchemaVersion());
 
@@ -113,8 +117,15 @@ public final class WorkAssignmentInstallationCoordinator {
 			}
 			UUID assignmentId = inspection.manifest().assignmentId();
 			UUID packageId = inspection.manifest().packageId();
+			if (new SqliteContributionReturnLedger(database).findLatest(assignmentId).isPresent()) {
+				new ContributorAssignmentCorpusDisposalService(database, new ManagedDataLayout(config.dataRoot()))
+						.releaseSubmitted(assignmentId, lock);
+				throw new IOException("This assignment has already been submitted. "
+						+ "It cannot be reopened by importing the original work package.");
+			}
 			var existing = sessions.find(assignmentId);
 			if (existing.isPresent()) {
+				ManagedAssetPublicationRecovery.recoverPending(config, lock);
 				var installed = existing.orElseThrow();
 				requireReplayMatch(installed.packageId(), installed.archiveSha256(), inspection);
 				var state = new SqliteContributorAssignmentVisibilityRepository(database).find(assignmentId)
@@ -132,7 +143,32 @@ public final class WorkAssignmentInstallationCoordinator {
 				sessions.select(assignmentId);
 				return new Result(assignmentId, packageId, true, false);
 			}
+			releaseSupersededAssignments(inspection, lock);
+			ManagedAssetPublicationRecovery.recoverPending(config, lock);
 			return installNew(source, inspection, lock);
+		}
+	}
+
+	private void releaseSupersededAssignments(WorkAssignmentPackageInspector.Inspection incoming,
+			ManagedAssetPublicationLock lock) throws SQLException, IOException {
+		UUID incomingAssignmentId = incoming.manifest().assignmentId();
+		UUID incomingExamId = incoming.manifest().scope().examIds().getFirst();
+		var visibility = new SqliteContributorAssignmentVisibilityRepository(database);
+		var disposal = new ContributorAssignmentCorpusDisposalService(database,
+				new ManagedDataLayout(config.dataRoot()));
+		for (var session : sessions.findAll()) {
+			if (session.assignmentId().equals(incomingAssignmentId)
+					|| !session.examPortableId().equals(incomingExamId)) {
+				continue;
+			}
+			var state = visibility.find(session.assignmentId())
+					.orElseThrow(() -> new SQLException("Installed predecessor visibility is unavailable"));
+			switch (state) {
+			case SUBMITTED -> disposal.releaseSubmitted(session.assignmentId(), lock);
+			case REMOVED -> disposal.releaseRemovedUnchanged(session.assignmentId(), lock);
+			case ACTIVE -> throw new PackageFormatException(
+					"Another active assignment already owns this Exam. Submit or remove it before installing a replacement.");
+			}
 		}
 	}
 

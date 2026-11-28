@@ -1004,9 +1004,8 @@ class ContributorAssignmentDashboardWorkflowTest {
 		awaitDashboardExam(robot, second.examLocalId(), 1);
 		assertEquals(second.assignmentId(), sessions().active().orElseThrow().assignmentId());
 		var visibility = new SqliteContributorAssignmentVisibilityRepository(database);
-		assertEquals(SqliteContributorAssignmentVisibilityRepository.State.SUBMITTED,
-				visibility.find(first.assignmentId()).orElseThrow());
-		assertTrue(sessions().find(first.assignmentId()).isPresent());
+		assertTrue(visibility.find(first.assignmentId()).isEmpty());
+		assertTrue(sessions().find(first.assignmentId()).isEmpty());
 		assertFalse(removal.canRemoveUnchanged(first.assignmentId()));
 		assertTrue(new SqliteContributionReturnLedger(database).findLatest(first.assignmentId()).isPresent());
 		robot.interact(() -> {
@@ -1016,10 +1015,10 @@ class ContributorAssignmentDashboardWorkflowTest {
 			assertEquals(second.assignmentId(), assignments.getValue().assignmentId());
 		});
 
-		// The submitted Question remains durable, but is no longer part
-		// of the active contributor Dashboard.
+		// Successful publication disposes the submitted working graph. Search and
+		// revision output therefore cannot rediscover the submitted Question.
 		assertTrue(new SqliteQuestionRepository(database).findAll().stream()
-				.anyMatch(question -> question.getId() == captured.getId()));
+				.noneMatch(question -> question.getId() == captured.getId()));
 		database.verifyIntegrity();
 	}
 

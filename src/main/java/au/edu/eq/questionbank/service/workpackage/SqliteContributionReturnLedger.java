@@ -63,7 +63,7 @@ public final class SqliteContributionReturnLedger {
 	 * This lookup is independent of the contributor's current active assignment
 	 * selection.
 	 *
-	 * @param assignmentId installed assignment identity
+	 * @param assignmentId assignment identity, including a disposed submission
 	 * @return latest return, or empty when no return was recorded
 	 * @throws SQLException         if retrieval fails
 	 * @throws NullPointerException if assignmentId is null
@@ -72,6 +72,26 @@ public final class SqliteContributionReturnLedger {
 		Objects.requireNonNull(assignmentId, "assignmentId");
 		try (Connection connection = database.openConnection()) {
 			return findLatest(connection, assignmentId);
+		}
+	}
+
+	Optional<AssignmentEvidence> findAssignmentEvidence(UUID assignmentId) throws SQLException {
+		Objects.requireNonNull(assignmentId, "assignmentId");
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT *
+						FROM contributor_return_packages
+						WHERE assignment_id = ?
+						ORDER BY return_number DESC
+						LIMIT 1
+						""")) {
+			statement.setString(1, assignmentId.toString());
+			try (ResultSet result = statement.executeQuery()) {
+				if (!result.next()) {
+					return Optional.empty();
+				}
+				return Optional.of(readAssignmentEvidence(result));
+			}
 		}
 	}
 
@@ -261,6 +281,25 @@ public final class SqliteContributionReturnLedger {
 		}
 	}
 
+	private AssignmentEvidence readAssignmentEvidence(ResultSet result) throws SQLException {
+		try {
+			String contributionCreatedAt = result.getString("contribution_created_at");
+			return new AssignmentEvidence(UUID.fromString(result.getString("assignment_id")),
+					UUID.fromString(result.getString("assignment_package_id")),
+					result.getString("assignment_archive_sha256"),
+					UUID.fromString(result.getString("baseline_snapshot_id")),
+					UUID.fromString(result.getString("master_installation_id")),
+					UUID.fromString(result.getString("contributor_id")),
+					UUID.fromString(result.getString("origin_installation_id")),
+					UUID.fromString(result.getString("subject_portable_id")),
+					UUID.fromString(result.getString("exam_portable_id")), Instant.parse(result.getString("issued_at")),
+					Instant.parse(result.getString("installed_at")),
+					contributionCreatedAt == null ? null : Instant.parse(contributionCreatedAt));
+		} catch (IllegalArgumentException | NullPointerException failure) {
+			throw new SQLException("Invalid detached assignment evidence", failure);
+		}
+	}
+
 	private void requireAssignment(ExamWorkManifest manifest,
 			SqliteContributorAssignmentSessionRepository.Session session, UUID installationId) throws SQLException {
 		if (!manifest.originInstallationId().equals(installationId)
@@ -314,6 +353,28 @@ public final class SqliteContributionReturnLedger {
 			}
 			if (archiveSha256 == null || !archiveSha256.matches("[0-9a-f]{64}")) {
 				throw new IllegalArgumentException("Invalid contributor archive digest");
+			}
+		}
+	}
+
+	record AssignmentEvidence(UUID assignmentId, UUID assignmentPackageId, String assignmentArchiveSha256,
+			UUID baselineSnapshotId, UUID masterInstallationId, UUID contributorId, UUID originInstallationId,
+			UUID subjectPortableId, UUID examPortableId, Instant issuedAt, Instant installedAt,
+			Instant contributionCreatedAt) {
+
+		AssignmentEvidence {
+			Objects.requireNonNull(assignmentId, "assignmentId");
+			Objects.requireNonNull(assignmentPackageId, "assignmentPackageId");
+			Objects.requireNonNull(baselineSnapshotId, "baselineSnapshotId");
+			Objects.requireNonNull(masterInstallationId, "masterInstallationId");
+			Objects.requireNonNull(contributorId, "contributorId");
+			Objects.requireNonNull(originInstallationId, "originInstallationId");
+			Objects.requireNonNull(subjectPortableId, "subjectPortableId");
+			Objects.requireNonNull(examPortableId, "examPortableId");
+			Objects.requireNonNull(issuedAt, "issuedAt");
+			Objects.requireNonNull(installedAt, "installedAt");
+			if (assignmentArchiveSha256 == null || !assignmentArchiveSha256.matches("[0-9a-f]{64}")) {
+				throw new IllegalArgumentException("Invalid assignment archive digest");
 			}
 		}
 	}
