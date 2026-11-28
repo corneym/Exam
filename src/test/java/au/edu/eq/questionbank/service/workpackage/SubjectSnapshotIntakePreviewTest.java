@@ -82,11 +82,12 @@ class SubjectSnapshotIntakePreviewTest {
 		var initial = preview.inspect(original);
 		assertTrue(new SubjectImportCoordinator(config).executeNewSubject(initial, original).applied());
 
-		// Reconstruct a genuine v48 destination with its imported graph and ledger
-		// intact, but without the subsequently introduced originating evidence.
+		// Reconstruct a genuine v48 database without newer
+		// freshness, contributor and mock examination structures.
 		try (Connection connection = destination.openConnection(); Statement statement = connection.createStatement()) {
 			HistoricalSchemaFixture.removeVersion49Objects(statement);
-			assertEquals(1, statement.executeUpdate("UPDATE schema_version SET version = 48 WHERE version = 50"));
+			assertEquals(1, statement.executeUpdate("UPDATE schema_version SET version = 48 " + "WHERE version = "
+					+ SqliteDatabase.latestSchemaVersion()));
 		}
 		destination.verifySchema();
 		destination.initialiseSchema();

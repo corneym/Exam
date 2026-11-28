@@ -121,7 +121,8 @@ class SqliteSubjectSnapshotFreshnessSchemaTest {
 		SqliteDatabase database = database("earlier.db");
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			HistoricalSchemaFixture.removeVersion27Objects(statement);
-			assertEquals(1, statement.executeUpdate("UPDATE schema_version SET version = 26 WHERE version = 50"));
+			assertEquals(1, statement.executeUpdate("UPDATE schema_version SET version = 26 " + "WHERE version = "
+					+ SqliteDatabase.latestSchemaVersion()));
 		}
 		assertEquals(26, database.schemaVersion());
 		assertNoV49Objects(database);
@@ -260,7 +261,8 @@ class SqliteSubjectSnapshotFreshnessSchemaTest {
 			connection.setAutoCommit(false);
 			try (Statement statement = connection.createStatement()) {
 				HistoricalSchemaFixture.removeVersion49Objects(statement);
-				assertEquals(1, statement.executeUpdate("UPDATE schema_version SET version = 48 WHERE version = 50"));
+				assertEquals(1, statement.executeUpdate("UPDATE schema_version SET version = 48 " + "WHERE version = "
+						+ SqliteDatabase.latestSchemaVersion()));
 				connection.commit();
 			} catch (SQLException | RuntimeException failure) {
 				connection.rollback();

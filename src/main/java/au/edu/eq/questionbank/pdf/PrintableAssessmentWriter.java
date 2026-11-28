@@ -6,6 +6,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
@@ -248,22 +249,14 @@ public final class PrintableAssessmentWriter {
 		Path paperOnePath = outputDirectory.resolve("Paper 1.pdf");
 		Path paperTwoPath = outputDirectory.resolve("Paper 2.pdf");
 		Path guidePath = outputDirectory.resolve("Marking Guide.pdf");
-		List<Path> destinations = new ArrayList<>();
-		if (hasMcq) {
-			destinations.add(mcqPath);
-		}
-		if (hasPaperOne) {
-			destinations.add(paperOnePath);
-		}
-		if (hasPaperTwo) {
-			destinations.add(paperTwoPath);
-		}
-		destinations.add(guidePath);
 
-		// Protect existing output before constructing any documents.
-		for (Path destination : destinations) {
-			if (Files.exists(destination)) {
-				throw new FileAlreadyExistsException(destination.toString());
+		// Protect all recognised examination outputs, including
+		// omitted booklets. A previous Paper 2 must not be mistaken
+		// for part of a newly generated Paper 1-only examination.
+		for (Path destination : List.of(mcqPath, paperOnePath, paperTwoPath, guidePath)) {
+			if (Files.exists(destination, LinkOption.NOFOLLOW_LINKS)) {
+				throw new FileAlreadyExistsException(destination.toString(), null,
+						"Select a directory without existing examination PDFs.");
 			}
 		}
 		try (PDDocument mcq = new PDDocument();
@@ -292,6 +285,9 @@ public final class PrintableAssessmentWriter {
 				appendPageNumbers(paperTwo, fonts, 2, false);
 				appendSourceCredit(paperTwo, fonts, plan.getPaperTwo());
 			}
+
+			// All selected Answers remain in one marking guide,
+			// regardless of the number of student booklets.
 			PrintableExamFonts guideFonts = fontLoader.load(guide, true);
 			appendMarkingGuide(guide, guideFonts, settings.subject(), settings.year(), plan);
 			appendPageNumbers(guide, guideFonts, 1, true);
@@ -300,8 +296,8 @@ public final class PrintableAssessmentWriter {
 			allQuestions.addAll(plan.getPaperTwo());
 			appendSourceCredit(guide, guideFonts, allQuestions);
 
-			// Finish constructing every document before saving
-			// any of the generated examination files.
+			// Finish constructing every document before
+			// publishing the examination files.
 			Files.createDirectories(outputDirectory);
 			if (hasMcq) {
 				saveNewDocument(mcq, mcqPath);

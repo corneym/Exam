@@ -44,7 +44,8 @@ class SqliteContributionReturnLedgerTest {
 		SqliteDatabase database = fixture.database();
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			HistoricalSchemaFixture.removeVersion50Objects(statement);
-			assertEquals(1, statement.executeUpdate("UPDATE schema_version SET version = 49 WHERE version = 50"));
+			assertEquals(1, statement.executeUpdate("UPDATE schema_version SET version = 49 " + "WHERE version = "
+					+ SqliteDatabase.latestSchemaVersion()));
 			statement.execute("""
 					CREATE TRIGGER test_reject_v50
 					BEFORE UPDATE OF version ON schema_version
@@ -73,36 +74,6 @@ class SqliteContributionReturnLedgerTest {
 	}
 
 	@Test
-	void migrationPreservesRemovedUnsubmittedAssignment() throws Exception {
-		Fixture fixture = fixture();
-		SqliteDatabase database = fixture.database();
-		try (Connection connection = database.openConnection()) {
-			connection.setAutoCommit(false);
-			try (PreparedStatement hidden = connection.prepareStatement("""
-					INSERT INTO contributor_assignment_hidden (assignment_id, removed_at)
-					VALUES (?, ?)
-					""")) {
-				hidden.setString(1, fixture.session().assignmentId().toString());
-				hidden.setString(2, Instant.now().toString());
-				assertEquals(1, hidden.executeUpdate());
-			}
-			try (Statement statement = connection.createStatement()) {
-				HistoricalSchemaFixture.removeVersion50Objects(statement);
-				assertEquals(1, statement.executeUpdate("UPDATE schema_version SET version = 49 WHERE version = 50"));
-			}
-			connection.commit();
-		}
-		database.initialiseSchema();
-		assertEquals(SqliteContributorAssignmentVisibilityRepository.State.REMOVED,
-				new SqliteContributorAssignmentVisibilityRepository(database).find(fixture.session().assignmentId())
-						.orElseThrow());
-		assertTrue(new SqliteContributorAssignmentSessionRepository(database).find(fixture.session().assignmentId())
-				.isPresent());
-		database.verifySchema();
-		database.verifyIntegrity();
-	}
-
-	@Test
 	void migratesHistoricalMultipleReturnsAndReceiptToDetachedEvidence() throws Exception {
 		Fixture fixture = fixture();
 		SqliteDatabase database = fixture.database();
@@ -114,15 +85,22 @@ class SqliteContributionReturnLedgerTest {
 			connection.setAutoCommit(false);
 			try (Statement statement = connection.createStatement()) {
 				HistoricalSchemaFixture.removeVersion50Objects(statement);
-				assertEquals(1, statement.executeUpdate("UPDATE schema_version SET version = 49 WHERE version = 50"));
+				assertEquals(1, statement.executeUpdate("UPDATE schema_version SET version = 49 " + "WHERE version = "
+						+ SqliteDatabase.latestSchemaVersion()));
 			}
 			insertHistoricalReturn(connection, session, fixture.installationId(), firstId, 1, null, hash("first"));
 			insertHistoricalReturn(connection, session, fixture.installationId(), secondId, 2, firstId, hash("second"));
 			try (PreparedStatement receipt = connection.prepareStatement("""
 					INSERT INTO contributor_receipt_acknowledgements (
-					    receipt_package_id, return_package_id, assignment_id,
-					    review_id, master_installation_id, archive_sha256,
-					    outcomes_jsonl, master_records_jsonl, acknowledged_at
+					    receipt_package_id,
+					    return_package_id,
+					    assignment_id,
+					    review_id,
+					    master_installation_id,
+					    archive_sha256,
+					    outcomes_jsonl,
+					    master_records_jsonl,
+					    acknowledged_at
 					)
 					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 					""")) {
@@ -175,6 +153,39 @@ class SqliteContributionReturnLedgerTest {
 		assertTrue(foreignKeyTargets(database, "contributor_receipt_acknowledgements")
 				.contains("contributor_return_packages"));
 		assertEquals(1, rowCount(database, "contributor_receipt_acknowledgements"));
+		database.verifySchema();
+		database.verifyIntegrity();
+	}
+
+	@Test
+	void migrationPreservesRemovedUnsubmittedAssignment() throws Exception {
+		Fixture fixture = fixture();
+		SqliteDatabase database = fixture.database();
+		try (Connection connection = database.openConnection()) {
+			connection.setAutoCommit(false);
+			try (PreparedStatement hidden = connection.prepareStatement("""
+					INSERT INTO contributor_assignment_hidden (
+					    assignment_id, removed_at
+					)
+					VALUES (?, ?)
+					""")) {
+				hidden.setString(1, fixture.session().assignmentId().toString());
+				hidden.setString(2, Instant.now().toString());
+				assertEquals(1, hidden.executeUpdate());
+			}
+			try (Statement statement = connection.createStatement()) {
+				HistoricalSchemaFixture.removeVersion50Objects(statement);
+				assertEquals(1, statement.executeUpdate("UPDATE schema_version SET version = 49 " + "WHERE version = "
+						+ SqliteDatabase.latestSchemaVersion()));
+			}
+			connection.commit();
+		}
+		database.initialiseSchema();
+		assertEquals(SqliteContributorAssignmentVisibilityRepository.State.REMOVED,
+				new SqliteContributorAssignmentVisibilityRepository(database).find(fixture.session().assignmentId())
+						.orElseThrow());
+		assertTrue(new SqliteContributorAssignmentSessionRepository(database).find(fixture.session().assignmentId())
+				.isPresent());
 		database.verifySchema();
 		database.verifyIntegrity();
 	}
@@ -265,66 +276,6 @@ class SqliteContributionReturnLedgerTest {
 	private void execute(SqliteDatabase database, String sql) throws SQLException {
 		try (Connection connection = database.openConnection(); Statement statement = connection.createStatement()) {
 			statement.execute(sql);
-		}
-	}
-
-	private List<String> foreignKeyTargets(SqliteDatabase database, String table) throws SQLException {
-		List<String> targets = new ArrayList<>();
-		try (Connection connection = database.openConnection();
-				Statement statement = connection.createStatement();
-				ResultSet result = statement.executeQuery("PRAGMA foreign_key_list(" + table + ")")) {
-			while (result.next()) {
-				targets.add(result.getString("table"));
-			}
-		}
-		return List.copyOf(targets);
-	}
-
-	private void insertHistoricalReturn(Connection connection,
-			SqliteContributorAssignmentSessionRepository.Session session, UUID installationId, UUID packageId,
-			int returnNumber, UUID previousPackageId, String archiveSha256) throws SQLException {
-		try (PreparedStatement statement = connection.prepareStatement("""
-				INSERT INTO contributor_return_packages (
-				    package_id, assignment_id, return_number, previous_package_id,
-				    baseline_snapshot_id, master_installation_id, contributor_id,
-				    origin_installation_id, archive_sha256, recorded_at
-				)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-				""")) {
-			statement.setString(1, packageId.toString());
-			statement.setString(2, session.assignmentId().toString());
-			statement.setInt(3, returnNumber);
-			statement.setString(4, previousPackageId == null ? null : previousPackageId.toString());
-			statement.setString(5, session.baselineSnapshotId().toString());
-			statement.setString(6, session.masterInstallationId().toString());
-			statement.setString(7, session.contributorId().toString());
-			statement.setString(8, installationId.toString());
-			statement.setString(9, archiveSha256);
-			statement.setString(10, Instant.now().toString());
-			assertEquals(1, statement.executeUpdate());
-		}
-	}
-
-	private int rowCount(SqliteDatabase database, String table) throws SQLException {
-		try (Connection connection = database.openConnection();
-				Statement statement = connection.createStatement();
-				ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM " + table)) {
-			assertTrue(result.next());
-			return result.getInt(1);
-		}
-	}
-
-	private boolean tableExists(SqliteDatabase database, String table) throws SQLException {
-		try (Connection connection = database.openConnection();
-				PreparedStatement statement = connection.prepareStatement("""
-						SELECT 1
-						FROM sqlite_master
-						WHERE type = 'table' AND name = ?
-						""")) {
-			statement.setString(1, table);
-			try (ResultSet result = statement.executeQuery()) {
-				return result.next();
-			}
 		}
 	}
 
@@ -427,12 +378,49 @@ class SqliteContributionReturnLedgerTest {
 		return new Fixture(database, sessions.find(assignmentId).orElseThrow(), installationId);
 	}
 
+	private List<String> foreignKeyTargets(SqliteDatabase database, String table) throws SQLException {
+		List<String> targets = new ArrayList<>();
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("PRAGMA foreign_key_list(" + table + ")")) {
+			while (result.next()) {
+				targets.add(result.getString("table"));
+			}
+		}
+		return List.copyOf(targets);
+	}
+
 	private String hash(String value) throws Exception {
 		return hashBytes(value.getBytes(StandardCharsets.UTF_8));
 	}
 
 	private String hashBytes(byte[] bytes) throws Exception {
 		return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+	}
+
+	private void insertHistoricalReturn(Connection connection,
+			SqliteContributorAssignmentSessionRepository.Session session, UUID installationId, UUID packageId,
+			int returnNumber, UUID previousPackageId, String archiveSha256) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement("""
+				INSERT INTO contributor_return_packages (
+				    package_id, assignment_id, return_number, previous_package_id,
+				    baseline_snapshot_id, master_installation_id, contributor_id,
+				    origin_installation_id, archive_sha256, recorded_at
+				)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				""")) {
+			statement.setString(1, packageId.toString());
+			statement.setString(2, session.assignmentId().toString());
+			statement.setInt(3, returnNumber);
+			statement.setString(4, previousPackageId == null ? null : previousPackageId.toString());
+			statement.setString(5, session.baselineSnapshotId().toString());
+			statement.setString(6, session.masterInstallationId().toString());
+			statement.setString(7, session.contributorId().toString());
+			statement.setString(8, installationId.toString());
+			statement.setString(9, archiveSha256);
+			statement.setString(10, Instant.now().toString());
+			assertEquals(1, statement.executeUpdate());
+		}
 	}
 
 	private ExamWorkManifest manifest(Fixture fixture, UUID packageId) {
@@ -443,6 +431,29 @@ class SqliteContributionReturnLedgerTest {
 				session.baselineSnapshotId(), "1.0.1", "1.0.1", SqliteDatabase.latestSchemaVersion(),
 				SqliteDatabase.latestSchemaVersion(),
 				new Scope(ScopeLevel.EXAMS, List.of(session.examPortableId()), List.of()), List.of());
+	}
+
+	private int rowCount(SqliteDatabase database, String table) throws SQLException {
+		try (Connection connection = database.openConnection();
+				Statement statement = connection.createStatement();
+				ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM " + table)) {
+			assertTrue(result.next());
+			return result.getInt(1);
+		}
+	}
+
+	private boolean tableExists(SqliteDatabase database, String table) throws SQLException {
+		try (Connection connection = database.openConnection();
+				PreparedStatement statement = connection.prepareStatement("""
+						SELECT 1
+						FROM sqlite_master
+						WHERE type = 'table' AND name = ?
+						""")) {
+			statement.setString(1, table);
+			try (ResultSet result = statement.executeQuery()) {
+				return result.next();
+			}
+		}
 	}
 
 	private record Fixture(SqliteDatabase database, SqliteContributorAssignmentSessionRepository.Session session,

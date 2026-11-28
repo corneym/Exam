@@ -227,6 +227,7 @@ import au.edu.eq.questionbank.ui.model.CurriculumSelectionModel;
 import au.edu.eq.questionbank.ui.model.CurriculumSelectionModelFactory;
 import au.edu.eq.questionbank.ui.model.ExamBuilderDraft;
 import au.edu.eq.questionbank.ui.model.ExamBuilderDraftFile;
+import au.edu.eq.questionbank.ui.model.SqliteMockExamStore;
 import au.edu.eq.questionbank.ui.pdf.PdfFilePicker;
 import au.edu.eq.questionbank.ui.pdf.PdfWorkspacePane;
 import au.edu.eq.questionbank.ui.pdf.SelectedPdf;
@@ -6114,17 +6115,25 @@ public class QuestionBankApplication extends Application {
 		Subject subject = workingSubject;
 		if (subject == null) {
 			showAlert(Alert.AlertType.WARNING, "Exam Builder", "No Working Subject is selected.",
-					"Select a Working Subject before " + "building an examination.");
+					"Select a Working Subject before building an examination.");
 			return;
 		}
 		if (activeAssignmentContext != null || packageImportInProgress || contributionExportRunning
 				|| applicationBusyOverlay.isBusy()) {
 			showAlert(Alert.AlertType.WARNING, "Exam Builder", "Exam Builder is currently unavailable.",
-					"Return to the ordinary Question Bank " + "workspace and complete any active "
-							+ "collection or import operation.");
+					"Return to the ordinary Question Bank workspace "
+							+ "and complete any active collection or import operation.");
 			return;
 		}
 		SqliteDatabase database = new SqliteDatabase(config.databasePath());
+		boolean locallyAuthoritative;
+		try {
+			locallyAuthoritative = !new SqliteImportedSubjectAuthorityRepository(database).isImported(subject.getId());
+		} catch (SQLException failure) {
+			showAlert(Alert.AlertType.ERROR, "Exam Builder", "Cannot establish Subject authority.",
+					failure.getMessage());
+			return;
+		}
 		CurriculumRepository curriculumRepository = new SqliteCurriculumRepository(database);
 		SqliteQuestionRepository questionRepository = new SqliteQuestionRepository(database, performanceRecorder);
 		QuestionRetrievalService retrievalService = new QuestionRetrievalService(questionRepository,
@@ -6134,17 +6143,22 @@ public class QuestionBankApplication extends Application {
 		SqliteQuestionOutputApplicabilityRepository outputApplicabilityRepository = new SqliteQuestionOutputApplicabilityRepository(
 				database);
 		ExamBuilderDraft draft = new ExamBuilderDraft(subject);
-		ExamBuilderDialog dialog = new ExamBuilderDialog(primaryStage, draft, (owner, section) -> {
+		SqliteMockExamStore mockExamStore = new SqliteMockExamStore(database);
+		ExamBuilderDialog.AnnualQuestionSelector annualSelector = (owner, section, cohortYear, lockedQuestionIds) -> {
 			ExamQuestionSelectionDialog selection = new ExamQuestionSelectionDialog(owner, draft, section,
 					curriculumRepository, retrievalService, questionRepository::findAll, previewService,
-					outputApplicabilityRepository, performanceRecorder);
+					outputApplicabilityRepository, performanceRecorder, cohortYear, lockedQuestionIds);
 			return selection.showAndWait();
-		});
+		};
+		ExamBuilderDialog dialog = new ExamBuilderDialog(primaryStage, draft,
+				(owner, section) -> annualSelector.select(owner, section, mockExamStore.currentYear(), Set.of()),
+				questionRepository::findAll);
 		PrintableAssessmentWriter assessmentWriter = new PrintableAssessmentWriter(pdfStore);
 		dialog.configureGeneration((settings, plan, destination) -> assessmentWriter.generate(settings, plan,
 				PrintableExamFonts.windowsFontDirectory(), destination), config.dataRoot());
 		SqlitePortableIdentityRepository identities = new SqlitePortableIdentityRepository(database);
-		dialog.configureDraftFiles(new ExamBuilderDraftFile(identities, questionRepository));
+		dialog.configureDraftFiles(new ExamBuilderDraftFile(identities, questionRepository, mockExamStore));
+		dialog.configureManagedExams(mockExamStore, locallyAuthoritative, annualSelector);
 		dialog.showAndWait();
 	}
 

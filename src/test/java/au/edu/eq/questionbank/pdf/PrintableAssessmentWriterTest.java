@@ -462,6 +462,65 @@ class PrintableAssessmentWriterTest {
 	}
 
 	@Test
+	void generatesPaperOneOnlyWithOneCombinedMarkingGuide() throws Exception {
+		PrintableAssessmentPlan full = createWrittenAssessmentPlan();
+		PrintableAssessmentPlan plan = new PrintableAssessmentPlan(
+				full.getMultipleChoice().stream().map(PrintableQuestionNumbering.NumberedQuestion::question).toList(),
+				full.getPaperOne().stream().map(PrintableQuestionNumbering.NumberedQuestion::question).toList(),
+				List.of());
+		PrintableExamSettings settings = new PrintableExamSettings("Chemistry", 2027, 5, 60, 10, 75);
+		PrintableAssessmentWriter writer = new PrintableAssessmentWriter(new PdfStore(tempDir));
+		Path output = tempDir.resolve("paper-one-only");
+		writer.generate(settings, plan, output,
+				(_, guide) -> guide ? createGuideTestFonts() : createStudentTestFonts());
+		try (var files = Files.list(output)) {
+			assertEquals(List.of("MCQ.pdf", "Marking Guide.pdf", "Paper 1.pdf"),
+					files.map(path -> path.getFileName().toString()).sorted().toList());
+		}
+		String mcq = extractText(output.resolve("MCQ.pdf"));
+		String paperOne = extractText(output.resolve("Paper 1.pdf"));
+		String guide = extractText(output.resolve("Marking Guide.pdf"));
+		assertTrue(mcq.contains("Select the correct species."));
+
+		// Paper 1 numbering continues after the MCQ section.
+		assertTrue(paperOne.contains("QUESTION 2 (5 marks)"));
+		assertTrue(guide.contains("Multiple choice"));
+		assertTrue(guide.contains("Short response: Paper 1"));
+		assertTrue(guide.contains("Equilibrium constant = 25"));
+		assertTrue(guide.contains("The reaction is endothermic."));
+		assertFalse(guide.contains("Short response: Paper 2"));
+		assertFalse(guide.contains("Oxidation state = +3"));
+		assertFalse(Files.exists(output.resolve("Paper 2.pdf")));
+	}
+
+	@Test
+	void generatesWrittenPaperOneWithoutEmptyMcqOrPaperTwoBooklets() throws Exception {
+		PrintableAssessmentPlan full = createWrittenAssessmentPlan();
+		PrintableAssessmentPlan plan = new PrintableAssessmentPlan(List.of(),
+				full.getPaperOne().stream().map(PrintableQuestionNumbering.NumberedQuestion::question).toList(),
+				List.of());
+		PrintableExamSettings settings = new PrintableExamSettings("Chemistry", 2027, 5, 60, 10, 75);
+		PrintableAssessmentWriter writer = new PrintableAssessmentWriter(new PdfStore(tempDir));
+		Path output = tempDir.resolve("written-paper-one-only");
+		writer.generate(settings, plan, output,
+				(_, guide) -> guide ? createGuideTestFonts() : createStudentTestFonts());
+		try (var files = Files.list(output)) {
+			assertEquals(List.of("Marking Guide.pdf", "Paper 1.pdf"),
+					files.map(path -> path.getFileName().toString()).sorted().toList());
+		}
+		String paperOne = extractText(output.resolve("Paper 1.pdf"));
+		String guide = extractText(output.resolve("Marking Guide.pdf"));
+
+		// Without MCQs, written Question numbering begins at one.
+		assertTrue(paperOne.contains("QUESTION 1 (5 marks)"));
+		assertTrue(guide.contains("Short response: Paper 1"));
+		assertTrue(guide.contains("Equilibrium constant = 25"));
+		assertFalse(guide.contains("Short response: Paper 2"));
+		assertFalse(Files.exists(output.resolve("MCQ.pdf")));
+		assertFalse(Files.exists(output.resolve("Paper 2.pdf")));
+	}
+
+	@Test
 	void keepsConsecutiveMultipleChoiceQuestionsWithTheirSharedContext() throws Exception {
 		PrintableAssessmentPlan base = createMultipleChoicePlan();
 		var original = base.getMultipleChoice();
@@ -609,6 +668,30 @@ class PrintableAssessmentWriterTest {
 		assertTrue(PrintableAssessmentWriter.canSelect(question));
 		PrintableAssessmentPlan plan = new PrintableAssessmentPlan(List.of(question), List.of(), List.of());
 		assertEquals(1, plan.getMultipleChoiceCount());
+	}
+
+	@Test
+	void rejectsStalePaperTwoInPaperOneOnlyOutputDirectory() throws Exception {
+		PrintableAssessmentPlan plan = createMultipleChoicePlan();
+		PrintableExamSettings settings = new PrintableExamSettings("Chemistry", 2027, 5, 60, 10, 75);
+		PrintableAssessmentWriter writer = new PrintableAssessmentWriter(new PdfStore(tempDir));
+		Path output = Files.createDirectory(tempDir.resolve("stale-paper-two"));
+		Path stalePaper = output.resolve("Paper 2.pdf");
+		createPdf(stalePaper, List.of("Previous examination Paper 2."));
+		byte[] original = Files.readAllBytes(stalePaper);
+		FileAlreadyExistsException failure = assertThrows(FileAlreadyExistsException.class,
+				() -> writer.generate(settings, plan, output, (_, _) -> {
+					throw new AssertionError("Existing output must be rejected before " + "document construction.");
+				}));
+		assertTrue(failure.getMessage().contains("Paper 2.pdf"));
+
+		// Existing output must remain untouched.
+		assertArrayEquals(original, Files.readAllBytes(stalePaper));
+
+		// No new examination output should have been published.
+		try (var files = Files.list(output)) {
+			assertEquals(List.of("Paper 2.pdf"), files.map(path -> path.getFileName().toString()).sorted().toList());
+		}
 	}
 
 	@Test

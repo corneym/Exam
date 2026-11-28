@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -687,6 +688,79 @@ class QuestionSearchDialogTest {
 	}
 
 	@Test
+	void examSelectionFiltersAnnualReservationsAndRetainsPendingSelections(FxRobot robot) throws TimeoutException {
+		Subject chemistry = new Subject(100, "Chemistry");
+		Question original = examSelectionQuestion(chemistry, 1000, true, 2025, QuestionResponseType.WRITTEN_RESPONSE);
+		SourceQuestion source = new SourceQuestion(1, original.getBooklet(), "21");
+		Question partA = new Question(1008, original.getBooklet(), "21a", "", 2, List.of(),
+				original.getClassification(), false, source, null, QuestionResponseType.WRITTEN_RESPONSE);
+		Question partB = new Question(1018, original.getBooklet(), "21b", "", 3, List.of(),
+				original.getClassification(), false, source, null, QuestionResponseType.WRITTEN_RESPONSE);
+		partA.setAnswer(original.getAnswer());
+		partB.setAnswer(new Answer(1019, null, original.getAnswer().getRegions()));
+		Question available = examSelectionQuestion(chemistry, 2000, true, 2025, QuestionResponseType.WRITTEN_RESPONSE);
+		Question selected = examSelectionQuestion(chemistry, 3000, true, 2025, QuestionResponseType.WRITTEN_RESPONSE);
+		Question unanswered = examSelectionQuestion(chemistry, 4000, false, 2025,
+				QuestionResponseType.WRITTEN_RESPONSE);
+		List<Question> corpus = List.of(partA, partB, available, selected, unanswered);
+		ExamBuilderDraft draft = new ExamBuilderDraft(chemistry);
+		var section = ExamBuilderDraft.Section.PAPER_ONE_WRITTEN;
+		assertTrue(draft.add(ExamBuilderDraft.Section.PAPER_TWO_WRITTEN, selected));
+
+		// Reserve only one constituent explicitly. The entire
+		// group must nevertheless become unavailable.
+		ExamQuestionSelectionDialog dialog = createExamSelectionDialog(robot, draft, section, corpus, 2026,
+				Set.of(partA.getId()));
+		try {
+			robot.interact(dialog::show);
+			ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+			CheckBox availableOnly = robot.lookup("#exam-question-available-only").queryAs(CheckBox.class);
+			Label summary = robot.lookup("#exam-question-selection-summary").queryAs(Label.class);
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 5);
+			CheckBox firstPart = examQuestionCheckBox(robot, results, partA.getId());
+			CheckBox secondPart = examQuestionCheckBox(robot, results, partB.getId());
+			assertTrue(firstPart.isDisabled());
+			assertTrue(secondPart.isDisabled());
+			assertTrue(secondPart.getTooltip().getText().contains("Committed for cohort 2026"));
+			CheckBox duplicate = examQuestionCheckBox(robot, results, selected.getId());
+			assertTrue(duplicate.isDisabled());
+			assertEquals("Already in this draft", duplicate.getTooltip().getText());
+			assertTrue(examQuestionCheckBox(robot, results, unanswered.getId()).isDisabled());
+			CheckBox eligible = examQuestionCheckBox(robot, results, available.getId());
+			assertFalse(eligible.isDisabled());
+			robot.interact(eligible::fire);
+			assertEquals("1 selected — 1 mark", summary.getText());
+			robot.interact(availableOnly::fire);
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+					&& results.getItems().getFirst().question().getId() == available.getId());
+			assertTrue(examQuestionCheckBox(robot, results, available.getId()).isSelected());
+			assertEquals("1 selected — 1 mark", summary.getText());
+
+			// Returning to the complete result set must restore
+			// the unavailable rows without changing pending selection.
+			robot.interact(availableOnly::fire);
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 5);
+			assertTrue(examQuestionCheckBox(robot, results, partB.getId()).isDisabled());
+			assertTrue(examQuestionCheckBox(robot, results, available.getId()).isSelected());
+			assertEquals("1 selected — 1 mark", summary.getText());
+			Button add = robot.lookup("#exam-question-selection-add").queryButton();
+			robot.interact(add::fire);
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> !dialog.isShowing());
+			assertEquals(List.of(available), dialog.getResult());
+
+			// The owning examination is not changed until it
+			// accepts the result from the selection dialog.
+			assertTrue(draft.getQuestions(section).isEmpty());
+		} finally {
+			robot.interact(() -> {
+				if (dialog.isShowing()) {
+					dialog.close();
+				}
+			});
+		}
+	}
+
+	@Test
 	void fullHeightPositionSurvivesHideAndReshow(FxRobot robot) {
 		InMemoryCurriculumRepository curriculumRepository = new InMemoryCurriculumRepository();
 		QuestionRetrievalRepository retrievalRepository = _ -> List.of();
@@ -796,8 +870,115 @@ class QuestionSearchDialogTest {
 		robot.interact(dialog::close);
 	}
 
+	@Test
+	void wholeMultipartSelectionIncludesFilteredConstituents(FxRobot robot) throws TimeoutException {
+		Subject chemistry = new Subject(100, "Chemistry");
+		Question original = examSelectionQuestion(chemistry, 1000, true, 2025, QuestionResponseType.WRITTEN_RESPONSE);
+		SourceQuestion source = new SourceQuestion(1, original.getBooklet(), "21");
+		Question partA = new Question(1008, original.getBooklet(), "21a", "First constituent", 2, List.of(),
+				original.getClassification(), false, source, null, QuestionResponseType.WRITTEN_RESPONSE);
+
+		// Give the second constituent a different original
+		// syllabus classification so filtering can hide it
+		// independently of the first constituent.
+		SyllabusVersion historical = new SyllabusVersion(2000, chemistry, "2019", false);
+		Unit historicalUnit = new Unit(2001, historical, "3", "Unit 3", 1);
+		Topic historicalTopic = new Topic(2002, historical, historicalUnit, "3.1", "Equilibrium", 1);
+		Subtopic historicalSubtopic = new Subtopic(2003, historical, historicalTopic, "3.1.1", "Equilibrium", 1);
+		Question partB = new Question(1018, original.getBooklet(), "21b", "Second constituent", 3, List.of(),
+				historicalSubtopic, false, source, null, QuestionResponseType.WRITTEN_RESPONSE);
+		partA.setAnswer(original.getAnswer());
+		partB.setAnswer(new Answer(1019, null, original.getAnswer().getRegions()));
+		List<Question> corpus = List.of(partB, partA);
+		ExamBuilderDraft draft = new ExamBuilderDraft(chemistry);
+		var section = ExamBuilderDraft.Section.PAPER_ONE_WRITTEN;
+		ExamQuestionSelectionDialog dialog = createExamSelectionDialog(robot, draft, section, corpus);
+		try {
+			robot.interact(dialog::show);
+			ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+			ComboBox<?> syllabusFilter = robot.lookup("#question-search-original-syllabus-filter").queryComboBox();
+			Label summary = robot.lookup("#exam-question-selection-summary").queryAs(Label.class);
+			Button clearFilters = robot.lookup("#question-search-clear-metadata-filters").queryButton();
+			ButtonType addType = dialog.getDialogPane().getButtonTypes().stream()
+					.filter(type -> type.getButtonData() == ButtonBar.ButtonData.OK_DONE).findFirst().orElseThrow();
+			ButtonBase add = (ButtonBase) dialog.getDialogPane().lookupButton(addType);
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS,
+					() -> results.getItems().size() == 2 && syllabusFilter.getItems().size() == 3);
+
+			// The catalogue orders original syllabus names
+			// ascending: All, 2019, 2025.
+			robot.interact(() -> syllabusFilter.getSelectionModel().select(2));
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 1
+					&& results.getItems().getFirst().question().getId() == partA.getId());
+			CheckBox firstCheck = examQuestionCheckBox(robot, results, partA.getId());
+			robot.interact(firstCheck::fire);
+
+			// Part B is not visible, but its three marks must
+			// be included in the single top-level selection.
+			assertEquals("1 selected — 5 marks", summary.getText());
+			assertFalse(add.isDisabled());
+			assertTrue(draft.isEmpty());
+			robot.interact(clearFilters::fire);
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+			assertTrue(examQuestionCheckBox(robot, results, partA.getId()).isSelected());
+			assertTrue(examQuestionCheckBox(robot, results, partB.getId()).isSelected());
+
+			// Unchecking either constituent must uncheck
+			// the entire pending top-level Question.
+			CheckBox secondCheck = examQuestionCheckBox(robot, results, partB.getId());
+			robot.interact(secondCheck::fire);
+			WaitForAsyncUtils.waitForFxEvents();
+			assertEquals("0 selected — 0 marks", summary.getText());
+			assertTrue(add.isDisabled());
+			assertFalse(examQuestionCheckBox(robot, results, partA.getId()).isSelected());
+			assertFalse(examQuestionCheckBox(robot, results, partB.getId()).isSelected());
+
+			// Select through the second constituent instead.
+			secondCheck = examQuestionCheckBox(robot, results, partB.getId());
+			robot.interact(secondCheck::fire);
+			assertEquals("1 selected — 5 marks", summary.getText());
+			robot.interact(add::fire);
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> !dialog.isShowing());
+
+			// Return the complete Question in source order,
+			// irrespective of search order or chosen constituent.
+			assertEquals(List.of(partA, partB), dialog.getResult());
+
+			// The chooser itself must not mutate the draft.
+			assertTrue(draft.isEmpty());
+		} finally {
+			robot.interact(() -> {
+				if (dialog.isShowing()) {
+					dialog.close();
+				}
+			});
+		}
+
+		// Confirm the returned selection in the owning draft.
+		assertTrue(draft.addSelections(section, dialog.getResult(), corpus));
+
+		// Both constituents must now be unavailable even
+		// when selecting Questions for the other paper.
+		ExamQuestionSelectionDialog otherPaper = createExamSelectionDialog(robot, draft,
+				ExamBuilderDraft.Section.PAPER_TWO_WRITTEN, corpus);
+		try {
+			robot.interact(otherPaper::show);
+			ListView<QuestionSearchResult> results = robot.lookup("#question-search-results").queryListView();
+			WaitForAsyncUtils.waitFor(Constants.TIMEOUT, TimeUnit.SECONDS, () -> results.getItems().size() == 2);
+			assertTrue(examQuestionCheckBox(robot, results, partA.getId()).isDisabled());
+			assertTrue(examQuestionCheckBox(robot, results, partB.getId()).isDisabled());
+		} finally {
+			robot.interact(otherPaper::close);
+		}
+	}
+
 	private ExamQuestionSelectionDialog createExamSelectionDialog(FxRobot robot, ExamBuilderDraft draft,
 			ExamBuilderDraft.Section section, List<Question> questions) {
+		return createExamSelectionDialog(robot, draft, section, questions, 2026, Set.of());
+	}
+
+	private ExamQuestionSelectionDialog createExamSelectionDialog(FxRobot robot, ExamBuilderDraft draft,
+			ExamBuilderDraft.Section section, List<Question> questions, int cohortYear, Set<Long> lockedQuestionIds) {
 		InMemoryCurriculumRepository curriculum = new InMemoryCurriculumRepository();
 		QuestionRetrievalRepository retrievalRepository = _ -> List.of();
 		QuestionRetrievalService retrieval = new QuestionRetrievalService(retrievalRepository,
@@ -806,8 +987,9 @@ class QuestionSearchDialogTest {
 				new QuestionExtractor());
 		PerformanceRecorder recorder = new PerformanceRecorder(false, tempDirectory.resolve("performance.csv"));
 		AtomicReference<ExamQuestionSelectionDialog> holder = new AtomicReference<>();
-		robot.interact(() -> holder.set(new ExamQuestionSelectionDialog(stage, draft, section, curriculum, retrieval,
-				() -> questions, preview, new InMemoryQuestionOutputApplicabilityRepository(), recorder)));
+		robot.interact(() -> holder.set(
+				new ExamQuestionSelectionDialog(stage, draft, section, curriculum, retrieval, () -> questions, preview,
+						new InMemoryQuestionOutputApplicabilityRepository(), recorder, cohortYear, lockedQuestionIds)));
 		return holder.get();
 	}
 
